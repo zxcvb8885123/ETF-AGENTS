@@ -17,13 +17,25 @@ def main() -> int:
     connection = sqlite3.connect(str(args.database))
     connection.row_factory = sqlite3.Row
     try:
+        has_analysis_view = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='view' AND name='analysis_daily_prices'"
+        ).fetchone()
+        table = "analysis_daily_prices" if has_analysis_view else "daily_prices"
         summary = connection.execute(
             """
             SELECT COUNT(*) AS rows, COUNT(DISTINCT symbol) AS symbols,
                    MIN(trade_date) AS first_date, MAX(trade_date) AS last_date
-            FROM daily_prices
-            """
+            FROM %s
+            """ % table
         ).fetchone()
+        latest_symbols = connection.execute(
+            "SELECT COUNT(DISTINCT symbol) AS value FROM %s WHERE trade_date=(SELECT MAX(trade_date) FROM %s)"
+            % (table, table)
+        ).fetchone()["value"]
+        sources = connection.execute(
+            "SELECT source, COUNT(*) AS rows FROM %s GROUP BY source ORDER BY rows DESC"
+            % table
+        ).fetchall()
         latest_run = connection.execute(
             """
             SELECT run_id, source, status, started_at, finished_at,
@@ -37,6 +49,8 @@ def main() -> int:
     print("行情筆數：%d" % summary["rows"])
     print("股票數：%d" % summary["symbols"])
     print("日期範圍：%s ～ %s" % (summary["first_date"] or "無", summary["last_date"] or "無"))
+    print("最新交易日股票數：%d" % latest_symbols)
+    print("來源：" + ", ".join("%s=%d" % (row["source"], row["rows"]) for row in sources))
     if latest_run:
         print("最近執行：%s / %s" % (latest_run["run_id"], latest_run["status"]))
         if latest_run["error_message"]:

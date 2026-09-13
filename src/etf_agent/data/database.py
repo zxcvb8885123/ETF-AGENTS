@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS daily_prices (
     high_price TEXT,
     low_price TEXT,
     close_price TEXT NOT NULL,
+    adjusted_close_price TEXT,
     price_change TEXT,
     volume_shares INTEGER NOT NULL,
     trade_value INTEGER NOT NULL,
@@ -68,6 +69,44 @@ CREATE INDEX IF NOT EXISTS idx_daily_prices_trade_date
 ON daily_prices(trade_date);
 
 INSERT OR IGNORE INTO schema_versions(version) VALUES (1);
+"""
+
+ANALYSIS_VIEW = """
+DROP VIEW IF EXISTS analysis_daily_prices;
+CREATE VIEW analysis_daily_prices AS
+SELECT
+    symbol,
+    trade_date,
+    open_price,
+    high_price,
+    low_price,
+    close_price,
+    COALESCE(adjusted_close_price, close_price) AS analysis_close_price,
+    adjusted_close_price,
+    price_change,
+    volume_shares,
+    trade_value,
+    transactions,
+    source,
+    fetched_at
+FROM (
+    SELECT
+        daily_prices.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY symbol, trade_date
+            ORDER BY CASE source
+                WHEN 'YAHOO_FINANCE' THEN 1
+                WHEN 'TPEX_TRADING_STOCK' THEN 2
+                WHEN 'TWSE_STOCK_DAY' THEN 2
+                WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
+                ELSE 9
+            END
+        ) AS source_rank
+    FROM daily_prices
+    JOIN instruments USING(symbol)
+    WHERE instruments.in_competition_universe = 1
+)
+WHERE source_rank = 1;
 """
 
 
@@ -93,6 +132,18 @@ class MarketDataDatabase:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(daily_prices)").fetchall()
+            }
+            if "adjusted_close_price" not in columns:
+                connection.execute(
+                    "ALTER TABLE daily_prices ADD COLUMN adjusted_close_price TEXT"
+                )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (2)"
+            )
+            connection.executescript(ANALYSIS_VIEW)
 
     @staticmethod
     def upsert_instruments(
@@ -172,14 +223,15 @@ class MarketDataDatabase:
             """
             INSERT INTO daily_prices(
                 symbol, trade_date, open_price, high_price, low_price, close_price,
-                price_change, volume_shares, trade_value, transactions, source,
+                adjusted_close_price, price_change, volume_shares, trade_value, transactions, source,
                 fetched_at, run_id, raw_payload_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, trade_date, source) DO UPDATE SET
                 open_price = excluded.open_price,
                 high_price = excluded.high_price,
                 low_price = excluded.low_price,
                 close_price = excluded.close_price,
+                adjusted_close_price = excluded.adjusted_close_price,
                 price_change = excluded.price_change,
                 volume_shares = excluded.volume_shares,
                 trade_value = excluded.trade_value,
@@ -196,6 +248,7 @@ class MarketDataDatabase:
                     str(price.high_price) if price.high_price is not None else None,
                     str(price.low_price) if price.low_price is not None else None,
                     str(price.close_price),
+                    str(price.adjusted_close) if price.adjusted_close is not None else None,
                     str(price.change) if price.change is not None else None,
                     price.volume_shares,
                     price.trade_value,
