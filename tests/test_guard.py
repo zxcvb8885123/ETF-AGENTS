@@ -39,6 +39,15 @@ class CompetitionGuardTests(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertTrue(any("9999.TW" in error for error in result.errors))
 
+    def test_applies_weight_limit_to_lowercase_symbol(self):
+        positions = (Position("0001.tw", 10, 10.0),) + tuple(
+            Position(symbol, 1, 1.0) for symbol in SYMBOLS[1:20]
+        )
+        guard = CompetitionGuard(RULES, ["0001.TW"] + SYMBOLS[1:20])
+        result = guard.validate(Portfolio(positions=positions, cash=0.0), self.benchmark)
+        self.assertFalse(result.passed)
+        self.assertTrue(any("0001.tw 權重" in error for error in result.errors))
+
     def test_active_share_formula(self):
         self.assertAlmostEqual(
             CompetitionGuard.calculate_active_share({"A": 0.6}, {"A": 0.4, "B": 0.2}),

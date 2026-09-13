@@ -58,7 +58,7 @@ class CompetitionGuard:
             if position.shares <= 0 or position.price <= 0:
                 errors.append("所有部位必須為正整股數與正價格")
                 break
-            weight = weights.get(position.symbol, 0.0)
+            weight = weights.get(position.symbol.upper(), 0.0)
             max_weight = (
                 float(self.rules["tsmc_max_stock_weight"])
                 if position.symbol.upper() == tsmc_symbol

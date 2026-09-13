@@ -1,0 +1,24 @@
+name: etf-agent
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: etf-agent:local
+    user: "${HOST_UID:-501}:${HOST_GID:-20}"
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: Asia/Taipei
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data:ro
+      - ./var:/app/var
+      - ./artifacts:/app/artifacts
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
+    command: ["python3", "scripts/check_setup.py"]

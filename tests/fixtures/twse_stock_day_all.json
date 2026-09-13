@@ -1,0 +1,28 @@
+[
+  {
+    "Date": "1150911",
+    "Code": "2330",
+    "Name": "台積電",
+    "TradeVolume": "20,000",
+    "TradeValue": "25,000,000",
+    "OpeningPrice": "1250.00",
+    "HighestPrice": "1260.00",
+    "LowestPrice": "1240.00",
+    "ClosingPrice": "1255.00",
+    "Change": "+5.00",
+    "Transaction": "10,000"
+  },
+  {
+    "Date": "1150911",
+    "Code": "2317",
+    "Name": "鴻海",
+    "TradeVolume": "30,000",
+    "TradeValue": "6,000,000",
+    "OpeningPrice": "199.00",
+    "HighestPrice": "202.00",
+    "LowestPrice": "198.00",
+    "ClosingPrice": "200.00",
+    "Change": "1.00",
+    "Transaction": "9,000"
+  }
+]
