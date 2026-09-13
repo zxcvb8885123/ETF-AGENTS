@@ -1,0 +1,18 @@
+{
+  "competition": "AI CUP 2026 Agent 基金經理人",
+  "universe_size": 150,
+  "min_positions": 20,
+  "max_positions": 30,
+  "cash_weight_must_be_below": 0.25,
+  "recommended_cash_weight_ceiling": 0.22,
+  "default_max_stock_weight": 0.1,
+  "tsmc_symbol": "2330.TW",
+  "tsmc_max_stock_weight": 0.25,
+  "minimum_active_share": 0.2,
+  "commission_rate": 0.001425,
+  "sell_transaction_tax_rate": 0.003,
+  "submission_start": "19:30",
+  "submission_deadline": "08:55",
+  "max_submissions_per_day": 25,
+  "minimum_successful_submission_days": 22
+}
