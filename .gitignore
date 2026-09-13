@@ -3,4 +3,9 @@ __pycache__/
 .DS_Store
 .venv/
 .env
-artifacts/
+artifacts/*
+!artifacts/.gitkeep
+var/*.db
+var/*.db-shm
+var/*.db-wal
+!var/.gitkeep
