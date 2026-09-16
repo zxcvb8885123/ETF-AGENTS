@@ -16,5 +16,35 @@
     "retries": 2,
     "batch_size": 30,
     "source": "Yahoo Finance through yfinance"
+  },
+  "corporate_data": {
+    "timeout_seconds": 30,
+    "user_agent": "ETF-Agent-AICUP-2026/0.1",
+    "sources": [
+      {
+        "source": "TWSE_MOPS_MONTHLY_REVENUE",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+        "market": "TWSE",
+        "document_type": "monthly_revenue"
+      },
+      {
+        "source": "TPEX_MOPS_MONTHLY_REVENUE",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O",
+        "market": "TPEX",
+        "document_type": "monthly_revenue"
+      },
+      {
+        "source": "TWSE_MOPS_MATERIAL_EVENT",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap04_L",
+        "market": "TWSE",
+        "document_type": "material_event"
+      },
+      {
+        "source": "TPEX_MOPS_MATERIAL_EVENT",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O",
+        "market": "TPEX",
+        "document_type": "material_event"
+      }
+    ]
   }
 }

@@ -109,6 +109,86 @@ FROM (
 WHERE source_rank = 1;
 """
 
+CORPORATE_DATA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS source_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    document_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    raw_payload_id INTEGER NOT NULL REFERENCES raw_payloads(id),
+    supersedes_document_id INTEGER REFERENCES source_documents(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, external_id, content_sha256),
+    UNIQUE(source, external_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_documents_cutoff
+ON source_documents(published_at, available_at);
+
+CREATE TABLE IF NOT EXISTS document_instruments (
+    document_id INTEGER NOT NULL REFERENCES source_documents(id),
+    symbol TEXT NOT NULL REFERENCES instruments(symbol),
+    evidence TEXT NOT NULL,
+    PRIMARY KEY(document_id, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS monthly_revenues (
+    document_id INTEGER PRIMARY KEY REFERENCES source_documents(id),
+    symbol TEXT NOT NULL REFERENCES instruments(symbol),
+    revenue_period TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    unit_multiplier INTEGER NOT NULL,
+    current_revenue TEXT,
+    previous_month_revenue TEXT,
+    previous_year_revenue TEXT,
+    mom_pct TEXT,
+    yoy_pct TEXT,
+    cumulative_revenue TEXT,
+    previous_year_cumulative_revenue TEXT,
+    cumulative_yoy_pct TEXT,
+    note TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_revenues_symbol_period
+ON monthly_revenues(symbol, revenue_period);
+
+CREATE TABLE IF NOT EXISTS quality_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT REFERENCES collection_runs(run_id),
+    source TEXT NOT NULL,
+    external_id TEXT,
+    symbol TEXT,
+    severity TEXT NOT NULL CHECK (severity IN ('warning', 'error')),
+    issue_code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS research_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT,
+    decision_cutoff TEXT NOT NULL,
+    universe_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    usable INTEGER NOT NULL CHECK (usable IN (0, 1)),
+    quality_flags_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS snapshot_documents (
+    snapshot_id TEXT NOT NULL REFERENCES research_snapshots(id),
+    document_id INTEGER NOT NULL REFERENCES source_documents(id),
+    PRIMARY KEY(snapshot_id, document_id)
+);
+"""
+
 
 class MarketDataDatabase:
     def __init__(self, path: Path):
@@ -142,6 +222,10 @@ class MarketDataDatabase:
                 )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (2)"
+            )
+            connection.executescript(CORPORATE_DATA_SCHEMA)
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (3)"
             )
             connection.executescript(ANALYSIS_VIEW)
 
