@@ -20,6 +20,7 @@ class DailyPrice:
     volume_shares: int
     trade_value: int
     transactions: int
+    adjusted_close: Optional[Decimal] = None
 
 
 def parse_roc_date(value: str) -> str:
