@@ -2,7 +2,12 @@ import json
 import unittest
 from datetime import date
 
-from etf_agent.data import HistoricalPriceProvider, Instrument, month_starts
+from etf_agent.data import (
+    HistoricalPriceProvider,
+    Instrument,
+    month_starts,
+    plan_history_refresh,
+)
 
 
 class HistoricalProviderTests(unittest.TestCase):
@@ -39,6 +44,26 @@ class HistoricalProviderTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertEqual(prices[0].volume_shares, 504000)
         self.assertEqual(prices[0].trade_value, 8595448000)
+
+    def test_incremental_refresh_backfills_missing_symbols_and_overlaps_existing(self):
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+        ]
+        batches = plan_history_refresh(
+            universe,
+            {"2330.TW": date(2026, 9, 11)},
+            date(2026, 9, 18),
+            lookback_years=2,
+            overlap_days=7,
+        )
+        self.assertEqual(
+            [(batch.start_date, [item.symbol for item in batch.instruments]) for batch in batches],
+            [
+                (date(2024, 9, 18), ["3718.TWO"]),
+                (date(2026, 9, 4), ["2330.TW"]),
+            ],
+        )
 
 
 if __name__ == "__main__":

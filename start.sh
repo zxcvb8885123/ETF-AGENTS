@@ -61,7 +61,8 @@ if [ "$MODE" = "auto" ]; then
 fi
 
 if [ "$MODE" = "official" ]; then
-  docker compose run --rm agent python3 scripts/collect_twse.py
+  docker compose run --rm agent python3 scripts/collect_latest_prices.py
+  docker compose run --rm agent python3 scripts/collect_history.py
 else
   docker compose run --rm agent python3 scripts/collect_twse.py --all-listed
 fi

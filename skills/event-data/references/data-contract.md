@@ -1,26 +1,46 @@
-# Data contract
+# 資料契約
 
-## Source priority
+## 來源優先順序
 
-Use configured TWSE and TPEx OpenAPI endpoints for monthly revenue and material disclosures. Save the complete response in `raw_payloads` before relying on parsed records. News may identify something to investigate, but it must not replace an official value.
+月營收與重大訊息使用設定好的 TWSE／TPEx OpenAPI 端點。必須先把完整回應保存至 `raw_payloads`，才能使用解析後的紀錄。新聞可以指出待調查的線索，但不得取代官方數值。
 
-## Identity and versions
+M0 來源健康檢查只能使用 `config/data_sources.json` 中的 `source_probes`。探測結果要記錄端點、HTTP 狀態、schema 欄位、資料日期、筆數、內容雜湊、延遲、交易池涵蓋率、缺漏代號與結構化錯誤。單次請求成功只能證明目前可以連線，不能證明長期穩定或具備歷史資料。
 
-- A monthly revenue document is identified by source, company code, and revenue period.
-- A material disclosure is identified by source, company code, publication date and time, clause, and fact date.
-- The same external ID and content hash is a duplicate.
-- A changed content hash for an existing external ID creates the next version and links `supersedes_document_id`.
+## 競賽交易池驗證
 
-## Time isolation
+- 官方交易池的每一筆資料都必須得到 `tradable`、`not_tradable` 或 `universe_mismatch` 狀態。
+- 代號存在且最新價格可用時為 `tradable`；代號存在但沒有可用價格時為 `not_tradable`；代號缺漏或市場來源無法使用時為 `universe_mismatch`。
+- 可能的承接代號只能作為證據。未經競賽規則確認，不得修改官方交易池代號。
+- 驗證結果要保存自己的交易池版本。只有該版本與快照交易池相符時，快照才能使用驗證結果。
+- 驗證缺漏、過期、降級、失敗或不可用時，必須關閉正式快照閘門。
 
-`published_at` is the source publication time. `available_at` is the first verified acquisition time. A snapshot includes a document only when both are at or before `decision_cutoff`, then selects the newest eligible version. Existing `snapshot_documents` links are immutable.
+## 識別鍵與版本
 
-Historical endpoint snapshots do not prove that the collector possessed the data in the past. Keep the actual acquisition time unless another source supplies auditable historical availability evidence.
+- 月營收文件以來源、公司代號與營收期間識別。
+- 重大訊息以來源、公司代號、發布日期與時間、條款及事實發生日識別。
+- 相同 external ID 與內容雜湊視為重複資料。
+- 既有 external ID 的內容雜湊改變時，建立下一個版本並連結 `supersedes_document_id`。
 
-## Numeric fields
+## 時間隔離
 
-Monthly revenue values use TWD with `unit_multiplier=1000`. Keep the original decimal text without binary floating-point conversion. A blank, dash, or unavailable value becomes SQL `NULL` and JSON `null`.
+`published_at` 是來源發布時間；`available_at` 是第一次可驗證的取得時間。只有兩者都不晚於 `decision_cutoff` 時，快照才能納入該文件，並從合格版本中選擇最新版本。既有 `snapshot_documents` 關聯不可修改。
 
-## Snapshot quality
+行情也是時間點資料。快照只能選擇實際 `fetched_at` 不晚於 `decision_cutoff` 的行情；`snapshot_prices` 要鎖定採用的代號、交易日、來源與原始 payload。之後的重新抓取不得改寫既有快照。
 
-The default snapshot requires a non-empty official universe and complete latest-date price coverage. Record failures in `quality_flags`, set `usable=false`, and stop strategy execution. `--allow-missing-prices` is limited to data inspection and automated tests.
+歷史端點目前提供的資料不能證明收集器在過去當時已經取得該資料。除非其他來源提供可稽核的歷史可得時間證據，否則必須保留實際取得時間。
+
+## 來源證據與 D-Plan 交接
+
+- 每筆快照行情與文件都要引用內部 `source_evidence_id`。
+- `source_evidence` 記錄權威來源分類、公開 URL、內容截至時間、抓取時間、內容雜湊與原始 payload ID。
+- 權威來源分類必須符合 D-Plan schema：`twse`、`tpex`、`taifex`、`mops`、`fininst`、`media`、`vendor` 或 `other`。
+- 快照證據 ID 不是 D-Plan 的 `S1`／`S2` ID。確定性 D-Plan Builder 只能為報告實際引用的證據配置精簡送件 ID。
+- Data Agent 不得建立市場觀點、推論鏈、決策或訂單。這些內容來自下游契約，而且必須保留證據引用。
+
+## 數值欄位
+
+月營收使用 TWD，`unit_multiplier=1000`。保留原始十進位文字，不得轉成二進位浮點數。空白、破折號或無法取得的值要保存為 SQL `NULL` 與 JSON `null`。
+
+## 快照品質
+
+預設快照要求官方交易池不可為空、具備版本相符且可用的交易池驗證，以及完整的最新交易日行情涵蓋。失敗項目要寫入 `quality_flags`、設定 `usable=false`，並停止策略執行。`--allow-missing-prices` 與 `--allow-unvalidated-universe` 只能用於明確的診斷或自動化測試。

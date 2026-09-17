@@ -25,7 +25,7 @@
 
 ### 交易池異常
 
-`5371` 在 2026-09-17 的 TPEx 最新行情、月營收及財報端點都不存在；同一官方行情與營收端點已有 `3718 中光電投控`。因此目前 `official_universe.csv` 不是當日可交易名單的完整映射。
+`5371` 在 2026-09-17 的 TPEx 最新行情、月營收及財報端點都不存在；同一官方行情與營收端點已有 `3718 中光電投控`。當時使用的舊版 `official_universe.csv` 因而不是當日可交易名單的完整映射。
 
 正式流程需要新增：
 
@@ -33,6 +33,8 @@
 - 保存舊代號、新代號、承接關係、生效日及來源證據。
 - 不可自行把舊代號換成新代號；必須依主辦規則確認競賽交易池是否同步更新。
 - 未確認前將該標的標記 `universe_mismatch`／`not_tradable`，禁止交易。
+
+2026-09-18 已收到主辦方新版 `玉山挑戰賽_投資組合及交易標的_150檔清單_v1.pdf`。PDF 共列出上市 100 檔、上櫃 50 檔；與舊 CSV 比對後唯一代號差異為移除 `5371`、新增 `3718 中光電投控`。`data/official_universe.csv` 已依該文件更新，全部資料列的 `source_date` 改為 PDF metadata 建立日 `2026-09-14`，PDF SHA-256 保存於 `config/competition_rules.json`。
 
 ## 歷史 MOPS 資料
 
@@ -76,7 +78,7 @@ status
 
 ### 可立即進入實作
 
-1. TPEx 最新行情 collector。
+1. TPEx 最新行情 collector（2026-09-18 已完成接入）。
 2. TWSE／TPEx 六種業別的損益表與資產負債表 collector。
 3. TPEx 暫停、恢復、變更交易、分盤及管理股票狀態。
 4. 每日交易池／代號／可交易狀態驗證。
@@ -94,8 +96,36 @@ status
 
 1. GDELT 作必要新聞來源。
 2. `yfinance.Search` 作台股新聞來源。
-3. 社群情緒與分析師目標價。
+3. 社群情緒與分析師目標價：不屬於 Data Agent；若後續開發，改由獨立「市場情緒與分析師研究 Agent」重新評估來源、授權、覆蓋與歷史可得性。
 
 ## 重測要求
 
 正式接入前須將探測流程做成可重跑腳本，至少驗證 HTTP 狀態、JSON／RSS schema、回傳日期、資料列數、交易池覆蓋、重複率及限流。單次成功只能標記 `candidate_passed_once`；連續多日成功且完成使用條件審查後，才能標記 `approved`。
+
+## M0 自動化重測結果
+
+2026-09-17 已完成 `scripts/probe_data_sources.py`、結構化 `SourceFeasibilityReport`／`UniverseValidationResult`、SQLite 保存及 Snapshot 閘門。使用舊版交易池的首次即時重測結果：
+
+- TWSE `STOCK_DAY_ALL`：1,379 筆，交易池 100／100。
+- TPEx `tpex_mainboard_quotes`：1,014 筆，交易池 49／50。
+- 逐檔結果：149 檔 `tradable`、0 檔 `not_tradable`、1 檔 `universe_mismatch`。
+- `5371.TWO` 查無代號；`3718.TWO` 只保存為候選承接關係，不自動修改交易池。
+- 正式 Snapshot 同時因交易池驗證不可用及行情覆蓋 149／150 而 fail closed。
+
+2026-09-18 使用新版官方交易池再次執行相同探測：
+
+- TWSE `STOCK_DAY_ALL`：1,377 筆，交易池 100／100。
+- TPEx `tpex_mainboard_quotes`：1,014 筆，交易池 50／50。
+- 逐檔結果：150 檔 `tradable`、0 檔 `not_tradable`、0 檔 `universe_mismatch`。
+- `UniverseValidationResult` 為 `completed` 且 `usable=true`。
+- 新版名單更新後一度只有 149／150，原因是 `3718` 尚未透過 collector 正式入庫；M1 已新增 TPEx 最新行情 provider、正式 CLI 與 Skill `collect-prices`。
+- 2026-09-18 即時驗收已寫入 2026-09-17 行情：TWSE 100 檔、TPEx 50 檔，`3718.TWO` 由 `TPEX_MAINBOARD_QUOTES` 入庫，收盤價為 64.10。正式 Snapshot 最新行情覆蓋 150／150、交易池可交易 150／150、`usable=true`。
+- 行情入庫不再覆寫官方名單的 `source_date`；`2330.TW` 與 `3718.TWO` 均維持新版 PDF 的 `2026-09-14`，避免剛完成的 universe validation 被誤判為過期。
+
+執行方式：
+
+```bash
+PYTHONPATH=src python3 scripts/probe_data_sources.py
+```
+
+退出碼 `0` 代表交易池可用，`2` 代表探測已完成但交易池不可用，`1` 代表設定、讀取或保存失敗。

@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
 from .universe import Instrument, normalize_symbol
@@ -218,6 +218,30 @@ class OfficialCorporateProvider:
             evidence="%s（%s）" % (company_name, code),
         )
         return CorporateRecord(document=document)
+
+
+class OfficialCorporateProviderFactory:
+    """從 allowlist 設定建立官方公司資料 provider 物件。"""
+
+    def create(
+        self, config: Mapping[str, object]
+    ) -> List[OfficialCorporateProvider]:
+        sources = config.get("sources")
+        if not isinstance(sources, list):
+            raise ValueError("corporate_data 缺少 sources 設定")
+        timeout_seconds = int(config.get("timeout_seconds", 30))
+        user_agent = str(config.get("user_agent", "ETF-Agent-AICUP-2026/0.1"))
+        return [
+            OfficialCorporateProvider(
+                source=str(item["source"]),
+                url=str(item["url"]),
+                market=str(item["market"]),
+                document_type=str(item["document_type"]),
+                timeout_seconds=timeout_seconds,
+                user_agent=user_agent,
+            )
+            for item in sources
+        ]
 
 
 class CorporateDataCollector:
