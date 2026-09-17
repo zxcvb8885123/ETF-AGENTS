@@ -40,7 +40,7 @@ def parse_roc_date(value: str) -> str:
 
 def parse_decimal(value: object) -> Optional[Decimal]:
     text = str(value or "").strip().replace(",", "")
-    if text in {"", "-", "--", "---"}:
+    if not text or set(text) == {"-"}:
         return None
     try:
         return Decimal(text)
@@ -59,6 +59,7 @@ def parse_integer(value: object) -> int:
 
 class TwseDailyProvider:
     source_name = "TWSE_STOCK_DAY_ALL"
+    market = "TWSE"
 
     def __init__(
         self,

@@ -1,8 +1,11 @@
 import hashlib
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, Optional, Sequence
+
+from etf_agent.contracts import SourceFeasibilityReport, UniverseValidationResult
 
 from .twse import DailyPrice
 from .universe import Instrument
@@ -88,7 +91,9 @@ SELECT
     trade_value,
     transactions,
     source,
-    fetched_at
+    fetched_at,
+    run_id,
+    raw_payload_id
 FROM (
     SELECT
         daily_prices.*,
@@ -99,6 +104,7 @@ FROM (
                 WHEN 'TPEX_TRADING_STOCK' THEN 2
                 WHEN 'TWSE_STOCK_DAY' THEN 2
                 WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
+                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                 ELSE 9
             END
         ) AS source_rank
@@ -187,6 +193,41 @@ CREATE TABLE IF NOT EXISTS snapshot_documents (
     document_id INTEGER NOT NULL REFERENCES source_documents(id),
     PRIMARY KEY(snapshot_id, document_id)
 );
+
+CREATE TABLE IF NOT EXISTS snapshot_prices (
+    snapshot_id TEXT NOT NULL REFERENCES research_snapshots(id),
+    symbol TEXT NOT NULL REFERENCES instruments(symbol),
+    trade_date TEXT NOT NULL,
+    source TEXT NOT NULL,
+    raw_payload_id INTEGER NOT NULL REFERENCES raw_payloads(id),
+    PRIMARY KEY(snapshot_id, symbol)
+);
+"""
+
+SOURCE_HEALTH_SCHEMA = """
+CREATE TABLE IF NOT EXISTS source_feasibility_reports (
+    report_id TEXT PRIMARY KEY,
+    generated_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('passed', 'degraded', 'failed')),
+    report_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS universe_validation_runs (
+    validation_id TEXT PRIMARY KEY,
+    source_report_id TEXT NOT NULL REFERENCES source_feasibility_reports(report_id),
+    generated_at TEXT NOT NULL,
+    universe_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('completed', 'degraded', 'failed')),
+    usable INTEGER NOT NULL CHECK (usable IN (0, 1)),
+    total_count INTEGER NOT NULL,
+    tradable_count INTEGER NOT NULL,
+    not_tradable_count INTEGER NOT NULL,
+    mismatch_count INTEGER NOT NULL,
+    result_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_universe_validation_generated_at
+ON universe_validation_runs(generated_at);
 """
 
 
@@ -227,6 +268,13 @@ class MarketDataDatabase:
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (3)"
             )
+            connection.executescript(SOURCE_HEALTH_SCHEMA)
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (4)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (5)"
+            )
             connection.executescript(ANALYSIS_VIEW)
 
     @staticmethod
@@ -245,6 +293,9 @@ class MarketDataDatabase:
                 name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE instruments.name END,
                 market = excluded.market,
                 source_date = CASE
+                    WHEN instruments.in_competition_universe = 1
+                         AND excluded.in_competition_universe = 0
+                    THEN instruments.source_date
                     WHEN excluded.source_date <> '' THEN excluded.source_date
                     ELSE instruments.source_date
                 END,
@@ -266,6 +317,20 @@ class MarketDataDatabase:
                 for item in instruments
             ],
         )
+
+    @classmethod
+    def replace_competition_universe(
+        cls,
+        connection: sqlite3.Connection,
+        instruments: Iterable[Instrument],
+    ) -> None:
+        rows = list(instruments)
+        if not rows:
+            raise ValueError("官方交易池是空的")
+        connection.execute(
+            "UPDATE instruments SET in_competition_universe = 0, updated_at = CURRENT_TIMESTAMP"
+        )
+        cls.upsert_instruments(connection, rows, True)
 
     @staticmethod
     def insert_raw_payload(
@@ -351,3 +416,70 @@ class MarketDataDatabase:
         with self.connect() as connection:
             row = connection.execute("SELECT MAX(trade_date) AS value FROM daily_prices").fetchone()
             return str(row["value"]) if row and row["value"] else None
+
+    def latest_complete_trade_date(self, sources: Sequence[str]) -> Optional[str]:
+        required = tuple(dict.fromkeys(sources))
+        if not required:
+            raise ValueError("至少需要一個行情來源")
+        placeholders = ", ".join("?" for _ in required)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT source, MAX(trade_date) AS last_date
+                FROM daily_prices
+                WHERE source IN (%s)
+                GROUP BY source
+                """
+                % placeholders,
+                required,
+            ).fetchall()
+        if len(rows) != len(required) or any(not row["last_date"] for row in rows):
+            return None
+        return min(str(row["last_date"]) for row in rows)
+
+    def save_source_feasibility_report(
+        self, report: SourceFeasibilityReport
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO source_feasibility_reports(
+                    report_id, generated_at, status, report_json
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    report.report_id,
+                    report.generated_at,
+                    report.status,
+                    json.dumps(report.as_dict(), ensure_ascii=False),
+                ),
+            )
+
+    def save_universe_validation(
+        self, validation: UniverseValidationResult
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO universe_validation_runs(
+                    validation_id, source_report_id, generated_at, universe_version,
+                    status, usable, total_count, tradable_count,
+                    not_tradable_count, mismatch_count, result_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    validation.validation_id,
+                    validation.source_report_id,
+                    validation.generated_at,
+                    validation.universe_version,
+                    validation.status,
+                    int(validation.usable),
+                    validation.total_count,
+                    validation.tradable_count,
+                    validation.not_tradable_count,
+                    validation.mismatch_count,
+                    json.dumps(validation.as_dict(), ensure_ascii=False),
+                ),
+            )

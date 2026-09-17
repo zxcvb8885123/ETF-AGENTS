@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
 from .twse import DailyPrice
@@ -26,6 +26,55 @@ class YFinanceCollectionResult:
     stored_rows: int
     missing_symbols: Tuple[str, ...]
     warnings: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class HistoryRefreshBatch:
+    start_date: date
+    instruments: Tuple[Instrument, ...]
+
+
+@dataclass(frozen=True)
+class YFinanceRefreshResult:
+    run_ids: Tuple[str, ...]
+    start_date: str
+    end_date: str
+    requested_symbols: int
+    stored_rows: int
+    missing_symbols: Tuple[str, ...]
+    warnings: Tuple[str, ...]
+
+
+def rolling_start(end: date, years: int = 2) -> date:
+    if years < 1:
+        raise ValueError("歷史回看年數必須大於 0")
+    try:
+        return end.replace(year=end.year - years)
+    except ValueError:
+        return end.replace(year=end.year - years, day=28)
+
+
+def plan_history_refresh(
+    universe: Sequence[Instrument],
+    last_dates: Mapping[str, date],
+    end: date,
+    lookback_years: int = 2,
+    overlap_days: int = 7,
+) -> List[HistoryRefreshBatch]:
+    if overlap_days < 0:
+        raise ValueError("歷史行情重疊天數不得小於 0")
+    floor = rolling_start(end, lookback_years)
+    grouped: Dict[date, List[Instrument]] = {}
+    for instrument in universe:
+        last_date = last_dates.get(instrument.symbol)
+        start = floor if last_date is None else max(
+            floor, last_date - timedelta(days=overlap_days)
+        )
+        grouped.setdefault(start, []).append(instrument)
+    return [
+        HistoryRefreshBatch(start_date=start, instruments=tuple(instruments))
+        for start, instruments in sorted(grouped.items())
+    ]
 
 
 def _decimal(value: object) -> Optional[Decimal]:
@@ -56,6 +105,59 @@ class YFinanceHistoryCollector:
         self.batch_size = batch_size
         self.retries = retries
         self.progress = progress
+
+    def refresh(
+        self,
+        universe: Sequence[Instrument],
+        end: date,
+        lookback_years: int = 2,
+        overlap_days: int = 7,
+    ) -> YFinanceRefreshResult:
+        if not universe:
+            raise ValueError("官方交易池是空的")
+        self.database.initialize()
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol, MAX(trade_date) AS last_date
+                FROM daily_prices
+                WHERE source = ?
+                GROUP BY symbol
+                """,
+                (self.source,),
+            ).fetchall()
+        last_dates = {
+            str(row["symbol"]): date.fromisoformat(str(row["last_date"]))
+            for row in rows
+            if row["last_date"]
+        }
+        batches = plan_history_refresh(
+            universe,
+            last_dates,
+            end,
+            lookback_years=lookback_years,
+            overlap_days=overlap_days,
+        )
+        results: List[YFinanceCollectionResult] = []
+        for batch in batches:
+            if self.progress:
+                self.progress(
+                    "增量區間 %s 至 %s：%d 檔"
+                    % (batch.start_date.isoformat(), end.isoformat(), len(batch.instruments))
+                )
+            results.append(self.collect(batch.instruments, batch.start_date, end))
+
+        return YFinanceRefreshResult(
+            run_ids=tuple(item.run_id for item in results),
+            start_date=min(batch.start_date for batch in batches).isoformat(),
+            end_date=end.isoformat(),
+            requested_symbols=len(universe),
+            stored_rows=sum(item.stored_rows for item in results),
+            missing_symbols=tuple(
+                sorted({symbol for item in results for symbol in item.missing_symbols})
+            ),
+            warnings=tuple(warning for item in results for warning in item.warnings),
+        )
 
     def collect(
         self, universe: Sequence[Instrument], start: date, end: date

@@ -1,6 +1,14 @@
 {
   "competition": "AI CUP 2026 Agent 基金經理人",
   "universe_size": 150,
+  "universe_source": {
+    "filename": "玉山挑戰賽_投資組合及交易標的_150檔清單_v1.pdf",
+    "version": "v1",
+    "document_created_at": "2026-09-14",
+    "sha256": "b6a17beb84cfbfe3db8629d6af8c2938b4443114de0d82e333bc487e4c7d8bd6",
+    "twse_count": 100,
+    "tpex_count": 50
+  },
   "min_positions": 20,
   "max_positions": 30,
   "cash_weight_must_be_below": 0.25,

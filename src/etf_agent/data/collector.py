@@ -2,10 +2,10 @@ import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Sequence
+from typing import List, Protocol, Sequence, Tuple
 
 from .database import MarketDataDatabase
-from .twse import DailyPrice, TwseDailyProvider
+from .twse import DailyPrice
 from .universe import Instrument
 
 
@@ -16,10 +16,24 @@ class CollectionResult:
     stored_rows: int
     trade_date: str
     warnings: List[str]
+    source: str = ""
+    market: str = ""
+
+
+class DailyPriceProvider(Protocol):
+    source_name: str
+    market: str
+    url: str
+
+    def fetch(self) -> Tuple[str, str]:
+        ...
+
+    def parse(self, payload: str) -> Tuple[List[DailyPrice], List[str]]:
+        ...
 
 
 class DailyPriceCollector:
-    def __init__(self, database: MarketDataDatabase, provider: TwseDailyProvider):
+    def __init__(self, database: MarketDataDatabase, provider: DailyPriceProvider):
         self.database = database
         self.provider = provider
 
@@ -47,19 +61,31 @@ class DailyPriceCollector:
         try:
             payload, fetched_at = self.provider.fetch()
             all_prices, warnings = self.provider.parse(payload)
-            selected = self._select(all_prices, universe, include_all_listed, warnings)
+            selected = self._select(
+                all_prices,
+                universe,
+                include_all_listed,
+                warnings,
+                self.provider.market,
+            )
             if not selected:
-                raise ValueError("TWSE 回應中找不到交易池內的上市股票")
+                raise ValueError(
+                    "%s 回應中找不到交易池內的 %s 股票"
+                    % (self.provider.source_name, self.provider.market)
+                )
             trade_dates = {price.trade_date for price in selected}
             if len(trade_dates) != 1:
-                raise ValueError("單次 TWSE 回應包含多個交易日：%s" % sorted(trade_dates))
+                raise ValueError(
+                    "單次 %s 回應包含多個交易日：%s"
+                    % (self.provider.source_name, sorted(trade_dates))
+                )
 
             observed = [
                 Instrument(
                     symbol=price.symbol,
                     code=price.code,
                     name=price.name,
-                    market="TWSE",
+                    market=self.provider.market,
                     source_date=price.trade_date,
                 )
                 for price in selected
@@ -104,6 +130,8 @@ class DailyPriceCollector:
                 stored_rows=stored_rows,
                 trade_date=next(iter(trade_dates)),
                 warnings=warnings,
+                source=self.provider.source_name,
+                market=self.provider.market,
             )
         except Exception as error:
             with self.database.connect() as connection:
@@ -123,12 +151,20 @@ class DailyPriceCollector:
         universe: Sequence[Instrument],
         include_all_listed: bool,
         warnings: List[str],
+        market: str = "TWSE",
     ) -> List[DailyPrice]:
         if include_all_listed:
             return list(prices)
-        allowed = {item.symbol for item in universe if item.market in {"TWSE", "上市"}}
+        market_aliases = {
+            "TWSE": {"TWSE", "上市"},
+            "TPEX": {"TPEX", "TPEx", "上櫃"},
+        }
+        allowed_markets = market_aliases.get(market.upper(), {market})
+        allowed = {item.symbol for item in universe if item.market in allowed_markets}
         selected = [price for price in prices if price.symbol in allowed]
         missing = sorted(allowed - {price.symbol for price in selected})
         if missing:
-            warnings.append("TWSE 最新資料缺少 %d 檔交易池股票" % len(missing))
+            warnings.append(
+                "%s 最新資料缺少 %d 檔交易池股票" % (market.upper(), len(missing))
+            )
         return selected

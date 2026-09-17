@@ -13,6 +13,42 @@ class Instrument:
     source_date: str
 
 
+class UniverseLoader:
+    """從官方交易池 CSV 建立 Instrument 物件。"""
+
+    def load(self, path: Path) -> List[Instrument]:
+        instruments: List[Instrument] = []
+        seen = set()
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            required = {"symbol", "name", "market", "source_date"}
+            if not reader.fieldnames or not required.issubset(reader.fieldnames):
+                raise ValueError(
+                    "交易池 CSV 欄位必須包含：symbol,name,market,source_date"
+                )
+            for line_number, row in enumerate(reader, start=2):
+                market = (row.get("market") or "").strip().upper()
+                raw_symbol = (row.get("symbol") or "").strip()
+                if not raw_symbol:
+                    continue
+                symbol = normalize_symbol(raw_symbol, market)
+                if symbol in seen:
+                    raise ValueError(
+                        "交易池第 %d 行有重複股票：%s" % (line_number, symbol)
+                    )
+                seen.add(symbol)
+                instruments.append(
+                    Instrument(
+                        symbol=symbol,
+                        code=symbol.split(".", 1)[0],
+                        name=(row.get("name") or "").strip(),
+                        market=market,
+                        source_date=(row.get("source_date") or "").strip(),
+                    )
+                )
+        return instruments
+
+
 def normalize_symbol(value: str, market: str = "TWSE") -> str:
     value = value.strip().upper()
     if value.endswith(".TW") or value.endswith(".TWO"):
@@ -22,29 +58,6 @@ def normalize_symbol(value: str, market: str = "TWSE") -> str:
 
 
 def load_universe(path: Path) -> List[Instrument]:
-    instruments: List[Instrument] = []
-    seen = set()
-    with path.open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        required = {"symbol", "name", "market", "source_date"}
-        if not reader.fieldnames or not required.issubset(reader.fieldnames):
-            raise ValueError("交易池 CSV 欄位必須包含：symbol,name,market,source_date")
-        for line_number, row in enumerate(reader, start=2):
-            market = (row.get("market") or "").strip().upper()
-            raw_symbol = (row.get("symbol") or "").strip()
-            if not raw_symbol:
-                continue
-            symbol = normalize_symbol(raw_symbol, market)
-            if symbol in seen:
-                raise ValueError("交易池第 %d 行有重複股票：%s" % (line_number, symbol))
-            seen.add(symbol)
-            instruments.append(
-                Instrument(
-                    symbol=symbol,
-                    code=symbol.split(".", 1)[0],
-                    name=(row.get("name") or "").strip(),
-                    market=market,
-                    source_date=(row.get("source_date") or "").strip(),
-                )
-            )
-    return instruments
+    """相容舊呼叫端；新程式應使用 UniverseLoader。"""
+
+    return UniverseLoader().load(path)

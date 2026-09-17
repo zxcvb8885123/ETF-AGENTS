@@ -19,7 +19,7 @@ docker compose version
 ./start.sh
 ```
 
-腳本會自動建置映像、檢查設定、初始化 SQLite、抓行情，再顯示資料庫狀態。官方交易池還空著時，會自動使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。
+腳本會自動建置映像、檢查設定、初始化 SQLite、抓行情，再顯示資料庫狀態。正式模式會先抓 TWSE／TPEx 最新行情，再把 150 檔兩年歷史行情增量更新至兩個官方市場都已完成的最近交易日；官方交易池還空著時，則使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。
 
 ```bash
 ./start.sh official  # 只抓官方交易池；空白時停止
@@ -49,10 +49,11 @@ docker compose run --rm agent python3 scripts/collect_twse.py --all-listed
 docker compose run --rm agent python3 scripts/data_status.py
 ```
 
-官方 150 檔名單填入 `data/official_universe.csv` 後，正式抓取：
+官方 150 檔名單填入 `data/official_universe.csv` 後，正式抓取上市與上櫃最新行情：
 
 ```bash
-docker compose run --rm agent python3 scripts/collect_twse.py
+docker compose run --rm agent python3 scripts/collect_latest_prices.py
+docker compose run --rm agent python3 scripts/collect_history.py
 ```
 
 執行測試：

@@ -5,10 +5,13 @@ from pathlib import Path
 
 from etf_agent.data import (
     CorporateDataCollector,
+    DataAgentStatusRepository,
     DataAgentService,
     Instrument,
     MarketDataDatabase,
     OfficialCorporateProvider,
+    SnapshotDocument,
+    SnapshotMonthlyRevenue,
 )
 
 
@@ -161,11 +164,22 @@ class DataAgentTests(unittest.TestCase):
                 "2026-09-18T04:00:00+00:00", require_prices=False
             )
 
-            self.assertEqual(old_snapshot.documents[0]["version"], 1)
-            self.assertEqual(before_correction.documents[0]["version"], 1)
-            self.assertEqual(after_correction.documents[0]["version"], 2)
+            self.assertEqual(old_snapshot.documents[0].version, 1)
+            self.assertEqual(before_correction.documents[0].version, 1)
+            self.assertEqual(after_correction.documents[0].version, 2)
             self.assertEqual(
-                after_correction.documents[0]["monthly_revenue"]["current_revenue"],
+                after_correction.documents[0].monthly_revenue.current_revenue,
+                "120",
+            )
+            self.assertIsInstance(after_correction.documents[0], SnapshotDocument)
+            self.assertIsInstance(
+                after_correction.documents[0].monthly_revenue,
+                SnapshotMonthlyRevenue,
+            )
+            self.assertEqual(
+                after_correction.as_dict()["documents"][0]["monthly_revenue"][
+                    "current_revenue"
+                ],
                 "120",
             )
             with database.connect() as connection:
@@ -180,6 +194,18 @@ class DataAgentTests(unittest.TestCase):
             self.assertEqual([row["version"] for row in versions], [1, 2])
             self.assertIsNotNone(versions[1]["supersedes_document_id"])
 
+            evidence_id = after_correction.documents[0].source_evidence_id
+            evidence = next(
+                item
+                for item in after_correction.source_evidence
+                if item.evidence_id == evidence_id
+            )
+            self.assertEqual(evidence.authority, "mops")
+            self.assertEqual(evidence.data_type, "monthly_revenue")
+            self.assertEqual(evidence.url, "fixture://monthly-revenue")
+            self.assertEqual(evidence.published_at, "2026-09-15T00:00:00+08:00")
+            self.assertEqual(evidence.fetched_at, "2026-09-17T12:00:00+08:00")
+
     def test_cutoff_excludes_documents_not_yet_obtained(self):
         with tempfile.TemporaryDirectory() as directory:
             database = MarketDataDatabase(Path(directory) / "test.db")
@@ -191,12 +217,28 @@ class DataAgentTests(unittest.TestCase):
                 "2026-09-15T03:59:59+00:00", require_prices=False
             )
             self.assertEqual(snapshot.documents, [])
+            self.assertEqual(snapshot.source_evidence, [])
 
     def test_cutoff_requires_timezone(self):
         with tempfile.TemporaryDirectory() as directory:
             service = DataAgentService(MarketDataDatabase(Path(directory) / "test.db"))
             with self.assertRaisesRegex(ValueError, "必須包含時區"):
                 service.build_snapshot("2026-09-15T12:00:00")
+
+    def test_status_repository_returns_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = DataAgentStatusRepository(
+                MarketDataDatabase(Path(directory) / "test.db")
+            )
+            status = repository.load()
+            self.assertEqual(status.prices.row_count, 0)
+            self.assertEqual(status.prices.symbol_count, 0)
+            self.assertEqual(status.prices.sources, [])
+            self.assertEqual(status.documents.versions, 0)
+            self.assertEqual(status.snapshot_count, 0)
+            self.assertIsNone(status.latest_collection)
+            self.assertIsNone(status.latest_source_report)
+            self.assertIsNone(status.latest_universe_validation)
 
 
 if __name__ == "__main__":

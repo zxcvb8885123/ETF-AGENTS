@@ -1,0 +1,28 @@
+[
+  {
+    "Date": "1150917",
+    "SecuritiesCompanyCode": "5904",
+    "CompanyName": "寶雅*",
+    "Close": "500.00",
+    "Change": "+1.00",
+    "Open": "499.00",
+    "High": "501.00",
+    "Low": "498.00",
+    "TradingShares": "10000",
+    "TransactionAmount": "5000000",
+    "TransactionNumber": "300"
+  },
+  {
+    "Date": "1150917",
+    "SecuritiesCompanyCode": "3718",
+    "CompanyName": "中光電投控",
+    "Close": "95.00",
+    "Change": "+0.50",
+    "Open": "94.50",
+    "High": "96.00",
+    "Low": "94.00",
+    "TradingShares": "16475000",
+    "TransactionAmount": "1565125000",
+    "TransactionNumber": "1441"
+  }
+]
