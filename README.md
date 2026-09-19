@@ -64,8 +64,11 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方
 | [Data Agent 計畫](docs/data_agent_plan.md) | 資料收集、補查、驗證、版本保存與研究快照 |
 | [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 官方行情、財報、事件與新聞來源的實測結果及接入判定 |
 | [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及實作里程碑 |
-| [事件策略 V1](docs/event_strategy_v1.md) | 策略層目前優先實作的事件資料、價格確認與候選清單 |
-| [回測計畫 V1](docs/backtest_plan_v1.md) | 歷史重播、成交模擬、策略比較與有效性驗證 |
+| [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 第一個下游 Agent；事件證據、補查、引用與研究結果 |
+| [動能／配置／風控 Agent 計畫](docs/momentum_portfolio_risk_agent_plan.md) | 第二個下游 Agent；動能、權重、訂單、費稅及競賽風控 |
+| [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
+| [回測與驗證方法規格](docs/backtest_plan_v1.md) | 資料切分、成交假設、策略比較與有效性判定方法 |
+| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四個且最後實作的下游 Agent；排程、D-Plan、每日／失敗報告與人工批准 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
 ## 專案結構
