@@ -1,0 +1,4 @@
+interface:
+  display_name: "獨立續抱與退出 Agent"
+  short_description: "完整覆蓋持股並獨立建立續抱、減碼與退出意圖"
+  default_prompt: "使用 $sell-exit 不讀取 Buy packet，逐檔建立完整覆蓋目前持股的 SellIntentPacket。"

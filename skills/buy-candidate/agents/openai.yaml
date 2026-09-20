@@ -1,0 +1,4 @@
+interface:
+  display_name: "獨立買進候選 Agent"
+  short_description: "建立可追溯且不讀賣方輸出的買進與加碼意圖"
+  default_prompt: "使用 $buy-candidate 根據共同輸入獨立建立 BuyIntentPacket，不讀取 Sell packet。"
