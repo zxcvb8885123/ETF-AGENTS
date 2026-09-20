@@ -1,0 +1,4 @@
+interface:
+  display_name: "事件空方研究子 Agent"
+  short_description: "獨立尋找事件反證、因果斷點與已定價風險"
+  default_prompt: "使用 $event-bear-research 從指定 FactPacket 建立獨立空方研究 packet。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "事件多方研究子 Agent"
+  short_description: "獨立建立有證據、可否證的最強多方事件 thesis"
+  default_prompt: "使用 $event-bull-research 從指定 FactPacket 建立獨立多方研究 packet。"

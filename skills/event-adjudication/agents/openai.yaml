@@ -1,0 +1,4 @@
+interface:
+  display_name: "事件研究裁決子 Agent"
+  short_description: "比較獨立多空研究並裁決保留主張與研究狀態"
+  default_prompt: "使用 $event-adjudication 比較指定 Fact、Bull、Bear packets 並產生裁決 packet。"

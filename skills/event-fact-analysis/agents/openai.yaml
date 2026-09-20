@@ -1,0 +1,4 @@
+interface:
+  display_name: "事件事實子 Agent"
+  short_description: "整理事件來源、比較基準與價量事實，不判斷方向"
+  default_prompt: "使用 $event-fact-analysis 為指定事件建立可驗證的 FactPacket。"

@@ -81,13 +81,13 @@
 | 2 | Data Agent M1 | **進行中** | 最新行情與 Yahoo 兩年增量刷新已完成；下一成果是官方歷史行情 CLI，再做財報彙總、交易狀態與細粒度工具 |
 | 3 | Data Agent M2 | 待 M1 通過 | TWSE RSS 與 Google News RSS 候選層、別名、去重及誤配檢查 |
 | 4 | Data Agent M3 | 待 M2 通過 | `DataAgentRequest`／`DataAgentResult`、工具軌跡、Codex／Claude 共用 Skill 工具循環 |
-| 5 | 事件研究 Agent | **第一個下游 Agent**；待 M3 通過 | 固定 `ResearchResult`、引用驗證、工具預算與人工事件測試集 |
+| 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
 | 6 | 動能／配置／風控 Agent | **第二個下游 Agent**；待事件研究通過 | 動能特徵、進攻／防守候選、配置、交易數量、費稅、競賽限制及拒絕分支 |
 | 7 | Data Agent M4 | 回測前置 PoC | 補齊可證明 `published_at`／`available_at` 的歷史資料、公司行動與時間點 Snapshot |
 | 8 | 回測 Agent | **第三個下游 Agent**；待決策層與 M4 必要資料通過 | 歷史時鐘、事件與決策重播、成交與帳務、策略比較、Agent 評估及未見資料驗證 |
 | 9 | 自動化排程與報告 Agent | **第四個、最後實作的下游 Agent**；待回測通過 | PipelineRun、D-Plan Builder／Validator、每日／失敗報告、通知與人工批准閘門 |
 | 10 | 市場情緒與分析師研究 Agent | 第一版後選配 | 獨立來源評估、情緒與共識變化訊號，不改寫核心資料或直接產生交易 |
 
-目前只進入 M1；M1 驗收未通過前，不開始事件研究 Agent。四個下游 Agent 必須依 `事件研究 → 動能／配置／風控 → 回測 → 自動化排程／報告` 順序開發，不平行跳過驗收。
+目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收，也不開始正式動能／配置／風控 Agent。四個下游 Agent 仍依 `事件研究 → 動能／配置／風控 → 回測 → 自動化排程／報告` 順序通過驗收。
 
 詳細規則見 [Data Agent 計畫](data_agent_plan.md)、[資料來源可行性測試](source_feasibility_2026-09-17.md)、[事件研究 Agent 計畫](event_strategy_v1.md)、[動能／配置／風控 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及[自動化排程／報告 Agent 計畫](automation_reporting_agent_plan.md)。
