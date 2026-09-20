@@ -39,6 +39,13 @@
 - 回測 Agent 必須使用歷史時鐘和當時可得版本，不得使用回測日之後的資料。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 
+### Research Report V0
+
+- 只整合相同 Snapshot／cutoff 的已驗證研究 artifact，產生同源 JSON 與 Markdown。
+- MarketPerceptionResult 與 PerceptionDataBundle 必須成對提供；缺少時產生明確降級報告。
+- Builder 不增加市場結論；Validator 以原始輸入重建整份報告並拒絕任何改寫。
+- 報告不得包含配置、權重、股數、訂單或聲稱自己是正式 DailyReport／D-Plan。
+
 ## 時間點與證據規則
 
 - 每個研究流程都必須有包含時區的 `decision_cutoff`。
