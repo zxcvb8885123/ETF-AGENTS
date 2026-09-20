@@ -1,8 +1,8 @@
 # ETF Agent 四層開發架構
 
-本文件為目標架構。以既有 SQLite 與行情管線為基礎，先完成 Data Agent M0～M3，再依序實作事件研究 Agent、動能／配置／風控 Agent、回測 Agent，最後才接自動化排程與報告 Agent。Data Agent M4 補齊的歷史時間點資料是正式回測的前置條件。
+本文件為目標架構。以既有 SQLite 與行情管線為基礎，先完成 Data Agent M0～M3 與事件研究；依 2026-09-21 的開發決定，市場情緒與分析師研究 Agent 的契約、工具及 Skill 提前建立，再接動能／配置／風控、回測與自動化排程。Data Agent M4 補齊的歷史時間點資料仍是正式回測的前置條件。
 
-> 計畫狀態（2026-09-19）：Data Agent M0 已完成；M1 的最新行情、Yahoo 兩年增量刷新與 D-Plan 來源證據交接已完成，目前接續官方歷史行情 CLI。第一版仍不接 LLM API、LangChain、LangGraph 或 CLIProxyAPI。
+> 計畫狀態（2026-09-21）：Data Agent M0 已完成，M1 進行中；事件研究多子 Agent 已完成基礎版；市場情緒與分析師研究 Agent 已完成資料契約、確定性工具、Validator、Skill、CLI 與 fixture 測試，真實 Provider 尚待來源審查。第一版仍不接 LLM API、LangChain、LangGraph 或 CLIProxyAPI。
 
 ## 整體流程
 
@@ -11,8 +11,8 @@
   行情、公告、基本面 → 資料庫 → 研究快照與市場狀態
                        ↓
 第二層｜研究與分析
-  事件研究（目前）＋動能分析（後續）→ 進攻／防守候選
-  市場情緒與分析師研究 Agent（未來獨立擴充，不阻擋第一版）
+  事件研究＋市場情緒與分析師研究（次級訊號）＋動能分析（後續）
+  → 進攻／防守候選
                        ↓
 第三層｜策略、風控與回測
   動能／配置／風控 Agent：候選＋目前持倉 → 配置與買賣計畫 → 風控檢查
@@ -45,22 +45,22 @@
 | --- | --- | --- |
 | 資料研究 | `skills/event-data/SKILL.md` | 查詢公告、讀取資料庫、驗證及保存事件 |
 | 事件分析 | `skills/event-analysis/SKILL.md` | 查詢事件原文、公司基本面與行情特徵 |
+| 市場情緒與分析師研究 | `skills/sentiment-analyst/SKILL.md` | 標記情緒、聚合分歧與熱度、計算分析師共識修正及事件預期差 |
 | 動能／配置／風控 | `skills/portfolio-risk/SKILL.md`（規劃） | 呼叫動能、候選合併、配置、訂單與競賽風控工具 |
 | 回測驗證 | `skills/strategy-backtest/SKILL.md`（規劃） | 鎖定版本、啟動歷史重播、模擬成交、比較策略、分析績效與檢查前向驗證 |
 | 自動化排程與報告 | `skills/daily-report/SKILL.md`（規劃） | 檢查各階段結果、建立報告、說明失敗與要求人工處理 |
-| 市場情緒與分析師研究（未來） | `skills/sentiment-analyst/SKILL.md`（規劃） | 查詢已核准的社群與分析師資料，分析情緒、共識修正、分歧及反證 |
 | D-Plan Builder／Validator（確定性程式，不是新 Agent） | 不需要獨立 Skill | 合併 Snapshot、研究、決策與風控輸出；配置引用 ID，執行 JSON Schema 與語意驗證 |
 
 技能文件定義任務流程、證據要求與輸出格式，由控制器載入給 LLM。各角色先共用一個應用程式，無須各自部署成服務。動能計算、交易數量、費稅與風控限制由程式執行；LLM 負責事件理解及有來源的文字說明。
 
-## 未來獨立研究 Agent
+## 市場情緒與分析師研究 Agent
 
-社群情緒與分析師目標價不放入 Data Agent。若後續確認資料取得、授權、台股覆蓋與歷史時間一致性，再建立獨立的「市場情緒與分析師研究 Agent」：
+社群情緒與分析師目標價不放入 Data Agent。目前已建立獨立的「市場情緒與分析師研究 Agent」契約、fixture 工具鏈與 Skill；真實 Provider 只有在確認資料取得、授權、台股覆蓋與歷史時間一致性後才接入：
 
 - 社群情緒部分辨識來源、熱度、方向、異常擴散與操縱風險。
 - 分析師部分追蹤評等、目標價、預估值及共識修正，不把單一目標價視為事實價格。
 - 輸出帶來源、時間、分歧與不確定性的研究訊號，不能直接修改核心財務數字、產生訂單或繞過風控。
-- 此 Agent 是第一版之後的選配研究層，不阻擋 Data Agent M1～M3、事件研究、策略與風控主線。
+- 此 Agent 只提供次級研究訊號，不阻擋 Data Agent M1～M3、事件研究、策略與風控主線；未接真實 Provider 時明確輸出 `unavailable`。
 
 ## 排程與報告範圍
 
@@ -82,12 +82,12 @@
 | 3 | Data Agent M2 | 待 M1 通過 | TWSE RSS 與 Google News RSS 候選層、別名、去重及誤配檢查 |
 | 4 | Data Agent M3 | 待 M2 通過 | `DataAgentRequest`／`DataAgentResult`、工具軌跡、Codex／Claude 共用 Skill 工具循環 |
 | 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
-| 6 | 動能／配置／風控 Agent | **第二個下游 Agent**；待事件研究通過 | 動能特徵、進攻／防守候選、配置、交易數量、費稅、競賽限制及拒絕分支 |
-| 7 | Data Agent M4 | 回測前置 PoC | 補齊可證明 `published_at`／`available_at` 的歷史資料、公司行動與時間點 Snapshot |
-| 8 | 回測 Agent | **第三個下游 Agent**；待決策層與 M4 必要資料通過 | 歷史時鐘、事件與決策重播、成交與帳務、策略比較、Agent 評估及未見資料驗證 |
-| 9 | 自動化排程與報告 Agent | **第四個、最後實作的下游 Agent**；待回測通過 | PipelineRun、D-Plan Builder／Validator、每日／失敗報告、通知與人工批准閘門 |
-| 10 | 市場情緒與分析師研究 Agent | 第一版後選配 | 獨立來源評估、情緒與共識變化訊號，不改寫核心資料或直接產生交易 |
+| 6 | 市場情緒與分析師研究 Agent | **契約／工具／Skill MVP 已完成**；真實 Provider 待審查 | 接入通過授權與歷史時間驗證的來源，建立人工標註集與消融評估 |
+| 7 | 動能／配置／風控 Agent | **下一個決策層 Agent**；待研究層通過 | 動能特徵、進攻／防守候選、配置、交易數量、費稅、競賽限制及拒絕分支 |
+| 8 | Data Agent M4 | 回測前置 PoC | 補齊可證明 `published_at`／`available_at` 的歷史資料、公司行動與時間點 Snapshot |
+| 9 | 回測 Agent | 待決策層與 M4 必要資料通過 | 歷史時鐘、事件與決策重播、成交與帳務、策略比較、Agent 評估及未見資料驗證 |
+| 10 | 自動化排程與報告 Agent | 最後實作；待回測通過 | PipelineRun、D-Plan Builder／Validator、每日／失敗報告、通知與人工批准閘門 |
 
-目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收，也不開始正式動能／配置／風控 Agent。四個下游 Agent 仍依 `事件研究 → 動能／配置／風控 → 回測 → 自動化排程／報告` 順序通過驗收。
+目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收。市場情緒與分析師研究 Agent 已提前完成不依賴真實來源的 MVP；正式決策主線仍依 `研究層驗收 → 動能／配置／風控 → 回測 → 自動化排程／報告` 通過驗收。
 
 詳細規則見 [Data Agent 計畫](data_agent_plan.md)、[資料來源可行性測試](source_feasibility_2026-09-17.md)、[事件研究 Agent 計畫](event_strategy_v1.md)、[動能／配置／風控 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及[自動化排程／報告 Agent 計畫](automation_reporting_agent_plan.md)。
