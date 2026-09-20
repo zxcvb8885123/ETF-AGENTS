@@ -1,6 +1,6 @@
 # 自動化排程與報告 Agent 計畫 V1
 
-> 開發順序：事件研究 Agent、動能／配置／風控 Agent及回測 Agent完成，且固定版本前向驗證通過後最後實作。
+> 開發順序：事件研究 Agent、投資組合買賣決策與風控多子 Agent 及回測 Agent 完成，且固定版本前向驗證通過後最後實作。
 
 > 現況：Research Report V0 已完成研究層 artifact 的 JSON／Markdown 整合與完整重建驗證；它不包含本文件規劃的 DecisionResult、D-Plan、正式 DailyReport、FailureReport、排程或通知。
 
@@ -16,7 +16,7 @@
 排程觸發並建立 pipeline_run_id
   → Data Agent 更新資料並建立 ResearchSnapshot
   → 事件研究 Agent 產生 ResearchResult
-  → 動能／配置／風控 Agent 產生 DecisionResult
+  → 投資組合買賣決策與風控多子 Agent 產生 DecisionResult
   → 驗證所有 run_id、snapshot_id、cutoff 與版本一致
   → DPlanBuilder 組裝官方 D-Plan 4.0
   → DPlanValidator 執行 JSON Schema＋語意驗證

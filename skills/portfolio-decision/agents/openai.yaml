@@ -1,0 +1,4 @@
+interface:
+  display_name: "投資組合買賣決策主控"
+  short_description: "主控獨立買賣研究、動能與交易意圖裁決"
+  default_prompt: "使用 $portfolio-decision 驗證共同輸入，主控 Momentum、Buy、Sell 與 Trade Adjudicator 子 Agent 產生可驗證的 TradeIntentResult。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "買賣意圖裁決 Agent"
+  short_description: "裁決獨立買賣 packets 且不新增股票、事實或數字"
+  default_prompt: "使用 $trade-adjudication 比較已驗證的 Buy 與 Sell packets，產生不含配置數字的 TradeIntentResult。"
