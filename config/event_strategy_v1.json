@@ -1,0 +1,60 @@
+{
+  "name": "one_month_event_driven_v1",
+  "competition_period": {
+    "start": "2026-10-26",
+    "end": "2026-11-27",
+    "trading_days": 24,
+    "decision_cutoff": "08:55",
+    "timezone": "Asia/Taipei"
+  },
+  "portfolio": {
+    "target_positions": 25,
+    "default_max_weight": 0.08,
+    "tsmc_normal_max_weight": 0.12,
+    "industry_target_max_weight": 0.25,
+    "starter_position_max_weight": 0.015
+  },
+  "event_score": {
+    "event_timing": 15,
+    "fundamental_change": 25,
+    "price_confirmation": 30,
+    "persistence": 15,
+    "liquidity": 10,
+    "evidence_quality": 5,
+    "maximum_risk_penalty": 25,
+    "candidate_threshold": 65,
+    "high_conviction_threshold": 75,
+    "maximum_days_to_catalyst": 10
+  },
+  "price_confirmation": {
+    "minimum_conditions_met": 2,
+    "volume_vs_20d_median": 1.5,
+    "close_location_minimum": 0.5,
+    "maximum_chase_atr_multiple": 3.0
+  },
+  "regimes": {
+    "bull": {
+      "breadth_minimum": 0.6,
+      "cash_target": 0.05,
+      "attack_weight": 0.7,
+      "defense_weight": 0.25
+    },
+    "neutral": {
+      "cash_target": 0.12,
+      "attack_weight": 0.53,
+      "defense_weight": 0.35
+    },
+    "bear": {
+      "breadth_maximum": 0.35,
+      "cash_target": 0.2,
+      "attack_weight": 0.3,
+      "defense_weight": 0.5
+    }
+  },
+  "exit_rules": {
+    "failed_confirmation_days": 2,
+    "time_stop_days": 5,
+    "maximum_event_holding_days": 10,
+    "stop_loss_from_execution_average": 0.06
+  }
+}
