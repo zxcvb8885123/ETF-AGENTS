@@ -2,7 +2,7 @@
 
 > 開發順序：Research Report V0 之後的下一個決策層；完成後交給回測 Agent，通過前向驗證後才接正式 DailyReport 與 D-Plan。
 
-> 實作狀態（2026-09-21）：P0～P2 已完成，包括 DecisionInputBundle、MomentumEngine、Momentum／Buy／Sell／Trade Adjudicator Skills、CLI 及 fail-closed validators。P3 配置與訂單、P4 Portfolio Risk／完整 CompetitionGuard、P5 主控保存仍待實作。
+> 實作狀態（2026-09-21）：P0～P5 MVP 已完成，包括 DecisionInputBundle、獨立買賣裁決、確定性配置／訂單／費稅、壓力情境、全部輸入基準 Guard、Portfolio Risk Skill、有限修正、最終重建與不可變保存。P6 稽核案例仍可擴充；真實帳戶／交易狀態／正式規則接入與 P7 回測尚未完成。
 
 ## 定位與範圍
 
@@ -76,7 +76,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 - 零或多份已驗證 `ResearchResult`；Market Perception 若提供，`MarketPerceptionResult` 與 `PerceptionDataBundle` 必須成對且版本一致。
 - `AccountSnapshot`：結算日期、現金、NAV、持股、成本、超限起始日及來源版本。
 - 官方 150 檔交易池、可交易狀態、競賽規則及全部指定 ETF 基準版本。
-- 手續費、交易稅、整股單位、滑價、成交價、收盤價及壓力情境設定。
+- 手續費、交易稅、一張 1,000 股的固定交易單位、滑價、成交價、收盤價及壓力情境設定。
 
 市場認知資料為選配；合法資料不存在時保留 `unavailable`，不能阻擋純事件／動能基線。帳戶、必要價格、交易池、規則或基準缺失則必須 fail closed。
 
@@ -91,7 +91,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 | `TradeDebateBundle` | 相同輸入雜湊、獨立買賣 packets 及依賴證明 |
 | `TradeIntentResult` | 裁決後每檔交易意圖、優先序、理由及未解問題 |
 | `AllocationProposal` | 確定性目標權重、現金目標及使用的策略設定 |
-| `OrderProposal` | 目前持股到目標組合的整股買賣量、費稅與預估現金 |
+| `OrderProposal` | 目前持股到目標組合的整張買賣量、換算股數、費稅與預估現金 |
 | `ScenarioResult` | 成交、收盤、波動及流動性壓力情境結果 |
 | `RiskReview` | `approve`／`revise`／`reject`、結構化修正及風險證據 |
 | `GuardResult` | 每條硬性規則的通過、拒絕、警告與重算數值 |
@@ -107,7 +107,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 | `MomentumEngine` | 以固定公式計算行情特徵與市場狀態輸入 |
 | `CandidateMerger` | 合併交易意圖、既有持股與排除原因，不增加新事實 |
 | `PortfolioAllocator` | 依核准策略設定計算目標權重與現金目標 |
-| `OrderPlanner` | 計算整股買賣量，禁止超賣、放空及雙向重複訂單 |
+| `OrderPlanner` | 以一張 1,000 股計算買賣量，禁止零股單、超賣、放空及雙向重複訂單 |
 | `FeeTaxCalculator` | 使用十進位規則計算手續費、交易稅與預留現金 |
 | `ScenarioSimulator` | 分開使用預估成交價與收盤價進行壓力情境 |
 | `CompetitionGuard` | 驗證交易池、可交易性、持股數、現金、個股上限及全部 ETF Active Share |
@@ -144,7 +144,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 - 決策輸入夾帶未知欄位、evidence ID 跨來源碰撞、內容雜湊不一致或 Market Perception cutoff 不完全相同時拒絕。
 - 缺少帳戶、必要價格、競賽規則、交易池、可交易狀態或任一指定 ETF 基準時拒絕。
 - 交易池外、不可交易、超賣、放空、持股數、現金、個股權重或 Active Share 違規時拒絕。
-- 費稅、整股、現金或情境結果無法重算時拒絕。
+- 費稅、整張單位、現金或情境結果無法重算時拒絕。
 - Risk Agent 的文字結論與工具結果衝突時，以硬性工具為準並拒絕結果。
 - `rejected` 不得輸出可送件訂單；`approved` 也只代表可交給回測與人工檢查。
 
@@ -164,13 +164,54 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 1. **P0 契約與邊界（已完成）**：建立 `DecisionInputBundle`、買賣 packets、DebateBundle、結果契約、列舉值及 validators。
 2. **P1 動能與市場狀態（已完成）**：完成無未來資料的 MomentumEngine、時間隔離、缺值政策及市場狀態 fixture。
 3. **P2 獨立買賣裁決（已完成）**：建立 Momentum、Buy、Sell、Adjudicator Skills 與獨立依賴驗證；不產生權重。
-4. **P3 配置與訂單**：完成目標權重、整股、費稅、現金、換手及再平衡的確定性工具。
-5. **P4 情境與風控**：建立 Risk Skill、壓力情境、全部 ETF Active Share、硬性規則及有上限修正循環。
-6. **P5 主控與保存**：建立 `portfolio-decision` Skill、CLI、DecisionRepository、內容雜湊及完整重建 validator。
-7. **P6 測試與稽核**：涵蓋買進、退出、無交易、資料缺漏、不可交易、現金不足、超限、壓力情境及風控拒絕。
+4. **P3 配置與訂單（已完成 MVP）**：完成目標配置、整張（1,000 股）、費稅、現金、換手及受限重算的確定性工具。
+5. **P4 情境與風控（已完成 MVP）**：建立 Risk Skill、價格／流動性壓力情境、全部輸入基準 Active Share、硬性規則及三次修正上限。
+6. **P5 主控與保存（已完成 MVP）**：擴充 `portfolio-decision` Skill、CLI、DecisionRepository、內容雜湊及完整重建 validator。
+7. **P6 測試與稽核（部分完成）**：已涵蓋核准、無交易、現金緩衝裁切、可交易狀態缺漏、規則拒絕、上游／數值竄改、強制退出流動性、合法／非法修正及保存衝突；完整退出鏈、費用進位邊界及真實資料 fixture 尚待擴充。
 8. **P7 回測交接**：固定資料、策略、Agent、工具及規則版本，交給[回測 Agent](backtest_agent_plan.md)與[回測方法規格](backtest_plan_v1.md)驗證。
 
-第一個實作批次 P0～P2 已完成；下一批從 P3 開始，實作配置、股數、費稅與現金，再進入 P4 完整競賽風控。
+P0～P5 MVP 已完成；下一批擴充 P6 的退出、無交易、費用與現金邊界案例，確認正式 Provider／規則版本後進入 P7 回測。
+
+## P3～P5 實作紀錄（2026-09-21，MVP 已完成）
+
+目標：把已驗證的 `TradeIntentResult` 轉成可重算的配置、交易提案與最終風控結果。現有 CLI 負責確定性運算與驗證；Buy、Sell、裁決與風險論證仍由載入 Skills 的工作階段產生，目前沒有單一指令自動呼叫全部模型的執行器。
+
+### 批次一：P3 配置、股數與現金
+
+1. **補齊版本化輸入**：設計配置層獨立設定契約，保存策略、費稅、交易單位、價格假設、產業分類、可交易狀態、基準及來源版本。沿用 P0～P2 嚴格白名單，不直接塞入未知欄位；需要改版時明列 schema 遷移與相容性測試。
+2. **固定第一版配置政策**：採可重現的等額新增資金配置基線，現金緩衝、單股／產業上限、減碼比例及換手上限由版本化策略設定提供。`buy/add` 只授權增加曝險；`hold/no_trade` 保留股數；`trim` 依固定政策減少；`exit/forced_exit` 目標歸零。`exclude` 不授權買進或隱含賣出既有持股。不可行時回報限制原因，不擅自改變裁決方向。這是工程基線，不宣稱為最優策略。
+3. **建立 PortfolioAllocator**：先套用退出／減碼，再依可用資金配置買進／加碼候選；同順位按股票代號排序。上限裁切與剩餘資金重新分配採固定順序，保存每項裁切原因。保留既有持股造成硬性超限時拒絕，不偷偷增加賣出意圖。
+4. **建立 OrderPlanner 與 FeeTaxCalculator**：以 Decimal 計算價格、張數、換算股數、手續費、稅與現金；第一版固定一張 1,000 股，最低費用及進位方式由設定提供。整張化後重新計算實際權重、費稅、換手及餘額；禁止零股單、超賣、負股數與同檔雙向訂單。帳戶若已有零股則 fail closed；賣出資金是否可支應買進由結算／購買力規則決定，不預設立即可用。
+5. **產出與驗證**：提供 `AllocationProposal`、`OrderProposal` 與可重算 validators；新增配置、訂單及驗證 CLI。每份結果綁定輸入、裁決、策略及工具版本雜湊。
+
+驗收：覆蓋新買、加碼、續抱、減碼、退出、零股／交易單位殘餘、費用不足、資金不足、同順位及不可行配置；相同輸入產出相同結果。P3 輸出仍為中間提案，不能標記最終 `approved`。
+
+### 批次二：P4 壓力情境與 Portfolio Risk
+
+1. **ScenarioSimulator**：依版本化設定模擬成交滑價、收盤估值、價格下跌、流動性不足及部分／無法成交。分開保存參考價、假設成交價與情境收盤價；所有假設標記為情境，不冒充 cutoff 後已知行情。缺少必要行情或分類時明列失敗。
+2. **完整 CompetitionGuard**：驗證全部指定 ETF 基準，以及交易池、可交易性、持股檔數、現金、個股曝險、超限期限與必要限制。逐條保存規則 ID、門檻、重算值及證據；分別檢查取整後組合與必要情境。規則、費稅與 Active Share 計算口徑必須以有來源的有效版本確認，不把現有原型設定視為已完成官方核實。
+3. **新增 portfolio-risk-review Skill**：讀取固定的配置、訂單、情境與 Guard 結果，審查集中度、來源／事件重疊、流動性、現金及換手風險。輸出 `RiskReview`，包含 `approve/revise/reject`、論點、證據與結構化修正要求。
+4. **有限修正**：首次提案後最多允許三次修正重算。第一版只允許移除買進候選、降低設定內的風險預算／曝險上限、提高現金緩衝或減少換手；不能新增未裁決標的、提高買進強度或任意填入目標權重。每次變更由程式驗證合法性，再重跑配置、訂單、情境與 Guard；Risk 必須審查新版本。硬性失敗直接拒絕，策略修正只適用於尚未違反硬性規則的風險疑慮。
+
+驗收：覆蓋單一／多個基準、基準缺漏、無法成交的強制退出、集中與現金壓力、非法修正、舊版本審查重用、第四次修正及 Risk 同意但 Guard 拒絕。`forced_exit` 表示退出要求，不能作為已成交證明。
+
+### 批次三：P5 主控保存與最終結果
+
+1. **DecisionResult**：保存 `approved/rejected/no_trade`、引用的配置／訂單／情境／審查／Guard、未解風險、版本與雜湊。只有 Risk 同意、硬性規則通過且完整驗證成功，才可輸出 `approved`；零訂單仍須完成相同檢查才能輸出 `no_trade`。
+2. **DecisionValidator**：從原始輸入與已保存 Agent artifacts 重算配置、股數、費稅、現金、情境及 Guard，再核對最終狀態與修正鏈；不重新呼叫模型，也不以內容雜湊代替數值驗證。
+3. **DecisionRepository**：按 run ID 保存不可變輸入、每次提案、Agent 輸出、修正原因、驗證結果與 manifest。採原子保存與內容比對；相同 run ID 重跑不得覆蓋不同內容，中斷後不得留下可誤認為成功的結果。
+4. **主控 Skill 與 CLI 擴充**：提供配置、情境、風險審查驗證、有限修正、最終封存與重播驗證指令。Skill 主控負責呼叫子 Agent，Python 負責執行狀態與修正次數，不引入模型 API。
+5. **交付邊界**：`rejected` 保留診斷與歷次提案供稽核，但最終可用訂單清單為空；`approved` 只代表通過本版驗證的模擬交易提案。Research Report V0 保持研究用途；正式 DailyReport／D-Plan 與下單不納入本批。
+
+驗收：完整測試買進、退出、無交易、修正後通過、拒絕與中斷恢復；竄改任何中間數值、來源、版本或狀態都必須被拒絕。
+
+### 檔案與交付安排
+
+- 核心程式放在 `src/etf_agent/decision/`，按配置、訂單／費稅、情境、風控與保存分模組；既有 `guard.py` 的原型呼叫端需保留相容測試。
+- 新增 `skills/portfolio-risk-review/`，擴充 `skills/portfolio-decision/` 的 CLI 與契約參考；同步更新 README、架構與回測交接文件。
+- 每批完成均執行全專案 unittest、compileall、`git diff --check`；新增／大幅修改的 Skills 另跑結構驗證。P6 的稽核測試併入每一批，不留到所有程式完成後才補。
+- 先以清楚標示的 fixtures 驗證完整流程，再接真實帳戶、可交易狀態、有效規則與全部基準；未接妥的 Provider 明確標記缺漏，不能宣稱正式資料端到端完成。
+- P5 已完成 MVP；補齊 P6 邊界 fixture、正式規則與 Provider 後建立固定版本的回測交接包，進入 P7。
 
 ## 完成條件
 

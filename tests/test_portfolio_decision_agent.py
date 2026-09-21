@@ -99,7 +99,7 @@ def decision_bundle():
             "cash": "500000",
             "nav": "1000000",
             "positions": [
-                {"symbol": "2330.TW", "shares": 100, "average_cost": "120"}
+                {"symbol": "2330.TW", "shares": 1000, "average_cost": "120"}
             ],
         },
         "rules": {

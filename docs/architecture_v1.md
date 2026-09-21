@@ -1,6 +1,6 @@
 # 第一版 Agent 技術架構
 
-狀態（2026-09-21）：架構設計、Data Agent M0、事件研究、市場認知 MVP、Research Report V0，以及 Portfolio Decision P0～P2 已完成；配置、訂單、完整風控與回測仍待實作。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
+狀態（2026-09-21）：架構設計、Data Agent M0、事件研究、市場認知 MVP、Research Report V0，以及 Portfolio Decision P0～P5 MVP 已完成；正式資料接入、完整邊界稽核與回測仍待實作。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
 
 ## 1. 整體設計
 
@@ -104,7 +104,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | src/etf_agent/pipeline.py | 每日流程控制、狀態與重試 |
 | src/etf_agent/contracts.py | 模組資料契約與驗證 |
 | src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features、account_loader 及其他來源 |
-| src/etf_agent/decision/ | 已有 P0～P2：DecisionInputBundle、MomentumEngine、獨立買賣 packets、DebateBundle、TradeIntentResult validators 與 CLI service |
+| src/etf_agent/decision/ | 已有 P0～P5 MVP：共同輸入、動能、獨立買賣裁決、配置／訂單／費稅、情境、完整輸入基準 Guard、RiskReview、最終重建與不可變保存 |
 | src/etf_agent/strategy/ | 既有事件策略原型；後續與 decision 契約整合或拆分 |
 | src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
 | src/etf_agent/risk/ | 情境檢查、Active Share、超限日數、MDD |
@@ -122,7 +122,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 ## 8. 現況與實作里程碑
 
-目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。Portfolio Decision P0～P2 已加入共同輸入雜湊、確定性動能、獨立買賣 packets 與裁決 validators，但尚未產生配置或訂單。歷史刷新以兩個官方市場都已完成的最近交易日為截止日，避免把 Yahoo 盤中日 K 當成正式收盤資料。現有 guard 仍只接受單一 benchmark，尚未做前十大裁切、全部 ETF 比對、完整帳戶輸入、成交模擬或完整 Agent 稽核持久化；資料抓取成功或 TradeIntentResult 通過都不代表即可正式送件。
+目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。Portfolio Decision P0～P5 MVP 已加入共同輸入雜湊、確定性動能、獨立買賣裁決、配置／訂單／費稅、壓力情境、全部輸入基準 Guard、Portfolio Risk、有限修正與執行 manifest。歷史刷新以兩個官方市場都已完成的最近交易日為截止日，避免把 Yahoo 盤中日 K 當成正式收盤資料。舊 `guard.py` 單基準介面保留給既有策略；新決策層使用 `decision/risk.py`。正式帳戶、交易狀態、官方規則口徑與回測仍未接妥，因此 `approved` 只代表 fixture／契約層可交給回測與人工檢查。
 
 里程碑以 [Data Agent 計畫](data_agent_plan.md) 的 M0～M4 為資料主線：先完成 M0 來源健康與交易池閘門，再依序接入 M1 官方資料、M2 新聞候選與 M3 Agent 工具循環。事件研究通過後，才進入量化策略、完整風控、時間一致回測及送件格式。不得因已有事件策略原型，就跳過資料閘門直接產生正式交易決策。
 

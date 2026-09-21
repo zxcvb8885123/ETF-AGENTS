@@ -2,7 +2,7 @@
 
 本文件為目標架構。以既有 SQLite 與行情管線為基礎，先完成 Data Agent M0～M3 與事件研究；依 2026-09-21 的開發決定，市場情緒與分析師研究 Agent 的契約、工具及 Skill 提前建立，再接投資組合買賣決策與風控多子 Agent、回測與自動化排程。Data Agent M4 補齊的歷史時間點資料仍是正式回測的前置條件。
 
-> 計畫狀態（2026-09-21）：Data Agent M0 已完成，M1 進行中；事件研究多子 Agent、市場情緒／分析師研究 MVP 與 Research Report V0 已完成；Portfolio Decision P0～P2 已完成共同輸入、動能及獨立買賣裁決。真實 Perception Provider、配置／訂單／完整風控、正式 DailyReport 與 D-Plan 尚未完成。第一版仍不接 LLM API、LangChain、LangGraph 或 CLIProxyAPI。
+> 計畫狀態（2026-09-21）：Data Agent M0 已完成，M1 進行中；事件研究多子 Agent、市場情緒／分析師研究 MVP、Research Report V0 與 Portfolio Decision P0～P5 MVP 已完成。真實 Perception Provider、正式帳戶／規則接入、完整邊界稽核、回測、DailyReport 與 D-Plan 尚未完成。第一版仍不接 LLM API、LangChain、LangGraph 或 CLIProxyAPI。
 
 ## 整體流程
 
@@ -93,7 +93,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 | 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
 | 6 | 市場情緒與分析師研究 Agent | **契約／工具／Skill MVP 已完成**；真實 Provider 待審查 | 接入通過授權與歷史時間驗證的來源，建立人工標註集與消融評估 |
 | 7 | Research Report V0 | **已完成** | 用真實、已驗證研究 artifact 執行並人工檢查報告 |
-| 8 | 投資組合買賣決策與風控多子 Agent | **P0～P2 已完成** | DecisionInputBundle、MomentumEngine、Momentum／Buy／Sell／Adjudicator Skills 與 validators 已完成；下一步 P3 配置與訂單 |
+| 8 | 投資組合買賣決策與風控多子 Agent | **P0～P5 MVP 已完成** | 配置／訂單／費稅、情境、Portfolio Risk、全部輸入基準 Guard、有限修正、最終重建與保存已完成；下一步 P6 邊界稽核與 P7 回測 |
 | 9 | Data Agent M4 | 回測前置 PoC | 補齊可證明 `published_at`／`available_at` 的歷史資料、公司行動與時間點 Snapshot |
 | 10 | 回測 Agent | 待決策層與 M4 必要資料通過 | 歷史時鐘、事件與決策重播、成交與帳務、策略比較、Agent 評估及未見資料驗證 |
 | 11 | 自動化排程與報告 Agent | 最後實作；待回測通過 | PipelineRun、D-Plan Builder／Validator、每日／失敗報告、通知與人工批准閘門 |
