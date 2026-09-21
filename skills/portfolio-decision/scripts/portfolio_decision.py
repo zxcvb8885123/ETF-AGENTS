@@ -80,19 +80,21 @@ class PortfolioDecisionApplication:
                 return 0 if result["valid"] else 2
             if args.command == "compute-scenarios":
                 result = service.compute_scenario_file(
-                    args.policy, args.proposal, args.output
+                    args.momentum, args.debate, args.intent, args.policy, args.proposal, args.output
                 )
                 self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
                 return 0
             if args.command == "compute-guard":
                 result = service.compute_guard_file(
-                    args.policy, args.proposal, args.scenario, args.output
+                    args.momentum, args.debate, args.intent, args.policy, args.proposal,
+                    args.scenario, args.output
                 )
                 self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
                 return 0
             if args.command == "validate-risk":
                 result = service.validate_risk_file(
-                    args.policy, args.proposal, args.scenario, args.guard, args.input
+                    args.momentum, args.debate, args.intent, args.policy, args.proposal,
+                    args.scenario, args.guard, args.input
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
@@ -106,14 +108,14 @@ class PortfolioDecisionApplication:
             if args.command == "finalize":
                 result = service.finalize_file(
                     args.momentum, args.debate, args.intent, args.policy, args.proposal, args.scenario,
-                    args.guard, args.review, args.output
+                    args.guard, args.review, args.history, args.output
                 )
                 self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
                 return 0
             if args.command == "validate-decision":
                 result = service.validate_decision_file(
                     args.momentum, args.debate, args.intent, args.policy, args.proposal, args.scenario,
-                    args.guard, args.review, args.input
+                    args.guard, args.review, args.history, args.input
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
@@ -130,11 +132,27 @@ class PortfolioDecisionApplication:
                         "scenario": args.scenario,
                         "guard": args.guard,
                         "risk_review": args.review,
+                        "revision_history": args.history,
                         "decision": args.decision,
                     },
                 )
                 self.emit(result)
                 return 0
+            if args.command in {"build-history", "append-history"}:
+                result = service.build_history_file(
+                    args.momentum, args.debate, args.intent, args.policy,
+                    args.proposal, args.scenario, args.guard,
+                    args.review, args.output,
+                    args.history if args.command == "append-history" else None,
+                )
+                self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
+                return 0
+            if args.command == "validate-history":
+                result = service.validate_history_file(
+                    args.momentum, args.debate, args.intent, args.policy, args.input
+                )
+                self.emit(result)
+                return 0 if result["valid"] else 2
             if args.command == "validate-momentum":
                 result = service.validate_momentum_file(args.input)
             elif args.command == "validate-buy":
@@ -232,6 +250,7 @@ class PortfolioDecisionApplication:
             "compute-scenarios", help="計算基準、價格下跌與流動性壓力情境"
         )
         scenarios.add_argument("--policy", type=Path, required=True)
+        self._add_upstream_intent_inputs(scenarios)
         scenarios.add_argument("--proposal", type=Path, required=True)
         scenarios.add_argument("--output", type=Path)
 
@@ -239,6 +258,7 @@ class PortfolioDecisionApplication:
             "compute-guard", help="對取整後組合執行完整硬性規則與全部基準檢查"
         )
         guard.add_argument("--policy", type=Path, required=True)
+        self._add_upstream_intent_inputs(guard)
         guard.add_argument("--proposal", type=Path, required=True)
         guard.add_argument("--scenario", type=Path, required=True)
         guard.add_argument("--output", type=Path)
@@ -246,7 +266,7 @@ class PortfolioDecisionApplication:
         validate_risk = commands.add_parser(
             "validate-risk", help="驗證 Portfolio Risk 審查與修正要求"
         )
-        self._add_risk_inputs(validate_risk, include_intent=False)
+        self._add_risk_inputs(validate_risk, include_intent=True, include_review=False)
         validate_risk.add_argument("--input", type=Path, required=True)
 
         revise = commands.add_parser(
@@ -255,36 +275,68 @@ class PortfolioDecisionApplication:
         self._add_risk_inputs(revise, include_intent=True)
         revise.add_argument("--output", type=Path)
 
+        for name, help_text in (
+            ("build-history", "建立 revision 0 修正歷程"),
+            ("append-history", "將下一版提案與審查追加至修正歷程"),
+        ):
+            history = commands.add_parser(name, help=help_text)
+            self._add_upstream_intent_inputs(history)
+            history.add_argument("--policy", type=Path, required=True)
+            history.add_argument("--proposal", type=Path, required=True)
+            history.add_argument("--scenario", type=Path, required=True)
+            history.add_argument("--guard", type=Path, required=True)
+            history.add_argument("--review", type=Path, required=True)
+            if name == "append-history":
+                history.add_argument("--history", type=Path, required=True)
+            history.add_argument("--output", type=Path)
+
+        validate_history = commands.add_parser(
+            "validate-history", help="重播並驗證完整提案修正鏈"
+        )
+        self._add_upstream_intent_inputs(validate_history)
+        validate_history.add_argument("--policy", type=Path, required=True)
+        validate_history.add_argument("--input", type=Path, required=True)
+
         finalize = commands.add_parser(
             "finalize", help="重建全部輸入並產生 approved、rejected 或 no_trade"
         )
-        self._add_risk_inputs(finalize, include_intent=True)
+        self._add_risk_inputs(finalize, include_intent=True, include_history=True)
         finalize.add_argument("--output", type=Path)
 
         validate_decision = commands.add_parser(
             "validate-decision", help="完整重算並驗證最終 DecisionResult"
         )
-        self._add_risk_inputs(validate_decision, include_intent=True)
+        self._add_risk_inputs(validate_decision, include_intent=True, include_history=True)
         validate_decision.add_argument("--input", type=Path, required=True)
 
         save = commands.add_parser("save-run", help="以不可變 manifest 原子保存完整執行")
-        self._add_risk_inputs(save, include_intent=True)
+        self._add_risk_inputs(save, include_intent=True, include_history=True)
         save.add_argument("--decision", type=Path, required=True)
         save.add_argument("--run-id", required=True)
         save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "portfolio_decisions")
         return parser
 
     @staticmethod
-    def _add_risk_inputs(parser, include_intent: bool) -> None:
+    def _add_upstream_intent_inputs(parser) -> None:
+        parser.add_argument("--momentum", type=Path, required=True)
+        parser.add_argument("--debate", type=Path, required=True)
+        parser.add_argument("--intent", type=Path, required=True)
+
+    @staticmethod
+    def _add_risk_inputs(
+        parser, include_intent: bool, include_review: bool = True,
+        include_history: bool = False,
+    ) -> None:
         if include_intent:
-            parser.add_argument("--momentum", type=Path, required=True)
-            parser.add_argument("--debate", type=Path, required=True)
-            parser.add_argument("--intent", type=Path, required=True)
+            PortfolioDecisionApplication._add_upstream_intent_inputs(parser)
         parser.add_argument("--policy", type=Path, required=True)
         parser.add_argument("--proposal", type=Path, required=True)
         parser.add_argument("--scenario", type=Path, required=True)
         parser.add_argument("--guard", type=Path, required=True)
-        parser.add_argument("--review", type=Path, required=True)
+        if include_review:
+            parser.add_argument("--review", type=Path, required=True)
+        if include_history:
+            parser.add_argument("--history", type=Path, required=True)
 
     @staticmethod
     def emit(payload) -> None:

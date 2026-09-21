@@ -1,4 +1,4 @@
-# Portfolio Decision P0-P5 契約
+# Portfolio Decision P0-P6 契約
 
 ## DecisionInputBundle
 
@@ -24,8 +24,8 @@
 
 - `snapshot_sha256` 使用排序 key、無多餘空白的 canonical JSON 計算。
 - `bundle_sha256` 鎖定整份輸入內容；頂層與帳戶、規則、基準、行情物件使用嚴格欄位白名單，不能夾帶 peer packet 或執行指令。
-- `account_snapshot` 必須有 `account_id`、`available_at`、`source_evidence_id`、`cash`、`nav` 與不重複的正股數持股。
-- `rules` 必須保存版本、可得時間及設定檔雜湊。
+- `account_snapshot` 必須有 `account_id`、`available_at`、`valuation_at`、`source_evidence_id`、`cash`、`settled_cash`、`unsettled_cash`、`nav` 與不重複的正股數持股。`cash=settled_cash+unsettled_cash`，NAV 必須在規則容許誤差內等於 cutoff 行情重算值；配置只能使用 settled cash。
+- `rules` 必須保存來源 URL、發布／可得時間、必備基準 ID、不可放寬限制及排除自身欄位後的 `config_sha256`。任何必備基準缺漏即拒絕。
 - `benchmarks` 至少一筆；每筆保存 `benchmark_id`、版本、可得時間及成分權重。
 - `price_series` 必須覆蓋 Snapshot 全交易池，每個序列以 `series_sha256` 鎖定並依日期嚴格遞增；最後交易日、收盤價與證據必須等於 Snapshot 最新行情。
 - `research_results` 若提供，必須通過既有 ResearchResult 2.1 validator。
@@ -104,7 +104,7 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 
 ## DecisionPolicy 與 ProposalBundle
 
-`DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的配置／執行設定。它保存 TWD 幣別、現金緩衝、預設目標權重、減碼比例、手續費、交易稅、最低費用、交易單位、滑價、換手與權重上限、持股檔數、全部基準 Active Share 門檻、壓力情境及三次修正上限。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。
+`DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的策略／執行設定。可調策略包含現金緩衝、預設目標權重、減碼比例、滑價、換手與壓力情境；手續費、交易稅、最低費用、交易單位、個股／產業／持股檔數／現金／Active Share 限制及賣款可否重用是硬規則，Policy 的重複欄位必須與 `DecisionInputBundle.rules` 完全一致，不能藉 Policy 放寬。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。
 
 第一版 `lot_size` 必須固定為 `1000`，也就是一張。`OrderProposal` 同時輸出 `lots` 與 `shares=lots*1000`；不產生零股單。帳戶既有持股若不是 1,000 股的整數倍，配置流程停止並要求先提供明確的零股處理政策。
 
@@ -136,6 +136,7 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
   "minimum_active_share": "0.20",
   "stress_price_decline_rate": "0.10",
   "stress_slippage_multiplier": "2",
+  "liquidity_fill_rate": "0.50",
   "reuse_sell_proceeds": false,
   "max_revisions": 3,
   "content_sha256": "canonical SHA-256"
@@ -146,18 +147,20 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 
 ## ScenarioResult、GuardResult 與 RiskReview
 
-`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力；流動性情境保存成交率與未成交股數，不冒充 cutoff 後行情。`GuardResult` 對取整後組合檢查交易池、明確可交易狀態、持股數、現金、個股權重、換手、情境、強制退出流動性，以及 DecisionInputBundle 內每一份基準的 Active Share。
+`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力。每個情境從 cutoff 帳戶重建：成交率以張為單位向下取整，滑價獨立套用，逐筆重算成交價、費稅、可用現金、總現金、持股、收盤估值、NAV 與未成交張數；不能從「假設全部成交」的配置直接乘跌幅。`GuardResult` 對提案及每個情境檢查交易池、明確可交易狀態、持股數、現金／買力、個股與產業權重、換手、強制退出流動性，以及規則指定每一份必備基準的 Active Share。
 
 Portfolio Risk Agent 只輸出 `RiskReview`：
 
 - `decision` 限定 `approve`、`revise`、`reject`。
-- Guard 失敗時不得 `approve`。
+- Guard 失敗是硬性失敗，RiskReview 只能 `reject`，不得 `approve` 或用修正繞過。
 - `revise` 只允許 `remove_candidate`、`increase_cash_buffer`、`reduce_max_stock_weight`、`reduce_turnover_limit`，且不能提高風險。
 - 修正序號必須連續且最多三次；每次重新建立 Proposal、Scenario、Guard 與 RiskReview。
 - `evidence_ids` 必須來自共同輸入；未知欄位或權重／股數等手寫結果一律拒絕。
 
-## DecisionResult 與保存
+## RevisionHistory、DecisionResult 與保存
+
+`RevisionHistory` 從 revision 0 保存每一版完整 `ProposalBundle`、`ScenarioResult`、`GuardResult` 與 `RiskReview`。Validator 由基礎 Policy 重建初版，再按前一版已驗證的 allowlist actions 重建下一版，檢查連續序號、parent proposal、單調降風險及最多三次修正。最終輸入必須等於 history 最後一版，最後一版不得為 `revise`。
 
 完整 Validator 重建 Proposal、Scenario、Guard 與 RiskReview 後才產生 `DecisionResult`。Risk approve、Guard passed 且存在訂單時為 `approved`；通過相同檢查但沒有訂單時為 `no_trade`；其他情況為 `rejected`。拒絕結果的最終 `orders` 必須為空。
 
-`DecisionRepository` 以 run ID 原子保存所有 artifacts 與 SHA-256 manifest。相同 run ID、相同內容可重試；相同 run ID 的不同內容拒絕覆蓋。這些結果只供回測與人工檢查，不代表已下單或正式送件。
+`DecisionRepository` 以安全白名單 run ID／artifact 名稱原子保存所有版本與 SHA-256 manifest。相同 run ID 重試前會重新讀取每個實際檔案並核對 manifest；缺檔、額外檔案、路徑穿越、內容竄改或相同 ID 不同內容均拒絕。這些結果只供回測與人工檢查，不代表已下單或正式送件。

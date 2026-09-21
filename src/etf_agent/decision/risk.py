@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from .allocation import DecisionPolicyValidator, ProposalValidator
@@ -51,53 +51,117 @@ class ScenarioEngine:
         self.policy = dict(policy)
 
     def run(self, proposal: Mapping[str, object]) -> Dict[str, object]:
-        allocation = proposal.get("allocation_proposal", {})
-        positions = allocation.get("positions", []) if isinstance(allocation, Mapping) else []
-        cash = decimal_value(allocation.get("cash"), "allocation_proposal.cash")
         decline = decimal_value(self.policy["stress_price_decline_rate"], "stress_price_decline_rate")
         multiplier = decimal_value(
             self.policy["stress_slippage_multiplier"], "stress_slippage_multiplier"
         )
+        stress_fill = decimal_value(self.policy["liquidity_fill_rate"], "liquidity_fill_rate")
+        account = self.context.bundle["account_snapshot"]
+        starting_cash = decimal_value(account["cash"], "account_snapshot.cash")
+        settled_cash = decimal_value(account["settled_cash"], "account_snapshot.settled_cash")
+        lot_size = int(self.policy["lot_size"])
+        prices = {
+            str(row["symbol"]).upper(): decimal_value(row["analysis_close_price"], "analysis_close_price")
+            for row in self.context.snapshot["latest_prices"]
+        }
+        starting_positions = {
+            str(row["symbol"]).upper(): int(row["shares"])
+            for row in account["positions"]
+        }
         scenarios = []
         for name, price_factor, liquidity_factor, fill_rate in (
             ("base", Decimal("1"), Decimal("1"), Decimal("1")),
             ("price_decline", Decimal("1") - decline, Decimal("1"), Decimal("1")),
-            (
-                "liquidity_stress",
-                Decimal("1") - decline,
-                multiplier,
-                min(Decimal("1"), Decimal("1") / multiplier)
-                if multiplier > 0
-                else Decimal("0"),
-            ),
+            ("liquidity_stress", Decimal("1") - decline, multiplier, stress_fill),
         ):
+            shares = dict(starting_positions)
+            cash = starting_cash
+            buying_power = settled_cash
+            executions = []
+            unfilled_orders = []
+            total_commission = Decimal("0")
+            total_tax = Decimal("0")
+            total_buy_cost = Decimal("0")
+            orders = proposal.get("order_proposal", {}).get("orders", [])
+            for order in orders:
+                requested_lots = int(order["lots"])
+                filled_lots = int(
+                    (Decimal(requested_lots) * fill_rate).to_integral_value(rounding=ROUND_FLOOR)
+                )
+                filled_shares = filled_lots * lot_size
+                unfilled_lots = requested_lots - filled_lots
+                if unfilled_lots:
+                    unfilled_orders.append(
+                        {
+                            "symbol": order["symbol"],
+                            "side": order["side"],
+                            "intent": order["intent"],
+                            "unfilled_lots": unfilled_lots,
+                            "unfilled_shares": unfilled_lots * lot_size,
+                        }
+                    )
+                if not filled_shares:
+                    continue
+                reference = decimal_value(order["reference_price"], "order.reference_price")
+                bps = decimal_value(self.policy["slippage_bps"], "slippage_bps") * liquidity_factor / Decimal("10000")
+                execution_price = reference * (
+                    Decimal("1") + bps if order["side"] == "buy" else Decimal("1") - bps
+                )
+                execution_price = execution_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                gross = execution_price * Decimal(filled_shares)
+                commission = max(
+                    gross * decimal_value(self.policy["commission_rate"], "commission_rate"),
+                    decimal_value(self.policy["minimum_commission"], "minimum_commission"),
+                ).quantize(MONEY, rounding=ROUND_CEILING)
+                tax = (
+                    gross * decimal_value(self.policy["sell_tax_rate"], "sell_tax_rate")
+                    if order["side"] == "sell" else Decimal("0")
+                ).quantize(MONEY, rounding=ROUND_CEILING)
+                impact = -(gross + commission) if order["side"] == "buy" else gross - commission - tax
+                symbol = str(order["symbol"]).upper()
+                shares[symbol] = shares.get(symbol, 0) + (filled_shares if order["side"] == "buy" else -filled_shares)
+                if shares[symbol] < 0:
+                    raise DecisionToolError("情境成交造成負持股：%s" % symbol)
+                cash += impact
+                if order["side"] == "buy":
+                    total_buy_cost += -impact
+                    buying_power += impact
+                elif self.policy["reuse_sell_proceeds"]:
+                    buying_power += impact
+                total_commission += commission
+                total_tax += tax
+                executions.append(
+                    {
+                        "symbol": symbol,
+                        "side": order["side"],
+                        "intent": order["intent"],
+                        "filled_lots": filled_lots,
+                        "filled_shares": filled_shares,
+                        "execution_price": str(execution_price),
+                        "gross_amount": _money(gross),
+                        "commission": _money(commission),
+                        "tax": _money(tax),
+                        "net_cash_impact": _money(impact),
+                    }
+                )
+            shares = {symbol: value for symbol, value in shares.items() if value > 0}
             values = []
             position_value = Decimal("0")
-            for row in positions:
-                value = decimal_value(row["market_value"], "position.market_value") * price_factor
+            for symbol, position_shares in sorted(shares.items()):
+                close_price = prices[symbol] * price_factor
+                value = Decimal(position_shares) * close_price
                 position_value += value
                 values.append(
                     {
-                        "symbol": row["symbol"],
+                        "symbol": symbol,
+                        "lots": position_shares // lot_size,
+                        "shares": position_shares,
                         "assumed_price_factor": _rate(price_factor),
+                        "assumed_close_price": str(close_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
                         "assumed_value": _money(value),
                     }
                 )
             nav = position_value + cash
-            unfilled_orders = [
-                {
-                    "symbol": order["symbol"],
-                    "side": order["side"],
-                    "intent": order["intent"],
-                    "unfilled_shares": int(
-                        (Decimal(int(order["shares"])) * (Decimal("1") - fill_rate)).to_integral_value(
-                            rounding=ROUND_HALF_UP
-                        )
-                    ),
-                }
-                for order in proposal.get("order_proposal", {}).get("orders", [])
-                if fill_rate < Decimal("1")
-            ]
             scenarios.append(
                 {
                     "name": name,
@@ -105,11 +169,17 @@ class ScenarioEngine:
                     "price_decline_rate": _rate(Decimal("1") - price_factor),
                     "slippage_multiplier": _rate(liquidity_factor),
                     "order_fill_rate": _rate(fill_rate),
+                    "executions": executions,
                     "unfilled_orders": unfilled_orders,
                     "positions": values,
                     "cash": _money(cash),
                     "nav": _money(nav),
                     "cash_weight": _rate(cash / nav) if nav > 0 else None,
+                    "buying_power": _money(buying_power),
+                    "buying_power_shortfall": _money(max(Decimal("0"), -buying_power)),
+                    "total_buy_cost": _money(total_buy_cost),
+                    "total_commission": _money(total_commission),
+                    "total_tax": _money(total_tax),
                 }
             )
         body: Dict[str, object] = {
@@ -170,7 +240,14 @@ class CompetitionGuardV2:
         self._check(checks, "UNIVERSE", set(weights).issubset(universe), sorted(set(weights) - universe))
         explicit_status = bool(tradable or not_tradable)
         self._check(checks, "TRADABILITY_AVAILABLE", explicit_status, [] if explicit_status else ["缺少明確可交易狀態"])
-        invalid_tradability = sorted(symbol for symbol in weights if symbol in not_tradable or (tradable and symbol not in tradable))
+        order_symbols = {
+            str(item.get("symbol", "")).upper()
+            for item in proposal.get("order_proposal", {}).get("orders", [])
+        }
+        invalid_tradability = sorted(
+            symbol for symbol in set(weights) | order_symbols
+            if symbol in not_tradable or (tradable and symbol not in tradable)
+        )
         self._check(checks, "TRADABLE", not invalid_tradability, invalid_tradability)
         count = len(positions)
         minimum = int(self.policy["min_positions"])
@@ -209,11 +286,79 @@ class CompetitionGuardV2:
         turnover_limit = decimal_value(self.policy["max_turnover_rate"], "max_turnover_rate")
         self._check(checks, "TURNOVER", turnover <= turnover_limit, {"actual": _rate(turnover), "limit": _rate(turnover_limit)})
         self._check(checks, "NON_NEGATIVE_CASH", decimal_value(allocation["cash"], "cash") >= 0, allocation["cash"])
-        scenario_ok = all(
-            decimal_value(item["cash"], "scenario.cash") >= 0 and decimal_value(item["nav"], "scenario.nav") > 0
-            for item in scenario_result.get("scenarios", [])
+        scenario_checks = []
+        required_benchmarks = set(self.context.bundle["rules"]["required_benchmark_ids"])
+        supplied_benchmarks = {
+            str(item["benchmark_id"]): item for item in self.context.bundle["benchmarks"]
+        }
+        minimum_active = decimal_value(self.policy["minimum_active_share"], "minimum_active_share")
+        for scenario in scenario_result.get("scenarios", []):
+            nav = decimal_value(scenario["nav"], "scenario.nav")
+            cash = decimal_value(scenario["cash"], "scenario.cash")
+            scenario_weights = {
+                str(item["symbol"]).upper(): decimal_value(item["assumed_value"], "assumed_value") / nav
+                for item in scenario.get("positions", [])
+            } if nav > 0 else {}
+            position_count = len(scenario_weights)
+            stock_violations = []
+            for symbol, weight in scenario_weights.items():
+                limit = decimal_value(special.get(symbol, default_limit), "weight_limit") if isinstance(special, Mapping) else default_limit
+                if weight > limit:
+                    stock_violations.append(symbol)
+            scenario_sector: Dict[str, Decimal] = {}
+            for symbol, weight in scenario_weights.items():
+                if symbol in sector_by_symbol:
+                    scenario_sector[sector_by_symbol[symbol]] = scenario_sector.get(sector_by_symbol[symbol], Decimal("0")) + weight
+            active_results = []
+            for benchmark_id in sorted(required_benchmarks):
+                benchmark = supplied_benchmarks.get(benchmark_id)
+                if benchmark is None:
+                    active_results.append({"benchmark_id": benchmark_id, "passed": False, "error": "missing"})
+                    continue
+                benchmark_weights = {
+                    str(symbol).upper(): decimal_value(value, "benchmark weight")
+                    for symbol, value in benchmark["weights"].items()
+                }
+                symbols = set(scenario_weights) | set(benchmark_weights)
+                active = Decimal("0.5") * sum(
+                    abs(scenario_weights.get(symbol, Decimal("0")) - benchmark_weights.get(symbol, Decimal("0")))
+                    for symbol in symbols
+                )
+                active_results.append({
+                    "benchmark_id": benchmark_id,
+                    "version": benchmark["version"],
+                    "active_share": _rate(active),
+                    "minimum": _rate(minimum_active),
+                    "passed": active >= minimum_active,
+                })
+            scenario_checks.append({
+                "name": scenario["name"],
+                "non_negative_cash": cash >= 0,
+                "positive_nav": nav > 0,
+                "cash_weight_ok": nav > 0 and cash / nav < cash_ceiling,
+                "buying_power_ok": decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0,
+                "position_count_ok": minimum <= position_count <= maximum,
+                "stock_weight_ok": not stock_violations,
+                "sector_weight_ok": all(value <= sector_limit for value in scenario_sector.values()),
+                "tradability_ok": not any(
+                    symbol in not_tradable or (tradable and symbol not in tradable)
+                    for symbol in scenario_weights
+                ),
+                "active_share_results": active_results,
+                "passed": cash >= 0 and nav > 0 and cash / nav < cash_ceiling
+                and decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0
+                and minimum <= position_count <= maximum
+                and not stock_violations
+                and all(value <= sector_limit for value in scenario_sector.values())
+                and not any(symbol in not_tradable or (tradable and symbol not in tradable) for symbol in scenario_weights)
+                and bool(active_results) and all(item["passed"] for item in active_results),
+            })
+        self._check(
+            checks,
+            "SCENARIOS",
+            len(scenario_checks) == 3 and all(item["passed"] for item in scenario_checks),
+            scenario_checks,
         )
-        self._check(checks, "SCENARIOS", scenario_ok, "所有情境現金須非負且 NAV 大於 0")
         unfilled_forced = [
             item
             for scenario in scenario_result.get("scenarios", [])
@@ -228,8 +373,11 @@ class CompetitionGuardV2:
         )
 
         benchmark_results = []
-        minimum_active = decimal_value(self.policy["minimum_active_share"], "minimum_active_share")
-        for benchmark in self.context.bundle["benchmarks"]:
+        for benchmark_id in sorted(required_benchmarks):
+            benchmark = supplied_benchmarks.get(benchmark_id)
+            if benchmark is None:
+                benchmark_results.append({"benchmark_id": benchmark_id, "passed": False, "error": "missing"})
+                continue
             benchmark_weights = {
                 str(symbol).upper(): decimal_value(value, "benchmark weight")
                 for symbol, value in benchmark["weights"].items()
@@ -248,7 +396,14 @@ class CompetitionGuardV2:
                     "passed": active >= minimum_active,
                 }
             )
-        self._check(checks, "ACTIVE_SHARE_ALL", bool(benchmark_results) and all(item["passed"] for item in benchmark_results), benchmark_results)
+        self._check(
+            checks,
+            "ACTIVE_SHARE_ALL",
+            len(benchmark_results) == len(required_benchmarks)
+            and bool(benchmark_results)
+            and all(item["passed"] for item in benchmark_results),
+            benchmark_results,
+        )
         passed = all(bool(check["passed"]) for check in checks)
         body: Dict[str, object] = {
             "schema_version": DECISION_SCHEMA_VERSION,
@@ -356,8 +511,8 @@ class RiskReviewValidator:
             errors.append("只有 status=completed 的 RiskReview 可進入決策")
         if review.get("decision") not in RISK_DECISIONS:
             errors.append("RiskReview.decision 必須是 approve、revise 或 reject")
-        if review.get("decision") == "approve" and guard.get("passed") is not True:
-            errors.append("CompetitionGuard 失敗時 RiskReview 不得 approve")
+        if guard.get("passed") is not True and review.get("decision") != "reject":
+            errors.append("CompetitionGuard 硬性規則失敗時 RiskReview 只能 reject")
         index = review.get("revision_index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index > int(self.policy["max_revisions"]):
             errors.append("RiskReview.revision_index 超過允許範圍")

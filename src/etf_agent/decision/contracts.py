@@ -87,6 +87,12 @@ def decision_bundle_sha256(bundle: Mapping[str, object]) -> str:
     return canonical_sha256(payload)
 
 
+def decision_rules_sha256(rules: Mapping[str, object]) -> str:
+    payload = dict(rules)
+    payload.pop("config_sha256", None)
+    return canonical_sha256(payload)
+
+
 def artifact_content_sha256(artifact: Mapping[str, object]) -> str:
     payload = dict(artifact)
     payload.pop("content_sha256", None)
@@ -159,9 +165,9 @@ class DecisionInputValidator:
             errors.append(str(error))
 
         self._validate_snapshot(errors)
+        self._validate_rules(errors)
         universe, price_evidence = self._universe_and_price_evidence(errors)
         self._validate_account(universe, errors)
-        self._validate_rules(errors)
         self._validate_benchmarks(errors)
         self._validate_price_series(universe, price_evidence, errors)
         self._validate_research_results(errors)
@@ -340,15 +346,18 @@ class DecisionInputValidator:
             {
                 "account_id",
                 "available_at",
+                "valuation_at",
                 "source_evidence_id",
                 "cash",
+                "settled_cash",
+                "unsettled_cash",
                 "nav",
                 "positions",
             },
             "account_snapshot",
             errors,
         )
-        for field in ("account_id", "available_at", "source_evidence_id"):
+        for field in ("account_id", "available_at", "valuation_at", "source_evidence_id"):
             try:
                 required_string(account, field)
             except DecisionToolError as error:
@@ -357,13 +366,20 @@ class DecisionInputValidator:
             available = parse_time(account.get("available_at"), "account_snapshot.available_at")
             if self.cutoff is not None and available > self.cutoff:
                 errors.append("帳戶快照晚於 decision_cutoff")
+            valuation = parse_time(account.get("valuation_at"), "account_snapshot.valuation_at")
+            if self.cutoff is not None and valuation > self.cutoff:
+                errors.append("帳戶估值時間晚於 decision_cutoff")
         except DecisionToolError as error:
             errors.append(str(error))
         try:
             cash = decimal_value(account.get("cash"), "account_snapshot.cash")
+            settled = decimal_value(account.get("settled_cash"), "account_snapshot.settled_cash")
+            unsettled = decimal_value(account.get("unsettled_cash"), "account_snapshot.unsettled_cash")
             nav = decimal_value(account.get("nav"), "account_snapshot.nav")
-            if cash < 0:
-                errors.append("account_snapshot.cash 不得為負")
+            if cash < 0 or settled < 0 or unsettled < 0:
+                errors.append("account_snapshot 現金欄位不得為負")
+            if cash != settled + unsettled:
+                errors.append("account_snapshot.cash 必須等於 settled_cash 加 unsettled_cash")
             if nav <= 0:
                 errors.append("account_snapshot.nav 必須大於 0")
             if cash > nav:
@@ -394,40 +410,119 @@ class DecisionInputValidator:
             elif universe and symbol not in universe:
                 errors.append("%s.symbol 不在 Snapshot 交易池" % prefix)
             seen.add(symbol)
-            try:
-                shares = int(position.get("shares"))
-                if shares <= 0:
-                    raise ValueError
-            except (TypeError, ValueError):
+            shares = position.get("shares")
+            if not isinstance(shares, int) or isinstance(shares, bool) or shares <= 0:
                 errors.append("%s.shares 必須是正整數" % prefix)
             try:
                 if decimal_value(position.get("average_cost"), "%s.average_cost" % prefix) <= 0:
                     errors.append("%s.average_cost 必須大於 0" % prefix)
             except DecisionToolError as error:
                 errors.append(str(error))
+        try:
+            latest = {
+                str(row.get("symbol", "")).upper(): decimal_value(
+                    row.get("analysis_close_price"), "snapshot.analysis_close_price"
+                )
+                for row in self.snapshot.get("latest_prices", [])
+                if isinstance(row, Mapping)
+            }
+            marked_nav = decimal_value(account.get("cash"), "account_snapshot.cash") + sum(
+                decimal_value(position.get("shares"), "position.shares")
+                * latest[str(position.get("symbol", "")).upper()]
+                for position in positions
+                if isinstance(position, Mapping)
+                and str(position.get("symbol", "")).upper() in latest
+            )
+            stated_nav = decimal_value(account.get("nav"), "account_snapshot.nav")
+            tolerance = decimal_value(
+                self.bundle.get("rules", {}).get("max_nav_drift_rate"),
+                "rules.max_nav_drift_rate",
+            )
+            drift = abs(stated_nav - marked_nav) / marked_nav if marked_nav else Decimal("1")
+            if drift > tolerance:
+                errors.append("account_snapshot.nav 與 cutoff 行情重算值差異超過允許範圍")
+        except (DecisionToolError, KeyError, TypeError):
+            pass
 
     def _validate_rules(self, errors: List[str]) -> None:
         rules = self.bundle.get("rules")
         if not isinstance(rules, Mapping):
             errors.append("rules 必須是物件")
             return
+        allowed = {
+            "version", "source_url", "published_at", "available_at", "config_sha256",
+            "required_benchmark_ids", "lot_size", "commission_rate", "sell_tax_rate",
+            "minimum_commission", "max_stock_weight", "special_weight_limits",
+            "max_sector_weight", "min_positions", "max_positions",
+            "cash_weight_must_be_below", "minimum_active_share", "reuse_sell_proceeds",
+            "max_nav_drift_rate",
+        }
         reject_unknown_fields(
             rules,
-            {"version", "available_at", "config_sha256"},
+            allowed,
             "rules",
             errors,
         )
-        for field in ("version", "available_at", "config_sha256"):
+        for field in ("version", "source_url", "published_at", "available_at", "config_sha256"):
             try:
                 required_string(rules, field)
             except DecisionToolError as error:
                 errors.append("rules.%s" % error)
         try:
+            published = parse_time(rules.get("published_at"), "rules.published_at")
             available = parse_time(rules.get("available_at"), "rules.available_at")
             if self.cutoff is not None and available > self.cutoff:
                 errors.append("競賽規則版本晚於 decision_cutoff")
+            if published > available:
+                errors.append("rules.published_at 不得晚於 available_at")
         except DecisionToolError as error:
             errors.append(str(error))
+        if rules.get("config_sha256") != decision_rules_sha256(rules):
+            errors.append("rules.config_sha256 與規則內容不一致")
+        try:
+            required = string_list(rules, "required_benchmark_ids")
+            if not required or len(required) != len(set(required)):
+                errors.append("rules.required_benchmark_ids 必須非空且不得重複")
+        except DecisionToolError as error:
+            errors.append(str(error))
+        for field in ("lot_size", "min_positions", "max_positions"):
+            value = rules.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                errors.append("rules.%s 必須是非負整數" % field)
+        if rules.get("lot_size") != 1000:
+            errors.append("rules.lot_size 必須固定為 1000")
+        if isinstance(rules.get("min_positions"), int) and isinstance(
+            rules.get("max_positions"), int
+        ) and rules["min_positions"] > rules["max_positions"]:
+            errors.append("rules.min_positions 不得大於 max_positions")
+        for field in (
+            "commission_rate", "sell_tax_rate", "max_stock_weight", "max_sector_weight",
+            "cash_weight_must_be_below", "minimum_active_share", "max_nav_drift_rate",
+        ):
+            try:
+                value = decimal_value(rules.get(field), "rules.%s" % field)
+                if value < 0 or value > 1:
+                    errors.append("rules.%s 必須介於 0 與 1" % field)
+            except DecisionToolError as error:
+                errors.append(str(error))
+        try:
+            if decimal_value(rules.get("minimum_commission"), "rules.minimum_commission") < 0:
+                errors.append("rules.minimum_commission 不得為負")
+        except DecisionToolError as error:
+            errors.append(str(error))
+        if rules.get("reuse_sell_proceeds") not in {True, False}:
+            errors.append("rules.reuse_sell_proceeds 必須是布林值")
+        limits = rules.get("special_weight_limits")
+        if not isinstance(limits, Mapping):
+            errors.append("rules.special_weight_limits 必須是物件")
+        else:
+            for symbol, raw in limits.items():
+                try:
+                    value = decimal_value(raw, "rules.special_weight_limits.%s" % symbol)
+                    if value <= 0 or value > 1:
+                        errors.append("rules.special_weight_limits.%s 超出範圍" % symbol)
+                except DecisionToolError as error:
+                    errors.append(str(error))
 
     def _validate_benchmarks(self, errors: List[str]) -> None:
         benchmarks = self.bundle.get("benchmarks")
@@ -479,6 +574,11 @@ class DecisionInputValidator:
                     errors.append(str(error))
             if total > Decimal("1.000001"):
                 errors.append("%s.weights 總和不得大於 1" % prefix)
+        rules = self.bundle.get("rules", {})
+        required = set(rules.get("required_benchmark_ids", [])) if isinstance(rules, Mapping) else set()
+        missing = sorted(required - seen)
+        if missing:
+            errors.append("benchmarks 缺少規則指定基準：%s" % ", ".join(missing))
 
     def _validate_price_series(
         self,
