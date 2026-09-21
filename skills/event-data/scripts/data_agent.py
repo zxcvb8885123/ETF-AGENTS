@@ -267,12 +267,13 @@ class DataAgentApplication:
             return 1
 
         print(
-            "公司文件：%d 版本 / %d 筆（月營收 %d、重大訊息 %d）"
+            "公司文件：%d 版本 / %d 筆（月營收 %d、重大訊息 %d、財報 %d）"
             % (
                 status.documents.versions,
                 status.documents.documents,
                 status.documents.monthly_rows,
                 status.documents.event_rows,
+                status.documents.financial_statement_rows,
             )
         )
         print(

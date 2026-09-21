@@ -84,6 +84,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | --- | --- |
 | [Agent 開發架構](docs/agent_plan.md) | 資料庫、事件與動能策略、進攻／防守分類、風控買賣及報告流程 |
 | [Data Agent 計畫](docs/data_agent_plan.md) | 資料收集、補查、驗證、版本保存與研究快照 |
+| [M1 第二批：官方財報彙總接入](docs/financial_statements_m1_plan.md) | 已實作：24 個官方端點、業別契約、版本保存、Snapshot 與 CLI；2026 Q2 實測 298/300，3718.TWO 缺兩張報表而降級 |
 | [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 官方行情、財報、事件與新聞來源的實測結果及接入判定 |
 | [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及實作里程碑 |
 | [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 第一個下游 Agent；事件證據、補查、引用與研究結果 |
