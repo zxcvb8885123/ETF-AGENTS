@@ -58,13 +58,13 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果；正式帳戶、可交易狀態、有效競賽規則、歷史／前向回測、DailyReport、D-Plan 與主辦平台送件尚未接入。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；正式帳戶、可交易狀態、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與主辦平台送件尚未接入。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方歷史行情 CLI、財報彙總與交易狀態。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
 ## 資料位置
 
-P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新。下一批是 P7 歷史／前向回測；正式資料接入與規則版本仍需另外確認。
+P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新；P7 B0～B2 fixture 回測帳務驗收也已完成。下一批是 B3 策略比較與 B4 Agent 評估；正式資料接入與規則版本仍需另外確認。
 
 | 路徑 | 用途 |
 | --- | --- |
@@ -77,7 +77,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 
 ## 文件
 
-[P6 決策驗收與風控補強](docs/decision_acceptance_plan.md) 已完成 fixture 驗收；下一階段依[回測 Agent 計畫](docs/backtest_agent_plan.md)實作 P7 的歷史時鐘、時間點資料與成交帳務。正式 Provider 尚未接妥，不能把 fixture 結果視為正式交易驗收。
+[P6 決策驗收與風控補強](docs/decision_acceptance_plan.md)與 P7 B0～B2 fixture 回測帳務驗收均已完成。正式 Provider 尚未接妥，不能把 fixture 結果視為正式交易驗收或策略績效。
 
 | 文件 | 內容 |
 | --- | --- |
@@ -90,6 +90,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [Research Report V0 計畫](docs/research_report_plan.md) | 將研究層輸出整合為可稽核 JSON／Markdown，不包含交易決策 |
 | [投資組合買賣決策與風控多子 Agent 計畫](docs/momentum_portfolio_risk_agent_plan.md) | Portfolio Decision 主控、五個子 Agent、確定性配置／訂單及競賽風控 |
 | [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
+| [P7 回測 Agent 第一批計畫](docs/backtest_mvp_plan.md) | B0～B2 fixture MVP 已完成：歷史時鐘、時間點資料、整張成交、交割與多日帳務重播 |
 | [回測與驗證方法規格](docs/backtest_plan_v1.md) | 資料切分、成交假設、策略比較與有效性判定方法 |
 | [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四個且最後實作的下游 Agent；排程、D-Plan、每日／失敗報告與人工批准 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |

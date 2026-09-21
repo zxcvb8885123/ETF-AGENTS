@@ -1,0 +1,4 @@
+interface:
+  display_name: 策略回測 Agent
+  short_description: 依歷史時鐘重播決策、成交與帳務
+  default_prompt: 使用 $strategy-backtest 驗證歷史資料並重播保存決策。

@@ -4,11 +4,13 @@
 
 ## 定位
 
+依 [P7 回測 Agent B0～B2 計畫](backtest_mvp_plan.md) 已完成 fixture MVP：可重播保存決策、隔離歷史時點、模擬整張成交與跨日帳務；下一步才是策略比較、完整 Agent 工具循環與前向驗證。
+
 實作前置：[P6 決策驗收與風控補強](decision_acceptance_plan.md) 已完成 fixture 驗收，可依本計畫 B0～B2 接入歷史時鐘與模擬成交；真實資料仍須滿足 available_at、公司行動及正式規則版本條件。
 
 回測 Agent 負責用歷史時鐘重播 Data、Research、Momentum／Portfolio／Risk 的相同契約，執行策略比較、成交模擬、帳戶更新與績效分析。它回答「Agent 是否正確使用當時可得資料」以及「研究與策略是否在扣除成本後產生穩定增益」。
 
-回測 Agent 不修改正式資料、不調整線上帳戶、不下單，也不能使用回測日期之後的資訊。第一版由 Codex 或 Claude 工作階段載入規劃中的 `strategy-backtest` Skill，選擇核准的實驗與診斷工具；歷史時鐘、特徵、成交、帳務、費稅與績效一律由確定性 Python 物件執行。
+回測 Agent 不修改正式資料、不調整線上帳戶、不下單，也不能使用回測日期之後的資訊。第一版已提供 `strategy-backtest` Skill 供 Codex 或 Claude 工作階段檢查 fixture 與診斷；歷史時鐘、成交、帳務、費稅與重播驗證一律由確定性 Python 物件執行。績效比較仍未實作。
 
 詳細統計方法、資料切分、成交假設與比較策略以[回測與驗證方法規格](backtest_plan_v1.md)為準；本文件只定義 Agent 架構與交付流程。
 
@@ -103,9 +105,9 @@ LLM 只能選擇已核准的實驗、要求診斷與解釋確定性結果，不�
 
 ## 開發里程碑
 
-1. **B0 契約與歷史時鐘**：建立 `BacktestRequest`、`BacktestRun`、交易日曆與 cutoff 測試。
-2. **B1 時間點資料**：完成價格、事件、財報、交易池及公司行動的無未來資料 fixture。
-3. **B2 成交與帳務**：完成可手算核對的成交、未成交、費稅、現金、持股與公司行動測試。
+1. **B0 契約與歷史時鐘**：**fixture MVP 已完成**；建立 `BacktestRequest`、`BacktestRun`、交易日曆與 cutoff 測試。
+2. **B1 時間點資料**：**fixture MVP 已完成**；可驗證研究版本與執行價時點，正式歷史資料仍待 Provider。
+3. **B2 成交與帳務**：**fixture MVP 已完成**；完成可手算核對的成交、未成交、費稅、現金、持股、交割及公司行動測試。
 4. **B3 策略比較**：實作必要比較組、績效、回撤、成本、貢獻與不確定性分析。
 5. **B4 Agent 評估**：加入事件測試集、工具行為、引用正確性、重跑穩定度與資源統計。
 6. **B5 Agent 工具循環**：建立 `strategy-backtest` Skill、結構化工具與 Codex／Claude 一致性驗證。
