@@ -1,6 +1,7 @@
 """Data Agent 的物件化研究快照建構流程。"""
 
 import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -127,6 +128,74 @@ class SnapshotMonthlyRevenue:
 
 
 @dataclass(frozen=True)
+class SnapshotFinancialStatement:
+    statement_type: str
+    industry: str
+    fiscal_year: int
+    fiscal_quarter: int
+    period_start: Optional[str]
+    period_end: str
+    period_kind: str
+    reporting_scope: str
+    currency: str
+    unit_multiplier: int
+    reported_at: str
+    source_published_at: Optional[str]
+    mapping_version: str
+    facts: Dict[str, object]
+
+    @classmethod
+    def from_row(cls, row):
+        if row["statement_type"] is None:
+            return None
+        raw_facts = json.loads(str(row["facts_json"]))
+        if not isinstance(raw_facts, dict):
+            raise ValueError("財報 facts_json 必須是物件")
+        return cls(
+            statement_type=str(row["statement_type"]),
+            industry=str(row["financial_industry"]),
+            fiscal_year=int(row["fiscal_year"]),
+            fiscal_quarter=int(row["fiscal_quarter"]),
+            period_start=(
+                str(row["financial_period_start"])
+                if row["financial_period_start"] is not None
+                else None
+            ),
+            period_end=str(row["financial_period_end"]),
+            period_kind=str(row["financial_period_kind"]),
+            reporting_scope=str(row["reporting_scope"]),
+            currency=str(row["financial_currency"]),
+            unit_multiplier=int(row["financial_unit_multiplier"]),
+            reported_at=str(row["reported_at"]),
+            source_published_at=(
+                str(row["source_published_at"])
+                if row["source_published_at"] is not None
+                else None
+            ),
+            mapping_version=str(row["mapping_version"]),
+            facts=raw_facts,
+        )
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "statement_type": self.statement_type,
+            "industry": self.industry,
+            "fiscal_year": self.fiscal_year,
+            "fiscal_quarter": self.fiscal_quarter,
+            "period_start": self.period_start,
+            "period_end": self.period_end,
+            "period_kind": self.period_kind,
+            "reporting_scope": self.reporting_scope,
+            "currency": self.currency,
+            "unit_multiplier": self.unit_multiplier,
+            "reported_at": self.reported_at,
+            "source_published_at": self.source_published_at,
+            "mapping_version": self.mapping_version,
+            "facts": self.facts,
+        }
+
+
+@dataclass(frozen=True)
 class SnapshotDocument:
     document_id: int
     source: str
@@ -142,6 +211,7 @@ class SnapshotDocument:
     content_sha256: str
     source_evidence_id: str
     monthly_revenue: Optional[SnapshotMonthlyRevenue] = None
+    financial_statement: Optional[SnapshotFinancialStatement] = None
 
     @classmethod
     def from_row(cls, row, evidence_builder: SourceEvidenceBuilder):
@@ -160,6 +230,7 @@ class SnapshotDocument:
             content_sha256=str(row["content_sha256"]),
             source_evidence_id=evidence_builder.document_evidence_id(row),
             monthly_revenue=SnapshotMonthlyRevenue.from_row(row),
+            financial_statement=SnapshotFinancialStatement.from_row(row),
         )
 
     def as_dict(self) -> Dict[str, object]:
@@ -180,6 +251,8 @@ class SnapshotDocument:
         }
         if self.monthly_revenue is not None:
             result["monthly_revenue"] = self.monthly_revenue.as_dict()
+        if self.financial_statement is not None:
+            result["financial_statement"] = self.financial_statement.as_dict()
         return result
 
 

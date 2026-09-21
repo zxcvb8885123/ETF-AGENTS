@@ -166,6 +166,54 @@ CREATE TABLE IF NOT EXISTS monthly_revenues (
 CREATE INDEX IF NOT EXISTS idx_monthly_revenues_symbol_period
 ON monthly_revenues(symbol, revenue_period);
 
+CREATE TABLE IF NOT EXISTS financial_statements (
+    document_id INTEGER PRIMARY KEY REFERENCES source_documents(id),
+    symbol TEXT NOT NULL REFERENCES instruments(symbol),
+    statement_type TEXT NOT NULL CHECK (
+        statement_type IN ('income_statement', 'balance_sheet')
+    ),
+    industry TEXT NOT NULL,
+    fiscal_year INTEGER NOT NULL,
+    fiscal_quarter INTEGER NOT NULL CHECK (fiscal_quarter BETWEEN 1 AND 4),
+    period_start TEXT,
+    period_end TEXT NOT NULL,
+    period_kind TEXT NOT NULL CHECK (
+        period_kind IN ('cumulative_to_quarter', 'point_in_time')
+    ),
+    reporting_scope TEXT NOT NULL CHECK (
+        reporting_scope IN ('consolidated', 'individual', 'unknown')
+    ),
+    currency TEXT NOT NULL,
+    unit_multiplier INTEGER NOT NULL CHECK (unit_multiplier > 0),
+    reported_at TEXT NOT NULL,
+    source_published_at TEXT,
+    mapping_version TEXT NOT NULL,
+    facts_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_statements_symbol_period
+ON financial_statements(symbol, statement_type, fiscal_year, fiscal_quarter);
+
+CREATE TABLE IF NOT EXISTS financial_statement_facts (
+    document_id INTEGER NOT NULL REFERENCES financial_statements(document_id),
+    metric_key TEXT NOT NULL,
+    source_field TEXT,
+    value TEXT,
+    value_status TEXT NOT NULL CHECK (
+        value_status IN ('provided', 'not_reported')
+    ),
+    currency TEXT NOT NULL,
+    unit_multiplier INTEGER NOT NULL CHECK (unit_multiplier > 0),
+    PRIMARY KEY(document_id, metric_key),
+    CHECK (
+        (value_status = 'provided' AND value IS NOT NULL AND source_field IS NOT NULL)
+        OR (value_status = 'not_reported' AND value IS NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_statement_facts_metric
+ON financial_statement_facts(metric_key);
+
 CREATE TABLE IF NOT EXISTS quality_issues (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT REFERENCES collection_runs(run_id),
@@ -274,6 +322,9 @@ class MarketDataDatabase:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (5)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (6)"
             )
             connection.executescript(ANALYSIS_VIEW)
 
