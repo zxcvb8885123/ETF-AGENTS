@@ -8,11 +8,12 @@ import math
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
+from .historical import HistoryRefreshBatch, plan_history_refresh, rolling_start
 from .twse import DailyPrice
 from .universe import Instrument
 
@@ -29,12 +30,6 @@ class YFinanceCollectionResult:
 
 
 @dataclass(frozen=True)
-class HistoryRefreshBatch:
-    start_date: date
-    instruments: Tuple[Instrument, ...]
-
-
-@dataclass(frozen=True)
 class YFinanceRefreshResult:
     run_ids: Tuple[str, ...]
     start_date: str
@@ -43,38 +38,6 @@ class YFinanceRefreshResult:
     stored_rows: int
     missing_symbols: Tuple[str, ...]
     warnings: Tuple[str, ...]
-
-
-def rolling_start(end: date, years: int = 2) -> date:
-    if years < 1:
-        raise ValueError("歷史回看年數必須大於 0")
-    try:
-        return end.replace(year=end.year - years)
-    except ValueError:
-        return end.replace(year=end.year - years, day=28)
-
-
-def plan_history_refresh(
-    universe: Sequence[Instrument],
-    last_dates: Mapping[str, date],
-    end: date,
-    lookback_years: int = 2,
-    overlap_days: int = 7,
-) -> List[HistoryRefreshBatch]:
-    if overlap_days < 0:
-        raise ValueError("歷史行情重疊天數不得小於 0")
-    floor = rolling_start(end, lookback_years)
-    grouped: Dict[date, List[Instrument]] = {}
-    for instrument in universe:
-        last_date = last_dates.get(instrument.symbol)
-        start = floor if last_date is None else max(
-            floor, last_date - timedelta(days=overlap_days)
-        )
-        grouped.setdefault(start, []).append(instrument)
-    return [
-        HistoryRefreshBatch(start_date=start, instruments=tuple(instruments))
-        for start, instruments in sorted(grouped.items())
-    ]
 
 
 def _decimal(value: object) -> Optional[Decimal]:

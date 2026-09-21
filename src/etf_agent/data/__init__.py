@@ -11,8 +11,24 @@ from .corporate import (
     SourceDocument,
 )
 from .database import MarketDataDatabase
-from .historical import HistoricalPriceProvider, HistoricalResponse, month_starts, tpex_ssl_context
-from .historical_collector import HistoricalCollectionResult, HistoricalPriceCollector
+from .historical import (
+    HistoricalPriceProvider,
+    HistoricalResponse,
+    HistoryRefreshBatch,
+    month_starts,
+    plan_history_refresh,
+    rolling_start,
+    tpex_ssl_context,
+)
+from .historical_collector import (
+    HistoricalCollectionError,
+    HistoricalCollectionResult,
+    HistoricalPriceCollector,
+    OfficialHistoricalRefreshService,
+    OfficialHistoryBatchResult,
+    OfficialHistoryCoverage,
+    OfficialHistoryRefreshResult,
+)
 from .latest import (
     LatestPriceCollector,
     LatestPriceCollectionResult,
@@ -24,12 +40,9 @@ from .tpex import TpexDailyProvider
 from .twse import DailyPrice, TwseDailyProvider
 from .universe import Instrument, UniverseLoader, load_universe
 from .yfinance_history import (
-    HistoryRefreshBatch,
     YFinanceCollectionResult,
     YFinanceHistoryCollector,
     YFinanceRefreshResult,
-    plan_history_refresh,
-    rolling_start,
 )
 from .snapshot import (
     DataAgentService,
@@ -75,6 +88,7 @@ __all__ = [
     "PriceSourceStatus",
     "PriceStatus",
     "HistoricalCollectionResult",
+    "HistoricalCollectionError",
     "HistoricalPriceCollector",
     "HistoricalPriceProvider",
     "HistoricalResponse",
@@ -87,6 +101,10 @@ __all__ = [
     "MonthlyRevenue",
     "OfficialCorporateProvider",
     "OfficialCorporateProviderFactory",
+    "OfficialHistoricalRefreshService",
+    "OfficialHistoryBatchResult",
+    "OfficialHistoryCoverage",
+    "OfficialHistoryRefreshResult",
     "ResearchSnapshot",
     "SnapshotBuilder",
     "SnapshotDocument",

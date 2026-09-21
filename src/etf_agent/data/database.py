@@ -3,7 +3,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator, Optional, Sequence
+from typing import Dict, Iterable, Iterator, Optional, Sequence, Tuple
 
 from etf_agent.contracts import SourceFeasibilityReport, UniverseValidationResult
 
@@ -100,9 +100,9 @@ FROM (
         ROW_NUMBER() OVER (
             PARTITION BY symbol, trade_date
             ORDER BY CASE source
-                WHEN 'YAHOO_FINANCE' THEN 1
-                WHEN 'TPEX_TRADING_STOCK' THEN 2
-                WHEN 'TWSE_STOCK_DAY' THEN 2
+                WHEN 'TPEX_TRADING_STOCK' THEN 1
+                WHEN 'TWSE_STOCK_DAY' THEN 1
+                WHEN 'YAHOO_FINANCE' THEN 2
                 WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
                 WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                 ELSE 9
@@ -436,6 +436,61 @@ class MarketDataDatabase:
         if len(rows) != len(required) or any(not row["last_date"] for row in rows):
             return None
         return min(str(row["last_date"]) for row in rows)
+
+    def latest_trade_dates_by_symbol(self, sources: Sequence[str]) -> Dict[str, str]:
+        """傳回指定來源各標的最後一筆已保存日線，供增量更新使用。"""
+
+        required = tuple(dict.fromkeys(sources))
+        if not required:
+            raise ValueError("至少需要一個行情來源")
+        placeholders = ", ".join("?" for _ in required)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol, MAX(trade_date) AS last_date
+                FROM daily_prices
+                WHERE source IN (%s)
+                GROUP BY symbol
+                """
+                % placeholders,
+                required,
+            ).fetchall()
+        return {
+            str(row["symbol"]): str(row["last_date"])
+            for row in rows
+            if row["last_date"]
+        }
+
+    def history_price_ranges(
+        self, sources: Sequence[str]
+    ) -> Dict[Tuple[str, str], Tuple[str, str, int]]:
+        """傳回官方歷史行情的可稽核區間，不以 Yahoo 補足覆蓋。"""
+
+        required = tuple(dict.fromkeys(sources))
+        if not required:
+            raise ValueError("至少需要一個行情來源")
+        placeholders = ", ".join("?" for _ in required)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol, source, MIN(trade_date) AS first_date,
+                       MAX(trade_date) AS last_date, COUNT(*) AS row_count
+                FROM daily_prices
+                WHERE source IN (%s)
+                GROUP BY symbol, source
+                """
+                % placeholders,
+                required,
+            ).fetchall()
+        return {
+            (str(row["symbol"]), str(row["source"])): (
+                str(row["first_date"]),
+                str(row["last_date"]),
+                int(row["row_count"]),
+            )
+            for row in rows
+            if row["first_date"] and row["last_date"]
+        }
 
     def save_source_feasibility_report(
         self, report: SourceFeasibilityReport

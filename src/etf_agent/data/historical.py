@@ -7,8 +7,8 @@ import ssl
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from typing import Callable, List, Optional, Tuple
+from datetime import date, datetime, timedelta, timezone
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .twse import DailyPrice, parse_decimal, parse_integer, parse_roc_date
 from .universe import Instrument
@@ -25,6 +25,48 @@ class HistoricalResponse:
     fetched_at: str
     source: str
     warnings: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class HistoryRefreshBatch:
+    """一組共用起始日的增量歷史行情請求。"""
+
+    start_date: date
+    instruments: Tuple[Instrument, ...]
+
+
+def rolling_start(end: date, years: int = 2) -> date:
+    if years < 1:
+        raise ValueError("歷史回看年數必須大於 0")
+    try:
+        return end.replace(year=end.year - years)
+    except ValueError:
+        return end.replace(year=end.year - years, day=28)
+
+
+def plan_history_refresh(
+    universe: Sequence[Instrument],
+    last_dates: Mapping[str, date],
+    end: date,
+    lookback_years: int = 2,
+    overlap_days: int = 7,
+) -> List[HistoryRefreshBatch]:
+    """為新標的回補、為既有標的重抓重疊區間。"""
+
+    if overlap_days < 0:
+        raise ValueError("歷史行情重疊天數不得小於 0")
+    floor = rolling_start(end, lookback_years)
+    grouped: Dict[date, List[Instrument]] = {}
+    for instrument in universe:
+        last_date = last_dates.get(instrument.symbol)
+        start = floor if last_date is None else max(
+            floor, last_date - timedelta(days=overlap_days)
+        )
+        grouped.setdefault(start, []).append(instrument)
+    return [
+        HistoryRefreshBatch(start_date=start, instruments=tuple(instruments))
+        for start, instruments in sorted(grouped.items())
+    ]
 
 
 def month_starts(start: date, end: date) -> List[date]:
@@ -44,10 +86,11 @@ def month_starts(start: date, end: date) -> List[date]:
 
 def tpex_ssl_context(
     opener: Callable[..., object] = urllib.request.urlopen,
+    certificate_url: str = TWCA_INTERMEDIATE_URL,
 ) -> ssl.SSLContext:
     """Build a verified context when TPEx omits its public intermediate cert."""
 
-    with opener(TWCA_INTERMEDIATE_URL, timeout=30) as response:
+    with opener(certificate_url, timeout=30) as response:
         certificate_der = response.read()
     context = ssl.create_default_context()
     context.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(certificate_der))
