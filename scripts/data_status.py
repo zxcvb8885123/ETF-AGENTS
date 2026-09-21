@@ -43,6 +43,29 @@ def main() -> int:
             FROM collection_runs ORDER BY started_at DESC LIMIT 1
             """
         ).fetchone()
+        has_documents = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_documents'"
+        ).fetchone()
+        if has_documents:
+            documents = connection.execute(
+                """
+                SELECT COUNT(*) AS rows,
+                       COUNT(DISTINCT source || '|' || external_id) AS logical_rows,
+                       SUM(document_type = 'monthly_revenue') AS monthly_rows,
+                       SUM(document_type = 'material_event') AS event_rows
+                FROM source_documents
+                """
+            ).fetchone()
+            snapshots = connection.execute(
+                "SELECT COUNT(*) AS value FROM research_snapshots"
+            ).fetchone()["value"]
+            issues = connection.execute(
+                "SELECT COUNT(*) AS value FROM quality_issues"
+            ).fetchone()["value"]
+        else:
+            documents = None
+            snapshots = 0
+            issues = 0
     finally:
         connection.close()
 
@@ -51,6 +74,17 @@ def main() -> int:
     print("日期範圍：%s ～ %s" % (summary["first_date"] or "無", summary["last_date"] or "無"))
     print("最新交易日股票數：%d" % latest_symbols)
     print("來源：" + ", ".join("%s=%d" % (row["source"], row["rows"]) for row in sources))
+    if documents:
+        print(
+            "公司文件：%d 版本 / %d 筆資料（月營收 %d、重大訊息 %d）"
+            % (
+                documents["rows"],
+                documents["logical_rows"],
+                documents["monthly_rows"] or 0,
+                documents["event_rows"] or 0,
+            )
+        )
+        print("研究快照：%d；品質問題：%d" % (snapshots, issues))
     if latest_run:
         print("最近執行：%s / %s" % (latest_run["run_id"], latest_run["status"]))
         if latest_run["error_message"]:
