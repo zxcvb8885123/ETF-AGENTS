@@ -54,6 +54,7 @@ docker compose run --rm agent python3 scripts/data_status.py
 ```bash
 docker compose run --rm agent python3 scripts/collect_latest_prices.py
 docker compose run --rm agent python3 scripts/collect_history.py
+docker compose run --rm agent python3 scripts/collect_official_history.py
 ```
 
 執行測試：

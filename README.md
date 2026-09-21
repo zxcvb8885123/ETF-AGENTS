@@ -22,6 +22,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `./start.sh check` | 只建置、檢查與執行測試 |
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
+| `PYTHONPATH=src python3 scripts/collect_official_history.py` | 以官方 TWSE／TPEx 月行情增量更新日線；先驗證最近完整交易日，並輸出逐檔覆蓋 JSON |
 | `python3 scripts/run_strategy.py --input snapshot.json` | 以研究快照執行事件策略 V1 |
 | `.venv/bin/python scripts/collect_history.py` | 透過 yfinance 增量更新 150 檔最近兩年日線至最近完整官方交易日 |
 | `.venv/bin/python skills/event-data/scripts/data_agent.py collect` | 抓取官方月營收與重大訊息 |
@@ -44,7 +45,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 
 - SQLite：保存行情、原始 TWSE 回應、抓取時間及執行紀錄。
 - TWSE／TPEx 最新交易日行情收集器。
-- 最近兩年歷史行情增量更新與 TWSE／TPEx 缺漏備援；新標的補完整期間，既有標的回抓重疊區間。
+- 官方 TWSE／TPEx 歷史行情增量 CLI：新標的補完整期間、既有標的回抓重疊區間、保留原始回應與逐檔覆蓋報告；Yahoo 日線維持備援。
 - TWSE／TPEx 月營收與重大訊息收集、原始回應保存及版本去重。
 - 指定截止時間的不可變研究快照與資料品質旗標。
 - 可重跑的 TWSE／TPEx 來源健康探測與結構化可行性報告。
@@ -60,7 +61,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 
 事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；正式帳戶、可交易狀態、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與主辦平台送件尚未接入。
 
-Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方歷史行情 CLI、財報彙總與交易狀態。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
+Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已接入，目前接續財報彙總、交易狀態與細粒度工具。官方歷史 CLI 只驗證保存區間與終止日覆蓋；尚無版本化交易日曆，不能宣稱期間內每個交易日完整，也不能用於正式歷史回測。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
 ## 資料位置
 

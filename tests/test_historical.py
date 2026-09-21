@@ -1,13 +1,101 @@
 import json
+import tempfile
 import unittest
 from datetime import date
+from decimal import Decimal
+from pathlib import Path
 
 from etf_agent.data import (
+    DailyPrice,
     HistoricalPriceProvider,
+    HistoricalResponse,
     Instrument,
+    MarketDataDatabase,
+    OfficialHistoricalRefreshService,
     month_starts,
     plan_history_refresh,
 )
+
+
+class OfficialHistoryFixtureProvider:
+    twse_source = "TWSE_STOCK_DAY"
+    tpex_source = "TPEX_TRADING_STOCK"
+
+    def __init__(self, failed_symbols=()):
+        self.failed_symbols = set(failed_symbols)
+
+    def fetch(self, instrument, month):
+        if instrument.symbol in self.failed_symbols:
+            raise TimeoutError("fixture timeout")
+        source = (
+            self.tpex_source
+            if instrument.market.upper() in {"TPEX", "OTC", "上櫃"}
+            else self.twse_source
+        )
+        price = DailyPrice(
+            symbol=instrument.symbol,
+            code=instrument.code,
+            name=instrument.name,
+            trade_date="2026-09-17",
+            open_price=Decimal("100"),
+            high_price=Decimal("101"),
+            low_price=Decimal("99"),
+            close_price=Decimal("100"),
+            change=Decimal("1"),
+            volume_shares=1000,
+            trade_value=100000,
+            transactions=1,
+        )
+        return HistoricalResponse(
+            prices=(price,),
+            payload=json.dumps({"symbol": instrument.symbol}),
+            endpoint="fixture://%s/%s" % (source, month.isoformat()),
+            fetched_at="2026-09-17T06:00:00+00:00",
+            source=source,
+            warnings=(),
+        )
+
+
+def seed_latest_price(database, instrument, source):
+    database.initialize()
+    with database.connect() as connection:
+        database.upsert_instruments(connection, [instrument], True)
+        run_id = "seed-" + instrument.symbol
+        connection.execute(
+            "INSERT INTO collection_runs(run_id, source, started_at, status) VALUES (?, ?, ?, 'success')",
+            (run_id, source, "2026-09-17T06:00:00+00:00"),
+        )
+        payload_id = database.insert_raw_payload(
+            connection,
+            run_id,
+            source,
+            "fixture://latest/%s" % instrument.symbol,
+            "2026-09-17T06:00:00+00:00",
+            "{}",
+        )
+        database.upsert_prices(
+            connection,
+            [
+                DailyPrice(
+                    symbol=instrument.symbol,
+                    code=instrument.code,
+                    name=instrument.name,
+                    trade_date="2026-09-17",
+                    open_price=Decimal("100"),
+                    high_price=Decimal("101"),
+                    low_price=Decimal("99"),
+                    close_price=Decimal("100"),
+                    change=Decimal("1"),
+                    volume_shares=1000,
+                    trade_value=100000,
+                    transactions=1,
+                )
+            ],
+            source,
+            "2026-09-17T06:00:00+00:00",
+            run_id,
+            payload_id,
+        )
 
 
 class HistoricalProviderTests(unittest.TestCase):
@@ -64,6 +152,72 @@ class HistoricalProviderTests(unittest.TestCase):
                 (date(2026, 9, 4), ["2330.TW"]),
             ],
         )
+
+    def test_official_refresh_requires_safe_end_and_reports_coverage(self):
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            seed_latest_price(database, universe[0], "TWSE_STOCK_DAY_ALL")
+            seed_latest_price(database, universe[1], "TPEX_MAINBOARD_QUOTES")
+            service = OfficialHistoricalRefreshService(
+                database, OfficialHistoryFixtureProvider(), max_workers=1, retries=0
+            )
+            with self.assertRaisesRegex(ValueError, "晚於最近完整官方交易日"):
+                service.refresh(universe, end=date(2026, 9, 18))
+
+            first = service.refresh(universe, start=date(2026, 9, 1))
+            self.assertEqual(first.status, "completed")
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(first.safe_end_date, "2026-09-17")
+            self.assertEqual([row.end_coverage for row in first.coverage], ["present", "present"])
+            self.assertEqual(
+                [row.range_coverage for row in first.coverage],
+                ["unverified_without_official_calendar"] * 2,
+            )
+            with database.connect() as connection:
+                sources = connection.execute(
+                    "SELECT symbol, source FROM analysis_daily_prices WHERE trade_date = '2026-09-17' ORDER BY symbol"
+                ).fetchall()
+            self.assertEqual(
+                [(row["symbol"], row["source"]) for row in sources],
+                [("2330.TW", "TWSE_STOCK_DAY"), ("3718.TWO", "TPEX_TRADING_STOCK")],
+            )
+
+            second = service.refresh(universe)
+            self.assertEqual(second.batches[0].start_date, "2026-09-10")
+            self.assertEqual(second.status, "completed")
+
+    def test_official_refresh_preserves_failed_run_and_returns_failed_report(self):
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            seed_latest_price(database, universe[0], "TWSE_STOCK_DAY_ALL")
+            seed_latest_price(database, universe[1], "TPEX_MAINBOARD_QUOTES")
+            result = OfficialHistoricalRefreshService(
+                database,
+                OfficialHistoryFixtureProvider(failed_symbols=("3718.TWO",)),
+                max_workers=1,
+                retries=0,
+            ).refresh(universe, start=date(2026, 9, 1))
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.exit_code, 1)
+            self.assertEqual(result.batches[0].status, "failed")
+            self.assertEqual(
+                next(item for item in result.coverage if item.symbol == "3718.TWO").end_coverage,
+                "missing",
+            )
+            with database.connect() as connection:
+                run = connection.execute(
+                    "SELECT status FROM collection_runs WHERE run_id = ?",
+                    (result.batches[0].run_id,),
+                ).fetchone()
+            self.assertEqual(run["status"], "failed")
 
 
 if __name__ == "__main__":
