@@ -17,6 +17,7 @@ from etf_agent.decision import (
     TradeIntentResultValidator,
     canonical_sha256,
     decision_bundle_sha256,
+    decision_rules_sha256,
     build_role_input_artifact,
     artifact_content_sha256,
 )
@@ -95,17 +96,35 @@ def decision_bundle():
         "account_snapshot": {
             "account_id": "account-1",
             "available_at": "2026-09-19T20:00:00+00:00",
+            "valuation_at": CUTOFF,
             "source_evidence_id": "account-evidence-1",
             "cash": "500000",
-            "nav": "1000000",
+            "settled_cash": "500000",
+            "unsettled_cash": "0",
+            "nav": "664000",
             "positions": [
                 {"symbol": "2330.TW", "shares": 1000, "average_cost": "120"}
             ],
         },
         "rules": {
             "version": "competition-rules-1",
+            "source_url": "fixture://competition-rules-1",
+            "published_at": "2026-09-01T00:00:00+00:00",
             "available_at": "2026-09-01T00:00:00+00:00",
-            "config_sha256": "rules-sha256",
+            "required_benchmark_ids": ["etf-0050-top10"],
+            "lot_size": 1000,
+            "commission_rate": "0.001425",
+            "sell_tax_rate": "0.003",
+            "minimum_commission": "20",
+            "max_stock_weight": "0.50",
+            "special_weight_limits": {"2330.TW": "0.50"},
+            "max_sector_weight": "0.60",
+            "min_positions": 1,
+            "max_positions": 5,
+            "cash_weight_must_be_below": "0.90",
+            "minimum_active_share": "0.05",
+            "reuse_sell_proceeds": True,
+            "max_nav_drift_rate": "0.000001",
         },
         "benchmarks": [
             {
@@ -132,6 +151,7 @@ def decision_bundle():
         "research_results": [],
         "perception_inputs": [],
     }
+    bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
     bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
     return bundle
 
@@ -139,6 +159,7 @@ def decision_bundle():
 def refresh_bundle_hashes(bundle):
     for series in bundle["price_series"]:
         series["series_sha256"] = canonical_sha256(series["bars"])
+    bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
     bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
     return bundle
 
@@ -337,6 +358,27 @@ def refresh_artifact_hash(artifact):
 class PortfolioDecisionAgentTests(unittest.TestCase):
     def test_decision_input_bundle_is_valid(self):
         self.assertEqual(DecisionInputValidator(decision_bundle()).validate(), [])
+
+    def test_rules_hash_tampering_fails_closed(self):
+        bundle = decision_bundle()
+        bundle["rules"]["minimum_commission"] = "1"
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        errors = DecisionInputValidator(bundle).validate()
+        self.assertTrue(any("rules.config_sha256" in error for error in errors))
+
+    def test_missing_required_benchmark_fails_closed(self):
+        bundle = decision_bundle()
+        bundle["benchmarks"] = []
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        errors = DecisionInputValidator(bundle).validate()
+        self.assertTrue(any("benchmarks" in error for error in errors))
+
+    def test_account_nav_is_reconciled_to_cutoff_prices(self):
+        bundle = decision_bundle()
+        bundle["account_snapshot"]["nav"] = "1000000"
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        errors = DecisionInputValidator(bundle).validate()
+        self.assertTrue(any("cutoff 行情重算值" in error for error in errors))
 
     def test_snapshot_hash_tampering_fails_closed(self):
         bundle = decision_bundle()

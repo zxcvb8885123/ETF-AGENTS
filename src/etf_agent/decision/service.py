@@ -22,6 +22,7 @@ from .risk import (
     ScenarioValidator,
     revision_effects,
 )
+from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
 from .trade_intent import (
     BuyIntentPacketValidator,
     SellIntentPacketValidator,
@@ -65,7 +66,13 @@ class PortfolioDecisionApplicationService:
         errors = DecisionInputValidator(self.bundle).validate()
         return {"valid": not errors, "errors": errors}
 
+    def _require_input(self) -> None:
+        errors = DecisionInputValidator(self.bundle).validate()
+        if errors:
+            raise DecisionToolError("DecisionInputBundle 驗證失敗：" + "；".join(errors))
+
     def compute_momentum(self, output: Optional[Path] = None) -> Dict[str, object]:
+        self._require_input()
         result = MomentumEngine(self.bundle).run()
         self._write(result, output)
         return result
@@ -160,6 +167,7 @@ class PortfolioDecisionApplicationService:
         policy_path: Path,
         output: Optional[Path] = None,
     ) -> Dict[str, object]:
+        self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
         debate = self.read_json(debate_path, " TradeDebateBundle")
         intent = self.read_json(intent_path, " TradeIntentResult")
@@ -190,27 +198,47 @@ class PortfolioDecisionApplicationService:
 
     def compute_scenario_file(
         self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
         policy_path: Path,
         proposal_path: Path,
         output: Optional[Path] = None,
     ) -> Dict[str, object]:
+        self._require_input()
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
+        if errors:
+            raise DecisionToolError("ProposalBundle 驗證失敗：" + "；".join(errors))
         result = ScenarioEngine(self.bundle, policy).run(proposal)
         self._write(result, output)
         return result
 
     def compute_guard_file(
         self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
         policy_path: Path,
         proposal_path: Path,
         scenario_path: Path,
         output: Optional[Path] = None,
     ) -> Dict[str, object]:
+        self._require_input()
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
-        errors = ScenarioValidator(self.bundle, policy).validate(proposal, scenario)
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
+        errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         if errors:
             raise DecisionToolError("ScenarioResult 驗證失敗：" + "；".join(errors))
         result = CompetitionGuardV2(self.bundle, policy).run(proposal, scenario)
@@ -219,18 +247,28 @@ class PortfolioDecisionApplicationService:
 
     def validate_risk_file(
         self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
         policy_path: Path,
         proposal_path: Path,
         scenario_path: Path,
         guard_path: Path,
         review_path: Path,
     ) -> Dict[str, object]:
+        self._require_input()
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = GuardValidator(self.bundle, policy).validate(proposal, scenario, guard)
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
+        errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
+        errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
         errors.extend(
             RiskReviewValidator(self.bundle, policy).validate(
                 proposal, scenario, guard, review
@@ -285,7 +323,7 @@ class PortfolioDecisionApplicationService:
         self._write(result, output)
         return result
 
-    def finalize_file(
+    def build_history_file(
         self,
         momentum_path: Path,
         debate_path: Path,
@@ -296,6 +334,58 @@ class PortfolioDecisionApplicationService:
         guard_path: Path,
         review_path: Path,
         output: Optional[Path] = None,
+        history_path: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        self._require_input()
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        scenario = self.read_json(scenario_path, " ScenarioResult")
+        guard = self.read_json(guard_path, " GuardResult")
+        review = self.read_json(review_path, " RiskReview")
+        intent_errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        if intent_errors:
+            raise DecisionToolError("TradeIntentResult 驗證失敗：" + "；".join(intent_errors))
+        builder = RevisionHistoryBuilder(self.bundle, policy, intent)
+        result = (
+            builder.append(
+                self.read_json(history_path, " RevisionHistory"),
+                proposal, scenario, guard, review,
+            )
+            if history_path is not None
+            else builder.create(proposal, scenario, guard, review)
+        )
+        self._write(result, output)
+        return result
+
+    def validate_history_file(
+        self, momentum_path: Path, debate_path: Path, intent_path: Path,
+        policy_path: Path, history_path: Path
+    ) -> Dict[str, object]:
+        self._require_input()
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        history = self.read_json(history_path, " RevisionHistory")
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors.extend(RevisionHistoryValidator(self.bundle, policy, intent).validate(history))
+        return {"valid": not errors, "errors": errors}
+
+    def finalize_file(
+        self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
+        policy_path: Path,
+        proposal_path: Path,
+        scenario_path: Path,
+        guard_path: Path,
+        review_path: Path,
+        history_path: Path,
+        output: Optional[Path] = None,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
         debate = self.read_json(debate_path, " TradeDebateBundle")
@@ -305,8 +395,9 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
+        history = self.read_json(history_path, " RevisionHistory")
         result = DecisionFinalizer(self.bundle, policy, momentum, debate, intent).run(
-            proposal, scenario, guard, review
+            proposal, scenario, guard, review, history
         )
         self._write(result, output)
         return result
@@ -321,6 +412,7 @@ class PortfolioDecisionApplicationService:
         scenario_path: Path,
         guard_path: Path,
         review_path: Path,
+        history_path: Path,
         result_path: Path,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
@@ -331,11 +423,12 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
+        history = self.read_json(history_path, " RevisionHistory")
         result = self.read_json(result_path, " DecisionResult")
         errors = DecisionResultValidator(
             self.bundle, policy, momentum, debate, intent
         ).validate(
-            proposal, scenario, guard, review, result
+            proposal, scenario, guard, review, history, result
         )
         return {"valid": not errors, "errors": errors}
 
@@ -357,6 +450,7 @@ class PortfolioDecisionApplicationService:
             "scenario",
             "guard",
             "risk_review",
+            "revision_history",
             "decision",
         }
         missing = sorted(required - set(artifacts))
@@ -375,6 +469,7 @@ class PortfolioDecisionApplicationService:
                 artifacts["scenario"],
                 artifacts["guard"],
                 artifacts["risk_review"],
+                artifacts["revision_history"],
                 artifacts["decision"],
             )
         )
@@ -382,4 +477,5 @@ class PortfolioDecisionApplicationService:
             raise DecisionToolError("DecisionResult 保存前驗證失敗：" + "；".join(errors))
         artifacts = {"decision_input": self.bundle, **artifacts}
         output = DecisionRepository(repository_root).save(run_id, artifacts)
-        return {"ok": True, "output": str(output)}
+        DecisionRepository(repository_root).verify(run_id)
+        return {"ok": True, "output": str(output), "verified": True}

@@ -4,6 +4,8 @@
 
 ## 定位
 
+實作前置：[P6 決策驗收與風控補強](decision_acceptance_plan.md) 已完成 fixture 驗收，可依本計畫 B0～B2 接入歷史時鐘與模擬成交；真實資料仍須滿足 available_at、公司行動及正式規則版本條件。
+
 回測 Agent 負責用歷史時鐘重播 Data、Research、Momentum／Portfolio／Risk 的相同契約，執行策略比較、成交模擬、帳戶更新與績效分析。它回答「Agent 是否正確使用當時可得資料」以及「研究與策略是否在扣除成本後產生穩定增益」。
 
 回測 Agent 不修改正式資料、不調整線上帳戶、不下單，也不能使用回測日期之後的資訊。第一版由 Codex 或 Claude 工作階段載入規劃中的 `strategy-backtest` Skill，選擇核准的實驗與診斷工具；歷史時鐘、特徵、成交、帳務、費稅與績效一律由確定性 Python 物件執行。
