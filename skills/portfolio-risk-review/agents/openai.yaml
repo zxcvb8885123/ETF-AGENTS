@@ -1,0 +1,4 @@
+interface:
+  display_name: "投資組合風險審查"
+  short_description: "審查配置、情境與硬性風控並提出受限修正"
+  default_prompt: "使用 $portfolio-risk-review 審查已驗證的配置、情境與 Guard 結果，產生可驗證的 RiskReview。"

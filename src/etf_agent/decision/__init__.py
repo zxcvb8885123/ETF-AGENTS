@@ -17,6 +17,25 @@ from .trade_intent import (
     TradeIntentResultValidator,
     build_role_input_artifact,
 )
+from .allocation import (
+    AllocationOrderEngine,
+    DecisionPolicyValidator,
+    ProposalValidator,
+    decision_policy_sha256,
+)
+from .risk import (
+    CompetitionGuardV2,
+    GuardValidator,
+    RiskReviewValidator,
+    ScenarioEngine,
+    ScenarioValidator,
+    revision_effects,
+)
+from .finalization import (
+    DecisionFinalizer,
+    DecisionRepository,
+    DecisionResultValidator,
+)
 from .service import PortfolioDecisionApplicationService
 
 __all__ = [
@@ -34,5 +53,18 @@ __all__ = [
     "TradeDebateValidator",
     "TradeIntentResultValidator",
     "build_role_input_artifact",
+    "AllocationOrderEngine",
+    "DecisionPolicyValidator",
+    "ProposalValidator",
+    "decision_policy_sha256",
+    "ScenarioEngine",
+    "ScenarioValidator",
+    "CompetitionGuardV2",
+    "GuardValidator",
+    "RiskReviewValidator",
+    "revision_effects",
+    "DecisionFinalizer",
+    "DecisionResultValidator",
+    "DecisionRepository",
     "PortfolioDecisionApplicationService",
 ]

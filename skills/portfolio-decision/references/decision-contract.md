@@ -1,4 +1,4 @@
-# Portfolio Decision P0-P2 契約
+# Portfolio Decision P0-P5 契約
 
 ## DecisionInputBundle
 
@@ -101,3 +101,63 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 - 已持股不得裁決為 `buy`；未持股不得裁決為 `add/hold/trim/exit/forced_exit`。
 - P0～P2 禁止任何權重、股數、費稅或訂單欄位。
 - Buy／Sell packet、TradeDebateBundle 與 TradeIntentResult 都保存 `content_sha256`；內容被改寫但 hash 未更新時拒絕。
+
+## DecisionPolicy 與 ProposalBundle
+
+`DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的配置／執行設定。它保存 TWD 幣別、現金緩衝、預設目標權重、減碼比例、手續費、交易稅、最低費用、交易單位、滑價、換手與權重上限、持股檔數、全部基準 Active Share 門檻、壓力情境及三次修正上限。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。
+
+第一版 `lot_size` 必須固定為 `1000`，也就是一張。`OrderProposal` 同時輸出 `lots` 與 `shares=lots*1000`；不產生零股單。帳戶既有持股若不是 1,000 股的整數倍，配置流程停止並要求先提供明確的零股處理政策。
+
+必要欄位如下；`content_sha256` 使用移除自身欄位後的 canonical JSON SHA-256：
+
+```json
+{
+  "schema_version": "1.0",
+  "policy_id": "policy-id",
+  "available_at": "2026-09-21T08:00:00+08:00",
+  "currency": "TWD",
+  "cash_buffer_rate": "0.05",
+  "default_target_weight": "0.04",
+  "trim_fraction": "0.50",
+  "commission_rate": "0.001425",
+  "sell_tax_rate": "0.003",
+  "minimum_commission": "20",
+  "lot_size": 1000,
+  "slippage_bps": "10",
+  "max_turnover_rate": "0.30",
+  "max_stock_weight": "0.10",
+  "special_weight_limits": {"2330.TW": "0.25"},
+  "max_sector_weight": "0.30",
+  "sector_classification_version": "version-id",
+  "sector_by_symbol": {"2330.TW": "半導體"},
+  "min_positions": 20,
+  "max_positions": 30,
+  "cash_weight_ceiling": "0.25",
+  "minimum_active_share": "0.20",
+  "stress_price_decline_rate": "0.10",
+  "stress_slippage_multiplier": "2",
+  "reuse_sell_proceeds": false,
+  "max_revisions": 3,
+  "content_sha256": "canonical SHA-256"
+}
+```
+
+`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。內容必須可由原始帳戶、cutoff 行情、TradeIntentResult 與 DecisionPolicy 完整重算。
+
+## ScenarioResult、GuardResult 與 RiskReview
+
+`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力；流動性情境保存成交率與未成交股數，不冒充 cutoff 後行情。`GuardResult` 對取整後組合檢查交易池、明確可交易狀態、持股數、現金、個股權重、換手、情境、強制退出流動性，以及 DecisionInputBundle 內每一份基準的 Active Share。
+
+Portfolio Risk Agent 只輸出 `RiskReview`：
+
+- `decision` 限定 `approve`、`revise`、`reject`。
+- Guard 失敗時不得 `approve`。
+- `revise` 只允許 `remove_candidate`、`increase_cash_buffer`、`reduce_max_stock_weight`、`reduce_turnover_limit`，且不能提高風險。
+- 修正序號必須連續且最多三次；每次重新建立 Proposal、Scenario、Guard 與 RiskReview。
+- `evidence_ids` 必須來自共同輸入；未知欄位或權重／股數等手寫結果一律拒絕。
+
+## DecisionResult 與保存
+
+完整 Validator 重建 Proposal、Scenario、Guard 與 RiskReview 後才產生 `DecisionResult`。Risk approve、Guard passed 且存在訂單時為 `approved`；通過相同檢查但沒有訂單時為 `no_trade`；其他情況為 `rejected`。拒絕結果的最終 `orders` 必須為空。
+
+`DecisionRepository` 以 run ID 原子保存所有 artifacts 與 SHA-256 manifest。相同 run ID、相同內容可重試；相同 run ID 的不同內容拒絕覆蓋。這些結果只供回測與人工檢查，不代表已下單或正式送件。
