@@ -4,6 +4,8 @@
 
 > 計畫狀態（2026-09-22）：Data Agent M0 已完成，M1 進行中；事件研究多子 Agent、市場情緒／分析師研究 MVP、Research Report V0、Portfolio Decision P0～P6、回測 Agent B0～B2，以及 DailyReport／FailureReport A0～A1 fixture／離線版已完成。真實 Perception Provider、正式帳戶／規則接入、正式歷史回測、D-Plan 與正式排程尚未完成。第一版仍不接 LLM API、LangChain、LangGraph 或 CLIProxyAPI。
 
+新增研究支線（2026-09-22）：[基本面研究 Agent](fundamental_research_agent_plan.md) 的 FR0～FR3 fixture MVP 已完成：固定 Snapshot 資料包、可重算指標、結果 Validator、CLI 與 Skill。FR4 有限真實資料演練及 FR5 下游升版待完成；不取代 M1 交易狀態、M2／M3 或正式決策前置驗收。
+
 ## 整體流程
 
 ```text
@@ -11,7 +13,7 @@
   行情、公告、基本面 → 資料庫 → 研究快照與市場狀態
                        ↓
 第二層｜研究與分析
-  事件研究＋市場情緒與分析師研究（次級訊號）＋動能分析（後續）
+  事件研究＋基本面研究（fixture MVP）＋市場情緒與分析師研究（次級訊號）＋動能分析（後續）
   → 進攻／防守候選
   └→ Research Report V0（研究整合，不含交易決策）
                        ↓
@@ -51,6 +53,7 @@
 | 資料研究 | `skills/event-data/SKILL.md` | 查詢公告、讀取資料庫、驗證及保存事件 |
 | 事件分析 | `skills/event-analysis/SKILL.md` | 查詢事件原文、公司基本面與行情特徵 |
 | 市場情緒與分析師研究 | `skills/sentiment-analyst/SKILL.md` | 標記情緒、聚合分歧與熱度、計算分析師共識修正及事件預期差 |
+| 基本面研究 | `skills/fundamental-research/SKILL.md` | 唯讀財報 Snapshot、確定性比率、有引用的研究解讀；不產生交易候選 |
 | 研究報告整合（不是決策 Agent） | `skills/research-report/SKILL.md` | 驗證同一 Snapshot 的研究 artifact，建立同源 JSON／Markdown |
 | 投資組合買賣決策主控 | `skills/portfolio-decision/SKILL.md` | 固定子 Agent 順序、限制修正次數、重播完整修正鏈並保存 `DecisionResult` |
 | 動能與市場狀態 | `skills/momentum-regime/SKILL.md`（規劃） | 解讀確定性動能、波動、流動性與市場寬度結果 |
@@ -62,6 +65,12 @@
 | D-Plan Builder／Validator（確定性程式，不是新 Agent） | 不需要獨立 Skill | 合併 Snapshot、研究、決策與風控輸出；配置引用 ID，執行 JSON Schema 與語意驗證 |
 
 Skill 文件定義任務流程、證據要求與輸出格式，由控制器載入給 LLM；`cli/` 是 Skill、人工與排程共用的穩定命令入口；`src/etf_agent/` 則保存實際 runtime、資料契約與確定性計算。各角色先共用一個應用程式，無須各自部署成服務。動能計算、交易數量、費稅與風控限制由程式執行；LLM 負責事件理解及有來源的文字說明。
+
+## 基本面研究 Agent
+
+基本面研究回答公司持續性的營運與財務結構問題；事件研究回答特定事件造成的改變。Data Agent 仍負責來源收集與版本保存。首版支援有核實欄位的一般業損益表／資產負債表與確定性比率；缺少比較期間不形成趨勢，金融業不套用一般業公式。結果須有相同 Snapshot／cutoff、完整引用及可重算指標，不輸出買賣評等、目標價、配置或訂單。
+
+FR0 契約、FR1 資料包、FR2 指標與 Validator、FR3 CLI／Skill 已完成 fixture MVP。下一步為 FR4 有限真實資料演練，再進行 FR5 下游升版。現有 Research Report 與 Portfolio Decision 尚不接受基本面結果；接入時需同步升版、重建驗證，並將相同資料提供給隔離的 Buy／Sell。詳見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
 
 ## 市場情緒與分析師研究 Agent
 
