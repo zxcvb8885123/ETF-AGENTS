@@ -1,12 +1,14 @@
-# 自動化排程與報告 Agent 計畫 V1
+# 自動化排程與報告 Agent 計畫 V2
 
-> 開發順序：事件研究 Agent、投資組合買賣決策與風控多子 Agent 及回測 Agent 完成，且固定版本前向驗證通過後最後實作。
+> 更新日期：2026-09-21。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
 
 > 現況：Research Report V0 已完成研究層 artifact 的 JSON／Markdown 整合與完整重建驗證；它不包含本文件規劃的 DecisionResult、D-Plan、正式 DailyReport、FailureReport、排程或通知。
 
 ## 定位
 
 本 Agent 負責在固定時間啟動已驗證的 Data、Research、Portfolio／Risk 流程，保存每個階段的結果，組裝 D-Plan 與人類可讀報告，並在失敗時通知使用者。它不能修改研究結論、重算權重、放寬風控、直接下單或自動送件。
+
+架構不設「主辦平台送件／交易執行 Agent」。本 Agent 的交付終點是報告、已驗證候選檔與人工檢視資訊；平台送件與交易屬系統外的人工操作，也不列入本計畫的後續開發階段。人工確認不會觸發任何外部送件或交易。
 
 排程本身使用一般 scheduler 執行確定性工作；只有需要摘要、解釋失敗或整理報告文字時，才由 Codex／Claude 工作階段載入規劃中的 `daily-report` Skill。第一版不需要模型 API、LangChain、LangGraph 或 CLIProxyAPI。
 
@@ -16,13 +18,14 @@
 排程觸發並建立 pipeline_run_id
   → Data Agent 更新資料並建立 ResearchSnapshot
   → 事件研究 Agent 產生 ResearchResult
+  → 選配市場認知結果及其版本化 PerceptionDataBundle（缺少時明確降級）
   → 投資組合買賣決策與風控多子 Agent 產生 DecisionResult
   → 驗證所有 run_id、snapshot_id、cutoff 與版本一致
   → DPlanBuilder 組裝官方 D-Plan 4.0
   → DPlanValidator 執行 JSON Schema＋語意驗證
       ├─ 失敗 → FailureReport＋通知，停止送件候選
       └─ 通過 → D-Plan.json＋DailyReport
-  → 人工確認與手動送件
+  → 交付人工檢視，系統流程結束
 ```
 
 任何前置階段失敗時不得跳過或沿用未知版本結果。是否允許使用最近一次已知良好結果必須由明確規則決定，並在報告中標記資料日期；預設 fail closed。
@@ -33,10 +36,11 @@
 
 - `DataAgentResult`／`ResearchSnapshot`
 - `ResearchResult`
+- 選配的 `MarketPerceptionResult`／`PerceptionDataBundle`，必須成對且通過驗證
 - `DecisionResult`／`GuardResult`
 - `BacktestReport`／前向驗證狀態
 - 官方 `D-Plan.schema.json`、語意規則及競賽設定版本
-- 排程、截止時間、通知政策與人工確認狀態
+- 排程、截止時間、通知政策與執行模式（fixture／正式）
 
 輸出：
 
@@ -59,9 +63,11 @@
 | `DPlanValidator` | 執行官方 JSON Schema 4.0 與 C1／C2／C6／C9／C11／C12／C14 規則 |
 | `DailyReportBuilder` | 產生人類可讀報告，不改寫來源數字或風控結果 |
 | `NotificationPolicy` | 只在完成、失敗或需要人工處理時通知 |
-| `ManualApprovalGate` | 在送件前要求人工確認 |
+| `ReviewHandoff` | 列出檔案、雜湊、驗證結果及待人工檢視事項；可保存檢視紀錄，不執行送件或交易 |
 
 D-Plan Builder／Validator 是確定性程式，不是另一個會自行推論的 LLM Agent。報告 Agent 可以整理文字，但所有數字、引用、決策與訂單必須直接來自已驗證契約。
+
+一般 scheduler 只啟動確定性 CLI。需要 Agent 推論但尚無已配置的 Codex／Claude 工作階段時，流程保存 `waiting_for_agent` 狀態與輸入 artifact；收到通過驗證的輸出後才能續跑，不宣稱單靠 scheduler 已完成無人值守推論。
 
 ## 排程草案
 
@@ -84,11 +90,53 @@ D-Plan Builder／Validator 是確定性程式，不是另一個會自行推論�
 
 ## 開發里程碑
 
-1. **A0 執行契約**：建立 `PipelineRun`、階段狀態機、RunManifest 與 artifact 目錄。
-2. **A1 D-Plan**：將官方 schema 納入專案，實作 Builder、schema validator、語意 validator 與 fixture。
-3. **A2 報告**：實作 DailyReport／FailureReport Builder，驗證所有數字可回溯。
-4. **A3 排程**：加入本機排程、鎖定、防重複執行、有限重試與通知政策。
-5. **A4 Agent 整合**：建立 `daily-report` Skill，由 Codex／Claude 產生有引用的說明文字。
-6. **A5 演練**：以成功、資料缺漏、來源故障、研究失敗、風控拒絕與 schema 失敗情境做端到端測試。
+Research Report V0 不代表正式 DailyReport；A0／A1 已完成 fixture／離線版，A2 以後仍為規劃。
 
-完成條件：每日流程可以重跑且不重複寫入；失敗時停止在正確階段；D-Plan 通過官方驗證；報告與送件候選可回溯到同一組輸入版本；人工批准前不會發生外部送件或交易。
+| 階段 | 具體工作與交付 | 驗收條件 |
+| --- | --- | --- |
+| A0 執行契約與離線編排 | **已完成：fixture／離線版。** `PipelineRun`、`RunManifest`、不可變 artifact 儲存、上游 adapter 與最小 CLI；先讀取已保存結果 | 驗證 Snapshot、含時區 cutoff、版本及內容雜湊；上游失敗停止下游；可重建、可驗證、可續跑 |
+| A1 每日／失敗報告 | **已完成：fixture／離線版。** DailyReport 同源 JSON／Markdown、FailureReport、重建 validator；整合研究、決策與風控的已驗證結果 | 修改任一數字、引用或風控結果均被拒絕；研究資料不足時輸出降級 DailyReport；風控拒絕、資料不符或執行鍵衝突時只封存 FailureReport |
+| A2 D-Plan 候選檔 | 待官方規格。取得並封存官方 schema 與語意規則的來源／版本／雜湊；建立 Builder、Validator、ReviewHandoff | 完整引用鏈且可重算；缺官方規格時標記 blocked，不以自建 fixture 宣稱通過官方驗證；失敗不發布候選檔 |
+| A3 排程與恢復 | 本機 scheduler adapter、交易日／截止時間設定、互斥鎖、防重複、有限重試、續跑與通知紀錄 | 重複觸發不重複發布；程序中斷可恢復；逾時停止；通知失敗不使既有通過產物失效，且可獨立重試 |
+| A4 Daily-report Skill 整合 | `skills/daily-report/`、Agent 工作階段交接與操作文件；沿用既有 `cli/daily_report.py` | `$daily-report` 明確出現在 default_prompt；CLI 支援執行、狀態、驗證與續跑；文字不可改寫已驗證事實／決策 |
+| A5 端到端演練與正式啟用驗收 | fixture 故障注入、真實資料 dry-run、固定版本前向驗證證據與正式啟用清單 | fixture 與正式產物明確區隔；正式資料、帳戶、交易狀態、競賽規則與回測／前向驗證均通過，才可啟用正式排程 |
+
+核心邏輯放在 `src/etf_agent/automation/` 與 `src/etf_agent/runtime/`，報告 Builder／Validator 延伸 `src/etf_agent/reporting/`；`cli/` 提供人工、排程與 Skill 共用的命令入口，Skill 只定義 Agent 工作流程。A0 起提供最小離線 CLI，各階段同步加入測試，A4 再整合完整操作介面。
+
+### 已完成的離線入口
+
+`cli/daily_report.py` 已提供 A0／A1 的三個確定性操作：
+
+- `run`：驗證封存的 Decision run、對齊同一份 Snapshot 與 ResearchResult，成功時產生 DailyReport，失敗時只封存 FailureReport。
+- `validate`：以原始輸入完整重建 DailyReport。
+- `verify-run`：驗證已封存 pipeline run 的 manifest 與每個檔案雜湊。
+
+建立前必須先以投資組合決策 CLI 保存完整、已驗證的 Decision run。例如：
+
+```bash
+PYTHONPATH=src python3 cli/daily_report.py run \
+  --execution-mode fixture \
+  --generated-at 2026-09-20T01:05:00+00:00 \
+  --pipeline-run-id fixture-20260920-1 \
+  --repository artifacts/pipeline_runs \
+  --snapshot /path/to/research_snapshot.json \
+  --research /path/to/research_result.json \
+  --decision-repository /path/to/portfolio_decisions \
+  --decision-run-id decision-run-id
+```
+
+`fixture` 只用於契約與故障分支驗收，並非真實資料或正式日常決策。相同執行日、cutoff、模式與策略規格若有相同輸入，會回傳既有封存結果；若輸入內容不同，則封存 FailureReport 並拒絕重複發布。
+
+## 執行契約與驗收案例
+
+- `PipelineRun` 保存 run ID、執行模式、策略／程式／設定版本、含時區 cutoff、階段輸入輸出雜湊、開始／結束時間、重試次數與錯誤碼。`RunManifest` 封存所有必要輸入引用，禁止悄悄換成最新版本。
+- 階段狀態採 `pending → running → succeeded`；可轉入 `waiting_for_agent`、`failed` 或 `blocked`。等待輸出不可標為成功；截止前仍缺必要 artifact 時停止該 run。
+- 防重複鍵包含業務日期、cutoff、執行模式與設定／策略版本；同鍵相同輸入回傳既有結果，同鍵不同輸入拒絕覆寫。重試保存獨立 attempt，已封存產物保持不可變。
+- 報告與候選檔先在暫存區完整驗證，再一次發布；重啟不得把半成品視為成功。D-Plan 失敗可保留內部診斷，但只交付 FailureReport，不交付可用候選檔。
+- 測試涵蓋 cutoff 後資料、缺時區、Snapshot／版本不符、引用不存在、產物遭修改、缺必要資料、風控拒絕、schema 不符、重複觸發、中斷恢復、超時與通知故障。
+- 市場認知缺少時允許明確降級；若有提供，必須成對驗證 bundle／result、授權與時間一致性。必要決策、風控或正式啟用證據缺少時停止。
+- 每次修改 Python、契約、CLI 或 Skill，依 `AGENTS.md` 執行完整 unittest、compileall 與 diff check；新增 Skill 再執行 quick_validate。
+
+完成條件：每日流程可重跑且不重複發布；失敗停在正確階段；報告與候選檔可回溯到同一組輸入版本；D-Plan 通過已封存的官方規格驗證；整個流程以交付人工檢視結束，不具備外部送件或交易執行能力。
+
+建議下一個實作範圍為 **A0＋A1：離線編排與每日／失敗報告**，使用既有已驗證 artifact 建立可重建、可驗收的最小流程。官方規格與正式上游尚未齊備時，A2／正式啟用維持 blocked，不影響離線契約與報告測試。
