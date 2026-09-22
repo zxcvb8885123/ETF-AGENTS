@@ -1,5 +1,6 @@
 {
   "competition": "AI CUP 2026 Agent 基金經理人",
+  "initial_capital_twd": 1000000000,
   "universe_size": 150,
   "universe_source": {
     "filename": "玉山挑戰賽_投資組合及交易標的_150檔清單_v1.pdf",

@@ -25,6 +25,9 @@ class CompetitionGuardTests(unittest.TestCase):
         self.assertTrue(result.passed, result.errors)
         self.assertGreaterEqual(result.active_share, 0.2)
 
+    def test_initial_competition_capital_is_one_billion_twd(self):
+        self.assertEqual(self.guard.rules["initial_capital_twd"], 1_000_000_000)
+
     def test_rejects_cash_at_or_above_25_percent(self):
         result = self.guard.validate(valid_portfolio(cash=30.0), self.benchmark)
         self.assertFalse(result.passed)
