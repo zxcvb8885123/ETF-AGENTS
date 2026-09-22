@@ -60,7 +60,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；正式帳戶、可交易狀態、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與正式排程尚未接入。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；正式帳戶、可交易狀態、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與正式排程尚未接入。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已接入，目前接續財報彙總、交易狀態與細粒度工具。官方歷史 CLI 只驗證保存區間與終止日覆蓋；尚無版本化交易日曆，不能宣稱期間內每個交易日完整，也不能用於正式歷史回測。之後才依序進行新聞候選（M2）與    Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
@@ -91,6 +91,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 第一個下游 Agent；事件證據、補查、引用與研究結果 |
 | [市場情緒與分析師研究 Agent 計畫](docs/sentiment_analyst_agent_plan.md) | 市場情緒、共識修正、預期差、資料授權與時間點驗證 |
 | [Research Report V0 計畫](docs/research_report_plan.md) | 將研究層輸出整合為可稽核 JSON／Markdown，不包含交易決策 |
+| [本地 Agent 真實資料研究演練](docs/local_research_dry_run_plan.md) | 已完成：固定快照、3 件事件獨立研究、雙重驗證、降級 Research Report 與決策缺口清單 |
 | [投資組合買賣決策與風控多子 Agent 計畫](docs/momentum_portfolio_risk_agent_plan.md) | Portfolio Decision 主控、五個子 Agent、確定性配置／訂單及競賽風控 |
 | [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
 | [P7 回測 Agent 第一批計畫](docs/backtest_mvp_plan.md) | B0～B2 fixture MVP 已完成：歷史時鐘、時間點資料、整張成交、交割與多日帳務重播 |

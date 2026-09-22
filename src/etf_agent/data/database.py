@@ -102,9 +102,9 @@ FROM (
             ORDER BY CASE source
                 WHEN 'TPEX_TRADING_STOCK' THEN 1
                 WHEN 'TWSE_STOCK_DAY' THEN 1
-                WHEN 'YAHOO_FINANCE' THEN 2
-                WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
-                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
+                WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
+                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
+                WHEN 'YAHOO_FINANCE' THEN 3
                 ELSE 9
             END
         ) AS source_rank

@@ -49,6 +49,31 @@ class SnapshotRepository:
     ):
         row = connection.execute(
             """
+            WITH universe AS (
+                SELECT COUNT(*) AS size
+                FROM instruments
+                WHERE in_competition_universe = 1
+            ), covered_dates AS (
+                SELECT daily_prices.trade_date,
+                       COUNT(DISTINCT daily_prices.symbol) AS symbol_count
+                FROM daily_prices
+                JOIN instruments USING(symbol)
+                WHERE instruments.in_competition_universe = 1
+                  AND daily_prices.trade_date <= ?
+                  AND daily_prices.fetched_at <= ?
+                GROUP BY daily_prices.trade_date
+            )
+            SELECT MAX(trade_date) AS value
+            FROM covered_dates
+            WHERE symbol_count = (SELECT size FROM universe)
+            """,
+            (price_date_limit, cutoff),
+        ).fetchone()
+        if row and row["value"]:
+            return str(row["value"])
+
+        row = connection.execute(
+            """
             SELECT MAX(daily_prices.trade_date) AS value
             FROM daily_prices
             JOIN instruments USING(symbol)
@@ -73,11 +98,11 @@ class SnapshotRepository:
                        ROW_NUMBER() OVER (
                            PARTITION BY daily_prices.symbol, daily_prices.trade_date
                            ORDER BY CASE daily_prices.source
-                               WHEN 'YAHOO_FINANCE' THEN 1
-                               WHEN 'TPEX_TRADING_STOCK' THEN 2
-                               WHEN 'TWSE_STOCK_DAY' THEN 2
-                               WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
-                               WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
+                               WHEN 'TPEX_TRADING_STOCK' THEN 1
+                               WHEN 'TWSE_STOCK_DAY' THEN 1
+                               WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
+                               WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
+                               WHEN 'YAHOO_FINANCE' THEN 3
                                ELSE 9
                            END
                        ) AS source_rank

@@ -13,6 +13,7 @@ from etf_agent.data import (
     TwseDailyProvider,
     collect_latest_prices,
 )
+from etf_agent.data.evidence import SourceEvidenceBuilder
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,17 @@ class TpexFixtureProvider(TpexDailyProvider):
 
 
 class DataCollectionTests(unittest.TestCase):
+    def test_price_evidence_id_is_unique_per_symbol_in_one_raw_response(self):
+        first = SourceEvidenceBuilder.price_evidence_id(
+            {"raw_payload_id": 42, "symbol": "2330.TW", "trade_date": "2026-09-21"}
+        )
+        second = SourceEvidenceBuilder.price_evidence_id(
+            {"raw_payload_id": 42, "symbol": "3718.TWO", "trade_date": "2026-09-21"}
+        )
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, "price:42:2330.TW:2026-09-21")
+
     def test_parses_roc_date_and_numeric_fields(self):
         prices, warnings = TwseDailyProvider.parse(FIXTURE.read_text(encoding="utf-8"))
         self.assertEqual(warnings, [])

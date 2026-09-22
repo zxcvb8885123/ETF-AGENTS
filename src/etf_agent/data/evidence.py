@@ -98,8 +98,9 @@ class SourceEvidenceBuilder:
 
     @staticmethod
     def price_evidence_id(row) -> str:
-        return "price:%d:%s" % (
+        return "price:%d:%s:%s" % (
             int(row["raw_payload_id"]),
+            str(row["symbol"]).upper(),
             str(row["trade_date"]),
         )
 
