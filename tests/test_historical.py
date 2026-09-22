@@ -4,14 +4,17 @@ import unittest
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from etf_agent.data import (
+    DataAgentService,
     DailyPrice,
     HistoricalPriceProvider,
     HistoricalResponse,
     Instrument,
     MarketDataDatabase,
     OfficialHistoricalRefreshService,
+    YFinanceHistoryCollector,
     month_starts,
     plan_history_refresh,
 )
@@ -56,21 +59,21 @@ class OfficialHistoryFixtureProvider:
         )
 
 
-def seed_latest_price(database, instrument, source):
+def seed_latest_price(database, instrument, source, trade_date="2026-09-17"):
     database.initialize()
     with database.connect() as connection:
         database.upsert_instruments(connection, [instrument], True)
-        run_id = "seed-" + instrument.symbol
+        run_id = "seed-%s-%s-%s" % (source, instrument.symbol, trade_date)
         connection.execute(
             "INSERT INTO collection_runs(run_id, source, started_at, status) VALUES (?, ?, ?, 'success')",
-            (run_id, source, "2026-09-17T06:00:00+00:00"),
+            (run_id, source, "%sT06:00:00+00:00" % trade_date),
         )
         payload_id = database.insert_raw_payload(
             connection,
             run_id,
             source,
             "fixture://latest/%s" % instrument.symbol,
-            "2026-09-17T06:00:00+00:00",
+            "%sT06:00:00+00:00" % trade_date,
             "{}",
         )
         database.upsert_prices(
@@ -80,7 +83,7 @@ def seed_latest_price(database, instrument, source):
                     symbol=instrument.symbol,
                     code=instrument.code,
                     name=instrument.name,
-                    trade_date="2026-09-17",
+                    trade_date=trade_date,
                     open_price=Decimal("100"),
                     high_price=Decimal("101"),
                     low_price=Decimal("99"),
@@ -92,13 +95,76 @@ def seed_latest_price(database, instrument, source):
                 )
             ],
             source,
-            "2026-09-17T06:00:00+00:00",
+            "%sT06:00:00+00:00" % trade_date,
             run_id,
             payload_id,
         )
 
 
 class HistoricalProviderTests(unittest.TestCase):
+    def test_snapshot_uses_latest_fully_covered_day_and_official_price(self):
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            for instrument in universe:
+                seed_latest_price(
+                    database, instrument, "YAHOO_FINANCE", "2026-09-21"
+                )
+            seed_latest_price(
+                database, universe[0], "TWSE_STOCK_DAY_ALL", "2026-09-21"
+            )
+            seed_latest_price(
+                database, universe[1], "TPEX_MAINBOARD_QUOTES", "2026-09-22"
+            )
+
+            snapshot = DataAgentService(database).build_snapshot(
+                "2026-09-22T18:00:00+08:00",
+                require_universe_validation=False,
+            )
+
+        self.assertTrue(snapshot.usable)
+        self.assertEqual(snapshot.latest_trade_date, "2026-09-21")
+        self.assertEqual(snapshot.latest_price_symbols, 2)
+        self.assertEqual(
+            [(item.symbol, item.source) for item in snapshot.latest_prices],
+            [("2330.TW", "TWSE_STOCK_DAY_ALL"), ("3718.TWO", "YAHOO_FINANCE")],
+        )
+
+    def test_yfinance_collection_requests_day_after_safe_end(self):
+        class EmptyColumns:
+            nlevels = 1
+
+        class EmptyFrame:
+            columns = EmptyColumns()
+            empty = True
+
+            def dropna(self, **_kwargs):
+                return self
+
+        class RecordingYFinance:
+            def __init__(self):
+                self.calls = []
+
+            def download(self, symbols, **kwargs):
+                self.calls.append((symbols, kwargs))
+                return EmptyFrame()
+
+        provider = RecordingYFinance()
+        instrument = Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14")
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            collector = YFinanceHistoryCollector(database, retries=0)
+            with patch("etf_agent.data.yfinance_history.importlib.import_module", return_value=provider):
+                result = collector.collect(
+                    [instrument], date(2026, 9, 10), date(2026, 9, 21)
+                )
+
+        self.assertEqual(result.missing_symbols, ("2330.TW",))
+        self.assertEqual(provider.calls[0][1]["end"], "2026-09-22")
+
     def test_month_starts_includes_partial_boundary_months(self):
         self.assertEqual(
             month_starts(date(2024, 9, 13), date(2026, 9, 13))[0],

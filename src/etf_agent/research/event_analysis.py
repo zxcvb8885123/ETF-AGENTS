@@ -106,11 +106,11 @@ class HistoricalPriceFeatureRepository:
                            ROW_NUMBER() OVER (
                                PARTITION BY symbol, trade_date
                                ORDER BY CASE source
-                                   WHEN 'YAHOO_FINANCE' THEN 1
-                                   WHEN 'TPEX_TRADING_STOCK' THEN 2
-                                   WHEN 'TWSE_STOCK_DAY' THEN 2
-                                   WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
-                                   WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
+                                   WHEN 'TPEX_TRADING_STOCK' THEN 1
+                                   WHEN 'TWSE_STOCK_DAY' THEN 1
+                                   WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
+                                   WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
+                                   WHEN 'YAHOO_FINANCE' THEN 3
                                    ELSE 9
                                END
                            ) AS source_rank
@@ -323,8 +323,8 @@ class SnapshotResearchTools:
         lookback_days: int = 45,
         limit: int = 100,
     ) -> List[Dict[str, object]]:
-        if lookback_days <= 0 or limit <= 0 or limit > 500:
-            raise ResearchToolError("lookback_days 必須為正數，limit 必須介於 1～500")
+        if lookback_days <= 0 or limit <= 0 or limit > 1000:
+            raise ResearchToolError("lookback_days 必須為正數，limit 必須介於 1～1000")
         earliest = self.cutoff_time - timedelta(days=lookback_days)
         selected: List[Dict[str, object]] = []
         for document in self.documents:

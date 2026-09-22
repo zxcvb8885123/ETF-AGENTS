@@ -86,6 +86,8 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 ## 開發順序與目前狀態
 
+[本地 Agent 真實資料研究演練](local_research_dry_run_plan.md)已完成：同一可用 Snapshot 的 525 件 45 日候選中，三件事件以獨立多空研究通過雙重驗證並建立 Research Report V0。報告因沒有合法、歷史化的市場認知資料而明確降級，三件均為 `pending`，不產生交易候選。這是有限範圍的整合驗收，不改變 M1～M4 與正式決策／回測的前置要求。
+
 | 順序 | 階段 | 狀態 | 下一個明確成果 |
 | ---: | --- | --- | --- |
 | 0 | Data Agent 基礎版 | 已完成 | SQLite、TWSE／TPEx 月營收與重大訊息、歷史行情、不可變 Snapshot、`event-data` Skill 與 CLI |
@@ -95,7 +97,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 | 4 | Data Agent M3 | 待 M2 通過 | `DataAgentRequest`／`DataAgentResult`、工具軌跡、Codex／Claude 共用 Skill 工具循環 |
 | 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
 | 6 | 市場情緒與分析師研究 Agent | **契約／工具／Skill MVP 已完成**；真實 Provider 待審查 | 接入通過授權與歷史時間驗證的來源，建立人工標註集與消融評估 |
-| 7 | Research Report V0 | **已完成** | 用真實、已驗證研究 artifact 執行並人工檢查報告 |
+| 7 | Research Report V0 | **已完成；已通過一次三事件真實資料演練（降級）** | 接入合法、歷史化的市場認知資料後再驗證完整報告 |
 | 8 | 投資組合買賣決策與風控多子 Agent | **P0～P6 fixture 驗收已完成** | 整張配置／費稅、部分成交情境重建、必備基準 Guard、完整修正鏈、最終重建與磁碟封存驗證已完成；下一步 P7 回測 |
 | 9 | Data Agent M4 | 回測前置 PoC | 補齊可證明 `published_at`／`available_at` 的歷史資料、公司行動與時間點 Snapshot |
 | 10 | 回測 Agent | **B0～B2 fixture MVP 已完成**；正式資料待 M4 | 歷史時鐘、時間點研究版本、整張成交、交割、公司行動、封存與帳務驗收已完成；策略比較、Agent 評估及未見資料驗證待後續 |
