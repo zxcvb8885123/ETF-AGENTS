@@ -1,0 +1,4 @@
+interface:
+  display_name: "基本面研究 Agent"
+  short_description: "以可重算財報指標研究公司營運與財務結構"
+  default_prompt: "使用 $fundamental-research 從同一份 ResearchSnapshot 建立並驗證基本面研究結果。"

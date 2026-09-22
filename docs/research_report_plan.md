@@ -67,3 +67,7 @@ Research Report V0 是研究層的確定性整合產物，不是新的投資決�
 - 沒有 Perception 時仍能產生明確降級的事件研究報告。
 - 任一報告欄位被修改後 Validator 必定拒絕。
 - 全套測試與 Skill 結構驗證通過。
+
+## 基本面研究後續接入（規劃）
+
+[基本面研究 Agent 計畫](fundamental_research_agent_plan.md) 已建立，但目前 ResearchReport 1.0 不接受 FundamentalResearchResult。FR5 須另行升版，將 result、原始 bundle 與 metrics 成組驗證，核對同一 Snapshot／cutoff、版本與完整引用，並維持同源 JSON／Markdown 重建。不得直接增加未列入白名單的欄位；未提供基本面輸入的既有流程維持原契約行為。此接入尚未實作。

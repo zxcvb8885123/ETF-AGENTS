@@ -28,6 +28,12 @@
 
 交易池、帳戶、必要價格或 ETF 基準缺失時停止該次流程；個別新聞缺失則標記缺失，不自動解讀為利多或利空。目前 `data/official_universe.csv` 已依 2026-09-14 新版官方 PDF 載入 150 檔，其中 `5371 中光電` 已由官方名單更新為 `3718 中光電投控`。每日仍須驗證代號與可交易狀態；任何未出現在官方名單的承接關係都不得自行套用。
 
+## 2.1 基本面研究模組（FR0～FR3 fixture MVP）
+
+新增研究層的 `fundamental-research`，唯讀同一 ResearchSnapshot 的已驗證財報，由 Python 建立資料包及計算比率，LLM 只解讀事實、假設、反證與限制。已實作 `FundamentalDataBundle`、`FundamentalMetrics` 與 `FundamentalResearchResult` 的重建驗證、CLI 和 Skill；只支援已有映射欄位的一般業，輸出不產生交易候選或訂單。詳細契約、Provider 邊界、FR0～FR5 順序及驗收見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
+
+研究報告、Portfolio Decision 與離線 DailyReport 的接入留到 FR5 顯式升版；目前契約不因本計畫自動接受新欄位。Buy／Sell 接入時共用相同已驗證基本面結果並保持角色隔離。正式決策與歷史回測的資料前置條件不變。
+
 ## 3. 買賣意圖裁決模組
 
 ### 元件
