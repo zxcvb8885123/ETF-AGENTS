@@ -1,8 +1,8 @@
 # 自動化排程與報告 Agent 計畫 V2
 
-> 更新日期：2026-09-21。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
+> 更新日期：2026-09-22。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
 
-> 現況：Research Report V0 已完成研究層 artifact 的 JSON／Markdown 整合與完整重建驗證；它不包含本文件規劃的 DecisionResult、D-Plan、正式 DailyReport、FailureReport、排程或通知。
+> 現況：Research Report V0 與 A0／A1 離線 DailyReport／FailureReport 已完成；真實資料端到端交付與正式排程尚未接通。下一批按[一鍵研究與報告交付計畫](report_delivery_agent_plan.md)完成 RPT0～RPT3，先提供按需研究報告及固定結果入口。
 
 ## 定位
 
@@ -139,4 +139,4 @@ PYTHONPATH=src python3 cli/daily_report.py run \
 
 完成條件：每日流程可重跑且不重複發布；失敗停在正確階段；報告與候選檔可回溯到同一組輸入版本；D-Plan 通過已封存的官方規格驗證；整個流程以交付人工檢視結束，不具備外部送件或交易執行能力。
 
-建議下一個實作範圍為 **A0＋A1：離線編排與每日／失敗報告**，使用既有已驗證 artifact 建立可重建、可驗收的最小流程。官方規格與正式上游尚未齊備時，A2／正式啟用維持 blocked，不影響離線契約與報告測試。
+A0／A1 已完成；下一個實作範圍改為[一鍵研究與報告交付計畫](report_delivery_agent_plan.md)的 **RPT0～RPT3**，沿用既有 Builder，補上資料時間、Agent 交接、續跑與固定格式交付。先做按需研究交付及 A4 的研究流程子集；A2 官方候選檔、A3 正式排程及 A5 正式啟用仍需原有前置驗收，不因研究報告可用而提前啟用。

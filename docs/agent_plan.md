@@ -101,7 +101,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 | ---: | --- | --- | --- |
 | 0 | Data Agent 基礎版 | 已完成 | SQLite、TWSE／TPEx 月營收與重大訊息、歷史行情、不可變 Snapshot、`event-data` Skill 與 CLI |
 | 1 | Data Agent M0 | 已完成 | 可重跑的來源探測、150 檔交易池狀態、`5371`／`3718` 回歸案例及 Snapshot fail-closed 閘門 |
-| 2 | Data Agent M1 | **進行中** | 最新行情與 Yahoo 兩年增量刷新已完成；下一成果是官方歷史行情 CLI，再做財報彙總、交易狀態與細粒度工具 |
+| 2 | Data Agent M1 | **進行中** | 官方歷史行情 CLI、財報彙總與交易狀態 TS1～TS4 已實作；財報覆蓋仍降級，交易狀態 TS0 來源核准與 TS5 150 檔實測待完成，再收尾細粒度工具 |
 | 3 | Data Agent M2 | 待 M1 通過 | TWSE RSS 與 Google News RSS 候選層、別名、去重及誤配檢查 |
 | 4 | Data Agent M3 | 待 M2 通過 | `DataAgentRequest`／`DataAgentResult`、工具軌跡、Codex／Claude 共用 Skill 工具循環 |
 | 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
@@ -115,3 +115,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收。市場情緒與分析師研究 Agent 已提前完成不依賴真實來源的 MVP，Research Report V0 也可整合已保存結果；回測 Agent 已完成 B0～B2 fixture 帳務驗收，但正式歷史 Provider、策略有效性與前向驗證仍待完成。自動化排程與報告 Agent 的 A0／A1 已可用封存 fixture 建立、重建與驗證 DailyReport／FailureReport，但不代表正式日常排程已啟用。正式決策主線仍依 `研究層驗收 → 多子 Agent 買賣裁決與確定性風控 → 回測 → 自動化排程／報告` 通過驗收。
 
 詳細規則見 [Data Agent 計畫](data_agent_plan.md)、[資料來源可行性測試](source_feasibility_2026-09-17.md)、[事件研究 Agent 計畫](event_strategy_v1.md)、[Research Report V0 計畫](research_report_plan.md)、[投資組合買賣決策與風控多子 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及[自動化排程／報告 Agent 計畫](automation_reporting_agent_plan.md)。
+
+## 下一批：按需報告交付（2026-09-22）
+
+依[自動化報告 Agent 一鍵交付計畫](report_delivery_agent_plan.md)先完成 RPT0～RPT3，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑及固定報告入口。這批先交付 Research Report V0 或等待／失敗診斷；正式 DailyReport、D-Plan 與排程仍須通過各自資料、決策及驗收前置條件。

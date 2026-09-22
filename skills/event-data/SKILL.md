@@ -19,6 +19,7 @@ metadata:
 6. 重播歷史決策時，執行 `snapshot` 並明確提供含時區的 `--decision-cutoff`。只有確定要使用目前 UTC 時間時才能省略。財報彙總端點的 `available_at` 是實際抓取時間，不能當作正式歷史回測的當時可得資料。
 7. 回報所有 `QUALITY` 旗標。不可用的快照不得交給策略。只有明確要求診斷時才能使用略過驗證的參數，而且該輸出不能作為正式研究輸入。
 8. 保留 `latest_prices` 與 `documents` 中的每個 `source_evidence_id`。`source_evidence` 是交接給下游 D-Plan 的稽核橋梁；不得在 Data Agent 內配置送件專用的 `S1`／`O1` ID。
+9. 建立交易狀態時使用 `cli/trading_status.py build-bundle`。輸入必須包含固定 Snapshot、含時區的 `decision_cutoff`、目標交易時段、來源覆蓋及原始回應解析結果；`validate` 會重建 `TradingStatusBundle` 與 `TradabilityAssessment`。`allowed` 只代表必要來源完整且沒有已知限制，`blocked` 與 `unknown` 都不得繞過 Portfolio Guard。
 
 從專案根目錄使用以下確定性入口：
 
@@ -33,6 +34,11 @@ PYTHONPATH=src python3 scripts/collect_financial_statements.py \
 .venv/bin/python cli/data_agent.py snapshot \
   --decision-cutoff 2026-09-16T13:30:00+08:00 \
   --output artifacts/research_snapshot.json
+PYTHONPATH=src python3 cli/trading_status.py build-bundle \
+  --request artifacts/trading-status/request.json \
+  --records artifacts/trading-status/records.json \
+  --coverage artifacts/trading-status/coverage.json \
+  --output artifacts/trading-status/bundle.json
 ```
 
 修改解析、版本或 cutoff 行為前，必須先閱讀[資料契約](references/data-contract.md)。
@@ -48,5 +54,7 @@ PYTHONPATH=src python3 scripts/collect_financial_statements.py \
 - 官方財報彙總端點的「出表日期」是內容／產製日期，不得聲稱為公司發布時間；沒有可靠發布時間時，證據的 `published_at` 必須是 `null`。
 - 官方交易池外的資料列不得進入研究文件。
 - 正式快照必須具備目前、版本相符且可用的交易池驗證。驗證缺漏、過期、降級或失敗時，必須關閉下游閘門。
+- 交易狀態來源的完整性與逐檔可交易性是兩個欄位。HTTP 失敗、未核准、未完成分頁、cutoff 後取得或缺少必要類別時輸出 `unknown`；確認停牌時可以是完整覆蓋，但 assessment 仍為 `blocked`。
+- `ResearchSnapshot.tradable_symbols` 與 `not_tradable_symbols` 是計數，不得轉成股票集合。正式決策使用成對的 `TradingStatusBundle`／`TradabilityAssessment`；舊 fixture 若仍使用名單，必須明確標示為相容測試入口。
 - 不得透過此 Skill 執行任意 SQL、刪除資料、下單或送出報告。
 - 不得產生 D-Plan 的市場觀點、推論、決策、不交易理由或訂單。後續的確定性 Builder 才能把下游結果與此快照證據組合成 D-Plan。

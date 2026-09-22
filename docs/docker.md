@@ -25,7 +25,10 @@ docker compose version
 ./start.sh official  # 只抓官方交易池；空白時停止
 ./start.sh all       # 開發模式：抓全部 TWSE 最新行情
 ./start.sh check     # 建置映像並執行設定檢查與測試
+./start.sh daily     # 一鍵驗證來源、更新行情／事件並建立今日 Snapshot
 ```
+
+`daily` 會先驗證官方來源與交易池，再更新上市／上櫃行情、歷史行情及月營收／重大訊息，最後以 `DAILY_CUTOFF`（未設定時使用 Asia/Taipei 現在時間）建立 `artifacts/research_snapshot_latest.json`。它不會自動產生或送出訂單；交易狀態正式來源、帳戶與競賽規則尚未完成時會依 fail-closed 規則停止下游決策。
 
 ## 手動 Docker 指令
 
