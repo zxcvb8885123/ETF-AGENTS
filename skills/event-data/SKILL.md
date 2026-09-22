@@ -24,13 +24,13 @@ metadata:
 
 ```bash
 PYTHONPATH=src python3 scripts/probe_data_sources.py
-.venv/bin/python skills/event-data/scripts/data_agent.py status
-.venv/bin/python skills/event-data/scripts/data_agent.py collect-prices
-.venv/bin/python skills/event-data/scripts/data_agent.py collect
+.venv/bin/python cli/data_agent.py status
+.venv/bin/python cli/data_agent.py collect-prices
+.venv/bin/python cli/data_agent.py collect
 PYTHONPATH=src python3 scripts/collect_financial_statements.py \
   --fiscal-year 2026 --fiscal-quarter 2 \
   --report artifacts/financial-statements/coverage-2026q2.json
-.venv/bin/python skills/event-data/scripts/data_agent.py snapshot \
+.venv/bin/python cli/data_agent.py snapshot \
   --decision-cutoff 2026-09-16T13:30:00+08:00 \
   --output artifacts/research_snapshot.json
 ```

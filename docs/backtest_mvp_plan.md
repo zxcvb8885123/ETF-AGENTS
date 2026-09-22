@@ -61,7 +61,7 @@
 
 核心已放在 `src/etf_agent/backtest/`，以 contracts、engine、service、repository 分開歷史時鐘、時間點資料、成交／帳務、重播與封存。共用交易計算仍應持續收斂，避免回測與每日決策各自維護不同費稅公式。
 
-第一批已提供 `skills/strategy-backtest/scripts/backtest.py` 的 `validate-request`、`inspect-coverage`、`replay`、`validate-run`、`save-run` 與 `build-report` 指令；`strategy-backtest` Skill 已建立，但完整 Agent 工具循環與跨策略實驗仍維持 B5 順序。
+第一批已提供 `cli/backtest.py` 的 `validate-request`、`inspect-coverage`、`replay`、`validate-run`、`save-run` 與 `build-report` 指令；`strategy-backtest` Skill 已建立，但完整 Agent 工具循環與跨策略實驗仍維持 B5 順序。
 
 封存 BacktestRun、每日 ReplayResult、ExecutionResult、AccountLedgerSnapshot、輸入與 manifest，產出同源 JSON／Markdown 帳務驗收報告。報告列出期初／期末 NAV、成交與成本、失敗日、資料模式及限制，不宣稱策略有效。
 

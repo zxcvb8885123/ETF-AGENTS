@@ -61,7 +61,7 @@
 
 ## 程式與 Skill 慣例
 
-- 核心邏輯放在 `src/etf_agent/`，Skill 腳本只提供穩定 CLI 包裝，不複製資料邏輯。
+- 核心邏輯放在 `src/etf_agent/`；`cli/` 只提供穩定 CLI 包裝，不複製資料邏輯。Skill 只保存工作流程、契約參考與產品 metadata。
 - 可重複的數值計算、時間檢查、引用驗證及停止條件必須由 Python 實作，不只寫在 prompt。
 - 新 Agent 優先提供：計畫文件、資料契約、Provider 邊界、確定性工具、Validator、Skill、CLI 與測試。
 - Skill 使用小寫連字號命名，並包含精簡的 `SKILL.md`；需要詳細 schema 時放在 `references/`。

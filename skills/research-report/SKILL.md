@@ -22,7 +22,7 @@ description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情�
 不含 Market Perception：
 
 ```bash
-.venv/bin/python skills/research-report/scripts/research_report.py build \
+.venv/bin/python cli/research_report.py build \
   --snapshot artifacts/research_snapshot_latest.json \
   --research artifacts/event_research_validated.json \
   --json-output artifacts/research_report.json \
@@ -32,7 +32,7 @@ description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情�
 包含 Market Perception：
 
 ```bash
-.venv/bin/python skills/research-report/scripts/research_report.py build \
+.venv/bin/python cli/research_report.py build \
   --snapshot artifacts/research_snapshot_latest.json \
   --research artifacts/event_research_validated.json \
   --perception artifacts/market_perception_validated.json \
@@ -44,7 +44,7 @@ description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情�
 驗證既有報告時使用相同上游輸入：
 
 ```bash
-.venv/bin/python skills/research-report/scripts/research_report.py validate \
+.venv/bin/python cli/research_report.py validate \
   --snapshot artifacts/research_snapshot_latest.json \
   --research artifacts/event_research_validated.json \
   --input artifacts/research_report.json

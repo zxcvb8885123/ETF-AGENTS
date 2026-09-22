@@ -17,15 +17,15 @@ description: 重播已保存的台股 ETF 決策，依歷史 cutoff 驗證資料
 詳細欄位見 [回測契約](references/backtest-contract.md)。
 
 ```bash
-.venv/bin/python skills/strategy-backtest/scripts/backtest.py \
+.venv/bin/python cli/backtest.py \
   --request artifacts/backtest_request.json validate-request
 
-.venv/bin/python skills/strategy-backtest/scripts/backtest.py \
+.venv/bin/python cli/backtest.py \
   --request artifacts/backtest_request.json \
   --daily-inputs artifacts/backtest_daily_inputs.json replay \
   --output artifacts/backtest_run.json
 
-.venv/bin/python skills/strategy-backtest/scripts/backtest.py \
+.venv/bin/python cli/backtest.py \
   --request artifacts/backtest_request.json \
   --daily-inputs artifacts/backtest_daily_inputs.json \
   --input artifacts/backtest_run.json validate-run

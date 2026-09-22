@@ -3,7 +3,7 @@
 AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成資料蒐集、投資決策、組合／資金風控，最後產生可提交的決策報告與交易書。
 
 ```text
-資料蒐集 → 研究 → 多子 Agent 買賣裁決 → 確定性配置／風控 → 報告與交易提交
+資料蒐集 → 研究 → 多子 Agent 買賣裁決 → 確定性配置／風控 → 報告與 D-Plan 候選檔 → 人工檢視
 ```
 
 ## 快速開始
@@ -25,21 +25,22 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `PYTHONPATH=src python3 scripts/collect_official_history.py` | 以官方 TWSE／TPEx 月行情增量更新日線；先驗證最近完整交易日，並輸出逐檔覆蓋 JSON |
 | `python3 scripts/run_strategy.py --input snapshot.json` | 以研究快照執行事件策略 V1 |
 | `.venv/bin/python scripts/collect_history.py` | 透過 yfinance 增量更新 150 檔最近兩年日線至最近完整官方交易日 |
-| `.venv/bin/python skills/event-data/scripts/data_agent.py collect` | 抓取官方月營收與重大訊息 |
-| `.venv/bin/python skills/event-data/scripts/data_agent.py snapshot --output artifacts/research_snapshot_latest.json` | 建立目前時間的研究快照 |
-| `.venv/bin/python skills/event-analysis/scripts/event_research.py status` | 確認事件研究 Snapshot 與證據可用 |
-| `.venv/bin/python skills/event-analysis/scripts/event_research.py list-events --lookback-days 45` | 列出截止時間前的事件候選 |
-| `.venv/bin/python skills/event-analysis/scripts/event_research.py analyze-event-context --evidence-id ID` | 建立比較基準、新穎性、相關事件與事件相對行情資料包 |
-| `.venv/bin/python skills/event-analysis/scripts/event_research.py validate-debate --input BUNDLE.json` | 驗證 Fact／Bull／Bear／Adjudicator 子 Agent 輸出與獨立依賴 |
-| `.venv/bin/python skills/event-analysis/scripts/event_research.py validate-result --input RESULT.json` | 驗證事件研究結果、正式引用與 cutoff |
-| `.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py status` | 檢查市場情緒與分析師資料包的來源及覆蓋 |
-| `.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py validate-result --input RESULT.json` | 重算並驗證市場情緒、共識修正與引用 |
-| `.venv/bin/python skills/research-report/scripts/research_report.py build` | 將已驗證研究結果建立成 ResearchReport JSON 與 Markdown |
-| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
-| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
-| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
-| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
-| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
+| `.venv/bin/python cli/data_agent.py collect` | 抓取官方月營收與重大訊息 |
+| `.venv/bin/python cli/data_agent.py snapshot --output artifacts/research_snapshot_latest.json` | 建立目前時間的研究快照 |
+| `.venv/bin/python cli/event_research.py status` | 確認事件研究 Snapshot 與證據可用 |
+| `.venv/bin/python cli/event_research.py list-events --lookback-days 45` | 列出截止時間前的事件候選 |
+| `.venv/bin/python cli/event_research.py analyze-event-context --evidence-id ID` | 建立比較基準、新穎性、相關事件與事件相對行情資料包 |
+| `.venv/bin/python cli/event_research.py validate-debate --input BUNDLE.json` | 驗證 Fact／Bull／Bear／Adjudicator 子 Agent 輸出與獨立依賴 |
+| `.venv/bin/python cli/event_research.py validate-result --input RESULT.json` | 驗證事件研究結果、正式引用與 cutoff |
+| `.venv/bin/python cli/sentiment_research.py status` | 檢查市場情緒與分析師資料包的來源及覆蓋 |
+| `.venv/bin/python cli/sentiment_research.py validate-result --input RESULT.json` | 重算並驗證市場情緒、共識修正與引用 |
+| `.venv/bin/python cli/research_report.py build` | 將已驗證研究結果建立成 ResearchReport JSON 與 Markdown |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
+| `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
 
 ## 目前完成
 
@@ -59,9 +60,9 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；正式帳戶、可交易狀態、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與主辦平台送件尚未接入。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；正式帳戶、可交易狀態、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與正式排程尚未接入。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
 
-Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已接入，目前接續財報彙總、交易狀態與細粒度工具。官方歷史 CLI 只驗證保存區間與終止日覆蓋；尚無版本化交易日曆，不能宣稱期間內每個交易日完整，也不能用於正式歷史回測。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
+Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已接入，目前接續財報彙總、交易狀態與細粒度工具。官方歷史 CLI 只驗證保存區間與終止日覆蓋；尚無版本化交易日曆，不能宣稱期間內每個交易日完整，也不能用於正式歷史回測。之後才依序進行新聞候選（M2）與    Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
 ## 資料位置
 
@@ -94,8 +95,10 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
 | [P7 回測 Agent 第一批計畫](docs/backtest_mvp_plan.md) | B0～B2 fixture MVP 已完成：歷史時鐘、時間點資料、整張成交、交割與多日帳務重播 |
 | [回測與驗證方法規格](docs/backtest_plan_v1.md) | 資料切分、成交假設、策略比較與有效性判定方法 |
-| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四個且最後實作的下游 Agent；排程、D-Plan、每日／失敗報告與人工批准 |
+| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四層下游 Agent；執行紀錄、每日／失敗報告、D-Plan 候選檔與排程；交付人工檢視 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
+
+自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作：它能驗證已封存的決策 run，產生或重建 DailyReport，並在資料或風控前置失敗時封存 FailureReport。正式排程、D-Plan 與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。
 
 ## 專案結構
 
@@ -103,8 +106,10 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 config/                 競賽與資料來源設定
 data/                   官方交易池與 ETF 基準資料
 docs/                   規劃、架構與操作文件
-scripts/                初始化、收集與狀態查詢指令
-src/etf_agent/          Agent 核心程式與研究報告 Builder
+cli/                    Agent、人工與排程共用的穩定 CLI 入口
+scripts/                初始化、收集與狀態查詢維運指令
+skills/                 Codex／Claude 工作流程、契約參考與 UI metadata
+src/etf_agent/          Agent 核心程式、runtime 與報告 Builder
 tests/                  單元測試與測試資料
 var/                    SQLite 資料庫（不納入 Git）
 artifacts/              每日輸出檔案（不納入 Git）
