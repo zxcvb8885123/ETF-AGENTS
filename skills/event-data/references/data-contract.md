@@ -49,3 +49,9 @@ M0 來源健康檢查只能使用 `config/data_sources.json` 中的 `source_prob
 ## 快照品質
 
 預設快照要求官方交易池不可為空、具備版本相符且可用的交易池驗證，以及完整的最新交易日行情涵蓋。失敗項目要寫入 `quality_flags`、設定 `usable=false`，並停止策略執行。`--allow-missing-prices` 與 `--allow-unvalidated-universe` 只能用於明確的診斷或自動化測試。
+
+## 交易狀態 Bundle
+
+`TradingStatusRequest` 固定交易池、`decision_cutoff` 與帶時區的目標交易時段。來源回應先寫入既有 `raw_payloads`，再由欄位映射 Parser 產生 `TradingStatusRecord` 與 `TradingStatusSourceCoverage`。空回應只有在來源設定明確證明「完整現況」時才可標記完整；否則為失敗覆蓋。
+
+`TradingStatusBundleValidator` 不查詢最新資料，而是從 bundle 內容重建 `TradabilityAssessment`。所有 `available_at`、`fetched_at` 與可證明的 `published_at` 都不得晚於 cutoff；限制衝突、未核准來源、缺少必要類別或未完成分頁輸出 `unknown`。`blocked` 表示已確認限制，`allowed` 只表示核准來源完整且沒有已知限制。Snapshot 的 `tradable_symbols`／`not_tradable_symbols` 計數不得轉成股票集合，正式決策須攜帶成對的 status bundle 與 assessment。

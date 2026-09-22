@@ -14,6 +14,7 @@ from etf_agent.perception import (
     PerceptionToolError,
 )
 from etf_agent.research import ResearchResultValidator, ResearchToolError
+from etf_agent.data.trading_status import TradingStatusBundleValidator
 
 
 DECISION_SCHEMA_VERSION = "1.0"
@@ -140,6 +141,8 @@ class DecisionInputValidator:
                 "price_series",
                 "research_results",
                 "perception_inputs",
+                "trading_status_bundle",
+                "tradability_assessment",
             },
             "DecisionInputBundle",
             errors,
@@ -165,6 +168,7 @@ class DecisionInputValidator:
             errors.append(str(error))
 
         self._validate_snapshot(errors)
+        self._validate_trading_status(errors)
         self._validate_rules(errors)
         universe, price_evidence = self._universe_and_price_evidence(errors)
         self._validate_account(universe, errors)
@@ -174,6 +178,32 @@ class DecisionInputValidator:
         self._validate_perception_inputs(errors)
         self._validate_global_evidence_ids(errors)
         return errors
+
+    def _validate_trading_status(self, errors: List[str]) -> None:
+        bundle = self.bundle.get("trading_status_bundle")
+        assessment = self.bundle.get("tradability_assessment")
+        if bundle is None and assessment is None:
+            # 舊 fixture 仍可用明確的股票名單測試；研究 Snapshot 的整數計數
+            # 不得被風控當作集合，正式輸入須提供成對狀態包。
+            for field in ("tradable_symbols", "not_tradable_symbols"):
+                value = self.snapshot.get(field)
+                if value is not None and not isinstance(value, list):
+                    errors.append("snapshot.%s 是計數；正式決策需提供 trading_status_bundle" % field)
+            return
+        if not isinstance(bundle, Mapping) or not isinstance(assessment, Mapping):
+            errors.append("trading_status_bundle 與 tradability_assessment 必須成對存在")
+            return
+        status_errors = TradingStatusBundleValidator().validate(bundle, assessment)
+        errors.extend("trading_status：%s" % error for error in status_errors)
+        if bundle.get("snapshot_id") != self.bundle.get("snapshot_id"):
+            errors.append("trading_status_bundle.snapshot_id 與 DecisionInputBundle 不一致")
+        try:
+            if parse_time(bundle.get("decision_cutoff"), "trading_status_bundle.decision_cutoff") != self.cutoff:
+                errors.append("trading_status_bundle.decision_cutoff 不一致")
+            if parse_time(assessment.get("decision_cutoff"), "tradability_assessment.decision_cutoff") != self.cutoff:
+                errors.append("tradability_assessment.decision_cutoff 不一致")
+        except DecisionToolError as error:
+            errors.append(str(error))
 
     def _validate_snapshot(self, errors: List[str]) -> None:
         if not self.snapshot:
@@ -786,6 +816,14 @@ class DecisionInputValidator:
                         "perception_inputs[%d].bundle.source_evidence[%d]"
                         % (input_index, evidence_index),
                     )
+        status_bundle = self.bundle.get("trading_status_bundle")
+        if isinstance(status_bundle, Mapping):
+            for evidence_index, evidence in enumerate(status_bundle.get("source_evidence", [])):
+                if isinstance(evidence, Mapping):
+                    register(
+                        evidence.get("evidence_id"),
+                        "trading_status_bundle.source_evidence[%d]" % evidence_index,
+                    )
 
 
 class DecisionContext:
@@ -838,6 +876,14 @@ class DecisionContext:
                     if evidence_id in result:
                         raise DecisionToolError("evidence_id 跨輸入來源重複：%s" % evidence_id)
                     result[evidence_id] = str(evidence.get("symbol", "")).upper() or None
+        status_bundle = self.bundle.get("trading_status_bundle", {})
+        if isinstance(status_bundle, Mapping):
+            for record in status_bundle.get("records", []):
+                if isinstance(record, Mapping) and record.get("evidence_id"):
+                    evidence_id = str(record["evidence_id"])
+                    if evidence_id in result:
+                        raise DecisionToolError("evidence_id 跨輸入來源重複：%s" % evidence_id)
+                    result[evidence_id] = str(record.get("symbol", "")).upper() or None
         account_evidence_id = str(self.account["source_evidence_id"])
         if account_evidence_id in result:
             raise DecisionToolError(

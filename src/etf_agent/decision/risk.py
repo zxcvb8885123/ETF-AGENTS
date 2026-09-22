@@ -230,22 +230,45 @@ class CompetitionGuardV2:
             str(item["symbol"]).upper(): decimal_value(item["weight"], "weight")
             for item in positions
         }
-        tradable = {
-            str(value).upper() for value in self.context.snapshot.get("tradable_symbols", [])
-        }
-        not_tradable = {
-            str(value).upper() for value in self.context.snapshot.get("not_tradable_symbols", [])
-        }
+        status_bundle = self.context.bundle.get("trading_status_bundle")
+        assessment = self.context.bundle.get("tradability_assessment")
+        status_by_symbol = {}
+        if isinstance(status_bundle, Mapping) and isinstance(assessment, Mapping):
+            status_by_symbol = {
+                str(item.get("symbol", "")).upper(): str(item.get("state", "unknown"))
+                for item in assessment.get("symbols", [])
+                if isinstance(item, Mapping) and item.get("symbol")
+            }
+            tradable = {symbol for symbol, state in status_by_symbol.items() if state == "allowed"}
+            not_tradable = {symbol for symbol, state in status_by_symbol.items() if state == "blocked"}
+        else:
+            # 相容既有 fixture；正式 Snapshot 的同名欄位是計數，不能進入此分支。
+            tradable = {
+                str(value).upper() for value in self.context.snapshot.get("tradable_symbols", [])
+            }
+            not_tradable = {
+                str(value).upper() for value in self.context.snapshot.get("not_tradable_symbols", [])
+            }
         universe = set(self.context.universe)
         self._check(checks, "UNIVERSE", set(weights).issubset(universe), sorted(set(weights) - universe))
-        explicit_status = bool(tradable or not_tradable)
+        explicit_status = bool(status_by_symbol) or bool(tradable or not_tradable)
         self._check(checks, "TRADABILITY_AVAILABLE", explicit_status, [] if explicit_status else ["缺少明確可交易狀態"])
+        if status_by_symbol:
+            unknown = sorted(symbol for symbol in universe if status_by_symbol.get(symbol) == "unknown")
+            missing = sorted(universe - set(status_by_symbol))
+            self._check(
+                checks,
+                "TRADABILITY_COVERAGE",
+                not unknown and not missing,
+                {"unknown": unknown, "missing": missing},
+            )
         order_symbols = {
             str(item.get("symbol", "")).upper()
             for item in proposal.get("order_proposal", {}).get("orders", [])
         }
+        checked_symbols = order_symbols if status_by_symbol else set(weights) | order_symbols
         invalid_tradability = sorted(
-            symbol for symbol in set(weights) | order_symbols
+            symbol for symbol in checked_symbols
             if symbol in not_tradable or (tradable and symbol not in tradable)
         )
         self._check(checks, "TRADABLE", not invalid_tradability, invalid_tradability)

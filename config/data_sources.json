@@ -309,6 +309,46 @@
         "industry": "ins",
         "unit_multiplier": 1000
       }
-    ]
+    ],
+    "trading_status": {
+      "schema_version": "1.0",
+      "policy_version": "trading-status-policy-1",
+      "approval_rule": "only_approved_sources",
+      "sources": [],
+      "candidate_endpoints": [
+        {
+          "source_id": "TPEX_SPENDI_TODAY",
+          "market": "TPEX",
+          "categories": ["trading_halt"],
+          "url": "https://www.tpex.org.tw/openapi/v1/tpex_spendi_today",
+          "approval_status": "candidate"
+        },
+        {
+          "source_id": "TPEX_CMODE",
+          "market": "TPEX",
+          "categories": ["special_trading", "split_trading", "management", "trading_halt"],
+          "url": "https://www.tpex.org.tw/openapi/v1/tpex_cmode",
+          "approval_status": "candidate"
+        },
+        {
+          "source_id": "TPEX_TRADING_WARNING",
+          "market": "TPEX",
+          "categories": ["attention"],
+          "url": "https://www.tpex.org.tw/openapi/v1/tpex_trading_warning_information",
+          "approval_status": "candidate"
+        },
+        {
+          "source_id": "TPEX_DISPOSAL",
+          "market": "TPEX",
+          "categories": ["disposition"],
+          "url": "https://www.tpex.org.tw/openapi/v1/tpex_disposal_information",
+          "approval_status": "candidate"
+        }
+      ],
+      "gaps": [
+        "TWSE 停復牌、注意、處置、分盤、變更交易及管理狀態端點尚未完成欄位與歷史時間語意核准",
+        "TPEx 狀態端點需重測分頁、空回應語意、更新週期與授權後才能標記 approved"
+      ]
+    }
   }
 }
