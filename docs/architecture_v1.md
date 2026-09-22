@@ -1,6 +1,6 @@
 # 第一版 Agent 技術架構
 
-狀態（2026-09-21）：架構設計、Data Agent M0、事件研究、市場認知 MVP、Research Report V0，以及 Portfolio Decision P0～P5 MVP 已完成；正式資料接入、完整邊界稽核與回測仍待實作。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
+狀態（2026-09-22）：架構設計、Data Agent M0、事件研究、市場認知 MVP、Research Report V0、Portfolio Decision P0～P6、回測 B0～B2 與 DailyReport／FailureReport A0～A1 fixture／離線版已完成；正式資料接入、D-Plan、排程與前向驗證仍待實作。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
 
 ## 1. 整體設計
 
@@ -95,24 +95,26 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 網路請求採有上限重試。送件逾時先查回執，不能直接重複送出。策略或資料失敗時告警；零交易也必須檢查現有組合並產生每日報告，不能假定不交易就一定合規。
 
-## 7. 預定程式配置
+## 7. 程式配置
 
-以下為目前及預定的程式配置。
+核心 runtime 集中在 `src/etf_agent/`，所有可執行 wrapper 集中在頂層 `cli/`，Skill 只保留工作流程與契約參考。以下為目前及預定的程式配置。
 
 | 路徑 | 責任 |
 | --- | --- |
-| src/etf_agent/pipeline.py | 每日流程控制、狀態與重試 |
+| src/etf_agent/runtime/ | 共用 pipeline run 身分、狀態與未來流程控制邊界 |
 | src/etf_agent/contracts.py | 模組資料契約與驗證 |
 | src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features、account_loader 及其他來源 |
 | src/etf_agent/decision/ | 已有 P0～P5 MVP：共同輸入、動能、獨立買賣裁決、配置／訂單／費稅、情境、完整輸入基準 Guard、RiskReview、最終重建與不可變保存 |
 | src/etf_agent/strategy/ | 既有事件策略原型；後續與 decision 契約整合或拆分 |
 | src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
 | src/etf_agent/risk/ | 情境檢查、Active Share、超限日數、MDD |
-| src/etf_agent/reporting/ | 已有 Research Report V0 Builder／Validator／Markdown renderer；正式 DailyReport、FailureReport 與 D-Plan 待後續實作 |
+| src/etf_agent/reporting/ | Research Report V0 Builder／Validator／Markdown renderer |
+| src/etf_agent/automation/ | PipelineRun、DailyReport／FailureReport、不可變封存與重建驗證；排程、D-Plan 待後續實作 |
 | src/etf_agent/data/database.py | 已有：行情、原始回應與執行紀錄；待擴充其他模組資料表 |
 | src/etf_agent/models.py | 既有：部位與投資組合資料模型 |
 | src/etf_agent/guard.py | 既有：初步風控檢查，後續擴充或轉接 risk |
-| scripts/collect_latest_prices.py | 已有：官方交易池 TWSE／TPEx 最新交易日行情收集入口 |
+| cli/ | Agent、人工與排程共用的資料、研究、決策、回測與報告 CLI wrapper |
+| scripts/collect_latest_prices.py | 維運用：官方交易池 TWSE／TPEx 最新交易日行情收集入口 |
 | scripts/collect_twse.py | 已有：TWSE 單一來源與全上市證券開發模式入口 |
 | scripts/init_db.py、scripts/data_status.py | 已有：初始化資料庫與查看資料狀態 |
 | scripts/run_daily.py | 預定完整每日執行入口 |

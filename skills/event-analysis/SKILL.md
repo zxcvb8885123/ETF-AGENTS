@@ -36,23 +36,23 @@ description: 主控事件事實、多方、空方與裁決子 Agent，使用同�
 從專案根目錄執行：
 
 ```bash
-.venv/bin/python skills/event-analysis/scripts/event_research.py status
-.venv/bin/python skills/event-analysis/scripts/event_research.py list-events \
+.venv/bin/python cli/event_research.py status
+.venv/bin/python cli/event_research.py list-events \
   --lookback-days 45 --limit 100
-.venv/bin/python skills/event-analysis/scripts/event_research.py analyze-event-context \
+.venv/bin/python cli/event_research.py analyze-event-context \
   --evidence-id DOCUMENT_EVIDENCE_ID
-.venv/bin/python skills/event-analysis/scripts/event_research.py read-source \
+.venv/bin/python cli/event_research.py read-source \
   --evidence-id DOCUMENT_EVIDENCE_ID
-.venv/bin/python skills/event-analysis/scripts/event_research.py get-company-facts \
+.venv/bin/python cli/event_research.py get-company-facts \
   --symbol 2330.TW
-.venv/bin/python skills/event-analysis/scripts/event_research.py find-related-events \
+.venv/bin/python cli/event_research.py find-related-events \
   --symbol 2330.TW --event-id EVENT_ID
-.venv/bin/python skills/event-analysis/scripts/event_research.py get-price-features \
+.venv/bin/python cli/event_research.py get-price-features \
   --symbol 2330.TW --event-published-at 2026-09-14T16:00:00+00:00
-.venv/bin/python skills/event-analysis/scripts/event_research.py validate-debate \
+.venv/bin/python cli/event_research.py validate-debate \
   --input artifacts/event_debate.json \
   --output artifacts/event_debate_validated.json
-.venv/bin/python skills/event-analysis/scripts/event_research.py validate-result \
+.venv/bin/python cli/event_research.py validate-result \
   --input artifacts/event_research_draft.json \
   --output artifacts/event_research_validated.json
 ```

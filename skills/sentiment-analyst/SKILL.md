@@ -35,18 +35,18 @@ description: 研究台股事件的市場情緒、討論分歧與分析師共識�
 從專案根目錄執行：
 
 ```bash
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py status
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py list-covered-symbols
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py get-sentiment-items \
+.venv/bin/python cli/sentiment_research.py status
+.venv/bin/python cli/sentiment_research.py list-covered-symbols
+.venv/bin/python cli/sentiment_research.py get-sentiment-items \
   --symbol 2330.TW --lookback-days 28
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py aggregate-sentiment \
+.venv/bin/python cli/sentiment_research.py aggregate-sentiment \
   --symbol 2330.TW --labels artifacts/sentiment_labels.json
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py compute-consensus-revision \
+.venv/bin/python cli/sentiment_research.py compute-consensus-revision \
   --symbol 2330.TW --metric eps --forecast-period 2026FY
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py compare-event-expectations \
+.venv/bin/python cli/sentiment_research.py compare-event-expectations \
   --event-result artifacts/event_research_validated.json \
   --event-id EVENT_ID --fact-name FACT_NAME --metric eps --forecast-period 2026FY
-.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py validate-result \
+.venv/bin/python cli/sentiment_research.py validate-result \
   --input artifacts/market_perception_draft.json \
   --event-result artifacts/event_research_validated.json \
   --output artifacts/market_perception_validated.json
