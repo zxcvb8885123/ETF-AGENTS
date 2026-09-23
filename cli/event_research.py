@@ -42,6 +42,24 @@ class EventResearchApplication:
                     lookback_days=args.lookback_days,
                     limit=args.limit,
                 )
+                if args.output:
+                    args.output.parent.mkdir(parents=True, exist_ok=True)
+                    args.output.write_text(
+                        json.dumps(
+                            {
+                                "snapshot_id": service.tools.snapshot_id,
+                                "decision_cutoff": service.tools.decision_cutoff,
+                                "symbol": args.symbol,
+                                "document_type": args.document_type,
+                                "lookback_days": args.lookback_days,
+                                "events": result,
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
             elif args.command == "read-source":
                 result = service.tools.read_source(args.evidence_id)
             elif args.command == "get-company-facts":
@@ -90,6 +108,7 @@ class EventResearchApplication:
         list_events.add_argument("--document-type")
         list_events.add_argument("--lookback-days", type=int, default=45)
         list_events.add_argument("--limit", type=int, default=100)
+        list_events.add_argument("--output", type=Path)
 
         read_source = commands.add_parser("read-source", help="讀取單一正式來源")
         read_source.add_argument("--evidence-id", required=True)

@@ -96,7 +96,7 @@
 四個角色可以由 Codex／Claude 子 Agent 執行，不需要專案直接呼叫模型 API。保存 bundle 後執行：
 
 ```bash
-.venv/bin/python skills/event-analysis/scripts/event_research.py validate-debate \
+.venv/bin/python cli/event_research.py validate-debate \
   --input artifacts/event_debate.json \
   --output artifacts/event_debate_validated.json
 ```

@@ -191,7 +191,7 @@ class BacktestAgentTests(unittest.TestCase):
             request_path, daily_path, result_path = root / "request.json", root / "daily.json", root / "run.json"
             request_path.write_text(json.dumps(request()), encoding="utf-8")
             daily_path.write_text(json.dumps(daily_inputs()), encoding="utf-8")
-            script = Path(__file__).parents[1] / "skills" / "strategy-backtest" / "scripts" / "backtest.py"
+            script = Path(__file__).parents[1] / "cli" / "backtest.py"
             base = [sys.executable, str(script), "--request", str(request_path), "--daily-inputs", str(daily_path)]
             replay = subprocess.run(base + ["replay", "--output", str(result_path)], capture_output=True, text=True)
             self.assertEqual(replay.returncode, 0, replay.stdout + replay.stderr)

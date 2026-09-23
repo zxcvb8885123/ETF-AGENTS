@@ -126,12 +126,13 @@ Data Agent 核心採物件組合，不以大型函式同時處理查詢、轉換
 ```text
 skills/event-data/
 ├── SKILL.md
-├── scripts/data_agent.py
 ├── references/data-contract.md
 └── agents/openai.yaml
+
+cli/data_agent.py
 ```
 
-核心 `SKILL.md`、`scripts/` 與 `references/` 保持 Codex／Claude 都能理解的 Agent Skills 格式。供應商專屬設定分開處理：
+核心 `SKILL.md` 與 `references/` 保持 Codex／Claude 都能理解的 Agent Skills 格式；共用 CLI 則在 `cli/data_agent.py`。供應商專屬設定分開處理：
 
 - Codex：安裝共同 Skill 後以 `$event-data` 觸發；`agents/openai.yaml` 只提供 Codex／OpenAI UI metadata。
 - Claude Code：將共同 Skill 安裝或同步到 `.claude/skills/event-data/`，以 `/event-data` 觸發。
@@ -401,8 +402,9 @@ ReasoningBackend（未來可替換）
 skills/event-data/                 # 共同 Skill 來源
 ├── SKILL.md
 ├── agents/openai.yaml             # Codex／OpenAI 專屬 metadata
-├── scripts/data_agent.py          # 結構化資料工具 CLI
 └── references/data-contract.md
+
+cli/data_agent.py                  # 結構化資料工具 CLI
 
 .claude/skills/event-data/         # Claude Code 安裝目標，不複製維護規則
 
@@ -422,7 +424,7 @@ artifacts/data-agent/{agent_run_id}/
 artifacts/source-feasibility/{source_id}.json
 ```
 
-Skill 腳本只包裝 `src/etf_agent/data/` 的正式功能，不複製資料邏輯。Codex、Claude、人工 CLI 與排程器必須共用相同 parser、validator 與 Snapshot builder。
+CLI 只包裝 `src/etf_agent/data/` 的正式功能，不複製資料邏輯。Codex、Claude、人工 CLI 與排程器必須共用相同 parser、validator 與 Snapshot builder。
 
 ## 15. 已有基礎與待實作
 

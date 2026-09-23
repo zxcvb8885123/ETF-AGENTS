@@ -4,6 +4,8 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
+from cli.event_research import EventResearchApplication
+
 from etf_agent.data import MarketDataDatabase
 from etf_agent.research import (
     HistoricalPriceFeatureRepository,
@@ -12,6 +14,9 @@ from etf_agent.research import (
     ResearchToolError,
     SnapshotResearchTools,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def snapshot_fixture():
@@ -297,6 +302,27 @@ class FixturePriceRepository:
 
 
 class SnapshotResearchToolTests(unittest.TestCase):
+    def test_list_events_cli_can_archive_candidate_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path = root / "snapshot.json"
+            output_path = root / "candidates.json"
+            snapshot_path.write_text(
+                json.dumps(snapshot_fixture(), ensure_ascii=False), encoding="utf-8"
+            )
+
+            exit_code = EventResearchApplication(ROOT).run(
+                [
+                    "--snapshot", str(snapshot_path), "--database", str(root / "prices.db"),
+                    "list-events", "--lookback-days", "30", "--output", str(output_path),
+                ]
+            )
+
+            archived = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(archived["snapshot_id"], snapshot_fixture()["snapshot_id"])
+        self.assertEqual(len(archived["events"]), 1)
+
     def test_lists_and_reads_only_snapshot_events(self):
         tools = SnapshotResearchTools(snapshot_fixture())
         events = tools.list_events(lookback_days=30)
@@ -313,6 +339,12 @@ class SnapshotResearchToolTests(unittest.TestCase):
             context["reference_frames"][1]["kind"], "prior_year_same_month"
         )
         self.assertIn("不是市場預期差", context["research_warning"])
+
+    def test_event_list_limit_accepts_a_complete_small_snapshot(self):
+        tools = SnapshotResearchTools(snapshot_fixture())
+        self.assertEqual(len(tools.list_events(lookback_days=30, limit=1000)), 1)
+        with self.assertRaisesRegex(ResearchToolError, "1～1000"):
+            tools.list_events(lookback_days=30, limit=1001)
 
     def test_rejects_snapshot_without_evidence_bridge(self):
         snapshot = snapshot_fixture()
@@ -369,6 +401,47 @@ class SnapshotResearchToolTests(unittest.TestCase):
 
 
 class HistoricalPriceFeatureTests(unittest.TestCase):
+    def test_features_prefer_same_day_official_price_over_yahoo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "prices.db")
+            database.initialize()
+            with database.connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO instruments(symbol, code, name, market, source_date, in_competition_universe)
+                    VALUES ('2330.TW', '2330', '台積電', 'TWSE', '2026-09-01', 1)
+                    """
+                )
+                for source, close in (("YAHOO_FINANCE", "100"), ("TWSE_STOCK_DAY_ALL", "101")):
+                    run_id = "run-" + source
+                    connection.execute(
+                        "INSERT INTO collection_runs(run_id, source, started_at, status) VALUES (?, ?, ?, 'success')",
+                        (run_id, source, "2026-09-19T10:00:00+00:00"),
+                    )
+                    payload_id = database.insert_raw_payload(
+                        connection, run_id, source, "fixture://" + source,
+                        "2026-09-19T10:00:00+00:00", "{}",
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO daily_prices(
+                            symbol, trade_date, open_price, high_price, low_price,
+                            close_price, adjusted_close_price, price_change,
+                            volume_shares, trade_value, transactions, source,
+                            fetched_at, run_id, raw_payload_id
+                        ) VALUES ('2330.TW', '2026-09-19', '100', '102', '99', ?, NULL,
+                                  '1', 1000, 100000, 100, ?, '2026-09-19T10:00:00+00:00', ?, ?)
+                        """,
+                        (close, source, run_id, payload_id),
+                    )
+
+            features = HistoricalPriceFeatureRepository(database).get_features(
+                "2330.TW", "2026-09-20T00:55:00+00:00", "2026-09-19"
+            )
+
+        self.assertEqual(features["source"], "TWSE_STOCK_DAY_ALL")
+        self.assertEqual(features["analysis_close_price"], "101")
+
     def test_features_use_only_rows_available_before_cutoff(self):
         with tempfile.TemporaryDirectory() as directory:
             database = MarketDataDatabase(Path(directory) / "prices.db")

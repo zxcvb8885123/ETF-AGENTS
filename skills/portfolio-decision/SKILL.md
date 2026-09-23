@@ -29,40 +29,40 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
 從專案根目錄執行：
 
 ```bash
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-input
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json compute-momentum \
   --output artifacts/momentum_result.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json build-role-input \
   --role buy --momentum artifacts/momentum_result.json \
   --output artifacts/buy_role_input.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-buy \
   --momentum artifacts/momentum_result.json \
   --input artifacts/buy_intent.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-sell \
   --momentum artifacts/momentum_result.json \
   --input artifacts/sell_intent.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-debate \
   --momentum artifacts/momentum_result.json \
   --input artifacts/trade_debate.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-intent \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
   --input artifacts/trade_intent_result.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json compute-proposal \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
@@ -70,7 +70,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
   --policy artifacts/decision_policy.json \
   --output artifacts/proposal.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json compute-scenarios \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
@@ -79,7 +79,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
   --proposal artifacts/proposal.json \
   --output artifacts/scenario.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json compute-guard \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
@@ -89,7 +89,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
   --scenario artifacts/scenario.json \
   --output artifacts/guard.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-risk \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
@@ -100,7 +100,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
   --guard artifacts/guard.json \
   --input artifacts/risk_review.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json build-history \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
@@ -112,7 +112,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
   --review artifacts/risk_review.json \
   --output artifacts/revision_history.json
 
-.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py \
+.venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json finalize \
   --momentum artifacts/momentum_result.json \
   --debate artifacts/trade_debate.json \
