@@ -12,6 +12,16 @@ from .contracts import (
     artifact_content_sha256,
 )
 from .momentum import MomentumEngine, MomentumResultValidator
+from .allocation import AllocationOrderEngine, ProposalValidator
+from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
+from .risk import (
+    CompetitionGuardV2,
+    GuardValidator,
+    RiskReviewValidator,
+    ScenarioEngine,
+    ScenarioValidator,
+    revision_effects,
+)
 from .trade_intent import (
     BuyIntentPacketValidator,
     SellIntentPacketValidator,
@@ -22,7 +32,7 @@ from .trade_intent import (
 
 
 class PortfolioDecisionApplicationService:
-    """Read one input bundle and expose deterministic P0-P2 operations."""
+    """Read one input bundle and expose deterministic portfolio operations."""
 
     def __init__(self, bundle: Mapping[str, object]):
         self.bundle = dict(bundle)
@@ -141,3 +151,235 @@ class PortfolioDecisionApplicationService:
             if output is not None:
                 response["output"] = str(output)
         return response
+
+    def compute_proposal_file(
+        self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
+        policy_path: Path,
+        output: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        if errors:
+            raise DecisionToolError("TradeIntentResult 驗證失敗：" + "；".join(errors))
+        result = AllocationOrderEngine(self.bundle, policy).run(intent)
+        self._write(result, output)
+        return result
+
+    def validate_proposal_file(
+        self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
+        policy_path: Path,
+        proposal_path: Path,
+    ) -> Dict[str, object]:
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
+        return {"valid": not errors, "errors": errors}
+
+    def compute_scenario_file(
+        self,
+        policy_path: Path,
+        proposal_path: Path,
+        output: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        result = ScenarioEngine(self.bundle, policy).run(proposal)
+        self._write(result, output)
+        return result
+
+    def compute_guard_file(
+        self,
+        policy_path: Path,
+        proposal_path: Path,
+        scenario_path: Path,
+        output: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        scenario = self.read_json(scenario_path, " ScenarioResult")
+        errors = ScenarioValidator(self.bundle, policy).validate(proposal, scenario)
+        if errors:
+            raise DecisionToolError("ScenarioResult 驗證失敗：" + "；".join(errors))
+        result = CompetitionGuardV2(self.bundle, policy).run(proposal, scenario)
+        self._write(result, output)
+        return result
+
+    def validate_risk_file(
+        self,
+        policy_path: Path,
+        proposal_path: Path,
+        scenario_path: Path,
+        guard_path: Path,
+        review_path: Path,
+    ) -> Dict[str, object]:
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        scenario = self.read_json(scenario_path, " ScenarioResult")
+        guard = self.read_json(guard_path, " GuardResult")
+        review = self.read_json(review_path, " RiskReview")
+        errors = GuardValidator(self.bundle, policy).validate(proposal, scenario, guard)
+        errors.extend(
+            RiskReviewValidator(self.bundle, policy).validate(
+                proposal, scenario, guard, review
+            )
+        )
+        return {"valid": not errors, "errors": errors}
+
+    def revise_proposal_file(
+        self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
+        policy_path: Path,
+        proposal_path: Path,
+        scenario_path: Path,
+        guard_path: Path,
+        review_path: Path,
+        output: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        scenario = self.read_json(scenario_path, " ScenarioResult")
+        guard = self.read_json(guard_path, " GuardResult")
+        review = self.read_json(review_path, " RiskReview")
+        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
+        errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
+        errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
+        errors.extend(RiskReviewValidator(self.bundle, policy).validate(
+            proposal, scenario, guard, review
+        ))
+        if errors:
+            raise DecisionToolError("RiskReview 驗證失敗：" + "；".join(errors))
+        if review.get("decision") != "revise":
+            raise DecisionToolError("只有 decision=revise 可以重算提案")
+        next_revision = int(proposal.get("revision_count", 0)) + 1
+        if next_revision != review.get("revision_index") or next_revision > int(
+            policy["max_revisions"]
+        ):
+            raise DecisionToolError("修正序號不連續或超過上限")
+        effects = revision_effects(review, proposal)
+        result = AllocationOrderEngine(self.bundle, policy).run(
+            intent,
+            excluded_symbols=effects["excluded_symbols"],
+            overrides=effects["overrides"],
+            revision_count=next_revision,
+            parent_proposal_id=str(proposal["proposal_id"]),
+        )
+        self._write(result, output)
+        return result
+
+    def finalize_file(
+        self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
+        policy_path: Path,
+        proposal_path: Path,
+        scenario_path: Path,
+        guard_path: Path,
+        review_path: Path,
+        output: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        scenario = self.read_json(scenario_path, " ScenarioResult")
+        guard = self.read_json(guard_path, " GuardResult")
+        review = self.read_json(review_path, " RiskReview")
+        result = DecisionFinalizer(self.bundle, policy, momentum, debate, intent).run(
+            proposal, scenario, guard, review
+        )
+        self._write(result, output)
+        return result
+
+    def validate_decision_file(
+        self,
+        momentum_path: Path,
+        debate_path: Path,
+        intent_path: Path,
+        policy_path: Path,
+        proposal_path: Path,
+        scenario_path: Path,
+        guard_path: Path,
+        review_path: Path,
+        result_path: Path,
+    ) -> Dict[str, object]:
+        momentum = self.read_json(momentum_path, " MomentumResult")
+        debate = self.read_json(debate_path, " TradeDebateBundle")
+        intent = self.read_json(intent_path, " TradeIntentResult")
+        policy = self.read_json(policy_path, " DecisionPolicy")
+        proposal = self.read_json(proposal_path, " ProposalBundle")
+        scenario = self.read_json(scenario_path, " ScenarioResult")
+        guard = self.read_json(guard_path, " GuardResult")
+        review = self.read_json(review_path, " RiskReview")
+        result = self.read_json(result_path, " DecisionResult")
+        errors = DecisionResultValidator(
+            self.bundle, policy, momentum, debate, intent
+        ).validate(
+            proposal, scenario, guard, review, result
+        )
+        return {"valid": not errors, "errors": errors}
+
+    def save_run_files(
+        self,
+        run_id: str,
+        repository_root: Path,
+        paths: Mapping[str, Path],
+    ) -> Dict[str, object]:
+        artifacts: Dict[str, Mapping[str, object]] = {
+            name: self.read_json(path, " %s" % name) for name, path in paths.items()
+        }
+        required = {
+            "momentum",
+            "debate",
+            "intent",
+            "policy",
+            "proposal",
+            "scenario",
+            "guard",
+            "risk_review",
+            "decision",
+        }
+        missing = sorted(required - set(artifacts))
+        if missing:
+            raise DecisionToolError("保存前缺少 artifacts：" + ", ".join(missing))
+        errors = MomentumResultValidator(self.bundle).validate(artifacts["momentum"])
+        errors.extend(
+            DecisionResultValidator(
+                self.bundle,
+                artifacts["policy"],
+                artifacts["momentum"],
+                artifacts["debate"],
+                artifacts["intent"],
+            ).validate(
+                artifacts["proposal"],
+                artifacts["scenario"],
+                artifacts["guard"],
+                artifacts["risk_review"],
+                artifacts["decision"],
+            )
+        )
+        if errors:
+            raise DecisionToolError("DecisionResult 保存前驗證失敗：" + "；".join(errors))
+        artifacts = {"decision_input": self.bundle, **artifacts}
+        output = DecisionRepository(repository_root).save(run_id, artifacts)
+        return {"ok": True, "output": str(output)}

@@ -36,6 +36,9 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `.venv/bin/python skills/research-report/scripts/research_report.py build` | 將已驗證研究結果建立成 ResearchReport JSON 與 Markdown |
 | `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
 | `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
+| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
+| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
+| `.venv/bin/python skills/portfolio-decision/scripts/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
 
 ## 目前完成
 
@@ -50,16 +53,18 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 事件研究 Agent `ResearchResult` 2.1：主控加 Fact／Bull／Bear／Adjudicator 子 Agent Skills、獨立多空 DebateBundle、財務傳導鏈、事件相對行情及雙重 fail-closed validator。
 - 市場情緒與分析師研究 Agent MVP：`PerceptionDataBundle`、逐筆情緒標籤、去重聚合、分析師共識修正、事件預期差、`MarketPerceptionResult` validator、Skill 與 CLI。
 - Research Report V0：整合 Snapshot、事件研究與選配市場認知結果，產生同源、可重建驗證且不含交易建議的 JSON／Markdown 報告。
-- Portfolio Decision P0～P2：共用 DecisionInputBundle、確定性 MomentumEngine、Momentum／Buy／Sell／Trade Adjudicator 子 Agent Skills、獨立買賣 DebateBundle 與 fail-closed validators。
+- Portfolio Decision P0～P5 MVP：共用輸入、動能、獨立買賣裁決、確定性配置／訂單／費稅、壓力情境、Portfolio Risk Skill、全部輸入基準 Guard、三次修正上限、最終重建與不可變保存。
 - 事件策略 V1：事件評分、價格確認及進攻／防守配置。
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P2，可驗證共同輸入、計算動能並產生獨立買賣裁決；尚未實作 P3～P5 的正式配置、訂單、Portfolio Risk、CompetitionGuard 整合，以及 DailyReport、D-Plan 或主辦平台送件。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0。Portfolio Decision 已完成 P0～P5 MVP，可把已驗證裁決轉成配置、模擬訂單、情境、風控與最終結果；目前仍使用 fixture／介面驗證，正式帳戶、可交易狀態、有效競賽規則、完整 P6 邊界測試、回測、DailyReport、D-Plan 與主辦平台送件尚未接入。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方歷史行情 CLI、財報彙總與交易狀態。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
 ## 資料位置
+
+P3～P5 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p5-實作紀錄2026-09-21mvp-已完成) 已更新。下一批是 P6 邊界 fixture 與 P7 歷史／前向回測；正式資料接入與規則版本仍需另外確認。
 
 | 路徑 | 用途 |
 | --- | --- |
