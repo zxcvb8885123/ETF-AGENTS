@@ -49,6 +49,10 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `PYTHONPATH=src python3 cli/account_data.py import --input ACCOUNT.json --cutoff ISO_TIME --run-id RUN_ID --mode fixture` | 匯入標準帳戶 JSON 並封存原始檔與雜湊；正式模式須先在 `config/account_sources.json` 核准 provider／版本 |
 | `PYTHONPATH=src python3 cli/account_data.py reconcile --account ACCOUNT_BUNDLE.json --snapshot SNAPSHOT.json --max-nav-drift-rate RATE --output RECONCILIATION.json` | 以同一 cutoff Snapshot 重算 NAV、現金及價格覆蓋，另產 Markdown 對帳報告 |
 | `PYTHONPATH=src python3 cli/account_data.py export-decision-account --account ACCOUNT_BUNDLE.json --reconciliation RECONCILIATION.json --snapshot SNAPSHOT.json --output DECISION_ACCOUNT.json` | 僅在正式來源且通過對帳、可無損轉換時匯出決策帳戶欄位 |
+| `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --started-at ISO_TIME` | 只用一次設定本金建立 10 億 TWD 虛擬帳戶 |
+| `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 prepare-day --snapshot SNAPSHOT.json --run-id RUN_ID --account-output ACCOUNT.json` | 續接前帳本、結算到期款項並建立決策前帳戶快照 |
+| `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 attach-account --template BUNDLE.json --account-snapshot ACCOUNT.json --snapshot SNAPSHOT.json --output DECISION_INPUT.json` | 綁定虛擬帳戶並完整驗證決策輸入包 |
+| `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 apply-decision --decision-run-id RUN_ID --execution-market EXECUTION.json --close-market CLOSE.json --settlement-date YYYY-MM-DD --run-id CLOSE_RUN` | 驗證已封存 Decision run，模擬成交並保存日終虛擬帳本 |
 | `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
 | `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；提供 Decision run 後可接 DailyReport |
 
@@ -73,7 +77,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；交易狀態的契約與 Guard adapter 已接入，但官方來源核准與 150 檔真實覆蓋尚未完成；正式帳戶、有效競賽規則、真實歷史／前向回測、DailyReport、D-Plan 與正式排程尚未接入。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；每日虛擬帳本 VA1～VA3 fixture 工具鏈現已具備 10 億 TWD 唯一開帳、決策前帳戶快照、完整 Decision run 驗證、模擬成交與日終封存。每日報告工作流尚未自動串接帳本；交易狀態官方來源核准、150 檔真實覆蓋、有效競賽規則、真實歷史／前向回測及正式排程仍未完成。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已接入，目前接續財報彙總、交易狀態與細粒度工具。官方歷史 CLI 只驗證保存區間與終止日覆蓋；尚無版本化交易日曆，不能宣稱期間內每個交易日完整，也不能用於正式歷史回測。之後才依序進行新聞候選（M2）與    Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
@@ -118,7 +122,8 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四層下游 Agent；執行紀錄、每日／失敗報告、D-Plan 候選檔與排程；交付人工檢視 |
 | [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4：資料／cutoff、研究交接、續跑、固定格式交付與 DailyReport 接線 |
 | [真實研究續跑與決策報告驗收](docs/report_workflow_acceptance_plan.md) | W0～W5 已完成一件真實事件驗收；降級 Research Report 可重建，DailyReport 等待正式決策輸入 |
-| [正式帳戶資料接入與對帳計畫](docs/account_data_integration_plan.md) | AC1～AC4 fixture 工具鏈已完成；官方來源核准清單目前為空，真實帳戶驗收待正式匯出樣本 |
+| [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA3 fixture 工具鏈已完成；VA4 報告工作流接線、VA5 真實資料與前向驗收待完成 |
+| [外部帳戶結算檔匯入與對帳計畫](docs/account_data_integration_plan.md) | 選配支線；AC1～AC4 fixture 工具鏈已完成，正式來源核准清單仍為空 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
 自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。D-Plan、正式排程與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。

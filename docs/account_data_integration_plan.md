@@ -1,6 +1,6 @@
 # 正式帳戶資料接入與對帳計畫
 
-狀態：AC1～AC4 fixture 版已完成（2026-09-23）；AC0 正式欄位核實及 AC5 真實帳戶驗收待正式平台匯出樣本。接續報告驗收 W5 的第 1 項缺口「帳戶、持倉、可用現金、未交割款與 NAV」。
+狀態：AC1～AC4 fixture 版已完成（2026-09-23）。使用者確認主線帳戶為 10 億起始的虛擬帳戶，因此本計畫改列選配的外部結算檔對帳支線；每日決策帳戶主線見[虛擬帳戶與每日買賣決策接入計畫](virtual_account_daily_decision_plan.md)。AC0 正式欄位核實及 AC5 匯出檔驗收仍待平台樣本，不阻擋虛擬帳本實作。
 
 ## 目標與完成邊界
 
@@ -15,7 +15,7 @@
 - `src/etf_agent/decision/contracts.py` 已驗證 `account_snapshot` 的來源引用、可得時間、估值時間、持倉及 NAV；目前要求 `cash = settled_cash + unsettled_cash`，且三項現金皆非負。
 - 現有帳戶欄位採嚴格白名單：`account_id`、`available_at`、`valuation_at`、`source_evidence_id`、`cash`、`settled_cash`、`unsettled_cash`、`nav`、`positions`。持倉保存代號、股數與平均成本。
 - 配置與情境引擎以 `settled_cash` 作為初始購買力。真實帳戶的凍結款、應付交割款及平台可用額度未必符合此假設，不能直接填入。
-- 尚無正式帳戶 Provider、原始帳戶檔封存、逐筆未交割款來源與對帳報告；設定檔初始本金不能充當真實帳戶證據。
+- 已有標準 JSON 匯入、原始檔封存與逐筆交割對帳；尚無經核准的外部平台 Provider 或其正式欄位映射。設定檔初始本金則供虛擬帳戶唯一開帳使用，不能充當外部結算檔證據。
 - 目前整張決策流程不支援零股；匯入須保留原始股數並回報限制，不得取整或刪除部位。
 
 ## 資料與時間契約
@@ -66,17 +66,17 @@ AC1 優先保留現有決策契約。若凍結款、應付交割款或其他負�
 
 ## 預計程式與產物
 
-核心邏輯規劃放在 `src/etf_agent/accounts/`，CLI 放在 `cli/account_data.py`，測試放在 `tests/test_account_data.py`。AC4 更新既有決策 validator 及報告缺口顯示；沿用現有 Skills，需要變動操作方式時才同步修改。
+核心邏輯已放在 `src/etf_agent/accounts/`，CLI 放在 `cli/account_data.py`，測試放在 `tests/test_account_data.py`。目前只輸出決策帳戶欄位，尚未把它自動填入完整 DecisionInputBundle；沿用現有 Skills，需要變動操作方式時才同步修改。
 
-規劃 CLI 子命令為 `import`、`reconcile`、`validate`、`status`、`verify-run` 與 `export-decision-account`。這些入口尚未實作；實作後提供可直接執行的範例及退出碼說明。
+現有 CLI 子命令為 `import`、`reconcile`、`validate`、`verify-run` 與 `export-decision-account`；尚無 `status`。操作入口見 README，正式來源核准設定目前為空。
 
-每輪封存至 `artifacts/account_runs/<run_id>/`：
+目前 `import` 會封存至 `artifacts/account_runs/<run_id>/`：
 
 - `raw/`：原始匯出檔及來源 metadata。
 - `account_bundle.json`：正規化但仍保留來源語意的帳戶資料。
-- `reconciliation.json`、`reconciliation.md`：數值對帳、差異與阻擋原因。
-- `decision_account.json`：僅驗證通過且可無損映射時輸出；不是完整 DecisionInputBundle。
-- `manifest.json`：輸入、政策、價格引用、版本與所有檔案雜湊。
+- `manifest.json`：匯入原件、資料包版本與檔案雜湊。
+
+`reconcile` 另依 CLI 指定位置輸出 `reconciliation.json` 與 Markdown；`export-decision-account` 輸出 `decision_account.json`，它不是完整 DecisionInputBundle。對帳與匯出結果的不可變 run 封存仍待後續擴充；本選配支線目前不得作為每日虛擬帳本來源。
 
 ## 驗證與交付標準
 
