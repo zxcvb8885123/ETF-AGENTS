@@ -7,15 +7,16 @@ cd "$PROJECT_DIR"
 MODE=${1:-auto}
 
 case "$MODE" in
-  auto|official|all|check|daily)
+  auto|official|all|check|daily|report)
     ;;
   *)
-    echo "用法：./start.sh [auto|official|all|check|daily]" >&2
+    echo "用法：./start.sh [auto|official|all|check|daily|report]" >&2
     echo "  auto      有官方交易池就正式抓取，否則使用開發模式（預設）" >&2
     echo "  official  僅抓取官方交易池，交易池空白時停止" >&2
     echo "  all       開發用，抓取 TWSE 端點全部可解析證券" >&2
     echo "  check     建置映像並執行環境檢查與測試，不抓資料" >&2
-    echo "  daily     一鍵驗證來源、更新行情／事件並建立今日 Snapshot" >&2
+    echo "  daily     一鍵驗證來源、更新行情／事件、建立 Snapshot 並交付報告" >&2
+    echo "  report    使用既有 Snapshot 執行或續跑報告工作流" >&2
     exit 2
     ;;
 esac
@@ -40,6 +41,11 @@ if [ "$MODE" = "daily" ]; then
   MODE=official
 fi
 
+REPORT_ONLY=0
+if [ "$MODE" = "report" ]; then
+  REPORT_ONLY=1
+fi
+
 echo "[1/4] 建立 Docker 映像"
 docker compose build
 
@@ -51,6 +57,26 @@ if [ "$MODE" = "check" ]; then
   docker compose run --rm agent python3 -m unittest discover -s tests -v
   echo "[4/4] 檢查完成"
   exit 0
+fi
+
+if [ "$REPORT_ONLY" -eq 1 ]; then
+  REPORT_RUN_ID=${REPORT_RUN_ID:-report-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
+  REPORT_GENERATED_AT=${REPORT_GENERATED_AT:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
+  echo "[3/4] 執行報告工作流：$REPORT_RUN_ID"
+  set +e
+  docker compose run --rm agent python3 cli/report_workflow.py run \
+    --snapshot artifacts/research_snapshot_latest.json \
+    --database var/etf_agent.db \
+    --research artifacts/event_research_validated.json \
+    --repository artifacts/report_runs \
+    --reports artifacts/reports \
+    --execution-mode official \
+    --run-id "$REPORT_RUN_ID" \
+    --generated-at "$REPORT_GENERATED_AT"
+  WORKFLOW_EXIT=$?
+  set -e
+  echo "[4/4] 報告工作流完成，狀態檔：artifacts/reports/latest.md"
+  exit "$WORKFLOW_EXIT"
 fi
 
 echo "[3/4] 初始化資料庫並抓取行情"
@@ -80,14 +106,36 @@ else
 fi
 
 if [ "$DAILY_RUN" -eq 1 ]; then
-  DAILY_CUTOFF=${DAILY_CUTOFF:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z')}
   echo "[3b/4] 收集官方月營收與重大訊息"
   docker compose run --rm agent python3 cli/data_agent.py collect
+  # 未指定歷史 cutoff 時，必須在所有資料收集完成後才固定現在時間；
+  # 否則本次抓到的文件會因 available_at 晚於 cutoff 而被正確排除。
+  DAILY_CUTOFF=${DAILY_CUTOFF:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
   echo "[3c/4] 建立研究 Snapshot：$DAILY_CUTOFF"
   docker compose run --rm agent python3 cli/data_agent.py snapshot \
     --decision-cutoff "$DAILY_CUTOFF" \
     --output artifacts/research_snapshot_latest.json
+  REPORT_RUN_ID=${REPORT_RUN_ID:-daily-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
+  REPORT_GENERATED_AT=${REPORT_GENERATED_AT:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
+  echo "[3d/4] 執行報告工作流：$REPORT_RUN_ID"
+  set +e
+  docker compose run --rm agent python3 cli/report_workflow.py run \
+    --snapshot artifacts/research_snapshot_latest.json \
+    --database var/etf_agent.db \
+    --research artifacts/event_research_validated.json \
+    --repository artifacts/report_runs \
+    --reports artifacts/reports \
+    --execution-mode official \
+    --run-id "$REPORT_RUN_ID" \
+    --generated-at "$REPORT_GENERATED_AT"
+  WORKFLOW_EXIT=$?
+  set -e
 fi
 
 echo "[4/4] 顯示資料狀態"
 docker compose run --rm agent python3 scripts/data_status.py
+
+if [ "$DAILY_RUN" -eq 1 ] && [ "${WORKFLOW_EXIT:-0}" -ne 0 ]; then
+  echo "報告工作流尚未完成；請查看 artifacts/reports/latest.md。" >&2
+  exit "$WORKFLOW_EXIT"
+fi

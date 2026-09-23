@@ -8,6 +8,11 @@ from .reporting import (
     DailyReportValidator,
     PipelineRepository,
 )
+from .workflow import (
+    ReportWorkflowError,
+    ReportWorkflowRepository,
+    ReportWorkflowService,
+)
 
 __all__ = [
     "AutomationReportingApplicationService",
@@ -16,4 +21,7 @@ __all__ = [
     "DailyReportMarkdownRenderer",
     "DailyReportValidator",
     "PipelineRepository",
+    "ReportWorkflowError",
+    "ReportWorkflowRepository",
+    "ReportWorkflowService",
 ]
