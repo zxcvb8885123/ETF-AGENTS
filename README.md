@@ -31,6 +31,8 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `.venv/bin/python skills/event-analysis/scripts/event_research.py analyze-event-context --evidence-id ID` | 建立比較基準、新穎性、相關事件與事件相對行情資料包 |
 | `.venv/bin/python skills/event-analysis/scripts/event_research.py validate-debate --input BUNDLE.json` | 驗證 Fact／Bull／Bear／Adjudicator 子 Agent 輸出與獨立依賴 |
 | `.venv/bin/python skills/event-analysis/scripts/event_research.py validate-result --input RESULT.json` | 驗證事件研究結果、正式引用與 cutoff |
+| `.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py status` | 檢查市場情緒與分析師資料包的來源及覆蓋 |
+| `.venv/bin/python skills/sentiment-analyst/scripts/sentiment_research.py validate-result --input RESULT.json` | 重算並驗證市場情緒、共識修正與引用 |
 
 ## 目前完成
 
@@ -43,11 +45,12 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 150 檔交易池逐檔驗證、代號承接候選及 Snapshot fail-closed 閘門。
 - 官方交易池 CSV 讀取與篩選。
 - 事件研究 Agent `ResearchResult` 2.1：主控加 Fact／Bull／Bear／Adjudicator 子 Agent Skills、獨立多空 DebateBundle、財務傳導鏈、事件相對行情及雙重 fail-closed validator。
+- 市場情緒與分析師研究 Agent MVP：`PerceptionDataBundle`、逐筆情緒標籤、去重聚合、分析師共識修正、事件預期差、`MarketPerceptionResult` validator、Skill 與 CLI。
 - 事件策略 V1：事件評分、價格確認及進攻／防守配置。
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。目前尚未接上季報、法說、市場共識、新聞候選、完整研究品質評測、完整回測、每日報告和主辦平台送件。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前尚未接上季報、法說、真實市場共識、新聞候選、完整研究品質評測、完整回測、每日報告和主辦平台送件。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方歷史行情 CLI、財報彙總與交易狀態。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 
@@ -71,6 +74,7 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方
 | [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 官方行情、財報、事件與新聞來源的實測結果及接入判定 |
 | [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及實作里程碑 |
 | [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 第一個下游 Agent；事件證據、補查、引用與研究結果 |
+| [市場情緒與分析師研究 Agent 計畫](docs/sentiment_analyst_agent_plan.md) | 市場情緒、共識修正、預期差、資料授權與時間點驗證 |
 | [動能／配置／風控 Agent 計畫](docs/momentum_portfolio_risk_agent_plan.md) | 第二個下游 Agent；動能、權重、訂單、費稅及競賽風控 |
 | [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
 | [回測與驗證方法規格](docs/backtest_plan_v1.md) | 資料切分、成交假設、策略比較與有效性判定方法 |
