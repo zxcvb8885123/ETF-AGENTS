@@ -21,6 +21,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `./start.sh all` | 開發模式：抓 TWSE 最新行情端點的全部可解析證券 |
 | `./start.sh check` | 只建置、檢查與執行測試 |
 | `./start.sh daily` | 一鍵驗證來源、更新行情／事件並建立 `artifacts/research_snapshot_latest.json` |
+| `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
 | `PYTHONPATH=src python3 scripts/collect_official_history.py` | 以官方 TWSE／TPEx 月行情增量更新日線；先驗證最近完整交易日，並輸出逐檔覆蓋 JSON |
@@ -46,8 +47,9 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
 | `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
+| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；提供 Decision run 後可接 DailyReport |
 
-下一批計畫為[自動化報告 Agent：一鍵研究與報告交付](docs/report_delivery_agent_plan.md)的 RPT0～RPT3：修復資料／cutoff 缺口、接上隔離事件研究與驗證，並交付固定格式報告及等待／失敗狀態頁。目前 `daily` 仍只到 Snapshot，此計畫尚未實作。
+自動化報告 Agent 已完成 RPT0～RPT4 的第一版：`daily` 會建立 Snapshot 並封存報告工作流；`report` 可使用既有 Snapshot 續跑；結果固定交付至 `artifacts/reports/latest.md`。沒有研究 Agent 輸出時會留下 `waiting_for_agent`；Research Report 完成但沒有同一 Snapshot／cutoff 的 Decision／Risk 時會留下 `waiting_for_decision`；不會捏造報告或繞過風控。
 
 ## 目前完成
 
@@ -111,9 +113,10 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [P7 回測 Agent 第一批計畫](docs/backtest_mvp_plan.md) | B0～B2 fixture MVP 已完成：歷史時鐘、時間點資料、整張成交、交割與多日帳務重播 |
 | [回測與驗證方法規格](docs/backtest_plan_v1.md) | 資料切分、成交假設、策略比較與有效性判定方法 |
 | [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四層下游 Agent；執行紀錄、每日／失敗報告、D-Plan 候選檔與排程；交付人工檢視 |
+| [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4：資料／cutoff、研究交接、續跑、固定格式交付與 DailyReport 接線 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
-自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作：它能驗證已封存的決策 run，產生或重建 DailyReport，並在資料或風控前置失敗時封存 FailureReport。正式排程、D-Plan 與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。
+自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。D-Plan、正式排程與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。
 
 ## 專案結構
 

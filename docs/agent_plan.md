@@ -61,7 +61,7 @@
 | 買賣裁決 | `skills/trade-adjudication/SKILL.md`（規劃） | 驗證獨立 packets、裁決衝突，不新增事實或計算權重 |
 | 配置後風險挑戰 | `skills/portfolio-risk-review/SKILL.md`（規劃） | 檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
 | 回測驗證 | `skills/strategy-backtest/SKILL.md` | 鎖定 fixture 版本、歷史重播、整張成交、交割與帳務驗收；策略比較、績效與前向驗證待後續完成 |
-| 自動化排程與報告 | `skills/daily-report/SKILL.md`（規劃） | 檢查各階段結果、建立報告、說明失敗與要求人工處理 |
+| 自動化排程與報告 | `skills/daily-report/SKILL.md`（RPT0～RPT4 第一版） | 檢查各階段結果、交付 Research Report，並在 Decision／Risk 通過時接既有 DailyReport／FailureReport；缺輸入時等待或失敗 |
 | D-Plan Builder／Validator（確定性程式，不是新 Agent） | 不需要獨立 Skill | 合併 Snapshot、研究、決策與風控輸出；配置引用 ID，執行 JSON Schema 與語意驗證 |
 
 Skill 文件定義任務流程、證據要求與輸出格式，由控制器載入給 LLM；`cli/` 是 Skill、人工與排程共用的穩定命令入口；`src/etf_agent/` 則保存實際 runtime、資料契約與確定性計算。各角色先共用一個應用程式，無須各自部署成服務。動能計算、交易數量、費稅與風控限制由程式執行；LLM 負責事件理解及有來源的文字說明。
@@ -118,4 +118,4 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 ## 下一批：按需報告交付（2026-09-22）
 
-依[自動化報告 Agent 一鍵交付計畫](report_delivery_agent_plan.md)先完成 RPT0～RPT3，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑及固定報告入口。這批先交付 Research Report V0 或等待／失敗診斷；正式 DailyReport、D-Plan 與排程仍須通過各自資料、決策及驗收前置條件。
+依[自動化報告 Agent 一鍵交付計畫](report_delivery_agent_plan.md)已完成 RPT0～RPT4 第一版，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑、固定報告入口及既有 DailyReport／FailureReport 接線。這批可交付 Research Report V0，或在 Decision／Risk 通過後交付 DailyReport；D-Plan 與排程仍須通過各自資料及驗收前置條件。
