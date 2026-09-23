@@ -54,9 +54,11 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 attach-account --template BUNDLE.json --account-snapshot ACCOUNT.json --snapshot SNAPSHOT.json --output DECISION_INPUT.json` | 綁定虛擬帳戶並完整驗證決策輸入包 |
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 apply-decision --decision-run-id RUN_ID --execution-market EXECUTION.json --close-market CLOSE.json --settlement-date YYYY-MM-DD --run-id CLOSE_RUN` | 驗證已封存 Decision run，模擬成交並保存日終虛擬帳本 |
 | `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
-| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；提供 Decision run 後可接 DailyReport |
+| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；official DailyReport 續跑還須提供最新封存的 VirtualAccount prepare-day run |
+| `.venv/bin/python cli/dplan.py build ...` | 從封存且重建通過的 Decision run 與 Agent 審閱 context 產生 D-Plan v4.0 候選；阻擋缺少策略說明、官方 150 檔交易池、引用或規則不一致 |
+| `.venv/bin/python cli/dplan.py validate --input D-Plan.json` | 執行本地支援的 D-Plan 結構與引用鏈檢查；不等同主辦方伺服器語意驗證 |
 
-自動化報告 Agent 已完成 RPT0～RPT4 的第一版：`daily` 會建立 Snapshot 並封存報告工作流；`report` 可使用既有 Snapshot 續跑；結果固定交付至 `artifacts/reports/latest.md`。沒有研究 Agent 輸出時會留下 `waiting_for_agent`；Research Report 完成但沒有同一 Snapshot／cutoff 的 Decision／Risk 時會留下 `waiting_for_decision`；不會捏造報告或繞過風控。
+自動化報告 Agent 已完成 RPT0～RPT4 的第一版：`daily` 會建立 Snapshot 並封存報告工作流；`report` 可使用既有 Snapshot 續跑；結果固定交付至 `artifacts/reports/latest.md`。沒有研究 Agent 輸出時會留下 `waiting_for_agent`；Research Report 完成但沒有同一 Snapshot／cutoff 的 Decision／Risk 時會留下 `waiting_for_decision`；official DailyReport 續跑會在產生報告前核對 VirtualAccount prepare-day run、Snapshot／cutoff 與決策 AccountSnapshot。新增 `cli/dplan.py` 作為 D-Plan v4.0 候選匯出及本地結構／引用鏈檢查入口；DailyReport 仍是內部報告，D-Plan 候選仍需完整真實資料、已核准策略說明、官方交易池與人工檢視。當前本地檢查不是主辦方 `verify_dplan.py`，不得標示成平台驗證或已送件。
 
 ## 目前完成
 
@@ -84,6 +86,8 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已�
 基本面研究 Agent 的 FR0～FR3 fixture MVP 已完成；它從固定 Snapshot 整理一般業財報、重算確定性財務比率並驗證有引用的研究解讀，不產生交易候選、權重或訂單。尚未完成 FR4 真實資料演練、FR5 下游契約升版，以及毛利率、現金流品質、估值與金融業公式；原 M1 交易狀態與資料主線仍需完成。
 
 ## 資料位置
+
+資料擴充依 [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md)（2026-09-23，待實作）：官方來源加 FinMind，先補日曆、交易狀態、ETF 基準，再擴充歷史財報、現金流與籌碼；FinLab 選配、Fugle 延後。金融資料 API 不改變本地 Codex／Claude 架構；新增 Provider 尚未接入。
 
 目前 M1 官方交易狀態已完成 TS1～TS4 的契約、固定 cutoff 重建、SQLite migration、CLI 與 Guard adapter；[M1 官方交易狀態接入](docs/trading_status_m1_plan.md) 的 TS0 來源核准與 TS5 150 檔真實覆蓋仍未完成。資料不足時阻擋正式決策，保留可用研究資料。
 
@@ -122,11 +126,12 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四層下游 Agent；執行紀錄、每日／失敗報告、D-Plan 候選檔與排程；交付人工檢視 |
 | [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4：資料／cutoff、研究交接、續跑、固定格式交付與 DailyReport 接線 |
 | [真實研究續跑與決策報告驗收](docs/report_workflow_acceptance_plan.md) | W0～W5 已完成一件真實事件驗收；降級 Research Report 可重建，DailyReport 等待正式決策輸入 |
-| [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA3 fixture 工具鏈已完成；VA4 報告工作流接線、VA5 真實資料與前向驗收待完成 |
+| [正式競賽決策報告與 D-Plan 交付](docs/competition_report_delivery_plan.md) | 已新增 D-Plan v4.0 候選匯出器與本地結構／引用檢查；真實交易池、策略說明、完整決策演練及伺服器驗證仍待完成 |
+| [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA3 fixture 已完成；VA4 報告帳戶呈現與帳本核對已實作、待驗收；自動帳務操作與 VA5 待完成 |
 | [外部帳戶結算檔匯入與對帳計畫](docs/account_data_integration_plan.md) | 選配支線；AC1～AC4 fixture 工具鏈已完成，正式來源核准清單仍為空 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
-自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。D-Plan、正式排程與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。
+自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。主辦方 D-Plan v4.0 Schema 與指南已取得並盤點，現有候選匯出器與本地結構／引用鏈檢查；正式資料端到端演練、主辦方伺服器語意驗證、正式排程及平台送件仍未完成。請參閱[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)及[正式競賽決策報告與 D-Plan 交付計畫](docs/competition_report_delivery_plan.md)。
 
 ## 專案結構
 

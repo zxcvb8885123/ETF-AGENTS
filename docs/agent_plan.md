@@ -1,5 +1,7 @@
 # ETF Agent 四層開發架構
 
+2026-09-23 資料主線更新：新增 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)，以官方來源加 FinMind 優先補齊正式報告必要資料，再擴充歷史基本面與籌碼；FinLab 選配、Fugle 延後。D0～D6 補充 M1～M4 的開發順序，既有 Agent 邊界維持；本次僅規劃，尚未新增 Provider。
+
 本文件為目標架構。以既有 SQLite 與行情管線為基礎，先完成 Data Agent M0～M3 與事件研究；依 2026-09-21 的開發決定，市場情緒與分析師研究 Agent 的契約、工具及 Skill 提前建立，再接投資組合買賣決策與風控多子 Agent、回測與自動化排程。Data Agent M4 補齊的歷史時間點資料仍是正式回測的前置條件。
 
 > 計畫狀態（2026-09-22）：Data Agent M0 已完成，M1 進行中；事件研究多子 Agent、市場情緒／分析師研究 MVP、Research Report V0、Portfolio Decision P0～P6、回測 Agent B0～B2，以及 DailyReport／FailureReport A0～A1 fixture／離線版已完成。真實 Perception Provider、正式帳戶／規則接入、正式歷史回測、D-Plan 與正式排程尚未完成。第一版仍不接 LLM API、LangChain、LangGraph 或 CLIProxyAPI。
