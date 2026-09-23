@@ -8,7 +8,7 @@
 
 - 已完成：Research Report V0 Builder／Validator、事件研究工具與角色 Skills、離線 DailyReport／FailureReport A0／A1。
 - 已完成第一版：`start.sh daily` 收集資料、建立 Snapshot、封存候選與 Agent 交接；`start.sh report` 可使用既有 Snapshot 執行或續跑；結果固定交付至 `artifacts/reports/latest.md`。
-- 本次檢查：目前快照可用、包含 150 檔行情，但文件數為零；工作區未找到已驗證事件研究檔。文件記載的先前演練不能代替本次可驗證產物。
+- 2026-09-23 的新驗收已使用前一日封存 Snapshot：150 檔行情、187 筆事件候選，完成一件隔離研究與降級 Research Report；詳見[真實研究續跑與決策報告驗收](report_workflow_acceptance_plan.md)。其餘候選未研究。
 - 待排查：零文件時仍須檢查收集結果、來源時間、資料庫掛載與 Snapshot 篩選，不能僅由零文件斷定原因。
 - 尚未接入：實際 Agent 工作階段的自動啟動／回傳、正式帳戶／規則及決策資料、官方 D-Plan 規格與正式排程。第一版會交付 waiting_for_agent，等待人工或 Codex／Claude 工作階段完成研究。
 
@@ -76,7 +76,7 @@ artifacts/reports/latest_success.json 最近一次通過報告索引
 | RPT4 決策報告接入 | **第一版已完成離線接線**：Research Report 後可接同一 Snapshot／cutoff 的 Decision run，呼叫既有 DailyReport／FailureReport Builder，封存下游產物 | 仍須核對真實帳戶、現金、持倉、交易狀態、基準、規則及回測／前向驗收；缺必要資料時只交付診斷及已驗證研究，不以 fixture 補正式輸入 |
 | RPT5 排程與候選檔 | 在原 A2／A3／A5 前置通過後啟用 scheduler、互斥鎖、有限重試、恢復與官方 D-Plan 驗證 | 逾時、並行、中斷、重複觸發測試通過；缺官方規格停止候選檔；最後交付人工檢視 |
 
-RPT0～RPT4 第一版已完成；下一步是以實際來源完成一次真實事件研究續跑，再用同一 Snapshot／cutoff 接入已驗證 Decision／Risk run。這是按需研究交付，不提前啟用正式每日決策排程。RPT5 仍依各自前置條件接續。
+RPT0～RPT4 第一版已完成，且同一 Snapshot／cutoff 的真實事件研究續跑已完成一件驗收。正式 Decision／Risk 輸入尚未齊備，當前報告狀態為 `waiting_for_decision`。這是按需研究交付，不提前啟用正式每日決策排程。RPT5 仍依各自前置條件接續。
 
 ## 狀態、恢復與測試
 
