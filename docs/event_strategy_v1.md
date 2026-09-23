@@ -104,6 +104,6 @@ LLM 負責事件理解、補查選擇與理由。營收增減、財報期間比�
 7. [ ] 建立人工標記事件集，測試公司辨識、基準選擇、因果鏈、最強反證、裁決、影響方向、引用正確性與補查能力；對照「無辯論／固定分數」消融版本。
 8. [ ] 接上動能、第三層風控及[回測 Agent](backtest_agent_plan.md)。
 
-完成條件：`ResearchResult` schema、引用與 cutoff 驗證全部通過；人工事件測試集達到預先設定的證據正確率與公司辨識門檻；同一 Snapshot 可重播工具結果；失敗或證據不足時不產生可配置候選。完成後交給[動能／配置／風控 Agent 計畫](momentum_portfolio_risk_agent_plan.md)。
+完成條件：`ResearchResult` schema、引用與 cutoff 驗證全部通過；人工事件測試集達到預先設定的證據正確率與公司辨識門檻；同一 Snapshot 可重播工具結果；失敗或證據不足時不產生可配置候選。完成後交給[投資組合買賣決策與風控多子 Agent 計畫](momentum_portfolio_risk_agent_plan.md)。
 
 保存工具呼叫、回傳資料、結構化結果與簡短決策依據，供重播和稽核；不依賴模型未公開的內部推理。

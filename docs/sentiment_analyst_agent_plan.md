@@ -22,7 +22,7 @@ ResearchSnapshot → 事件研究 Agent → ResearchResult
   → 同期間、同單位的事件預期差
   → MarketPerceptionResult
                          ↓
-動能／配置／風控 Agent（只作次級輸入）
+投資組合買賣決策與風控多子 Agent（只作次級輸入）
 ```
 
 ## 輸入與輸出

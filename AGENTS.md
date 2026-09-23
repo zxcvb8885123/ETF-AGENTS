@@ -35,7 +35,10 @@
 
 ### 後續 Agent
 
-- 動能／配置／風控 Agent 的技術指標、權重、股數、費稅與限制由確定性 Python 程式計算。
+- 投資組合決策層採 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 五個子 Agent；Buy 與 Sell 必須使用相同輸入且互相隔離。
+- 子 Agent 只輸出市場狀態解讀、買賣意圖、裁決或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
+- Buy／Sell 必須使用主控建立的獨立 role input artifact，packet 不得含 peer 依賴；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
+- Trade Adjudicator 不得新增事實，Portfolio Risk 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
 - 回測 Agent 必須使用歷史時鐘和當時可得版本，不得使用回測日之後的資料。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 

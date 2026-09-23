@@ -1,6 +1,6 @@
 # 回測 Agent 計畫 V1
 
-> 開發順序：動能／配置／風控 Agent 通過單元與整合測試後實作；回測及前向驗證通過後，才接自動化排程與報告 Agent。
+> 開發順序：投資組合買賣決策與風控多子 Agent 通過單元與整合測試後實作；回測及前向驗證通過後，才接自動化排程與報告 Agent。
 
 ## 定位
 
@@ -38,7 +38,7 @@
   → HistoricalClock 逐日推進 decision_cutoff
   → PointInTimeDataProvider 建立當時可用 Snapshot
   → 重播事件研究 Agent
-  → 重播動能／配置／風控 Agent
+  → 重播投資組合買賣決策與風控多子 Agent
   → ExecutionSimulator 模擬成交、費稅與未成交
   → AccountLedger 更新現金、持股與收盤估值
   → 保存每日 ReplayResult

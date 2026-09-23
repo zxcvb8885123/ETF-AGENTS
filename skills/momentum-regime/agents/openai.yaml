@@ -1,0 +1,4 @@
+interface:
+  display_name: "動能與市場狀態 Agent"
+  short_description: "解讀確定性動能、波動、流動性與市場寬度"
+  default_prompt: "使用 $momentum-regime 解讀已驗證 MomentumResult，不改寫指標或產生交易建議。"

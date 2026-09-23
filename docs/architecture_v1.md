@@ -1,6 +1,6 @@
 # 第一版 Agent 技術架構
 
-狀態（2026-09-18）：架構設計與 Data Agent M0 已完成；M1 的 TWSE／TPEx 最新行情與 Yahoo 兩年增量刷新已驗收，目前下一項是官方歷史行情 CLI。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
+狀態（2026-09-21）：架構設計、Data Agent M0、事件研究、市場認知 MVP、Research Report V0，以及 Portfolio Decision P0～P2 已完成；配置、訂單、完整風控與回測仍待實作。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
 
 ## 1. 整體設計
 
@@ -9,8 +9,8 @@
 | 模組 | 輸入 | 職責 | 輸出 |
 | --- | --- | --- | --- |
 | 資料蒐集 | 官方名單、行情、基本面、新聞、主辦持倉 | 收集、清理、檢查時間與品質、計算特徵 | ResearchSnapshot |
-| 策略決策 | ResearchSnapshot、目前持倉、策略設定 | 量化排序、事件分析、提出配置理由 | StrategyProposal |
-| 組合／資金風控 | StrategyProposal、帳戶快照、競賽規則 | 配置、交易數量計算、成交模擬、限制檢查 | ApprovedDecision 或 RejectedDecision |
+| 買賣意圖裁決 | ResearchSnapshot、研究結果、目前持倉 | Momentum、Buy、Sell、Adjudicator 子 Agent 獨立研究及裁決 | TradeIntentResult |
+| 組合／資金風控 | TradeIntentResult、帳戶快照、競賽規則 | 確定性配置、交易數量、費稅、情境模擬、Risk Agent 挑戰及硬性限制檢查 | DecisionResult |
 
 報告輸出與稽核是共用支援功能。只從通過檢查的同一份決策產生報告與交易書，避免兩份內容不一致。
 
@@ -28,15 +28,16 @@
 
 交易池、帳戶、必要價格或 ETF 基準缺失時停止該次流程；個別新聞缺失則標記缺失，不自動解讀為利多或利空。目前 `data/official_universe.csv` 已依 2026-09-14 新版官方 PDF 載入 150 檔，其中 `5371 中光電` 已由官方名單更新為 `3718 中光電投控`。每日仍須驗證代號與可交易狀態；任何未出現在官方名單的承接關係都不得自行套用。
 
-## 3. 策略決策模組
+## 3. 買賣意圖裁決模組
 
 ### 元件
 
-- `scoring`：計算量化分數與排名；每項分數保留原始指標及計算設定。
-- `event_analysis`：LLM 只根據研究快照分析新聞，輸出事件、影響、證據 ID 與不確定性。
-- `proposal`：綜合排名、事件與現有持倉，提出候選、建議權重、增減持理由及退出條件。
+- `momentum_regime`：呼叫確定性 MomentumEngine，解讀市場狀態、量化指標與排名。
+- `buy_candidate`：使用同一份輸入獨立提出 `buy`、`add`、`watch` 或 `exclude`。
+- `sell_exit`：不讀 Buy 輸出，針對既有持股提出 `hold`、`trim`、`exit` 或 `forced_exit`。
+- `trade_adjudication`：驗證買賣 packets 的共同輸入與獨立性，裁決成 `TradeIntentResult`。
 
-第一個可跑版本先採量化排序作為基準，再接入 LLM，比較對決策與績效的影響。評分權重與換股門檻屬於待驗證的策略參數，不是官方限制。
+第一個可跑版本先保留量化排序作為基準，再比較加入獨立買賣研究後對決策與績效的影響。評分權重與換股門檻屬於待驗證的策略參數，不是官方限制。Buy 與 Sell 必須使用相同輸入且互相隔離，Adjudicator 不能新增上游沒有的事實。
 
 LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化格式，引用的證據必須存在。格式錯誤最多重試設定次數；仍失敗則標记該次執行失敗，或採用事先設定並記錄的量化備援策略。
 
@@ -44,12 +45,13 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 ### 元件與順序
 
-1. `allocator`：依候選與設定產生 20–30 檔目標部位，檢查個股及可選的產業集中限制。
+1. `allocator`：依已驗證 `TradeIntentResult` 與設定產生 20–30 檔目標部位，檢查個股及可選的產業集中限制。
 2. `order_builder`：以目標部位減目前部位得到淨交易量。同一股票只產生單一方向的交易；禁止超賣與放空。內部以股數表示、交易要求整張倍數，最終欄位依官方格式確認。
 3. `simulator`：用預估成交價計算現金及費稅，用預估收盤價計算部位市值與 NAV，兩種價格不可混用。
 4. `scenario_check`：模擬不同成交與收盤價格，包括買進成本上升、持股下跌、個股權重上升等情境。
-5. `validator`：檢查交易池、檔數、現金、個股權重、交易限制與 Active Share。
-6. `repair`：檢查失敗時調整數量或替換候選，最多執行設定次數；耗盡後回傳拒絕結果，禁止無限重算。
+5. `portfolio_risk_review`：子 Agent 挑戰集中、流動性、換手、回撤與情境風險，只能提出 allowlist 內的結構化修正。
+6. `validator`：以確定性工具檢查交易池、檔數、現金、個股權重、交易限制與全部指定 ETF 的 Active Share。
+7. `repair`：依結構化要求重新計算，最多三次；耗盡後回傳拒絕結果，禁止無限重算。
 
 送件前無法知道當日成交均價與收盤價，情境模擬只能提供安全餘裕，不能保證結算時一定合規。結算後必須依主辦方實際結果再次核對。
 
@@ -71,12 +73,13 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | RunContext | decision_cutoff、config_version、code_version、mode |
 | AccountSnapshot | settlement_date、positions、cash、nav、source_id |
 | ResearchSnapshot | account_snapshot_id、universe_version、benchmark_version、features、events、sources、quality_flags |
-| StrategyProposal | snapshot_id、candidates、scores、suggested_weights、reasons、evidence_ids、reduce_triggers |
+| TradeIntentResult | snapshot_id、buy／add／hold／trim／exit／exclude、priority、reasons、evidence_ids、invalidation_conditions |
+| AllocationProposal | trade_intent_result_id、target_weights、cash_target、strategy_version |
 | OrderPlan | proposal_id、orders、estimated_fees、estimated_cash、projected_positions |
 | RiskResult | passed、violations、warnings、scenario_results、active_share_by_etf |
-| ApprovedDecision | order_plan_id、risk_result_id、final_reasons、content_hash |
+| DecisionResult | status、order_plan_id、risk_result_id、repair_history、final_reasons、content_hash |
 
-只有控制器能在 RiskResult 通過後建立 ApprovedDecision。RejectedDecision 保留原因與修正歷程，但不能進入正式交易書輸出。
+只有 Portfolio Decision 主控能在完整重建 validator 與硬性風控通過後建立 `approved` 或 `no_trade` DecisionResult。`rejected` 結果保留原因與修正歷程，但不能進入正式交易書輸出；`no_trade` 仍須驗證目前持股。
 
 ## 6. 每日流程與故障處理
 
@@ -84,7 +87,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 2. 在提交窗口內啟動執行，固定資料截止時間與 run_id。
 3. 建立研究快照，通過資料品質檢查後執行策略。
 4. 計算配置、交易與價格情境，執行風控及有次數上限的修正。
-5. 通過後從同一份 ApprovedDecision 產出報告和交易書，保存內容雜湊。
+5. 通過後從同一份 `approved` DecisionResult 產出報告和交易書，保存內容雜湊。
 6. 若後續接入送件器，送出後保存平台回執，以平台接受結果認定成功，不以本地檔案生成認定成功。
 7. 收到當日主辦結算後更新帳戶、NAV 歷史、MDD 與違規追蹤，再開始下一交易日。
 
@@ -101,7 +104,8 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | src/etf_agent/pipeline.py | 每日流程控制、狀態與重試 |
 | src/etf_agent/contracts.py | 模組資料契約與驗證 |
 | src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features、account_loader 及其他來源 |
-| src/etf_agent/strategy/ | scoring、event_analysis、proposal |
+| src/etf_agent/decision/ | 已有 P0～P2：DecisionInputBundle、MomentumEngine、獨立買賣 packets、DebateBundle、TradeIntentResult validators 與 CLI service |
+| src/etf_agent/strategy/ | 既有事件策略原型；後續與 decision 契約整合或拆分 |
 | src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
 | src/etf_agent/risk/ | 情境檢查、Active Share、超限日數、MDD |
 | src/etf_agent/reporting/ | 已有 Research Report V0 Builder／Validator／Markdown renderer；正式 DailyReport、FailureReport 與 D-Plan 待後續實作 |
@@ -118,7 +122,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 ## 8. 現況與實作里程碑
 
-目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。歷史刷新以兩個官方市場都已完成的最近交易日為截止日，避免把 Yahoo 盤中日 K 當成正式收盤資料。現有 guard 仍只接受單一 benchmark，尚未做前十大裁切、全部 ETF 比對、完整帳戶輸入、成交模擬或完整 Agent 稽核持久化；資料抓取成功不代表即可正式送件。
+目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。Portfolio Decision P0～P2 已加入共同輸入雜湊、確定性動能、獨立買賣 packets 與裁決 validators，但尚未產生配置或訂單。歷史刷新以兩個官方市場都已完成的最近交易日為截止日，避免把 Yahoo 盤中日 K 當成正式收盤資料。現有 guard 仍只接受單一 benchmark，尚未做前十大裁切、全部 ETF 比對、完整帳戶輸入、成交模擬或完整 Agent 稽核持久化；資料抓取成功或 TradeIntentResult 通過都不代表即可正式送件。
 
 里程碑以 [Data Agent 計畫](data_agent_plan.md) 的 M0～M4 為資料主線：先完成 M0 來源健康與交易池閘門，再依序接入 M1 官方資料、M2 新聞候選與 M3 Agent 工具循環。事件研究通過後，才進入量化策略、完整風控、時間一致回測及送件格式。不得因已有事件策略原型，就跳過資料閘門直接產生正式交易決策。
 
