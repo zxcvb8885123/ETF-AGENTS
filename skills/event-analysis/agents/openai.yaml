@@ -1,0 +1,4 @@
+interface:
+  display_name: "事件研究 Agent"
+  short_description: "主控事實、多方、空方與裁決子 Agent 研究台股事件"
+  default_prompt: "使用 $event-analysis 主控事實、多方、空方與裁決子 Agent，產生並驗證 ResearchResult 2.1。"

@@ -26,6 +26,11 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `.venv/bin/python scripts/collect_history.py` | 透過 yfinance 增量更新 150 檔最近兩年日線至最近完整官方交易日 |
 | `.venv/bin/python skills/event-data/scripts/data_agent.py collect` | 抓取官方月營收與重大訊息 |
 | `.venv/bin/python skills/event-data/scripts/data_agent.py snapshot --output artifacts/research_snapshot_latest.json` | 建立目前時間的研究快照 |
+| `.venv/bin/python skills/event-analysis/scripts/event_research.py status` | 確認事件研究 Snapshot 與證據可用 |
+| `.venv/bin/python skills/event-analysis/scripts/event_research.py list-events --lookback-days 45` | 列出截止時間前的事件候選 |
+| `.venv/bin/python skills/event-analysis/scripts/event_research.py analyze-event-context --evidence-id ID` | 建立比較基準、新穎性、相關事件與事件相對行情資料包 |
+| `.venv/bin/python skills/event-analysis/scripts/event_research.py validate-debate --input BUNDLE.json` | 驗證 Fact／Bull／Bear／Adjudicator 子 Agent 輸出與獨立依賴 |
+| `.venv/bin/python skills/event-analysis/scripts/event_research.py validate-result --input RESULT.json` | 驗證事件研究結果、正式引用與 cutoff |
 
 ## 目前完成
 
@@ -37,11 +42,12 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 可重跑的 TWSE／TPEx 來源健康探測與結構化可行性報告。
 - 150 檔交易池逐檔驗證、代號承接候選及 Snapshot fail-closed 閘門。
 - 官方交易池 CSV 讀取與篩選。
+- 事件研究 Agent `ResearchResult` 2.1：主控加 Fact／Bull／Bear／Adjudicator 子 Agent Skills、獨立多空 DebateBundle、財務傳導鏈、事件相對行情及雙重 fail-closed validator。
 - 事件策略 V1：事件評分、價格確認及進攻／防守配置。
 - 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
 - Docker 與快速啟動流程。
 
-目前尚未接上季報、法說、新聞、LLM 公告分類、完整回測、每日報告和主辦平台送件。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。目前尚未接上季報、法說、市場共識、新聞候選、完整研究品質評測、完整回測、每日報告和主辦平台送件。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情已接入，目前接續官方歷史行情 CLI、財報彙總與交易狀態。之後才依序進行新聞候選（M2）與 Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 

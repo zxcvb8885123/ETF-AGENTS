@@ -1,5 +1,9 @@
 {
   "name": "one_month_event_driven_v1",
+  "research_contract": "ResearchResult 2.1",
+  "debate_contract": "DebateBundle 1.0",
+  "subagent_roles": ["fact", "bull", "bear", "adjudicator"],
+  "fixed_score_policy": "benchmark_only_not_agent_verdict",
   "competition_period": {
     "start": "2026-10-26",
     "end": "2026-11-27",
