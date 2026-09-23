@@ -104,7 +104,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | src/etf_agent/strategy/ | scoring、event_analysis、proposal |
 | src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
 | src/etf_agent/risk/ | 情境檢查、Active Share、超限日數、MDD |
-| src/etf_agent/reporting/ | 報告與交易書產製、同源一致性檢查 |
+| src/etf_agent/reporting/ | 已有 Research Report V0 Builder／Validator／Markdown renderer；正式 DailyReport、FailureReport 與 D-Plan 待後續實作 |
 | src/etf_agent/data/database.py | 已有：行情、原始回應與執行紀錄；待擴充其他模組資料表 |
 | src/etf_agent/models.py | 既有：部位與投資組合資料模型 |
 | src/etf_agent/guard.py | 既有：初步風控檢查，後續擴充或轉接 risk |

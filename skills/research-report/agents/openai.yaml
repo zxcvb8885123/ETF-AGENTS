@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Report V0"
+  short_description: "整合事件與市場認知結果，產生可稽核研究報告"
+  default_prompt: "使用 $research-report 將同一 Snapshot 的事件與市場認知結果整理成經驗證的 JSON 與 Markdown 研究報告。"

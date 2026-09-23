@@ -2,6 +2,8 @@
 
 > 開發順序：事件研究 Agent、動能／配置／風控 Agent及回測 Agent完成，且固定版本前向驗證通過後最後實作。
 
+> 現況：Research Report V0 已完成研究層 artifact 的 JSON／Markdown 整合與完整重建驗證；它不包含本文件規劃的 DecisionResult、D-Plan、正式 DailyReport、FailureReport、排程或通知。
+
 ## 定位
 
 本 Agent 負責在固定時間啟動已驗證的 Data、Research、Portfolio／Risk 流程，保存每個階段的結果，組裝 D-Plan 與人類可讀報告，並在失敗時通知使用者。它不能修改研究結論、重算權重、放寬風控、直接下單或自動送件。
