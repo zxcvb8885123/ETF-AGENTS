@@ -46,6 +46,9 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
+| `PYTHONPATH=src python3 cli/account_data.py import --input ACCOUNT.json --cutoff ISO_TIME --run-id RUN_ID --mode fixture` | 匯入標準帳戶 JSON 並封存原始檔與雜湊；正式模式須先在 `config/account_sources.json` 核准 provider／版本 |
+| `PYTHONPATH=src python3 cli/account_data.py reconcile --account ACCOUNT_BUNDLE.json --snapshot SNAPSHOT.json --max-nav-drift-rate RATE --output RECONCILIATION.json` | 以同一 cutoff Snapshot 重算 NAV、現金及價格覆蓋，另產 Markdown 對帳報告 |
+| `PYTHONPATH=src python3 cli/account_data.py export-decision-account --account ACCOUNT_BUNDLE.json --reconciliation RECONCILIATION.json --snapshot SNAPSHOT.json --output DECISION_ACCOUNT.json` | 僅在正式來源且通過對帳、可無損轉換時匯出決策帳戶欄位 |
 | `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
 | `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；提供 Decision run 後可接 DailyReport |
 
@@ -114,6 +117,8 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [回測與驗證方法規格](docs/backtest_plan_v1.md) | 資料切分、成交假設、策略比較與有效性判定方法 |
 | [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四層下游 Agent；執行紀錄、每日／失敗報告、D-Plan 候選檔與排程；交付人工檢視 |
 | [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4：資料／cutoff、研究交接、續跑、固定格式交付與 DailyReport 接線 |
+| [真實研究續跑與決策報告驗收](docs/report_workflow_acceptance_plan.md) | W0～W5 已完成一件真實事件驗收；降級 Research Report 可重建，DailyReport 等待正式決策輸入 |
+| [正式帳戶資料接入與對帳計畫](docs/account_data_integration_plan.md) | AC1～AC4 fixture 工具鏈已完成；官方來源核准清單目前為空，真實帳戶驗收待正式匯出樣本 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
 自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。D-Plan、正式排程與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。
