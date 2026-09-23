@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from etf_agent.automation import (
+    ReportWorkflowError,
     ReportWorkflowRepository,
     ReportWorkflowService,
 )
@@ -155,6 +156,18 @@ class ReportWorkflowTests(unittest.TestCase):
                 )
             )
             self.assertEqual(report["parent_workflow_run_id"], "waiting-1")
+            reused = ReportWorkflowService(repository).run(
+                workflow_run_id="repeat-1",
+                repository_root=root / "runs",
+                reports_root=root / "reports",
+                snapshot_path=snapshot_path,
+                database_path=database_path,
+                research_path=research_path,
+                generated_at="2026-09-20T01:02:00+00:00",
+            )
+            self.assertTrue(reused["reused"])
+            self.assertEqual(reused["workflow_run_id"], "resume-1")
+            self.assertEqual(reused["status"], "waiting_for_decision")
 
     def test_verified_research_with_decision_run_publishes_daily_report(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -245,6 +258,101 @@ class ReportWorkflowTests(unittest.TestCase):
                 )
             self.assertEqual(result["status"], "failed")
             self.assertIn("相同執行鍵", result["errors"][0])
+            with patch(
+                "etf_agent.automation.workflow.EventResearchApplicationService.from_paths",
+                return_value=_FakeEventService(),
+            ), patch(
+                "etf_agent.automation.workflow.ResearchReportApplicationService.from_paths",
+                return_value=_FakeResearchService(),
+            ):
+                resumed = ReportWorkflowService(repository).run(
+                    workflow_run_id="legitimate-resume-1",
+                    repository_root=root / "runs",
+                    reports_root=root / "reports",
+                    snapshot_path=snapshot_path,
+                    database_path=database_path,
+                    research_path=research_path,
+                    generated_at="2026-09-20T01:02:00+00:00",
+                    parent_run_id="waiting-2",
+                )
+            self.assertEqual(resumed["status"], "waiting_for_decision")
+
+    def test_resume_rejects_missing_or_changed_parent_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path, database_path = self.write_snapshot(root)
+            repository = ReportWorkflowRepository(root / "runs")
+            service = ReportWorkflowService(repository)
+            with self.assertRaisesRegex(ReportWorkflowError, "找不到 workflow run"):
+                service.run(
+                    workflow_run_id="resume-missing",
+                    repository_root=root / "runs",
+                    reports_root=root / "reports",
+                    snapshot_path=snapshot_path,
+                    database_path=database_path,
+                    parent_run_id="missing-parent",
+                    generated_at="2026-09-20T01:00:00+00:00",
+                )
+            with patch(
+                "etf_agent.automation.workflow.EventResearchApplicationService.from_paths",
+                return_value=_FakeEventService(),
+            ):
+                service.run(
+                    workflow_run_id="parent-1",
+                    repository_root=root / "runs",
+                    reports_root=root / "reports",
+                    snapshot_path=snapshot_path,
+                    database_path=database_path,
+                    generated_at="2026-09-20T01:00:00+00:00",
+                )
+            altered = _snapshot()
+            altered["latest_trade_date"] = "2026-09-18"
+            snapshot_path.write_text(json.dumps(altered), encoding="utf-8")
+            with self.assertRaisesRegex(ReportWorkflowError, "Snapshot／cutoff／模式不一致"):
+                service.run(
+                    workflow_run_id="resume-altered",
+                    repository_root=root / "runs",
+                    reports_root=root / "reports",
+                    snapshot_path=snapshot_path,
+                    database_path=database_path,
+                    parent_run_id="parent-1",
+                    generated_at="2026-09-20T01:01:00+00:00",
+                )
+
+    def test_missing_decision_run_publishes_failure_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path, database_path = self.write_snapshot(root)
+            research_path = root / "research.json"
+            research_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            with patch(
+                "etf_agent.automation.workflow.EventResearchApplicationService.from_paths",
+                return_value=_FakeEventService(),
+            ), patch(
+                "etf_agent.automation.workflow.ResearchReportApplicationService.from_paths",
+                return_value=_FakeResearchService(),
+            ):
+                result = ReportWorkflowService(
+                    ReportWorkflowRepository(root / "runs")
+                ).run(
+                    workflow_run_id="missing-decision-1",
+                    repository_root=root / "runs",
+                    reports_root=root / "reports",
+                    snapshot_path=snapshot_path,
+                    database_path=database_path,
+                    research_path=research_path,
+                    decision_repository=root / "decisions",
+                    decision_run_id="absent-1",
+                    daily_report_repository=root / "pipeline",
+                    generated_at="2026-09-20T01:01:00+00:00",
+                )
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(
+                (root / "runs" / "missing-decision-1" / "failure_report.json").exists()
+            )
+            self.assertFalse(
+                (root / "runs" / "missing-decision-1" / "daily_report.json").exists()
+            )
 
 
 if __name__ == "__main__":

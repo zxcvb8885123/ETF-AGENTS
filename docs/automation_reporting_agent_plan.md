@@ -2,7 +2,7 @@
 
 > 更新日期：2026-09-22。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
 
-> 現況：Research Report V0 與 A0／A1 離線 DailyReport／FailureReport 已完成；真實資料端到端交付與正式排程尚未接通。下一批按[一鍵研究與報告交付計畫](report_delivery_agent_plan.md)完成 RPT0～RPT3，先提供按需研究報告及固定結果入口。
+> 現況：Research Report V0 與 A0／A1 離線 DailyReport／FailureReport 已完成；RPT0～RPT4 第一版及一件真實事件研究續跑已通過驗收。正式 Decision／Risk 輸入與每日排程尚未接通；詳見[真實研究續跑與決策報告驗收](report_workflow_acceptance_plan.md)。
 
 ## 定位
 
