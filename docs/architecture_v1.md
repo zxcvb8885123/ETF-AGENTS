@@ -19,7 +19,7 @@
 ### 元件
 
 - `providers`：分別取得行情、基本面、新聞、官方交易池與 ETF 基準；統一資料格式，保留原始回應。
-- `account_loader`：讀取主辦方最新持倉、現金、NAV、公司行動調整與結算日期。初始本金已在 `config/competition_rules.json` 的 `initial_capital_twd` 設為新臺幣 10 億元；此值只用於第一天建立帳戶，後續必須採主辦方結算快照，不能以設定值覆寫。
+- `virtual_account`：以 `config/competition_rules.json` 的 `initial_capital_twd`（新臺幣 10 億元）只建立一次空倉帳戶；後續依已驗證的前次帳本、交割、公司行動及模擬成交逐日更新持倉、現金與 NAV。若主辦方提供虛擬帳戶結算檔，另做差異對帳，不直接覆寫封存帳本；詳見[虛擬帳戶與每日決策接入計畫](virtual_account_daily_decision_plan.md)。
 - `quality`：驗證股票代碼、重複值、缺值、有限數值、資料日期與來源完整性。
 - `features`：用截止時間以前的資料計算趨勢、波動、成交量與成長特徵。
 - `snapshot_store`：保存固定版本的研究與帳戶快照，供策略、回測與稽核共同使用。
@@ -111,7 +111,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | --- | --- |
 | src/etf_agent/runtime/ | 共用 pipeline run 身分、狀態與未來流程控制邊界 |
 | src/etf_agent/contracts.py | 模組資料契約與驗證 |
-| src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features、account_loader 及其他來源 |
+| src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features 及其他來源；每日虛擬帳戶另由帳務模組負責 |
 | src/etf_agent/decision/ | 已有 P0～P5 MVP：共同輸入、動能、獨立買賣裁決、配置／訂單／費稅、情境、完整輸入基準 Guard、RiskReview、最終重建與不可變保存 |
 | src/etf_agent/strategy/ | 既有事件策略原型；後續與 decision 契約整合或拆分 |
 | src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
@@ -132,7 +132,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 ## 8. 現況與實作里程碑
 
-目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。Portfolio Decision P0～P5 MVP 已加入共同輸入雜湊、確定性動能、獨立買賣裁決、配置／訂單／費稅、壓力情境、全部輸入基準 Guard、Portfolio Risk、有限修正與執行 manifest。歷史刷新以兩個官方市場都已完成的最近交易日為截止日，避免把 Yahoo 盤中日 K 當成正式收盤資料。舊 `guard.py` 單基準介面保留給既有策略；新決策層使用 `decision/risk.py`。正式帳戶、交易狀態、官方規則口徑與回測仍未接妥，因此 `approved` 只代表 fixture／契約層可交給回測與人工檢查。
+目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。Portfolio Decision P0～P6 fixture MVP 已加入共同輸入雜湊、確定性動能、獨立買賣裁決、配置／訂單／費稅、壓力情境、全部輸入基準 Guard、Portfolio Risk、有限修正與執行 manifest。VA1～VA3 fixture 虛擬帳本也已可建立唯一 10 億 TWD genesis、續接帳戶、接入決策前快照並模擬成交；尚未串入每日報告工作流，且交易狀態官方來源、規則口徑、真實資料與前向回測仍待驗收，因此 `approved` 只代表 fixture／契約層可交給回測與人工檢查。
 
 里程碑以 [Data Agent 計畫](data_agent_plan.md) 的 M0～M4 為資料主線：先完成 M0 來源健康與交易池閘門，再依序接入 M1 官方資料、M2 新聞候選與 M3 Agent 工具循環。事件研究通過後，才進入量化策略、完整風控、時間一致回測及送件格式。不得因已有事件策略原型，就跳過資料閘門直接產生正式交易決策。
 

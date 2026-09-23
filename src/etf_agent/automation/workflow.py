@@ -214,6 +214,7 @@ class ReportWorkflowRepository:
     def find_by_idempotency(self, idempotency_key: str) -> Optional[Mapping[str, object]]:
         if not self.root.exists():
             return None
+        matches: List[Mapping[str, object]] = []
         for run_dir in sorted(self.root.iterdir(), key=lambda item: item.name):
             if not run_dir.is_dir() or run_dir.is_symlink():
                 continue
@@ -223,8 +224,24 @@ class ReportWorkflowRepository:
             except ReportWorkflowError:
                 continue
             if report.get("idempotency_key") == idempotency_key:
-                return report
-        return None
+                stages = report.get("stages")
+                if isinstance(stages, list) and any(
+                    isinstance(stage, Mapping)
+                    and stage.get("name") == "idempotency"
+                    and stage.get("status") == "failed"
+                    for stage in stages
+                ):
+                    continue
+                matches.append(report)
+        if not matches:
+            return None
+        return max(
+            matches,
+            key=lambda report: (
+                _parse_time(report.get("generated_at"), "generated_at").astimezone(timezone.utc),
+                str(report.get("workflow_run_id") or ""),
+            ),
+        )
 
     def publish_latest(
         self,
@@ -381,6 +398,34 @@ class ReportWorkflowService:
             )
 
         assert snapshot is not None
+        parent_report: Optional[Mapping[str, object]] = None
+        if parent_run_id is not None:
+            parent_dir = repository.verify(parent_run_id)
+            parent_report = _read_json(
+                parent_dir / "execution_report.json", "父工作流執行報告"
+            )
+            parent_snapshot = _read_json(
+                parent_dir / "input_snapshot.json", "父工作流 Snapshot"
+            )
+            if parent_report.get("status") not in {
+                "waiting_for_agent", "waiting_for_decision", "blocked"
+            }:
+                raise ReportWorkflowError("父工作流不是可續跑狀態")
+            if (
+                parent_report.get("snapshot_id") != snapshot_id
+                or parent_report.get("decision_cutoff") != cutoff
+                or parent_report.get("execution_mode") != execution_mode
+                or _canonical_hash(parent_snapshot) != _canonical_hash(snapshot)
+            ):
+                raise ReportWorkflowError("續跑輸入與父工作流 Snapshot／cutoff／模式不一致")
+            parent_research = parent_report.get("input_refs", {}).get("research")
+            if parent_report.get("status") == "waiting_for_decision" and (
+                not isinstance(parent_research, Mapping)
+                or parent_research.get("sha256") != (
+                    research_ref.get("sha256") if research_ref else None
+                )
+            ):
+                raise ReportWorkflowError("續跑 ResearchResult 與父工作流不一致")
         idempotency_key = "report:%s:%s:%s:%s" % (
             snapshot.get("snapshot_id"), snapshot.get("decision_cutoff"), execution_mode,
             decision_run_id or "research",
@@ -390,7 +435,9 @@ class ReportWorkflowService:
             if existing.get("input_fingerprint") != input_fingerprint:
                 can_resume = (
                     parent_run_id == existing.get("workflow_run_id")
-                    and existing.get("status") in {"waiting_for_agent", "blocked"}
+                    and existing.get("status") in {
+                        "waiting_for_agent", "waiting_for_decision", "blocked"
+                    }
                 )
                 if can_resume:
                     existing = None

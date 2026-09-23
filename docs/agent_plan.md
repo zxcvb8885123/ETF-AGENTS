@@ -119,3 +119,11 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 ## 下一批：按需報告交付（2026-09-22）
 
 依[自動化報告 Agent 一鍵交付計畫](report_delivery_agent_plan.md)已完成 RPT0～RPT4 第一版，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑、固定報告入口及既有 DailyReport／FailureReport 接線。這批可交付 Research Report V0，或在 Decision／Risk 通過後交付 DailyReport；D-Plan 與排程仍須通過各自資料及驗收前置條件。
+
+## 報告驗收進度（2026-09-23）
+
+依[真實研究續跑與決策報告驗收計畫](report_workflow_acceptance_plan.md)已完成 W0～W5 的一件真實事件驗收：固定父 run 輸入、補強續跑驗證、隔離研究、報告重建與決策缺口盤點。W6 DailyReport 須待每日虛擬帳本、交易狀態、規則、基準及相關驗收證據齊備。187 筆候選僅研究一件；正式排程未啟用。
+
+## 正式帳戶資料接入進度（2026-09-23）
+
+依[正式帳戶資料接入與對帳計畫](account_data_integration_plan.md)，AC1～AC4 fixture 版已完成：具備嚴格契約、原始檔封存、確定性 NAV／現金對帳與決策 adapter。這是選配的外部結算檔對帳支線。每日主線的 VA1～VA3 fixture 工具鏈也已完成，可建立唯一 10 億 TWD 空倉帳戶、續接帳本、建立決策前快照並封存模擬成交；VA4 尚未接入報告工作流，VA5 真實資料與前向驗收未完成。交易狀態、基準及規則仍須獨立驗收。
