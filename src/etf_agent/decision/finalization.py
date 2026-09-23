@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Mapping
@@ -17,6 +18,7 @@ from .contracts import (
     canonical_sha256,
 )
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
+from .revision import RevisionHistoryValidator
 from .trade_intent import TradeDebateValidator, TradeIntentResultValidator
 
 
@@ -47,8 +49,9 @@ class DecisionFinalizer:
         scenario: Mapping[str, object],
         guard: Mapping[str, object],
         risk_review: Mapping[str, object],
+        history: Mapping[str, object],
     ) -> Dict[str, object]:
-        errors = self.validate_inputs(proposal, scenario, guard, risk_review)
+        errors = self.validate_inputs(proposal, scenario, guard, risk_review, history)
         risk_decision = risk_review.get("decision")
         if errors or risk_decision != "approve" or guard.get("passed") is not True:
             status = "rejected"
@@ -70,6 +73,7 @@ class DecisionFinalizer:
             "scenario_id": scenario.get("scenario_id"),
             "guard_id": guard.get("guard_id"),
             "risk_review_id": risk_review.get("review_id"),
+            "revision_history_id": history.get("history_id"),
             "revision_count": proposal.get("revision_count", 0),
             "engine_version": DECISION_ENGINE_VERSION,
             "status": status,
@@ -88,6 +92,7 @@ class DecisionFinalizer:
         scenario: Mapping[str, object],
         guard: Mapping[str, object],
         risk_review: Mapping[str, object],
+        history: Mapping[str, object],
     ) -> List[str]:
         errors: List[str] = []
         errors.extend(
@@ -106,6 +111,26 @@ class DecisionFinalizer:
                 proposal, scenario, guard, risk_review
             )
         )
+        errors.extend(
+            RevisionHistoryValidator(self.bundle, self.policy, self.intent).validate(
+                history, require_terminal=True
+            )
+        )
+        entries = history.get("entries", [])
+        if isinstance(entries, list) and entries:
+            latest = entries[-1]
+            matches = isinstance(latest, Mapping)
+            if matches:
+                for field, value in (
+                    ("proposal", proposal), ("scenario", scenario),
+                    ("guard", guard), ("risk_review", risk_review),
+                ):
+                    candidate = latest.get(field)
+                    if not isinstance(candidate, Mapping) or dict(candidate) != dict(value):
+                        matches = False
+                        break
+            if not matches:
+                errors.append("最終 artifacts 必須等於 RevisionHistory 最後一版")
         return errors
 
 
@@ -130,9 +155,10 @@ class DecisionResultValidator:
         scenario: Mapping[str, object],
         guard: Mapping[str, object],
         risk_review: Mapping[str, object],
+        history: Mapping[str, object],
         result: Mapping[str, object],
     ) -> List[str]:
-        expected = self.finalizer.run(proposal, scenario, guard, risk_review)
+        expected = self.finalizer.run(proposal, scenario, guard, risk_review, history)
         return [] if dict(result) == expected else ["DecisionResult 與完整重建結果不一致"]
 
 
@@ -143,9 +169,14 @@ class DecisionRepository:
         self.root = root
 
     def save(self, run_id: str, artifacts: Mapping[str, Mapping[str, object]]) -> Path:
-        if not run_id or "/" in run_id or run_id in {".", ".."}:
-            raise DecisionToolError("run_id 不得為空或包含路徑字元")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
+            raise DecisionToolError("run_id 只能包含英數、點、底線與連字號")
+        for name in artifacts:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+                raise DecisionToolError("artifact 名稱不符合安全白名單：%s" % name)
         run_dir = self.root / run_id
+        if run_dir.is_symlink():
+            raise DecisionToolError("run 目錄不得是符號連結")
         manifest = {
             "schema_version": DECISION_SCHEMA_VERSION,
             "run_id": run_id,
@@ -166,6 +197,7 @@ class DecisionRepository:
                 current = json.loads(existing.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as error:
                 raise DecisionToolError("既有 manifest 無法讀取") from error
+            self.verify(run_id)
             if current != manifest:
                 raise DecisionToolError("相同 run_id 已存在不同內容，拒絕覆蓋")
             return run_dir
@@ -187,4 +219,45 @@ class DecisionRepository:
                 child.unlink()
             temp_dir.rmdir()
             raise
+        return run_dir
+
+    def verify(self, run_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
+            raise DecisionToolError("run_id 只能包含英數、點、底線與連字號")
+        run_dir = self.root / run_id
+        if run_dir.is_symlink():
+            raise DecisionToolError("run 目錄不得是符號連結")
+        manifest_path = run_dir / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise DecisionToolError("run manifest 無法讀取") from error
+        manifest_body = dict(manifest)
+        recorded = manifest_body.pop("manifest_sha256", None)
+        if recorded != canonical_sha256(manifest_body):
+            raise DecisionToolError("manifest_sha256 與內容不一致")
+        if manifest.get("run_id") != run_id or manifest.get("schema_version") != DECISION_SCHEMA_VERSION:
+            raise DecisionToolError("manifest 身分欄位不一致")
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, Mapping):
+            raise DecisionToolError("manifest.artifacts 必須是物件")
+        expected_files = {"manifest.json"}
+        for name, metadata in artifacts.items():
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", str(name)):
+                raise DecisionToolError("manifest 含不安全 artifact 名稱")
+            if not isinstance(metadata, Mapping) or metadata.get("filename") != "%s.json" % name:
+                raise DecisionToolError("manifest artifact 檔名不一致：%s" % name)
+            path = run_dir / str(metadata["filename"])
+            if path.is_symlink():
+                raise DecisionToolError("artifact 不得是符號連結：%s" % name)
+            expected_files.add(path.name)
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise DecisionToolError("artifact 無法讀取：%s" % name) from error
+            if not isinstance(payload, Mapping) or canonical_sha256(payload) != metadata.get("sha256"):
+                raise DecisionToolError("artifact 內容與 manifest 不一致：%s" % name)
+        actual_files = {path.name for path in run_dir.iterdir() if path.is_file()}
+        if actual_files != expected_files:
+            raise DecisionToolError("run 目錄檔案集合與 manifest 不一致")
         return run_dir

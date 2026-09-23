@@ -20,6 +20,7 @@ from .contracts import (
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
 MONEY = Decimal("1")
+PRICE = Decimal("0.01")
 RATE = Decimal("0.00000001")
 
 
@@ -29,6 +30,10 @@ def _money(value: Decimal) -> str:
 
 def _rate(value: Decimal) -> str:
     return str(value.quantize(RATE, rounding=ROUND_HALF_UP))
+
+
+def _price(value: Decimal) -> str:
+    return str(value.quantize(PRICE, rounding=ROUND_HALF_UP))
 
 
 def decision_policy_sha256(policy: Mapping[str, object]) -> str:
@@ -65,6 +70,7 @@ class DecisionPolicyValidator:
         "minimum_active_share",
         "stress_price_decline_rate",
         "stress_slippage_multiplier",
+        "liquidity_fill_rate",
         "reuse_sell_proceeds",
         "max_revisions",
         "content_sha256",
@@ -82,6 +88,7 @@ class DecisionPolicyValidator:
         "cash_weight_ceiling",
         "minimum_active_share",
         "stress_price_decline_rate",
+        "liquidity_fill_rate",
     }
 
     def __init__(self, bundle: Mapping[str, object]):
@@ -170,6 +177,38 @@ class DecisionPolicyValidator:
                     errors.append("sector_by_symbol.%s 必須是非空字串" % symbol)
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):
             errors.append("DecisionPolicy.cash_buffer_rate 必須小於 1")
+        rules = self.context.bundle.get("rules", {})
+        hard_bindings = {
+            "lot_size": "lot_size",
+            "commission_rate": "commission_rate",
+            "sell_tax_rate": "sell_tax_rate",
+            "minimum_commission": "minimum_commission",
+            "max_stock_weight": "max_stock_weight",
+            "special_weight_limits": "special_weight_limits",
+            "max_sector_weight": "max_sector_weight",
+            "min_positions": "min_positions",
+            "max_positions": "max_positions",
+            "cash_weight_ceiling": "cash_weight_must_be_below",
+            "minimum_active_share": "minimum_active_share",
+            "reuse_sell_proceeds": "reuse_sell_proceeds",
+        }
+        if isinstance(rules, Mapping):
+            for policy_field, rule_field in hard_bindings.items():
+                left = policy.get(policy_field)
+                right = rules.get(rule_field)
+                if isinstance(left, Mapping) and isinstance(right, Mapping):
+                    matches = dict(left) == dict(right)
+                elif isinstance(left, bool) or isinstance(right, bool) or isinstance(left, int) or isinstance(right, int):
+                    matches = type(left) is type(right) and left == right
+                else:
+                    try:
+                        matches = decimal_value(left, policy_field) == decimal_value(right, rule_field)
+                    except DecisionToolError:
+                        matches = False
+                if not matches:
+                    errors.append(
+                        "DecisionPolicy.%s 必須與 rules.%s 完全一致" % (policy_field, rule_field)
+                    )
         return errors
 
 
@@ -213,8 +252,9 @@ class AllocationOrderEngine:
                 "帳戶持股不是整張，第一版禁止產生零股交易："
                 + ", ".join(odd_lot_positions)
             )
-        starting_cash = decimal_value(account["cash"], "account_snapshot.cash")
-        marked_nav = starting_cash + sum(
+        starting_cash = decimal_value(account["settled_cash"], "account_snapshot.settled_cash")
+        starting_total_cash = decimal_value(account["cash"], "account_snapshot.cash")
+        marked_nav = starting_total_cash + sum(
             Decimal(shares) * self.prices[symbol] for symbol, shares in current.items()
         )
         if marked_nav <= 0:
@@ -280,7 +320,7 @@ class AllocationOrderEngine:
 
         orders = self._build_orders(current, target_shares, intents, effective)
         orders, projected_cash, cash_flags = self._fit_cash(
-            orders, starting_cash, marked_nav, effective
+            orders, starting_cash, starting_total_cash, marked_nav, effective
         )
         constraint_flags.extend(cash_flags)
         final_shares = dict(current)
@@ -298,7 +338,7 @@ class AllocationOrderEngine:
                 "symbol": symbol,
                 "lots": shares // lot_size,
                 "shares": shares,
-                "price": _money(self.prices[symbol]),
+                "price": _price(self.prices[symbol]),
                 "market_value": _money(Decimal(shares) * self.prices[symbol]),
                 "weight": _rate(Decimal(shares) * self.prices[symbol] / nav),
                 "intent": intents.get(symbol, "hold"),
@@ -331,6 +371,7 @@ class AllocationOrderEngine:
             "order_proposal": {
                 "orders": orders,
                 "starting_cash": _money(starting_cash),
+                "starting_total_cash": _money(starting_total_cash),
                 "projected_cash": _money(projected_cash),
                 "turnover_rate": _rate(turnover),
                 "total_commission": _money(
@@ -452,8 +493,8 @@ class AllocationOrderEngine:
             "side": side,
             "lots": shares // int(effective["lot_size"]),
             "shares": shares,
-            "reference_price": _money(reference),
-            "estimated_price": str(price),
+            "reference_price": _price(reference),
+            "estimated_price": _price(price),
             "gross_amount": _money(gross),
             "commission": _money(commission),
             "tax": _money(tax),
@@ -465,6 +506,7 @@ class AllocationOrderEngine:
         self,
         orders: List[Dict[str, object]],
         starting_cash: Decimal,
+        starting_total_cash: Decimal,
         nav: Decimal,
         effective: Mapping[str, object],
     ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
@@ -524,7 +566,7 @@ class AllocationOrderEngine:
                         "detail": "買進股數由 %d 降為 %d" % (requested_shares, actual_shares),
                     }
                 )
-        actual_cash = starting_cash + sum(
+        actual_cash = starting_total_cash + sum(
             decimal_value(item["net_cash_impact"], "net_cash_impact") for item in fitted
         )
         return fitted, actual_cash, flags
@@ -543,6 +585,7 @@ class ProposalValidator:
         self.intent_result = intent_result
 
     def validate(self, proposal: Mapping[str, object]) -> List[str]:
+        invariant_errors = self._invariant_errors(proposal)
         try:
             effective = proposal.get("effective_policy", {})
             override_keys = {
@@ -566,5 +609,59 @@ class ProposalValidator:
                 parent_proposal_id=proposal.get("parent_proposal_id"),
             )
         except (DecisionToolError, TypeError, ValueError) as error:
-            return [str(error)]
-        return [] if dict(proposal) == expected else ["ProposalBundle 與確定性重算結果不一致"]
+            return invariant_errors + [str(error)]
+        if dict(proposal) != expected:
+            invariant_errors.append("ProposalBundle 與確定性重算結果不一致")
+        return invariant_errors
+
+    def _invariant_errors(self, proposal: Mapping[str, object]) -> List[str]:
+        errors: List[str] = []
+        try:
+            effective = proposal["effective_policy"]
+            lot_size = int(effective["lot_size"])
+            order_block = proposal["order_proposal"]
+            orders = order_block["orders"]
+            impacts = Decimal("0")
+            for index, order in enumerate(orders):
+                lots = order.get("lots")
+                shares = order.get("shares")
+                if not isinstance(lots, int) or isinstance(lots, bool) or lots <= 0:
+                    errors.append("order[%d].lots 必須是正整數" % index)
+                    continue
+                if shares != lots * lot_size:
+                    errors.append("order[%d] shares 必須等於 lots*lot_size" % index)
+                gross = decimal_value(order["estimated_price"], "estimated_price") * Decimal(shares)
+                if order["gross_amount"] != _money(gross):
+                    errors.append("order[%d].gross_amount 無法由價格與股數重算" % index)
+                commission = max(
+                    gross * decimal_value(effective["commission_rate"], "commission_rate"),
+                    decimal_value(effective["minimum_commission"], "minimum_commission"),
+                ).quantize(MONEY, rounding=ROUND_CEILING)
+                tax = (
+                    gross * decimal_value(effective["sell_tax_rate"], "sell_tax_rate")
+                    if order["side"] == "sell" else Decimal("0")
+                ).quantize(MONEY, rounding=ROUND_CEILING)
+                impact = -(gross + commission) if order["side"] == "buy" else gross - commission - tax
+                if order["commission"] != _money(commission) or order["tax"] != _money(tax):
+                    errors.append("order[%d] 費稅無法重算" % index)
+                if order["net_cash_impact"] != _money(impact):
+                    errors.append("order[%d].net_cash_impact 無法重算" % index)
+                impacts += impact
+            projected = decimal_value(order_block["starting_total_cash"], "starting_total_cash") + impacts
+            if order_block["projected_cash"] != _money(projected):
+                errors.append("order_proposal.projected_cash 無法由現金影響重算")
+            allocation = proposal["allocation_proposal"]
+            market_value = Decimal("0")
+            for index, position in enumerate(allocation["positions"]):
+                if position["shares"] != position["lots"] * lot_size:
+                    errors.append("position[%d] shares 必須等於 lots*lot_size" % index)
+                value = decimal_value(position["price"], "position.price") * Decimal(position["shares"])
+                if position["market_value"] != _money(value):
+                    errors.append("position[%d].market_value 無法重算" % index)
+                market_value += value
+            nav = decimal_value(allocation["cash"], "allocation.cash") + market_value
+            if allocation["nav"] != _money(nav):
+                errors.append("allocation_proposal.nav 無法重算")
+        except (DecisionToolError, KeyError, TypeError, ValueError):
+            errors.append("ProposalBundle 缺少可重算的整張帳務欄位")
+        return errors

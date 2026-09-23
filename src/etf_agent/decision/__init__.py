@@ -7,6 +7,7 @@ from .contracts import (
     DecisionToolError,
     canonical_sha256,
     decision_bundle_sha256,
+    decision_rules_sha256,
     artifact_content_sha256,
 )
 from .momentum import MomentumEngine, MomentumResultValidator
@@ -36,6 +37,7 @@ from .finalization import (
     DecisionRepository,
     DecisionResultValidator,
 )
+from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
 from .service import PortfolioDecisionApplicationService
 
 __all__ = [
@@ -45,6 +47,7 @@ __all__ = [
     "DecisionToolError",
     "canonical_sha256",
     "decision_bundle_sha256",
+    "decision_rules_sha256",
     "artifact_content_sha256",
     "MomentumEngine",
     "MomentumResultValidator",
@@ -66,5 +69,7 @@ __all__ = [
     "DecisionFinalizer",
     "DecisionResultValidator",
     "DecisionRepository",
+    "RevisionHistoryBuilder",
+    "RevisionHistoryValidator",
     "PortfolioDecisionApplicationService",
 ]
