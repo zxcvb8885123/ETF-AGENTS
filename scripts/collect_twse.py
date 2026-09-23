@@ -11,7 +11,7 @@ from etf_agent.data import (  # noqa: E402
     DailyPriceCollector,
     MarketDataDatabase,
     TwseDailyProvider,
-    load_universe,
+    UniverseLoader,
 )
 
 
@@ -39,7 +39,9 @@ def main() -> int:
     collector = DailyPriceCollector(database, provider)
 
     try:
-        result = collector.collect(load_universe(args.universe), args.all_listed)
+        result = collector.collect(
+            UniverseLoader().load(args.universe), args.all_listed
+        )
     except Exception as error:
         print("抓取失敗：%s" % error, file=sys.stderr)
         return 1

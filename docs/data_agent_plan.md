@@ -56,6 +56,8 @@ Skill 提供角色、工作流程、資料來源優先順序、證據要求、�
 - 保存原始回應、來源 URL、抓取時間與內容雜湊。
 - 由 Python 驗證股票代碼、日期、單位、缺值、重複與版本。
 - 以 `decision_cutoff` 建立不可變的 `ResearchSnapshot`。
+- 快照中的行情與文件都要帶 `source_evidence_id`，可追到來源權威分類、URL、內容截至時間、抓取時間、內容雜湊與 `raw_payload_id`。
+- 快照要鎖定當次實際採用的價格版本；歷史 cutoff 不得讀到 cutoff 之後才抓回的行情。
 - 快照不可用時停止，禁止交給事件策略。
 - 保存 Agent 的查詢計畫、工具呼叫、collection `run_id`、品質旗標與最終結果。
 
@@ -87,6 +89,24 @@ Skill 提供角色、工作流程、資料來源優先順序、證據要求、�
 | 彙整執行結果 | 建立不可變 Snapshot 與結構化 run 紀錄 |
 
 LLM 的判斷只能影響「下一個呼叫哪個允許的工具」，不能決定資料是否通過數值、時間或交易池驗證。
+
+### Python 物件分工
+
+Data Agent 核心採物件組合，不以大型函式同時處理查詢、轉換、驗證與寫入：
+
+| 物件 | 責任 |
+| --- | --- |
+| `DataAgentService` | 提供 CLI 與其他 Agent 使用的穩定入口 |
+| `SnapshotBuilder` | 協調快照建立流程，不直接保存 SQL 細節 |
+| `SnapshotRepository` | 查詢 SQLite 並保存不可變快照關聯 |
+| `DataAgentStatusRepository` | 查詢資料健康、收集紀錄與交易池驗證，回傳狀態物件 |
+| `SourceEvidenceBuilder` | 將採用的行情與文件轉成 `SourceEvidence` |
+| `SnapshotQualityPolicy` | 計算 fail-closed 品質旗標 |
+| `SnapshotPrice`／`SnapshotDocument`／`SnapshotMonthlyRevenue` | 在 Python 內傳遞有型別的資料物件 |
+| `ResearchSnapshot` | 聚合快照物件，並在邊界序列化成相容 JSON |
+| `DataAgentApplication` | 解析 Skill CLI 命令並呼叫上述服務物件 |
+
+日期正規化、雜湊及 URL 轉換等沒有狀態的單純操作保留為純函式；不為了形式而建立沒有責任或狀態的 class。核心流程不得再用巢狀 dictionary 作為內部領域模型，dictionary 只出現在 SQLite row 與 JSON 輸入輸出邊界。
 
 ### 工具設計原則
 
@@ -161,8 +181,8 @@ Agent 每一輪只能選擇一個明確工具呼叫，讀取結果後才能規�
 
 | 資料 | 第一版來源 |
 | --- | --- |
-| 官方交易池、最新價量 | 官方名單、既有 TWSE 管線；TPEx 最新行情列入 P0 |
-| 歷史行情 | TWSE／TPEx，Yahoo 作既有缺漏備援 |
+| 官方交易池、最新價量 | 官方名單、TWSE／TPEx 最新行情管線 |
+| 歷史行情 | 目前由 Yahoo 每日增量更新兩年資料；TWSE／TPEx 官方歷史 provider 已有，正式 CLI 與覆蓋補強仍在 M1 |
 | 月營收 | TWSE／TPEx 公開資訊來源 |
 | 重大訊息 | TWSE／TPEx 公開資訊來源 |
 
@@ -172,7 +192,7 @@ Agent 每一輪只能選擇一個明確工具呼叫，讀取結果後才能規�
 
 | 優先級 | 資料 | 可得性 | 建議來源與目的 |
 | --- | --- | --- | --- |
-| P0 | TPEx 最新行情 | 已確認官方 OpenAPI | TPEx 收盤行情端點；補齊每日上市與上櫃價格新鮮度 |
+| P0 | TPEx 最新行情 | **已接入** | TPEx 收盤行情端點；與 TWSE 共用收集流程，補齊每日上市與上櫃價格新鮮度 |
 | P0 | 歷史月營收、歷史重大訊息 | 官方網站可查；穩定批次介面與完整期間待 PoC | MOPS／TWSE／TPEx；讓事件期間與兩年行情可對齊回測 |
 | P0 | ETF 基準成分與權重 | 條件式；須先確認競賽提供內容、指定 ETF 與授權 | 優先使用主辦單位檔案；其次基金公司公開持股。部分指數歷史權重是付費資料，不假設可免費自動取得 |
 | P1 | 季報與財務指標 | 資產負債表、損益表已有官方 OpenAPI；完整 XBRL、現金流與歷史涵蓋待 PoC | MOPS XBRL／官方財報；取得 EPS、毛利率、營益率、現金流、存貨與應收帳款 |
@@ -180,9 +200,10 @@ Agent 每一輪只能選擇一個明確工具呼叫，讀取結果後才能規�
 | P1 | 法說會日曆、簡報與公司展望 | MOPS 可查；附件格式、公司覆蓋與自動下載穩定性待 PoC | MOPS、交易所活動頁及公司 IR 網站；辨識短期催化與展望變化 |
 | P2 | 指數調整與總體日曆 | 政府統計多為公開；指數資料可能受授權或付費限制 | 指數編製機構、央行及政府統計；補充跨公司事件 |
 | P1 | 新聞與事件線索 | TWSE RSS 已確認；Google News RSS 可作候選發現；yfinance 覆蓋不一致 | 保存標題、發布者、時間與原文連結為 `NewsCandidate`，不直接成為正式數值或回測事實 |
-| 暫緩 | 社群情緒、分析師目標價 | 台股覆蓋、歷史可得性與授權不確定 | 有獨立評估資料後再接入，不列為必要資料 |
 
 每一個新來源接入前，必須先確認歷史涵蓋、發布時間、當時可得時間、授權／使用條件、穩定識別鍵及原始回應保存方式。
+
+社群情緒與分析師目標價**不屬於 Data Agent 的來源擴充清單**。後續若要使用，另建「市場情緒與分析師研究 Agent」負責來源評估、情緒／共識變化與反證；Data Agent 不負責評分、推導目標價或把這些訊號寫成正式公司事實。未來該 Agent 若需要保存原始資料，仍須透過受限的資料介面保存來源、授權、時間與版本，但不因此改變角色歸屬。
 
 2026-09-17 的第一輪實測結果、交易池缺漏與新聞來源比較見 [資料來源可行性測試](source_feasibility_2026-09-17.md)。
 
@@ -289,6 +310,19 @@ Codex／Claude 可以利用自身允許的搜尋或瀏覽工具：
 - 公司不明、時間缺漏或來源衝突的資料保留原文、記錄品質問題並隔離。
 - 新聞或搜尋摘要只能作為補查線索，不能覆蓋官方數字。
 
+### D-Plan 交接邊界
+
+Data Agent 只提供建立 D-Plan 所需的資料事實與來源證據，不直接產生完整 D-Plan，也不負責 `market_view`、`inferences`、`decisions`、`orders` 或 `no_trade`。
+
+`ResearchSnapshot` 對下游提供：
+
+- `latest_prices`：本次快照實際採用的行情，每筆引用 `source_evidence_id`。
+- `documents`：公告、營收與後續新聞候選等資料，每筆引用 `source_evidence_id`。
+- `source_evidence`：內部穩定證據 ID、D-Plan `authority` 分類、來源 URL、`content_as_of`、`published_at`、`fetched_at`、內容雜湊與 `raw_payload_id`。
+- `decision_cutoff`、交易池版本與品質旗標：讓下游證明沒有使用未來資料。
+
+未來新增的確定性 **D-Plan Builder／Validator** 才負責：選出本日實際引用的證據、依序配置 `S1`／`O1` 等送件 ID、合併研究與風控結果、建立完整引用鏈、轉成 `+08:00` 時間格式，並依官方 `D-Plan.schema.json` 與 C1／C2／C6／C9／C11／C12／C14 語意規則驗證。驗證失敗就停止產檔，不能由 LLM 補寫缺少欄位。
+
 ## 11. 失敗、重試與停止條件
 
 ### 立即失敗
@@ -373,6 +407,10 @@ skills/event-data/                 # 共同 Skill 來源
 .claude/skills/event-data/         # Claude Code 安裝目標，不複製維護規則
 
 src/etf_agent/data/                # 抓取、解析、驗證、版本與 Snapshot
+├── snapshot.py                    # Snapshot 資料物件、Builder、品質政策與 Service
+├── snapshot_repository.py         # Snapshot 專用 SQLite Repository
+├── status.py                      # DataAgentStatus 與狀態查詢 Repository
+└── evidence.py                    # SourceEvidenceBuilder 與無狀態時間／URL 工具
 src/etf_agent/contracts.py         # Request／Result／SourceCandidate／NewsCandidate／SourceFeasibilityReport 契約
 scripts/install_agent_skills.py    # 安裝／同步並檢查 Skill 版本
 artifacts/data-agent/{agent_run_id}/
@@ -388,28 +426,33 @@ Skill 腳本只包裝 `src/etf_agent/data/` 的正式功能，不複製資料邏
 
 ## 15. 已有基礎與待實作
 
-### 計畫狀態（2026-09-17）
+### 計畫狀態（2026-09-19）
 
 | 項目 | 狀態 | 證據／說明 |
 | --- | --- | --- |
 | Data Agent 基礎資料層 | 已完成 | SQLite、原始回應、collection run、文件版本與不可變 Snapshot 已有程式與測試 |
-| 官方交易池 | 已載入、待每日驗證 | `data/official_universe.csv` 有 150 檔；實測發現 `5371` 缺漏及 `3718` 承接關係待主辦規則確認 |
+| Data Agent 物件化 | 已完成 | Service、Builder、Repository、Evidence Builder、品質政策與 Snapshot 資料物件已分離；CLI JSON 保持相容 |
+| 官方交易池 | 已更新、持續每日驗證 | 2026-09-14 新版官方 PDF 共 150 檔，已將 `5371 中光電` 更新為 `3718 中光電投控`；PDF 雜湊保存在競賽設定 |
 | 第一輪來源可行性測試 | 已完成 | 已測 TWSE／TPEx 行情、營收、重大訊息、財報、交易狀態及新聞候選來源 |
-| 自動化來源探測 | 未完成 | 尚無 `scripts/probe_data_sources.py` 與結構化 `SourceFeasibilityReport` 輸出 |
-| M0 來源健康與交易池閘門 | **目前進行** | 下一個實作批次，只處理來源探測、交易池狀態與 Snapshot 阻擋規則 |
-| M1～M3 | 尚未開始 | 依 M0 → M1 → M2 → M3 順序執行，不平行擴張來源 |
+| 自動化來源探測 | 已完成 | `scripts/probe_data_sources.py` 產生並保存結構化 `SourceFeasibilityReport` |
+| M0 來源健康與交易池閘門 | 已完成 | 150 檔逐檔狀態、`5371`／`3718` 回歸測試與 Snapshot fail-closed 已驗收 |
+| M1 行情資料 | **第一段已完成** | TWSE／TPEx 最新行情 150／150；Yahoo 兩年行情已改為安全截止日的增量更新，150 檔均到 2026-09-17 |
+| D-Plan 資料交接 | **Data Agent 端第一段已完成** | Snapshot 已輸出價格／文件來源證據並鎖定採用價格版本；完整 D-Plan Builder／Validator 留在報告整合階段 |
+| M1 其餘官方資料 | **進行中** | 下一步是官方歷史行情 CLI、財報彙總、交易狀態及其餘細粒度工具 |
+| M2～M3 | 尚未開始 | 依 M1 → M2 → M3 順序執行，不平行擴張來源 |
 | M4 歷史與進階資料 | PoC／後續 | 不阻擋第一版 Data Agent，但會阻擋正式事件回測 |
 | LLM API／CLIProxyAPI／LangChain／LangGraph | 不列入 V1 | Codex／Claude 工作階段搭配共用 Skill 即可 |
 
-目前測試基線為 `PYTHONPATH=src python3 -m unittest discover -s tests -v`，共 23 個測試通過。這個數字只是 2026-09-17 的基線；後續以 CI／實際測試輸出為準，不在文件中假設永久固定。
+目前測試基線為 `PYTHONPATH=src python3 -m unittest discover -s tests -v`，共 41 個測試通過。這個數字是 2026-09-19 的基線；後續以 CI／實際測試輸出為準，不在文件中假設永久固定。
 
 ### 已完成
 
 - SQLite、原始回應與 collection run 紀錄。
-- 官方交易池、TWSE 最新行情、歷史行情與 Yahoo 備援。
+- 官方交易池、TWSE／TPEx 最新行情，以及 Yahoo 兩年行情增量更新。
 - TWSE／TPEx 月營收與重大訊息。
 - 文件去重、更正版本及時間隔離。
 - 不可變 `ResearchSnapshot` 與品質旗標。
+- Snapshot 行情／文件的 `SourceEvidence`、價格版本鎖定與抓取時間 cutoff 隔離。
 - `event-data` Skill、資料契約與 `status`／`collect`／`snapshot` CLI。
 - 重抓冪等、更正版本、舊快照不變、截止時間與缺值測試。
 - 2026-09-17 完成第一輪官方端點與新聞來源可行性測試，結果見 [資料來源可行性測試](source_feasibility_2026-09-17.md)。
@@ -420,31 +463,46 @@ Skill 腳本只包裝 `src/etf_agent/data/` 的正式功能，不複製資料邏
 
 #### M0：來源健康與交易池閘門
 
+狀態：**已完成（2026-09-17）**。初次即時驗收為 TWSE 100／100、TPEx 49／50，成功發現舊名單中的 `5371.TWO` 已不可交易並讓正式 Snapshot fail closed。2026-09-18 收到新版官方 PDF 後，確認完整 150 檔名單唯一代號差異為 `5371 → 3718`，已更新交易池、名稱、來源日期及來源雜湊；重測結果為 TWSE 100／100、TPEx 50／50，交易池驗證 `completed` 且 `usable=true`。舊案例保留為回歸 fixture，確保未來未經官方文件確認時仍不會自動替換。
+
 - 將本次人工探測整理成可重跑的 `scripts/probe_data_sources.py`，輸出 `SourceFeasibilityReport`。
 - 新增 `UniverseValidationResult`，每日比對官方交易池、TWSE／TPEx 行情與可交易狀態。
 - 對缺少行情、終止交易、代號變更或承接未確認的股票標記 `universe_mismatch`／`not_tradable`。
-- 保留 `5371`／`3718` 為第一個回歸 fixture；未取得主辦規則證據前不得自動替換。
+- 保留舊版 `5371`／`3718` 情境為第一個回歸 fixture；只有像 2026-09-14 新版官方 PDF 這類主辦文件，才能授權更新正式交易池。
 
 完成條件：所有 150 檔都有 `tradable`、`not_tradable` 或 `universe_mismatch` 的明確狀態；必要標的異常時 Snapshot fail closed。
 
-##### M0 下一個實作批次
+##### M0 已交付內容
 
 1. 在 `src/etf_agent/contracts.py` 建立 `SourceFeasibilityReport`、`UniverseInstrumentStatus` 與 `UniverseValidationResult`，先固定 JSON schema、列舉值與時間格式。
 2. 先把已核准的 TWSE／TPEx 探測端點加入 `config/data_sources.json` allowlist，再新增 `scripts/probe_data_sources.py`；輸出 HTTP 狀態、schema、資料日期、筆數、交易池覆蓋、耗時及錯誤，不在探測時產生投資結論。
 3. 新增交易池驗證器，合併 TWSE 與 TPEx 最新行情結果，對每檔股票輸出 `tradable`、`not_tradable` 或 `universe_mismatch` 及來源證據。
-4. 將 `5371` 缺漏、`3718` 存在但不得自動替換做成固定 fixture；加入空交易池、來源失敗、重複代號與跨市場錯配測試。
+4. 將舊版 `5371` 缺漏、`3718` 存在但不得自行替換做成固定 fixture；另驗證新版正式交易池確實使用 `3718`，並保留空交易池、來源失敗、重複代號與跨市場錯配測試。
 5. 讓 `status` 顯示來源健康與交易池統計；讓正式 `snapshot` 在必要股票狀態未確認時回傳不可用及非零 exit code。
 6. 完成單元測試與離線 fixture 後，再以即時端點執行一次驗收，將結果保存到 `artifacts/source-feasibility/`，不把即時網路測試當成單元測試。
 
-M0 不包含 TPEx collector 正式接入、財報入庫、新聞收集或 LLM 工具循環；這些分別留在 M1、M2、M3，避免一次修改過多邊界。
+M0 當時不包含 TPEx collector 正式接入、財報入庫、新聞收集或 LLM 工具循環；TPEx collector 已在後續 M1 第一段完成，其餘仍分別留在 M1、M2、M3。
 
 #### M1：補齊確定性官方資料
 
-- 接入 TPEx `tpex_mainboard_quotes` 最新行情。
-- 將 TWSE／TPEx 官方歷史行情 collector 接成正式 CLI。
-- 合併六種業別的 TWSE／TPEx 綜合損益表與資產負債表端點。
-- 接入暫停／恢復、變更交易、分盤、管理、注意及處置狀態。
-- 將 `fetch_prices`、`fetch_monthly_revenue`、`fetch_disclosures`、`fetch_financial_statements` 拆成可獨立測試的結構化工具。
+狀態：**進行中**。
+
+- [x] 接入 TPEx `tpex_mainboard_quotes` 最新行情，與 TWSE 共用 universe 篩選、raw payload、collection run、SQLite 入庫及 Snapshot 分析 view。
+- [x] 新增 `scripts/collect_latest_prices.py` 與 Skill `collect-prices`，一次更新官方 150 檔的上市／上櫃最新行情。
+- [x] 完成即時驗收：2026-09-17 行情寫入 TWSE 100 檔、TPEx 50 檔，`3718.TWO` 已由 `TPEX_MAINBOARD_QUOTES` 入庫；正式 Snapshot 為 150／150 且 `usable=true`。
+- [x] 將 Yahoo 兩年行情改成每日增量刷新：既有標的重抓 7 天、新標的補完整兩年；截止日以 TWSE／TPEx 都已完成的最近官方交易日為準，排除盤中未完成日 K。2026-09-18 驗收時 150 檔均更新至 2026-09-17，缺漏 0 檔。
+- [x] 讓 `ResearchSnapshot` 輸出行情與文件的來源證據，並以 `snapshot_prices` 鎖定採用版本；價格也依實際 `fetched_at` 執行 cutoff 隔離，供未來 D-Plan 完整引用鏈使用。
+- [ ] 將 TWSE／TPEx 官方歷史行情 collector 接成正式 CLI，逐步降低 Yahoo 作為必要歷史來源的地位。
+- [ ] 合併六種業別的 TWSE／TPEx 綜合損益表與資產負債表端點。
+- [ ] 接入暫停／恢復、變更交易、分盤、管理、注意及處置狀態。
+- [ ] 將 `fetch_prices`、`fetch_monthly_revenue`、`fetch_disclosures`、`fetch_financial_statements` 拆成可獨立測試的結構化工具。
+
+M1 接下來依序執行：
+
+1. 官方歷史行情 CLI：共用現有 TWSE／TPEx provider，支援增量區間、失敗重試、逐檔缺漏與來源覆蓋報告。
+2. 財報彙總：先接已確認的損益表與資產負債表欄位，保留期間、產業格式、發布／取得時間及原始回應。
+3. 交易狀態：接入停復牌、變更交易、分盤、管理、注意及處置狀態，加入 Snapshot 可成交性閘門。
+4. 細粒度工具：把行情、月營收、重大訊息與財報更新拆成可獨立執行、測試及記錄的結構化工具。
 
 完成條件：除已被交易池閘門隔離的標的外，當期行情與財報涵蓋率達 100%；每筆有來源、期間、抓取時間、原始回應與版本。
 
@@ -477,30 +535,30 @@ M0 不包含 TPEx collector 正式接入、財報入庫、新聞收集或 LLM �
 
 完成條件：每個正式來源都有核准的 `SourceFeasibilityReport`；歷史資料能證明 `published_at` 與 `available_at`，不能證明者標記探索資料並排除正式回測。
 
-### 第一版待實作
+### 第一版剩餘工作
 
-1. 更新 `event-data/SKILL.md`，加入 Codex／Claude 共用的 Agent 工具循環、查詢預算與停止條件。
-2. 將工具 CLI 統一為結構化 JSON 輸入輸出及穩定 exit code。
-3. 新增 `DataAgentRequest`、`DataAgentResult`、`SourceCandidate`、`NewsCandidate`、`SourceFeasibilityReport`、`UniverseValidationResult` 與工具軌跡契約。
-4. 新增 `get_data_status` 與 allowlist `search_official_sources` 工具。
-5. 新增 `agent_run_id` artifact 目錄與工具呼叫紀錄。
-6. 新增 Codex／Claude Skill 安裝與一致性檢查腳本。
-7. 分別用 Codex 與 Claude 執行相同 fixture 任務，確認產生相同 Snapshot 與品質結果。
-8. 將可用 Snapshot 交給 [事件研究流程](event_strategy_v1.md)，並供 [回測計畫](backtest_plan_v1.md) 使用相同資料契約重播。
+1. 完成 M1 官方歷史行情 CLI、財報彙總、交易狀態與細粒度結構化工具。
+2. 完成 M2 `NewsCandidate`、公司別名、去重、時間與誤配檢查。
+3. 補齊 `DataAgentRequest`、`DataAgentResult`、`SourceCandidate`、`NewsCandidate` 與工具軌跡契約；既有 `SourceFeasibilityReport`、`UniverseValidationResult` 不重做。
+4. 將工具 CLI 統一為結構化 JSON 輸入輸出與穩定 exit code，加入 `get_data_status` 及 allowlist `search_official_sources`。
+5. 新增 `agent_run_id` artifact 目錄，保存查詢計畫、工具呼叫、collection run、候選來源與最終結果。
+6. 完成 Codex／Claude Skill 安裝與一致性檢查，並以相同 fixture 驗證 Snapshot 與品質結果一致。
+7. 將可用 Snapshot 交給 [事件研究流程](event_strategy_v1.md)，並供 [回測計畫 V1](backtest_plan_v1.md) 使用相同資料契約重播。
+8. 在研究、決策與風控契約穩定後新增確定性 D-Plan Builder／Validator；Data Agent 不接手市場觀點、推論、決策或訂單。
 
 上述功能依 M0～M4 執行；第一版交付範圍以 M0～M3 為主，M4 除必要的來源可行性驗證外不阻擋第一版 Data Agent。
 
 ### 資料來源擴充待辦
 
 1. 先為每個候選來源產生 `SourceFeasibilityReport`；未確認介面、期間及使用條件前，不承諾正式接入。
-2. 接入已確認的 TPEx 官方最新行情；將既有 TWSE／TPEx 官方歷史行情 collector 接成正式 CLI。
+2. TPEx 官方最新行情已接入；下一步將既有 TWSE／TPEx 官方歷史行情 collector 接成正式 CLI。
 3. 對 MOPS 歷史月營收與歷史重大訊息做小範圍 PoC，確認可用期間、分頁、限流與發布時間後，再建立回補器。
 4. 向競賽規則／主辦資料確認指定 ETF、前十大口徑與更新方式；若官方未提供且來源需付費，標記為外部依賴並阻止正式 Active Share 驗證。
 5. 先接入已確認的財務彙總 API，再驗證完整 XBRL／財報文件；只對已證實可取得的欄位建立期間比較。
 6. 接入 TWSE 官方新聞 RSS，並以 Google News RSS 做 `NewsCandidate` PoC；只保存允許的 metadata／摘要與原文連結，加入公司別名、去重、時間與誤配檢查。
 7. 對法說附件與公司 IR 網站做覆蓋率測試，缺附件時保留日曆事件與缺漏旗標，不以 LLM 補寫展望。
 8. 接入已確認的公司行動與交易狀態端點，並每日檢查交易池代號、承接關係與可交易狀態。
-9. 社群情緒與分析師目標價不列入近期主線；GDELT 與 yfinance 新聞不得作必要來源。
+9. GDELT 與 yfinance 新聞不得作必要來源；社群情緒與分析師目標價已移出 Data Agent，改列未來獨立研究 Agent。
 
 `ReasoningBackend`、官方模型 API adapter、CLIProxyAPI adapter、LangChain 與 LangGraph 都不列入第一版待實作清單。
 
@@ -513,6 +571,8 @@ M0 不包含 TPEx collector 正式接入、財報入庫、新聞收集或 LLM �
 - LLM 不能直接寫入核心市場數值；所有正式資料都經 allowlist provider、parser 與 validator。
 - 相同官方資料重跑不建立重複文件；更正內容建立新版本。
 - 截止時間之後才取得的文件不會進入歷史 Snapshot。
+- 截止時間之後才取得的行情不會進入歷史 Snapshot；Snapshot 會鎖定每檔實際採用的 `raw_payload_id`。
+- Snapshot 中的行情與文件都能由 `source_evidence_id` 追到權威分類、URL、內容時間、抓取時間與內容雜湊。
 - 缺值保持 `null`，不因 Agent 說明或搜尋摘要而改寫。
 - 必要資料缺漏、來源失敗或 Snapshot 不可用時，下游不執行。
 - 所有 Agent 工具輪數與網路重試都有上限。

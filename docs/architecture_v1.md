@@ -1,6 +1,6 @@
 # 第一版 Agent 技術架構
 
-狀態（2026-09-17）：架構設計完成，Data Agent 基礎資料層已實作，目前進行 M0「來源健康與交易池閘門」。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
+狀態（2026-09-18）：架構設計與 Data Agent M0 已完成；M1 的 TWSE／TPEx 最新行情與 Yahoo 兩年增量刷新已驗收，目前下一項是官方歷史行情 CLI。依據 [四層開發架構](agent_plan.md) 與 [Data Agent 計畫](data_agent_plan.md)。
 
 ## 1. 整體設計
 
@@ -26,7 +26,7 @@
 
 每筆資料保留 `published_at`（發布時間）、`fetched_at`（取得時間）與 `source_id`。歷史模擬依當時可取得版本取資料，不能用後來修訂的財報或未來新聞。
 
-交易池、帳戶、必要價格或 ETF 基準缺失時停止該次流程；個別新聞缺失則標記缺失，不自動解讀為利多或利空。目前 `data/official_universe.csv` 已有 150 檔，但實測發現 `5371` 在 TPEx 來源缺漏、`3718` 已出現，因此仍須每日驗證代號與可交易狀態；主辦規則確認前不得自動替換。
+交易池、帳戶、必要價格或 ETF 基準缺失時停止該次流程；個別新聞缺失則標記缺失，不自動解讀為利多或利空。目前 `data/official_universe.csv` 已依 2026-09-14 新版官方 PDF 載入 150 檔，其中 `5371 中光電` 已由官方名單更新為 `3718 中光電投控`。每日仍須驗證代號與可交易狀態；任何未出現在官方名單的承接關係都不得自行套用。
 
 ## 3. 策略決策模組
 
@@ -100,7 +100,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | --- | --- |
 | src/etf_agent/pipeline.py | 每日流程控制、狀態與重試 |
 | src/etf_agent/contracts.py | 模組資料契約與驗證 |
-| src/etf_agent/data/ | 已有：TWSE 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features、account_loader 及其他來源 |
+| src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features、account_loader 及其他來源 |
 | src/etf_agent/strategy/ | scoring、event_analysis、proposal |
 | src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
 | src/etf_agent/risk/ | 情境檢查、Active Share、超限日數、MDD |
@@ -108,7 +108,8 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | src/etf_agent/data/database.py | 已有：行情、原始回應與執行紀錄；待擴充其他模組資料表 |
 | src/etf_agent/models.py | 既有：部位與投資組合資料模型 |
 | src/etf_agent/guard.py | 既有：初步風控檢查，後續擴充或轉接 risk |
-| scripts/collect_twse.py | 已有：TWSE 最新交易日行情收集入口 |
+| scripts/collect_latest_prices.py | 已有：官方交易池 TWSE／TPEx 最新交易日行情收集入口 |
+| scripts/collect_twse.py | 已有：TWSE 單一來源與全上市證券開發模式入口 |
 | scripts/init_db.py、scripts/data_status.py | 已有：初始化資料庫與查看資料狀態 |
 | scripts/run_daily.py | 預定完整每日執行入口 |
 | config/strategy.json | 預定策略參數 |
@@ -117,7 +118,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 ## 8. 現況與實作里程碑
 
-目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE 最新行情、TWSE／TPEx 歷史行情、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。現有 guard 仍只接受單一 benchmark，尚未做前十大裁切、全部 ETF 比對、完整帳戶輸入、成交模擬或完整 Agent 稽核持久化；資料抓取成功不代表即可正式送件。
+目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。歷史刷新以兩個官方市場都已完成的最近交易日為截止日，避免把 Yahoo 盤中日 K 當成正式收盤資料。現有 guard 仍只接受單一 benchmark，尚未做前十大裁切、全部 ETF 比對、完整帳戶輸入、成交模擬或完整 Agent 稽核持久化；資料抓取成功不代表即可正式送件。
 
 里程碑以 [Data Agent 計畫](data_agent_plan.md) 的 M0～M4 為資料主線：先完成 M0 來源健康與交易池閘門，再依序接入 M1 官方資料、M2 新聞候選與 M3 Agent 工具循環。事件研究通過後，才進入量化策略、完整風控、時間一致回測及送件格式。不得因已有事件策略原型，就跳過資料閘門直接產生正式交易決策。
 

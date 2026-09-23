@@ -4,6 +4,42 @@
     "timeout_seconds": 30,
     "user_agent": "ETF-Agent-AICUP-2026/0.1"
   },
+  "tpex_daily": {
+    "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+    "timeout_seconds": 30,
+    "user_agent": "ETF-Agent-AICUP-2026/0.1"
+  },
+  "source_probes": [
+    {
+      "source_id": "TWSE_STOCK_DAY_ALL",
+      "market": "TWSE",
+      "data_type": "latest_prices",
+      "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+      "format": "json",
+      "code_field": "Code",
+      "date_field": "Date",
+      "tradable_field": "ClosingPrice",
+      "required_fields": ["Code", "Name", "Date", "ClosingPrice"],
+      "timeout_seconds": 30,
+      "user_agent": "ETF-Agent-AICUP-2026/0.1"
+    },
+    {
+      "source_id": "TPEX_MAINBOARD_QUOTES",
+      "market": "TPEX",
+      "data_type": "latest_prices",
+      "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+      "format": "json",
+      "code_field": "SecuritiesCompanyCode",
+      "date_field": "Date",
+      "tradable_field": "Close",
+      "required_fields": ["SecuritiesCompanyCode", "CompanyName", "Date", "Close"],
+      "timeout_seconds": 30,
+      "user_agent": "ETF-Agent-AICUP-2026/0.1"
+    }
+  ],
+  "universe_validation": {
+    "successor_candidates": {}
+  },
   "historical_daily": {
     "twse_url": "https://www.twse.com.tw/exchangeReport/STOCK_DAY",
     "tpex_url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock",
@@ -15,6 +51,8 @@
   "yfinance_daily": {
     "retries": 2,
     "batch_size": 30,
+    "lookback_years": 2,
+    "overlap_days": 7,
     "source": "Yahoo Finance through yfinance"
   },
   "corporate_data": {

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Event Data Agent"
-  short_description: "Build verified Taiwan stock event-data snapshots"
-  default_prompt: "Use $event-data to update official event data and build a validated research snapshot."
+  display_name: "data Agent"
+  short_description: "驗證台灣市場來源並建立可追溯的事件資料快照"
+  default_prompt: "使用 $event-data 驗證官方來源與競賽交易池、更新事件資料，並建立研究快照。"
