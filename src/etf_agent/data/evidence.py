@@ -73,14 +73,23 @@ class SourceEvidenceBuilder:
         return evidence
 
     def build_for_document(self, row) -> SourceEvidence:
-        published_at = taipei_timestamp(str(row["published_at"]))
+        content_as_of = taipei_timestamp(str(row["published_at"]))
+        published_at = content_as_of
+        if str(row["document_type"]) == "financial_statement":
+            # 財報彙總端點只提供「出表日期」，不能把它宣稱為公司發布時間。
+            # source_published_at 目前應保留 null；仍以 available_at/fetched_at
+            # 防止把今日回補內容放進過去的快照。
+            if row["source_published_at"] is not None:
+                published_at = taipei_timestamp(str(row["source_published_at"]))
+            else:
+                published_at = None
         return SourceEvidence(
             evidence_id=self.document_evidence_id(row),
             source=str(row["source"]),
             authority=source_authority(str(row["source"])),
             data_type=str(row["document_type"]),
             url=str(row["source_url"]),
-            content_as_of=published_at,
+            content_as_of=content_as_of,
             published_at=published_at,
             fetched_at=taipei_timestamp(str(row["fetched_at"])),
             content_sha256=str(row["content_sha256"]),

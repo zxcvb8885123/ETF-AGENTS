@@ -46,6 +46,9 @@
     "twca_intermediate_url": "https://sslserver.twca.com.tw/cacert/Cyber_SSL_2023.crt",
     "timeout_seconds": 30,
     "retries": 3,
+    "max_workers": 4,
+    "lookback_years": 2,
+    "overlap_days": 7,
     "user_agent": "ETF-Agent-AICUP-2026/0.1"
   },
   "yfinance_daily": {
@@ -82,6 +85,229 @@
         "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O",
         "market": "TPEX",
         "document_type": "material_event"
+      }
+    ]
+  },
+  "financial_statements": {
+    "timeout_seconds": 30,
+    "retries": 3,
+    "user_agent": "ETF-Agent-AICUP-2026/0.1",
+    "sources": [
+      {
+        "source": "TWSE_MOPS_INCOME_CI",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "ci",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_INCOME_MIM",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_mim",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "mim",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_INCOME_BASI",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_basi",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "basi",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_INCOME_BD",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_bd",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "bd",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_INCOME_FH",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_fh",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "fh",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_INCOME_INS",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ins",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "ins",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_BALANCE_CI",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap07_L_ci",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "ci",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_BALANCE_MIM",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap07_L_mim",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "mim",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_BALANCE_BASI",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap07_L_basi",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "basi",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_BALANCE_BD",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap07_L_bd",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "bd",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_BALANCE_FH",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap07_L_fh",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "fh",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TWSE_MOPS_BALANCE_INS",
+        "url": "https://openapi.twse.com.tw/v1/opendata/t187ap07_L_ins",
+        "market": "TWSE",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "ins",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_INCOME_CI",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_ci",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "ci",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_INCOME_MIM",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_mim",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "mim",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_INCOME_BASI",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_basi",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "basi",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_INCOME_BD",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_bd",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "bd",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_INCOME_FH",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_fh",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "fh",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_INCOME_INS",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_ins",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "income_statement",
+        "industry": "ins",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_BALANCE_CI",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap07_O_ci",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "ci",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_BALANCE_MIM",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap07_O_mim",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "mim",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_BALANCE_BASI",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap07_O_basi",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "basi",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_BALANCE_BD",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap07_O_bd",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "bd",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_BALANCE_FH",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap07_O_fh",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "fh",
+        "unit_multiplier": 1000
+      },
+      {
+        "source": "TPEX_MOPS_BALANCE_INS",
+        "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap07_O_ins",
+        "market": "TPEX",
+        "document_type": "financial_statement",
+        "statement_type": "balance_sheet",
+        "industry": "ins",
+        "unit_multiplier": 1000
       }
     ]
   }

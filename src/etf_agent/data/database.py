@@ -3,7 +3,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator, Optional, Sequence
+from typing import Dict, Iterable, Iterator, Optional, Sequence, Tuple
 
 from etf_agent.contracts import SourceFeasibilityReport, UniverseValidationResult
 
@@ -100,9 +100,9 @@ FROM (
         ROW_NUMBER() OVER (
             PARTITION BY symbol, trade_date
             ORDER BY CASE source
-                WHEN 'YAHOO_FINANCE' THEN 1
-                WHEN 'TPEX_TRADING_STOCK' THEN 2
-                WHEN 'TWSE_STOCK_DAY' THEN 2
+                WHEN 'TPEX_TRADING_STOCK' THEN 1
+                WHEN 'TWSE_STOCK_DAY' THEN 1
+                WHEN 'YAHOO_FINANCE' THEN 2
                 WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
                 WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                 ELSE 9
@@ -165,6 +165,54 @@ CREATE TABLE IF NOT EXISTS monthly_revenues (
 
 CREATE INDEX IF NOT EXISTS idx_monthly_revenues_symbol_period
 ON monthly_revenues(symbol, revenue_period);
+
+CREATE TABLE IF NOT EXISTS financial_statements (
+    document_id INTEGER PRIMARY KEY REFERENCES source_documents(id),
+    symbol TEXT NOT NULL REFERENCES instruments(symbol),
+    statement_type TEXT NOT NULL CHECK (
+        statement_type IN ('income_statement', 'balance_sheet')
+    ),
+    industry TEXT NOT NULL,
+    fiscal_year INTEGER NOT NULL,
+    fiscal_quarter INTEGER NOT NULL CHECK (fiscal_quarter BETWEEN 1 AND 4),
+    period_start TEXT,
+    period_end TEXT NOT NULL,
+    period_kind TEXT NOT NULL CHECK (
+        period_kind IN ('cumulative_to_quarter', 'point_in_time')
+    ),
+    reporting_scope TEXT NOT NULL CHECK (
+        reporting_scope IN ('consolidated', 'individual', 'unknown')
+    ),
+    currency TEXT NOT NULL,
+    unit_multiplier INTEGER NOT NULL CHECK (unit_multiplier > 0),
+    reported_at TEXT NOT NULL,
+    source_published_at TEXT,
+    mapping_version TEXT NOT NULL,
+    facts_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_statements_symbol_period
+ON financial_statements(symbol, statement_type, fiscal_year, fiscal_quarter);
+
+CREATE TABLE IF NOT EXISTS financial_statement_facts (
+    document_id INTEGER NOT NULL REFERENCES financial_statements(document_id),
+    metric_key TEXT NOT NULL,
+    source_field TEXT,
+    value TEXT,
+    value_status TEXT NOT NULL CHECK (
+        value_status IN ('provided', 'not_reported')
+    ),
+    currency TEXT NOT NULL,
+    unit_multiplier INTEGER NOT NULL CHECK (unit_multiplier > 0),
+    PRIMARY KEY(document_id, metric_key),
+    CHECK (
+        (value_status = 'provided' AND value IS NOT NULL AND source_field IS NOT NULL)
+        OR (value_status = 'not_reported' AND value IS NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_statement_facts_metric
+ON financial_statement_facts(metric_key);
 
 CREATE TABLE IF NOT EXISTS quality_issues (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -274,6 +322,9 @@ class MarketDataDatabase:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (5)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (6)"
             )
             connection.executescript(ANALYSIS_VIEW)
 
@@ -436,6 +487,61 @@ class MarketDataDatabase:
         if len(rows) != len(required) or any(not row["last_date"] for row in rows):
             return None
         return min(str(row["last_date"]) for row in rows)
+
+    def latest_trade_dates_by_symbol(self, sources: Sequence[str]) -> Dict[str, str]:
+        """傳回指定來源各標的最後一筆已保存日線，供增量更新使用。"""
+
+        required = tuple(dict.fromkeys(sources))
+        if not required:
+            raise ValueError("至少需要一個行情來源")
+        placeholders = ", ".join("?" for _ in required)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol, MAX(trade_date) AS last_date
+                FROM daily_prices
+                WHERE source IN (%s)
+                GROUP BY symbol
+                """
+                % placeholders,
+                required,
+            ).fetchall()
+        return {
+            str(row["symbol"]): str(row["last_date"])
+            for row in rows
+            if row["last_date"]
+        }
+
+    def history_price_ranges(
+        self, sources: Sequence[str]
+    ) -> Dict[Tuple[str, str], Tuple[str, str, int]]:
+        """傳回官方歷史行情的可稽核區間，不以 Yahoo 補足覆蓋。"""
+
+        required = tuple(dict.fromkeys(sources))
+        if not required:
+            raise ValueError("至少需要一個行情來源")
+        placeholders = ", ".join("?" for _ in required)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol, source, MIN(trade_date) AS first_date,
+                       MAX(trade_date) AS last_date, COUNT(*) AS row_count
+                FROM daily_prices
+                WHERE source IN (%s)
+                GROUP BY symbol, source
+                """
+                % placeholders,
+                required,
+            ).fetchall()
+        return {
+            (str(row["symbol"]), str(row["source"])): (
+                str(row["first_date"]),
+                str(row["last_date"]),
+                int(row["row_count"]),
+            )
+            for row in rows
+            if row["first_date"] and row["last_date"]
+        }
 
     def save_source_feasibility_report(
         self, report: SourceFeasibilityReport

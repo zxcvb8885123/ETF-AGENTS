@@ -443,7 +443,7 @@ Skill 腳本只包裝 `src/etf_agent/data/` 的正式功能，不複製資料邏
 | M4 歷史與進階資料 | PoC／後續 | 不阻擋第一版 Data Agent，但會阻擋正式事件回測 |
 | LLM API／CLIProxyAPI／LangChain／LangGraph | 不列入 V1 | Codex／Claude 工作階段搭配共用 Skill 即可 |
 
-目前測試基線為 `PYTHONPATH=src python3 -m unittest discover -s tests -v`，共 41 個測試通過。這個數字是 2026-09-19 的基線；後續以 CI／實際測試輸出為準，不在文件中假設永久固定。
+目前測試基線為 `PYTHONPATH=src python3 -m unittest discover -s tests -v`，2026-09-21 的實際輸出為 138 個測試通過；後續以 CI／實際測試輸出為準，不在文件中假設永久固定。
 
 ### 已完成
 
@@ -492,19 +492,26 @@ M0 當時不包含 TPEx collector 正式接入、財報入庫、新聞收集或 
 - [x] 完成即時驗收：2026-09-17 行情寫入 TWSE 100 檔、TPEx 50 檔，`3718.TWO` 已由 `TPEX_MAINBOARD_QUOTES` 入庫；正式 Snapshot 為 150／150 且 `usable=true`。
 - [x] 將 Yahoo 兩年行情改成每日增量刷新：既有標的重抓 7 天、新標的補完整兩年；截止日以 TWSE／TPEx 都已完成的最近官方交易日為準，排除盤中未完成日 K。2026-09-18 驗收時 150 檔均更新至 2026-09-17，缺漏 0 檔。
 - [x] 讓 `ResearchSnapshot` 輸出行情與文件的來源證據，並以 `snapshot_prices` 鎖定採用版本；價格也依實際 `fetched_at` 執行 cutoff 隔離，供未來 D-Plan 完整引用鏈使用。
-- [ ] 將 TWSE／TPEx 官方歷史行情 collector 接成正式 CLI，逐步降低 Yahoo 作為必要歷史來源的地位。
+- [x] 將 TWSE／TPEx 官方歷史行情 collector 接成正式 CLI，逐步降低 Yahoo 作為必要歷史來源的地位。CLI 以最新官方行情限制終止日、按標的增量重抓、保存逐檔來源區間與 failed run；沒有版本化官方交易日曆時，報告固定標示期間完整性未驗證。2026-09-21 已以 2026-09-17 執行官方 150 檔終止日覆蓋驗收，150／150 筆日線寫入且無警告，run ID 為 `73c18b42-0bcc-49d8-8b47-7866769ce15e`；此驗收不代表兩年期間完整或可作正式回測。
 - [ ] 合併六種業別的 TWSE／TPEx 綜合損益表與資產負債表端點。
 - [ ] 接入暫停／恢復、變更交易、分盤、管理、注意及處置狀態。
 - [ ] 將 `fetch_prices`、`fetch_monthly_revenue`、`fetch_disclosures`、`fetch_financial_statements` 拆成可獨立測試的結構化工具。
 
 M1 接下來依序執行：
 
-1. 官方歷史行情 CLI：共用現有 TWSE／TPEx provider，支援增量區間、失敗重試、逐檔缺漏與來源覆蓋報告。
-2. 財報彙總：先接已確認的損益表與資產負債表欄位，保留期間、產業格式、發布／取得時間及原始回應。
-3. 交易狀態：接入停復牌、變更交易、分盤、管理、注意及處置狀態，加入 Snapshot 可成交性閘門。
-4. 細粒度工具：把行情、月營收、重大訊息與財報更新拆成可獨立執行、測試及記錄的結構化工具。
+1. 財報彙總：依 [M1 第二批實作計畫](financial_statements_m1_plan.md) 已接入官方損益表與資產負債表，完成來源重測、業別契約、版本保存、Snapshot 與 CLI。2026 Q2 驗收為 298/300；3718.TWO 在官方彙總端點缺兩張報表，結果維持降級。
+2. 交易狀態：接入停復牌、變更交易、分盤、管理、注意及處置狀態，加入 Snapshot 可成交性閘門。
+3. 細粒度工具：把行情、月營收、重大訊息與財報更新拆成可獨立執行、測試及記錄的結構化工具。
 
 完成條件：除已被交易池閘門隔離的標的外，當期行情與財報涵蓋率達 100%；每筆有來源、期間、抓取時間、原始回應與版本。
+
+官方歷史行情執行方式：
+
+```bash
+PYTHONPATH=src python3 scripts/collect_official_history.py
+```
+
+此命令會先要求資料庫已有同一交易池所需市場的最新官方行情，將 `--end` 限制在兩市場都完成的交易日。預設把 JSON 報告寫到 `artifacts/official-history/latest.json`，且標準輸出相同 JSON；退出碼 `0` 代表每檔終止日都有官方日線、`2` 代表覆蓋不足、`1` 代表設定、來源或批次失敗。`range_coverage=unverified_without_official_calendar` 是預期限制，不能被解讀成已驗證全期間完整或可供正式回測。
 
 #### M2：新聞候選層
 
@@ -537,7 +544,7 @@ M1 接下來依序執行：
 
 ### 第一版剩餘工作
 
-1. 完成 M1 官方歷史行情 CLI、財報彙總、交易狀態與細粒度結構化工具。
+1. 完成 M1 財報彙總、交易狀態與細粒度結構化工具。
 2. 完成 M2 `NewsCandidate`、公司別名、去重、時間與誤配檢查。
 3. 補齊 `DataAgentRequest`、`DataAgentResult`、`SourceCandidate`、`NewsCandidate` 與工具軌跡契約；既有 `SourceFeasibilityReport`、`UniverseValidationResult` 不重做。
 4. 將工具 CLI 統一為結構化 JSON 輸入輸出與穩定 exit code，加入 `get_data_status` 及 allowlist `search_official_sources`。

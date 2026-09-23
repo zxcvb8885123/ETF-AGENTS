@@ -1,4 +1,4 @@
 interface:
   display_name: "data Agent"
-  short_description: "驗證台灣市場來源並建立可追溯的事件資料快照"
-  default_prompt: "使用 $event-data 驗證官方來源與競賽交易池、更新事件資料，並建立研究快照。"
+  short_description: "驗證台灣市場來源、收集事件與財報資料，並建立可追溯快照"
+  default_prompt: "使用 $event-data 驗證官方來源與競賽交易池、更新事件或財報資料，並建立研究快照。"

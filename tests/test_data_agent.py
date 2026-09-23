@@ -235,6 +235,7 @@ class DataAgentTests(unittest.TestCase):
             self.assertEqual(status.prices.symbol_count, 0)
             self.assertEqual(status.prices.sources, [])
             self.assertEqual(status.documents.versions, 0)
+            self.assertEqual(status.documents.financial_statement_rows, 0)
             self.assertEqual(status.snapshot_count, 0)
             self.assertIsNone(status.latest_collection)
             self.assertIsNone(status.latest_source_report)

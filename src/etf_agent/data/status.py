@@ -12,6 +12,7 @@ class DocumentStatus:
     documents: int
     monthly_rows: int
     event_rows: int
+    financial_statement_rows: int
 
 
 @dataclass(frozen=True)
@@ -110,7 +111,9 @@ class DataAgentStatusRepository:
                 SELECT COUNT(*) AS versions,
                        COUNT(DISTINCT source || '|' || external_id) AS documents,
                        SUM(document_type = 'monthly_revenue') AS monthly_rows,
-                       SUM(document_type = 'material_event') AS event_rows
+                       SUM(document_type = 'material_event') AS event_rows,
+                       SUM(document_type = 'financial_statement')
+                           AS financial_statement_rows
                 FROM source_documents
                 """
             ).fetchone()
@@ -175,6 +178,9 @@ class DataAgentStatusRepository:
                 documents=int(documents["documents"]),
                 monthly_rows=int(documents["monthly_rows"] or 0),
                 event_rows=int(documents["event_rows"] or 0),
+                financial_statement_rows=int(
+                    documents["financial_statement_rows"] or 0
+                ),
             ),
             snapshot_count=snapshot_count,
             quality_issue_count=quality_issue_count,

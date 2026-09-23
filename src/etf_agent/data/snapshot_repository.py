@@ -126,7 +126,21 @@ class SnapshotRepository:
                    monthly_revenues.cumulative_revenue,
                    monthly_revenues.previous_year_cumulative_revenue,
                    monthly_revenues.cumulative_yoy_pct,
-                   monthly_revenues.note
+                   monthly_revenues.note,
+                   financial_statements.statement_type,
+                   financial_statements.industry AS financial_industry,
+                   financial_statements.fiscal_year,
+                   financial_statements.fiscal_quarter,
+                   financial_statements.period_start AS financial_period_start,
+                   financial_statements.period_end AS financial_period_end,
+                   financial_statements.period_kind AS financial_period_kind,
+                   financial_statements.reporting_scope,
+                   financial_statements.currency AS financial_currency,
+                   financial_statements.unit_multiplier AS financial_unit_multiplier,
+                   financial_statements.reported_at,
+                   financial_statements.source_published_at,
+                   financial_statements.mapping_version,
+                   financial_statements.facts_json
             FROM eligible
             JOIN document_instruments
               ON document_instruments.document_id = eligible.id
@@ -134,6 +148,8 @@ class SnapshotRepository:
               ON raw_payloads.id = eligible.raw_payload_id
             LEFT JOIN monthly_revenues
               ON monthly_revenues.document_id = eligible.id
+            LEFT JOIN financial_statements
+              ON financial_statements.document_id = eligible.id
             WHERE version_rank = 1
             ORDER BY published_at, eligible.id
             """,

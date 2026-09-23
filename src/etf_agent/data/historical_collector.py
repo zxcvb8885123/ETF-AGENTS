@@ -7,10 +7,16 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
-from .historical import HistoricalPriceProvider, HistoricalResponse, month_starts
+from .historical import (
+    HistoricalPriceProvider,
+    HistoricalResponse,
+    HistoryRefreshBatch,
+    month_starts,
+    plan_history_refresh,
+)
 from .universe import Instrument
 
 
@@ -23,6 +29,104 @@ class HistoricalCollectionResult:
     fetched_payloads: int
     stored_rows: int
     warnings: Tuple[str, ...]
+
+
+class HistoricalCollectionError(RuntimeError):
+    """保留已寫入的 collection run，讓呼叫端能報告部分失敗。"""
+
+    def __init__(self, run_id: str, message: str):
+        super().__init__(message)
+        self.run_id = run_id
+
+
+@dataclass(frozen=True)
+class OfficialHistoryBatchResult:
+    run_id: str
+    start_date: str
+    end_date: str
+    symbols: Tuple[str, ...]
+    status: str
+    stored_rows: int
+    warning_count: int
+    error_message: Optional[str] = None
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "symbols": list(self.symbols),
+            "status": self.status,
+            "stored_rows": self.stored_rows,
+            "warning_count": self.warning_count,
+            "error_message": self.error_message,
+        }
+
+
+@dataclass(frozen=True)
+class OfficialHistoryCoverage:
+    symbol: str
+    source: str
+    requested_start_date: str
+    requested_end_date: str
+    stored_start_date: Optional[str]
+    stored_end_date: Optional[str]
+    stored_rows: int
+    end_coverage: str
+    range_coverage: str
+    warnings: Tuple[str, ...]
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "symbol": self.symbol,
+            "source": self.source,
+            "requested_start_date": self.requested_start_date,
+            "requested_end_date": self.requested_end_date,
+            "stored_start_date": self.stored_start_date,
+            "stored_end_date": self.stored_end_date,
+            "stored_rows": self.stored_rows,
+            "end_coverage": self.end_coverage,
+            "range_coverage": self.range_coverage,
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class OfficialHistoryRefreshResult:
+    status: str
+    safe_end_date: str
+    start_date: str
+    end_date: str
+    requested_symbols: int
+    stored_rows: int
+    batches: Tuple[OfficialHistoryBatchResult, ...]
+    coverage: Tuple[OfficialHistoryCoverage, ...]
+    warnings: Tuple[str, ...]
+
+    @property
+    def exit_code(self) -> int:
+        if any(batch.status == "failed" for batch in self.batches):
+            return 1
+        if self.status == "degraded":
+            return 2
+        return 0
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "status": self.status,
+            "safe_end_date": self.safe_end_date,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "requested_symbols": self.requested_symbols,
+            "stored_rows": self.stored_rows,
+            "batches": [batch.as_dict() for batch in self.batches],
+            "coverage": [item.as_dict() for item in self.coverage],
+            "warnings": list(self.warnings),
+            "limitations": [
+                "未接入版本化官方交易日曆；range_coverage 只報告已保存區間，不能證明期間內每個應有交易日均完整。",
+                "本結果只驗證官方歷史行情收集與終止日覆蓋，不能作為正式歷史回測或策略績效驗證。",
+            ],
+        }
 
 
 class HistoricalPriceCollector:
@@ -139,7 +243,7 @@ class HistoricalPriceCollector:
                         run_id,
                     ),
                 )
-        except BaseException as error:
+        except Exception as error:
             with self.database.connect() as connection:
                 connection.execute(
                     """
@@ -157,7 +261,7 @@ class HistoricalPriceCollector:
                         run_id,
                     ),
                 )
-            raise
+            raise HistoricalCollectionError(run_id, str(error)) from error
         return HistoricalCollectionResult(
             run_id=run_id,
             start_date=start.isoformat(),
@@ -178,3 +282,210 @@ class HistoricalPriceCollector:
                 if attempt < self.retries:
                     time.sleep(self.retry_delay_seconds * (2**attempt))
         raise RuntimeError(str(last_error))
+
+
+class OfficialHistoricalRefreshService:
+    """以官方 TWSE／TPEx 月行情更新並稽核指定交易池的歷史日線。"""
+
+    latest_sources = {
+        "TWSE": "TWSE_STOCK_DAY_ALL",
+        "TPEX": "TPEX_MAINBOARD_QUOTES",
+    }
+
+    def __init__(
+        self,
+        database: MarketDataDatabase,
+        provider: HistoricalPriceProvider,
+        max_workers: int = 4,
+        retries: int = 3,
+        progress: Optional[Callable[[str], None]] = None,
+    ):
+        self.database = database
+        self.provider = provider
+        self.max_workers = max_workers
+        self.retries = retries
+        self.progress = progress
+
+    def refresh(
+        self,
+        universe: Sequence[Instrument],
+        end: Optional[date] = None,
+        start: Optional[date] = None,
+        lookback_years: int = 2,
+        overlap_days: int = 7,
+    ) -> OfficialHistoryRefreshResult:
+        if not universe:
+            raise ValueError("官方交易池是空的")
+        self.database.initialize()
+        safe_end = self._safe_end_date(universe)
+        target_end = safe_end if end is None else end
+        if target_end > safe_end:
+            raise ValueError(
+                "歷史行情迄日 %s 晚於最近完整官方交易日 %s"
+                % (target_end.isoformat(), safe_end.isoformat())
+            )
+        if start is not None and start > target_end:
+            raise ValueError("歷史資料起日不得晚於迄日")
+
+        if start is not None:
+            batches = [HistoryRefreshBatch(start, tuple(universe))]
+        else:
+            last_dates = {
+                symbol: date.fromisoformat(value)
+                for symbol, value in self.database.latest_trade_dates_by_symbol(
+                    self._historical_sources(universe)
+                ).items()
+            }
+            batches = plan_history_refresh(
+                universe,
+                last_dates,
+                target_end,
+                lookback_years=lookback_years,
+                overlap_days=overlap_days,
+            )
+
+        requested_starts = {
+            instrument.symbol: batch.start_date
+            for batch in batches
+            for instrument in batch.instruments
+        }
+        batch_results: List[OfficialHistoryBatchResult] = []
+        warnings: List[str] = []
+        stored_rows = 0
+        for batch in batches:
+            collector = HistoricalPriceCollector(
+                self.database,
+                self.provider,
+                max_workers=self.max_workers,
+                retries=self.retries,
+                progress=self.progress,
+            )
+            symbols = tuple(instrument.symbol for instrument in batch.instruments)
+            try:
+                result = collector.collect(batch.instruments, batch.start_date, target_end)
+            except HistoricalCollectionError as error:
+                warnings.append(
+                    "%s 至 %s 的 %d 檔請求失敗：%s"
+                    % (
+                        batch.start_date.isoformat(),
+                        target_end.isoformat(),
+                        len(symbols),
+                        error,
+                    )
+                )
+                batch_results.append(
+                    OfficialHistoryBatchResult(
+                        run_id=error.run_id,
+                        start_date=batch.start_date.isoformat(),
+                        end_date=target_end.isoformat(),
+                        symbols=symbols,
+                        status="failed",
+                        stored_rows=0,
+                        warning_count=0,
+                        error_message=str(error),
+                    )
+                )
+                continue
+            stored_rows += result.stored_rows
+            warnings.extend(result.warnings)
+            batch_results.append(
+                OfficialHistoryBatchResult(
+                    run_id=result.run_id,
+                    start_date=result.start_date,
+                    end_date=result.end_date,
+                    symbols=symbols,
+                    status="success",
+                    stored_rows=result.stored_rows,
+                    warning_count=len(result.warnings),
+                )
+            )
+
+        coverage = self._coverage(universe, requested_starts, target_end)
+        has_failed_batch = any(item.status == "failed" for item in batch_results)
+        has_uncovered_symbol = any(
+            item.end_coverage != "present" for item in coverage
+        )
+        status = "failed" if has_failed_batch else (
+            "degraded" if has_uncovered_symbol else "completed"
+        )
+        return OfficialHistoryRefreshResult(
+            status=status,
+            safe_end_date=safe_end.isoformat(),
+            start_date=min(requested_starts.values()).isoformat(),
+            end_date=target_end.isoformat(),
+            requested_symbols=len(universe),
+            stored_rows=stored_rows,
+            batches=tuple(batch_results),
+            coverage=tuple(coverage),
+            warnings=tuple(warnings),
+        )
+
+    def _safe_end_date(self, universe: Sequence[Instrument]) -> date:
+        latest_sources = tuple(
+            dict.fromkeys(
+                self.latest_sources[self._market_key(instrument)]
+                for instrument in universe
+            )
+        )
+        latest = self.database.latest_complete_trade_date(latest_sources)
+        if latest is None:
+            raise ValueError(
+                "缺少 TWSE／TPEx 最新官方行情；請先執行 collect_latest_prices.py"
+            )
+        return date.fromisoformat(latest)
+
+    def _coverage(
+        self,
+        universe: Sequence[Instrument],
+        requested_starts: Dict[str, date],
+        end: date,
+    ) -> List[OfficialHistoryCoverage]:
+        ranges = self.database.history_price_ranges(self._historical_sources(universe))
+        coverage: List[OfficialHistoryCoverage] = []
+        for instrument in universe:
+            expected_source = self._historical_source(instrument)
+            row = ranges.get((instrument.symbol, expected_source))
+            stored_start = stored_end = None
+            stored_rows = 0
+            warnings: List[str] = []
+            if row is not None:
+                stored_start, stored_end, stored_rows = row
+            else:
+                warnings.append("尚未保存 %s 的官方歷史行情" % expected_source)
+            if stored_end == end.isoformat():
+                end_coverage = "present"
+            else:
+                end_coverage = "missing"
+                warnings.append(
+                    "終止日 %s 未有官方日線；目前最後日為 %s"
+                    % (end.isoformat(), stored_end or "無")
+                )
+            coverage.append(
+                OfficialHistoryCoverage(
+                    symbol=instrument.symbol,
+                    source=expected_source,
+                    requested_start_date=requested_starts[instrument.symbol].isoformat(),
+                    requested_end_date=end.isoformat(),
+                    stored_start_date=stored_start,
+                    stored_end_date=stored_end,
+                    stored_rows=stored_rows,
+                    end_coverage=end_coverage,
+                    range_coverage="unverified_without_official_calendar",
+                    warnings=tuple(warnings),
+                )
+            )
+        return coverage
+
+    def _historical_sources(self, universe: Sequence[Instrument]) -> Tuple[str, ...]:
+        return tuple(dict.fromkeys(self._historical_source(item) for item in universe))
+
+    def _historical_source(self, instrument: Instrument) -> str:
+        return (
+            self.provider.tpex_source
+            if self._market_key(instrument) == "TPEX"
+            else self.provider.twse_source
+        )
+
+    @staticmethod
+    def _market_key(instrument: Instrument) -> str:
+        return "TPEX" if instrument.market.upper() in {"TPEX", "OTC", "上櫃"} else "TWSE"
