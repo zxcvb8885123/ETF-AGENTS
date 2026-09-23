@@ -1,16 +1,16 @@
 # 自動化報告 Agent：一鍵研究與報告交付計畫
 
-日期：2026-09-22。狀態：待實作。本文件補充既有自動化排程／報告計畫，先完成按需研究交付，再接正式決策及排程；不把新增計畫視為已可用功能。
+日期：2026-09-22。狀態：RPT0～RPT4 第一版已實作。本文件補充既有自動化排程／報告計畫；正式決策及排程仍依前置條件接續。
 
 ## 目標與目前缺口
 
 使用者啟動一次流程後，能從固定入口看到本次執行結果、可閱讀的報告、資料缺漏與下一步。報告 Agent 負責編排、驗證、格式化、封存及本地交付；研究與交易判斷仍由既有 Agent 負責。
 
 - 已完成：Research Report V0 Builder／Validator、事件研究工具與角色 Skills、離線 DailyReport／FailureReport A0／A1。
-- 部分完成：`start.sh daily` 收集資料並建立 Snapshot，但沒有執行研究、接收 Agent 輸出或交付報告。
+- 已完成第一版：`start.sh daily` 收集資料、建立 Snapshot、封存候選與 Agent 交接；`start.sh report` 可使用既有 Snapshot 執行或續跑；結果固定交付至 `artifacts/reports/latest.md`。
 - 本次檢查：目前快照可用、包含 150 檔行情，但文件數為零；工作區未找到已驗證事件研究檔。文件記載的先前演練不能代替本次可驗證產物。
-- 待排查：目前腳本在事件收集前固定預設 cutoff，可能排除新資料；也須檢查收集結果、來源時間、資料庫掛載與 Snapshot 篩選，不能僅由零文件斷定原因。
-- 尚未接入：Agent 工作階段交接、續跑、固定交付入口、正式帳戶／規則及決策資料、官方 D-Plan 規格與正式排程。
+- 待排查：零文件時仍須檢查收集結果、來源時間、資料庫掛載與 Snapshot 篩選，不能僅由零文件斷定原因。
+- 尚未接入：實際 Agent 工作階段的自動啟動／回傳、正式帳戶／規則及決策資料、官方 D-Plan 規格與正式排程。第一版會交付 waiting_for_agent，等待人工或 Codex／Claude 工作階段完成研究。
 
 ## 使用流程與責任
 
@@ -47,12 +47,14 @@ JSON 為權威內容，Markdown 由同一份已驗證 JSON 確定性渲染。首
 - **D-Plan**：獨立候選檔階段，待官方 schema、語意規則與正式前置驗收完成；不阻擋研究報告先交付。請求 D-Plan 失敗時該次交付為 FailureReport，已驗證研究可作稽核附檔。
 - 基本面研究仍待 FR5 契約升版，不能直接塞入現有 Research Report 或 DailyReport。
 
-規劃產物位置（尚未建立）：
+產物位置：
 
 ```text
 artifacts/report_runs/<run_id>/
-  inputs/                 固定版本的必要輸入與角色交接
-  attempts/               各次嘗試、等待、錯誤與續跑紀錄
+  input_snapshot.json     固定版本的 Snapshot
+  event_candidates.json   截止前事件候選清單
+  agent_request.json      Fact／Bull／Bear／Adjudicator 交接契約
+  research_result.json    通過驗證後封存（選配）
   research_report.json/md 或 daily_report.json/md（驗證通過才出現）
   execution_report.json/md（執行狀態與診斷）
   manifest.json           輸入輸出雜湊、版本與驗證結果
@@ -67,14 +69,14 @@ artifacts/reports/latest_success.json 最近一次通過報告索引
 
 | 階段 | 工作 | 驗收條件 |
 | --- | --- | --- |
-| RPT0 資料與時間修復 | 追查零文件；記錄收集 exit code、數量、時間與 DB 路徑；預設收集完成後固定 cutoff | 新抓資料依真實 available_at 納入；使用者指定歷史 cutoff 時維持原值，不回填可得時間；零文件交付診斷 |
-| RPT1 交付契約與格式 | 定義 execution report、索引及渲染契約；擴充既有 PipelineRun／manifest 的 adapter；先建立 run 再讀上游 | 檔案缺失、JSON 損壞或初始化失敗也可留診斷；無 Snapshot 時使用 null，不捏造 ID；JSON／Markdown 同源 |
-| RPT2 研究編排與續跑 | 保存完整事件清單及選取規則；角色交接、獨立多空、雙重驗證；執行研究報告 Builder | 同 Snapshot／cutoff；無 Agent 轉等待；跨 run、過期或改寫結果被拒；至少一個真實事件完成驗證與報告 |
-| RPT3 一鍵交付入口 | 擴充 `start.sh daily`；新增最薄的 workflow CLI（run／status／resume／verify）與 `daily-report` Skill；列印絕對報告路徑 | 成功、等待、降級、失敗都有可閱讀入口；重複啟動不重複發布；CLI 退出狀態不把等待當成功 |
-| RPT4 決策報告接入 | 核對真實帳戶、現金、持倉、交易狀態、基準、規則及回測／前向驗收；串接既有 DailyReport | 真實決策與風控通過；缺必要資料時只交付診斷及已驗證研究，不以 fixture 補正式輸入 |
+| RPT0 資料與時間修復 | **第一版已完成**：工作流記錄 Snapshot／DB／研究輸入雜湊，保留零文件診斷；`daily` 在收集完成後固定 cutoff | 零文件交付 blocked；資料與時間錯誤保留 execution report；未改寫來源時間 |
+| RPT1 交付契約與格式 | **第一版已完成**：`ReportWorkflowRepository`、execution report、JSON／Markdown 索引、原子發布與 manifest 驗證 | 檔案缺失、JSON 損壞或 Snapshot 不可用會留下可驗證失敗報告；`latest.md` 固定入口 |
+| RPT2 研究編排與續跑 | **第一版已完成**：候選封存、role input 交接、waiting_for_agent、resume 父子 run、ResearchResult 驗證與 Research Report Builder 接入 | 同 Snapshot／cutoff；Bull／Bear 隔離規則寫入交接契約；續跑不覆寫父 run |
+| RPT3 一鍵交付入口 | **第一版已完成**：`start.sh daily`／`report`、workflow CLI（run／status／resume／verify）與 `daily-report` Skill | 成功、等待、降級、失敗均有本地入口；同鍵同輸入重用；等待與阻擋使用非成功退出碼 |
+| RPT4 決策報告接入 | **第一版已完成離線接線**：Research Report 後可接同一 Snapshot／cutoff 的 Decision run，呼叫既有 DailyReport／FailureReport Builder，封存下游產物 | 仍須核對真實帳戶、現金、持倉、交易狀態、基準、規則及回測／前向驗收；缺必要資料時只交付診斷及已驗證研究，不以 fixture 補正式輸入 |
 | RPT5 排程與候選檔 | 在原 A2／A3／A5 前置通過後啟用 scheduler、互斥鎖、有限重試、恢復與官方 D-Plan 驗證 | 逾時、並行、中斷、重複觸發測試通過；缺官方規格停止候選檔；最後交付人工檢視 |
 
-下一批實作範圍為 **RPT0～RPT3**：讓使用者先能取得真實研究報告，並在不能產出時看到具體原因。這是按需研究交付，不提前啟用正式每日決策排程。RPT4 與 RPT5 依各自前置條件接續。
+RPT0～RPT4 第一版已完成；下一步是以實際來源完成一次真實事件研究續跑，再用同一 Snapshot／cutoff 接入已驗證 Decision／Risk run。這是按需研究交付，不提前啟用正式每日決策排程。RPT5 仍依各自前置條件接續。
 
 ## 狀態、恢復與測試
 
