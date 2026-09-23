@@ -13,6 +13,11 @@ services:
       PYTHONUNBUFFERED: "1"
       TZ: Asia/Taipei
     volumes:
+      - ./src:/app/src:ro
+      - ./cli:/app/cli:ro
+      - ./scripts:/app/scripts:ro
+      - ./skills:/app/skills:ro
+      - ./tests:/app/tests:ro
       - ./config:/app/config:ro
       - ./data:/app/data:ro
       - ./var:/app/var

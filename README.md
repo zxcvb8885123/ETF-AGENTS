@@ -12,7 +12,17 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 ./start.sh
 ```
 
-這會建立 Docker 映像、初始化 SQLite、抓取 TWSE／TPEx 最新行情、增量更新兩年歷史行情，再顯示資料狀態。
+首次執行會建立 Docker 映像；之後只有映像不存在、依賴或 Dockerfile 變更才重建。腳本接著初始化 SQLite、抓取 TWSE／TPEx 最新行情、增量更新兩年歷史行情，再顯示資料狀態。程式碼直接從工作區掛載進容器，修改 Python 程式不需重建映像。
+
+本機直接開發或驗證 Skill 時，可使用與 Docker 相同的依賴：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip check
+```
+
+`requirements.txt` 同時包含執行依賴與 Skill 驗證所需的 PyYAML，Docker 建置也安裝這份檔案。已有 `.venv` 時只需重跑安裝指令；修改依賴後執行 `docker compose build` 更新映像。本機完整驗證指令見 [AGENTS.md](AGENTS.md#測試與驗證)。
 
 | 指令 | 用途 |
 | --- | --- |

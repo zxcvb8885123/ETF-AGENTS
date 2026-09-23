@@ -69,16 +69,22 @@
 - 不直接在專案內串接模型 API、LangChain 或 LangGraph；除非計畫明確變更並完成測試與安全審查。
 - 保留既有使用者修改；不要修改與當前任務無關的檔案。
 
+## 開發與 Docker 環境
+
+- `requirements.txt` 是本機 `.venv` 與 Docker 的共用依賴，包含 Skill 驗證需要的 PyYAML；Dockerfile 安裝同一份檔案。改動依賴後須重建 Docker 映像。
+- 本機首次建立環境：`python3 -m venv .venv`，再執行 `.venv/bin/python -m pip install -r requirements.txt`；已有 `.venv` 時直接重裝需求即可。
+- 本機測試、編譯與 Skill 驗證統一使用 `.venv/bin/python`；Docker 內使用 `python3`。若缺少模組，檢查目前使用的解譯器、`.venv/bin/python -m pip check` 或重建 Docker 映像，不跳過驗證。
+
 ## 測試與驗證
 
 修改 Python、契約、CLI 或 Skill 後，至少執行：
 
 ```bash
 PYTHONPATH=src PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
-  python3 -m unittest discover -s tests -v
+  .venv/bin/python -m unittest discover -s tests -v
 
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
-  python3 -m compileall -q src skills tests
+  .venv/bin/python -m compileall -q src skills tests
 
 git diff --check
 ```
@@ -87,7 +93,7 @@ git diff --check
 
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
-  python3 /Users/apollo/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+  .venv/bin/python /Users/apollo/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/SKILL_NAME
 ```
 
@@ -102,11 +108,11 @@ PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
 ## Git commit 格式
 
 只有使用者要求時才建立 commit。沿用專案編號與以下格式：
+#是分支標號
 
 ````markdown
 #15 簡潔的功能標題
 
-```yaml
 Date: 21 Sep
 Start: 00:31
 End: 00:48
@@ -114,7 +120,6 @@ End: 00:48
 Notes:
 - 具體完成事項。
 - 重要契約、限制或測試結果。
-```
 ````
 
 - 使用下一個經使用者確認的編號，不自行跳號或重寫既有 commit。
