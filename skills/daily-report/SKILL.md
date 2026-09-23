@@ -40,8 +40,13 @@ Research Report 通過後，提供同一 Snapshot／cutoff 的已驗證 Decision
   --research artifacts/event_research_validated.json \
   --decision-repository artifacts/portfolio_decisions \
   --decision-run-id DECISION_RUN_ID \
+  --virtual-account-repository artifacts/virtual_accounts \
+  --virtual-account-account-id ai-cup-2026 \
+  --virtual-account-run-id PREPARED_ACCOUNT_RUN_ID \
   --daily-report-repository artifacts/pipeline_runs
 ```
+
+正式模式的帳戶 run 必須是目前 latest 的已封存 `prepare-day` 狀態；其 Snapshot 全文、ID、cutoff 與 DecisionInputBundle 內的 AccountSnapshot 都必須逐項吻合，且 run manifest 必須通過雜湊驗證。缺少或不一致時在呼叫報告產生器前停止。Fixture 模式可省略虛擬帳戶參數，但不得作正式競賽交付。
 
 成功時同一 workflow run 會封存 `daily_report.json` 與 `daily_report_markdown.md`；前置資料或風控失敗時封存 `failure_report.json`。這個入口只交付報告，不送件、不下單。
 

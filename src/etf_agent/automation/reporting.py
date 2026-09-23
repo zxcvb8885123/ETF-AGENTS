@@ -34,6 +34,7 @@ from etf_agent.runtime import PipelineRuntimeError, build_pipeline_run
 
 
 AUTOMATION_SCHEMA_VERSION = "1.0"
+DAILY_REPORT_SCHEMA_VERSION = "1.1"
 AUTOMATION_ENGINE_VERSION = "1.0.0"
 PIPELINE_MODES = {"fixture", "official"}
 PIPELINE_STATUSES = {"succeeded", "failed", "blocked", "waiting_for_agent"}
@@ -328,6 +329,10 @@ class DailyReportBuilder:
         embedded_snapshot = input_bundle.get("snapshot")
         if not isinstance(embedded_snapshot, Mapping) or dict(embedded_snapshot) != self.snapshot:
             raise AutomationReportingError("DecisionInputBundle 內嵌 Snapshot 與 ResearchSnapshot 內容不一致")
+        account_snapshot = input_bundle.get("account_snapshot")
+        if not isinstance(account_snapshot, Mapping):
+            raise AutomationReportingError("DecisionInputBundle 缺少 AccountSnapshot")
+        self.account_snapshot = dict(account_snapshot)
         result_errors = DecisionResultValidator(
             input_bundle,
             self.decision["policy"],
@@ -381,7 +386,7 @@ class DailyReportBuilder:
             raise AutomationReportingError("ResearchReport 驗證失敗：%s" % "；".join(report_errors))
         status = "degraded" if research_report.get("status") == "degraded" else "completed"
         result: Dict[str, object] = {
-            "schema_version": AUTOMATION_SCHEMA_VERSION,
+            "schema_version": DAILY_REPORT_SCHEMA_VERSION,
             "daily_report_id": "daily-report:" + pipeline_run_id,
             "pipeline_run_id": pipeline_run_id,
             "execution_mode": execution_mode,
@@ -390,8 +395,15 @@ class DailyReportBuilder:
             "decision_cutoff": self.decision_cutoff,
             "business_date": _business_date(self.decision_cutoff),
             "status": status,
+            "delivery_status": "internal_review_only",
+            "competition_format_validation": {
+                "status": "not_available",
+                "specification_id": None,
+                "reason": "OFFICIAL_TEMPLATE_NOT_AVAILABLE",
+            },
             "input_refs": {
                 "snapshot_sha256": canonical_sha256(self.snapshot),
+                "account_snapshot_sha256": canonical_sha256(self.account_snapshot),
                 "research_run_id": self.research_run_id,
                 "research_result_sha256": canonical_sha256(self.research_result),
                 "decision_id": self.decision_result.get("decision_id"),
@@ -403,6 +415,7 @@ class DailyReportBuilder:
                 "policy_sha256": self.decision["policy"].get("content_sha256"),
             },
             "research_report": research_report,
+            "account_snapshot": self.account_snapshot,
             "decision": {
                 "status": self.decision_result.get("status"),
                 "portfolio": self.decision_result.get("portfolio"),
@@ -434,8 +447,8 @@ class DailyReportValidator:
         ):
             if not isinstance(report.get(field), str) or not str(report.get(field)).strip():
                 errors.append("缺少必要字串欄位：%s" % field)
-        if report.get("schema_version") != AUTOMATION_SCHEMA_VERSION:
-            errors.append("schema_version 必須為 %s" % AUTOMATION_SCHEMA_VERSION)
+        if report.get("schema_version") != DAILY_REPORT_SCHEMA_VERSION:
+            errors.append("schema_version 必須為 %s" % DAILY_REPORT_SCHEMA_VERSION)
         if report.get("status") not in DAILY_REPORT_STATUSES:
             errors.append("DailyReport.status 不合法")
         if report.get("content_sha256") != _content_hash(report):
@@ -487,8 +500,53 @@ class DailyReportMarkdownRenderer:
             "- 資料截止：`%s`" % self._text(report.get("decision_cutoff")),
             "- Snapshot：`%s`" % self._text(report.get("snapshot_id")),
             "- 報告狀態：`%s`" % self._text(report.get("status")),
+            "- 交付狀態：`%s`" % self._text(report.get("delivery_status")),
+            "- 官方格式驗證：`%s`" % self._text(
+                report.get("competition_format_validation", {}).get("status")
+                if isinstance(report.get("competition_format_validation"), Mapping)
+                else None
+            ),
             "",
             "> 本報告只交付人工檢視，不會送出主辦平台或執行交易。",
+            "",
+            "> 主辦方正式報告／交易書模板尚未驗證；本產物不是已核准的競賽提交格式。",
+            "",
+            "## 決策時帳戶快照",
+            "",
+        ]
+        account = report.get("account_snapshot")
+        if isinstance(account, Mapping):
+            lines.extend(
+                [
+                    "- 帳戶：`%s`" % self._text(account.get("account_id")),
+                    "- 帳戶證據：`%s`" % self._text(account.get("source_evidence_id")),
+                    "- 估值時間：`%s`" % self._text(account.get("valuation_at")),
+                    "- NAV：`%s` TWD" % self._text(account.get("nav")),
+                    "- 現金：`%s` TWD（已交割 `%s`；未交割 `%s`）"
+                    % (
+                        self._text(account.get("cash")),
+                        self._text(account.get("settled_cash")),
+                        self._text(account.get("unsettled_cash")),
+                    ),
+                ]
+            )
+            positions = account.get("positions")
+            if isinstance(positions, list) and positions:
+                for position in positions:
+                    if isinstance(position, Mapping):
+                        lines.append(
+                            "- 持倉 `%s`：`%s` 股，平均成本 `%s`"
+                            % (
+                                self._text(position.get("symbol")),
+                                self._text(position.get("shares")),
+                                self._text(position.get("average_cost")),
+                            )
+                        )
+            else:
+                lines.append("- 無持倉。")
+        else:
+            lines.append("- AccountSnapshot unavailable。")
+        lines.extend([
             "",
             "## 決策與風控",
             "",
@@ -499,7 +557,7 @@ class DailyReportMarkdownRenderer:
             "",
             "## 配置與訂單",
             "",
-        ]
+        ])
         portfolio = decision.get("portfolio")
         orders = decision.get("orders")
         if isinstance(portfolio, Mapping):
@@ -699,6 +757,7 @@ class AutomationReportingApplicationService:
         input_fingerprint = canonical_sha256(
             {
                 "snapshot_sha256": daily_report["input_refs"]["snapshot_sha256"],
+                "account_snapshot_sha256": daily_report["input_refs"]["account_snapshot_sha256"],
                 "research_result_sha256": daily_report["input_refs"]["research_result_sha256"],
                 "decision_run_id": daily_report["input_refs"]["decision_run_id"],
                 "decision_result_sha256": daily_report["input_refs"]["decision_result_sha256"],
@@ -711,6 +770,7 @@ class AutomationReportingApplicationService:
                 "decision_cutoff": daily_report["decision_cutoff"],
                 "execution_mode": execution_mode,
                 "policy_sha256": daily_report["input_refs"]["policy_sha256"],
+                "account_snapshot_sha256": daily_report["input_refs"]["account_snapshot_sha256"],
             }
         )[:20]
         pipeline_run = self._pipeline_run(

@@ -216,6 +216,7 @@ class ReportWorkflowTests(unittest.TestCase):
                     decision_repository=decision_repository,
                     decision_run_id=decision_run_id,
                     daily_report_repository=root / "pipeline",
+                    execution_mode="fixture",
                     generated_at="2026-09-20T01:01:00+00:00",
                 )
             self.assertEqual(result["status"], "succeeded")
@@ -227,6 +228,22 @@ class ReportWorkflowTests(unittest.TestCase):
                 )
             )
             self.assertEqual(report["downstream"]["decision_run_id"], decision_run_id)
+
+    def test_official_daily_report_requires_virtual_account_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path, database_path = self.write_snapshot(root)
+            with self.assertRaisesRegex(ReportWorkflowError, "VirtualAccount prepare-day run"):
+                ReportWorkflowService(ReportWorkflowRepository(root / "runs")).run(
+                    workflow_run_id="official-daily-1",
+                    repository_root=root / "runs",
+                    reports_root=root / "reports",
+                    snapshot_path=snapshot_path,
+                    database_path=database_path,
+                    decision_repository=root / "decisions",
+                    decision_run_id="decision-1",
+                    generated_at="2026-09-20T01:01:00+00:00",
+                )
 
     def test_same_key_different_input_without_resume_is_failed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -344,6 +361,7 @@ class ReportWorkflowTests(unittest.TestCase):
                     decision_repository=root / "decisions",
                     decision_run_id="absent-1",
                     daily_report_repository=root / "pipeline",
+                    execution_mode="fixture",
                     generated_at="2026-09-20T01:01:00+00:00",
                 )
             self.assertEqual(result["status"], "failed")
