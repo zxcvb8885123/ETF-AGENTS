@@ -1,0 +1,4 @@
+interface:
+  display_name: "自動化報告 Agent"
+  short_description: "執行研究交接、驗證與固定格式報告交付"
+  default_prompt: "使用 $daily-report 執行或續跑按需研究與報告工作流，交付可驗證的 JSON／Markdown 報告或清楚的等待／失敗狀態。"

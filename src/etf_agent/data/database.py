@@ -278,6 +278,23 @@ CREATE INDEX IF NOT EXISTS idx_universe_validation_generated_at
 ON universe_validation_runs(generated_at);
 """
 
+TRADING_STATUS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS trading_status_bundles (
+    bundle_id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL,
+    decision_cutoff TEXT NOT NULL,
+    target_session_start TEXT NOT NULL,
+    target_session_end TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('completed', 'degraded')),
+    content_sha256 TEXT NOT NULL,
+    bundle_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trading_status_snapshot_cutoff
+ON trading_status_bundles(snapshot_id, decision_cutoff);
+"""
+
 
 class MarketDataDatabase:
     def __init__(self, path: Path):
@@ -325,6 +342,10 @@ class MarketDataDatabase:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (6)"
+            )
+            connection.executescript(TRADING_STATUS_SCHEMA)
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (7)"
             )
             connection.executescript(ANALYSIS_VIEW)
 

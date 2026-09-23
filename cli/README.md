@@ -5,17 +5,30 @@
 | 入口 | 核心領域 |
 | --- | --- |
 | `data_agent.py` | 資料狀態、收集與 ResearchSnapshot |
+| `trading_status.py` | 交易狀態 Bundle／TradabilityAssessment 建立與驗證 |
 | `event_research.py` | 事件研究與 Debate／ResearchResult 驗證 |
 | `sentiment_research.py` | 市場情緒、分析師共識與驗證 |
 | `research_report.py` | Research Report V0 建立與重建驗證 |
 | `portfolio_decision.py` | 動能、配置、風控、最終決策與封存 |
 | `backtest.py` | 歷史重播、帳務驗證與回測報告 |
 | `daily_report.py` | 離線 DailyReport／FailureReport pipeline run |
+| `report_workflow.py` | 按需研究交接、Research Report，以及接入 Decision／Risk 後的 DailyReport／FailureReport |
 
 從專案根目錄執行，例如：
 
 ```bash
 .venv/bin/python cli/data_agent.py status
+# 已保存的官方狀態回應需先轉成 records／coverage，再固定 cutoff 建立 bundle
+PYTHONPATH=src python3 cli/trading_status.py validate --input artifacts/trading-status/bundle.json
+PYTHONPATH=src python3 cli/report_workflow.py run
+PYTHONPATH=src python3 cli/report_workflow.py status
+
+# Research Report 完成後接同一 Snapshot／cutoff 的 Decision run
+PYTHONPATH=src python3 cli/report_workflow.py resume \
+  --from-run-id RESEARCH_RUN_ID \
+  --decision-repository artifacts/portfolio_decisions \
+  --decision-run-id DECISION_RUN_ID \
+  --daily-report-repository artifacts/pipeline_runs
 ```
 
 `skills/` 只定義 Codex／Claude 的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。

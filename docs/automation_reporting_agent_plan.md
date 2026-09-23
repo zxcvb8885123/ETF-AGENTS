@@ -1,8 +1,8 @@
 # 自動化排程與報告 Agent 計畫 V2
 
-> 更新日期：2026-09-21。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
+> 更新日期：2026-09-22。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
 
-> 現況：Research Report V0 已完成研究層 artifact 的 JSON／Markdown 整合與完整重建驗證；它不包含本文件規劃的 DecisionResult、D-Plan、正式 DailyReport、FailureReport、排程或通知。
+> 現況：Research Report V0 與 A0／A1 離線 DailyReport／FailureReport 已完成；真實資料端到端交付與正式排程尚未接通。下一批按[一鍵研究與報告交付計畫](report_delivery_agent_plan.md)完成 RPT0～RPT3，先提供按需研究報告及固定結果入口。
 
 ## 定位
 
@@ -10,7 +10,7 @@
 
 架構不設「主辦平台送件／交易執行 Agent」。本 Agent 的交付終點是報告、已驗證候選檔與人工檢視資訊；平台送件與交易屬系統外的人工操作，也不列入本計畫的後續開發階段。人工確認不會觸發任何外部送件或交易。
 
-排程本身使用一般 scheduler 執行確定性工作；只有需要摘要、解釋失敗或整理報告文字時，才由 Codex／Claude 工作階段載入規劃中的 `daily-report` Skill。第一版不需要模型 API、LangChain、LangGraph 或 CLIProxyAPI。
+排程本身使用一般 scheduler 執行確定性工作；只有需要摘要、解釋失敗或整理報告文字時，才由 Codex／Claude 工作階段載入 `daily-report` Skill。第一版不需要模型 API、LangChain、LangGraph 或 CLIProxyAPI。
 
 ## 每日流程
 
@@ -98,7 +98,7 @@ Research Report V0 不代表正式 DailyReport；A0／A1 已完成 fixture／離
 | A1 每日／失敗報告 | **已完成：fixture／離線版。** DailyReport 同源 JSON／Markdown、FailureReport、重建 validator；整合研究、決策與風控的已驗證結果 | 修改任一數字、引用或風控結果均被拒絕；研究資料不足時輸出降級 DailyReport；風控拒絕、資料不符或執行鍵衝突時只封存 FailureReport |
 | A2 D-Plan 候選檔 | 待官方規格。取得並封存官方 schema 與語意規則的來源／版本／雜湊；建立 Builder、Validator、ReviewHandoff | 完整引用鏈且可重算；缺官方規格時標記 blocked，不以自建 fixture 宣稱通過官方驗證；失敗不發布候選檔 |
 | A3 排程與恢復 | 本機 scheduler adapter、交易日／截止時間設定、互斥鎖、防重複、有限重試、續跑與通知紀錄 | 重複觸發不重複發布；程序中斷可恢復；逾時停止；通知失敗不使既有通過產物失效，且可獨立重試 |
-| A4 Daily-report Skill 整合 | `skills/daily-report/`、Agent 工作階段交接與操作文件；沿用既有 `cli/daily_report.py` | `$daily-report` 明確出現在 default_prompt；CLI 支援執行、狀態、驗證與續跑；文字不可改寫已驗證事實／決策 |
+| A4 Daily-report Skill 整合 | **部分完成：RPT0～RPT4 已接入**；工作流可在 Research Report 後呼叫既有 `AutomationReportingApplicationService`，產生 DailyReport 或 FailureReport | `$daily-report` 明確出現在 default_prompt；研究與決策 CLI 支援執行、狀態、驗證與續跑；缺 Decision／Risk 時維持 `waiting_for_decision`，文字不可改寫已驗證事實／決策 |
 | A5 端到端演練與正式啟用驗收 | fixture 故障注入、真實資料 dry-run、固定版本前向驗證證據與正式啟用清單 | fixture 與正式產物明確區隔；正式資料、帳戶、交易狀態、競賽規則與回測／前向驗證均通過，才可啟用正式排程 |
 
 核心邏輯放在 `src/etf_agent/automation/` 與 `src/etf_agent/runtime/`，報告 Builder／Validator 延伸 `src/etf_agent/reporting/`；`cli/` 提供人工、排程與 Skill 共用的命令入口，Skill 只定義 Agent 工作流程。A0 起提供最小離線 CLI，各階段同步加入測試，A4 再整合完整操作介面。
@@ -107,7 +107,7 @@ Research Report V0 不代表正式 DailyReport；A0／A1 已完成 fixture／離
 
 `cli/daily_report.py` 已提供 A0／A1 的三個確定性操作：
 
-- `run`：驗證封存的 Decision run、對齊同一份 Snapshot 與 ResearchResult，成功時產生 DailyReport，失敗時只封存 FailureReport。
+- `run`：驗證封存的 Decision run、對齊同一份 Snapshot 與 ResearchResult，成功時產生 DailyReport，失敗時只封存 FailureReport；`report_workflow.py` 可在研究報告完成後續接這個入口。
 - `validate`：以原始輸入完整重建 DailyReport。
 - `verify-run`：驗證已封存 pipeline run 的 manifest 與每個檔案雜湊。
 
@@ -139,4 +139,4 @@ PYTHONPATH=src python3 cli/daily_report.py run \
 
 完成條件：每日流程可重跑且不重複發布；失敗停在正確階段；報告與候選檔可回溯到同一組輸入版本；D-Plan 通過已封存的官方規格驗證；整個流程以交付人工檢視結束，不具備外部送件或交易執行能力。
 
-建議下一個實作範圍為 **A0＋A1：離線編排與每日／失敗報告**，使用既有已驗證 artifact 建立可重建、可驗收的最小流程。官方規格與正式上游尚未齊備時，A2／正式啟用維持 blocked，不影響離線契約與報告測試。
+A0／A1 與 RPT0～RPT4 第一版已完成，沿用既有 Builder，補上資料時間、Agent 交接、續跑、固定格式交付與 Decision／Risk 接線。下一步是以實際來源完成一次研究續跑演練，再接 A2 官方候選檔、A3 正式排程及 A5 正式啟用；各階段仍需原有前置驗收，不因研究報告可用而提前啟用。

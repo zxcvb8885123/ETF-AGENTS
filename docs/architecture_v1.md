@@ -28,6 +28,8 @@
 
 交易池、帳戶、必要價格或 ETF 基準缺失時停止該次流程；個別新聞缺失則標記缺失，不自動解讀為利多或利空。目前 `data/official_universe.csv` 已依 2026-09-14 新版官方 PDF 載入 150 檔，其中 `5371 中光電` 已由官方名單更新為 `3718 中光電投控`。每日仍須驗證代號與可交易狀態；任何未出現在官方名單的承接關係都不得自行套用。
 
+交易狀態依 [M1 交易狀態計畫](trading_status_m1_plan.md)執行；TS1～TS4 已完成 `TradingStatusBundle`／`TradabilityAssessment` 的成對驗證、固定時段重建、SQLite 保存、CLI 與 Guard adapter。研究 Snapshot 的 `tradable_symbols`／`not_tradable_symbols` 仍是計數，不能直接作為 Guard 的股票集合；TS0 官方來源核准與 TS5 真實覆蓋尚未完成。系統保留原計數意義，逐檔判斷目標交易時段的 allowed／blocked／unknown，並分開驗證研究資料可用性與訂單可交易性。
+
 ## 2.1 基本面研究模組（FR0～FR3 fixture MVP）
 
 新增研究層的 `fundamental-research`，唯讀同一 ResearchSnapshot 的已驗證財報，由 Python 建立資料包及計算比率，LLM 只解讀事實、假設、反證與限制。已實作 `FundamentalDataBundle`、`FundamentalMetrics` 與 `FundamentalResearchResult` 的重建驗證、CLI 和 Skill；只支援已有映射欄位的一般業，輸出不產生交易候選或訂單。詳細契約、Provider 邊界、FR0～FR5 順序及驗收見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
