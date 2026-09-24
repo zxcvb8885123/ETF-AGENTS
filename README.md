@@ -99,6 +99,10 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已�
 
 資料擴充依 [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md)（2026-09-23，待實作）：官方來源加 FinMind，先補日曆、交易狀態、ETF 基準，再擴充歷史財報、現金流與籌碼；FinLab 選配、Fugle 延後。金融資料 API 不改變本地 Codex／Claude 架構；新增 Provider 尚未接入。
 
+下一批按 [正式決策必要資料來源核實計畫](docs/decision_data_readiness_plan.md) 執行 D0／TS0／ETF 來源盤點、小樣本與就緒判定。公開官方來源工作可先進行；FinMind Token 可暫時留空，D1 接入與配額測試再使用，ETF 付費權限須先有覆蓋與授權證據才評估。
+
+2026-09-24 的 [來源稽核紀錄](docs/source_audit/2026-09-24_findings.md)已保存十個官方公開端點的初步回應與 12 檔交易池樣本；空白佔位列、來源完整性及 ETF 權重仍未核准，正式決策保持 blocked。
+
 目前 M1 官方交易狀態已完成 TS1～TS4 的契約、固定 cutoff 重建、SQLite migration、CLI 與 Guard adapter；[M1 官方交易狀態接入](docs/trading_status_m1_plan.md) 的 TS0 來源核准與 TS5 150 檔真實覆蓋仍未完成。資料不足時阻擋正式決策，保留可用研究資料。
 
 P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新；P7 B0～B2 fixture 回測帳務驗收也已完成。下一批是 B3 策略比較與 B4 Agent 評估；正式資料接入與規則版本仍需另外確認。
@@ -106,7 +110,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | 路徑 | 用途 |
 | --- | --- |
 | `var/etf_agent.db` | SQLite 資料庫 |
-| `data/official_universe.csv` | 官方 150 檔交易池，公布後填入 |
+| `data/official_universe.csv` | 已填入主辦方 150 檔股票交易池（上市 100、上櫃 50） |
 | `data/active_etf_top10.csv` | Active Share 的 ETF 前十大持股資料 |
 | `artifacts/` | 後續每日報告、交易書與稽核檔案 |
 
@@ -122,6 +126,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [Data Agent 計畫](docs/data_agent_plan.md) | 資料收集、補查、驗證、版本保存與研究快照 |
 | [M1 第二批：官方財報彙總接入](docs/financial_statements_m1_plan.md) | 已實作：24 個官方端點、業別契約、版本保存、Snapshot 與 CLI；2026 Q2 實測 298/300，3718.TWO 缺兩張報表而降級 |
 | [M1 下一批：官方交易狀態接入](docs/trading_status_m1_plan.md) | **部分完成**：契約、Parser、Bundle／Assessment Validator、SQLite、CLI 與 Guard 已完成；官方來源核准與 150 檔實測待完成 |
+| [正式決策必要資料來源核實](docs/decision_data_readiness_plan.md) | 下一批 D0／TS0／ETF 執行順序、來源證據與 API 依賴；Token 可先留空 |
 | [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 官方行情、財報、事件與新聞來源的實測結果及接入判定 |
 | [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及實作里程碑 |
 | [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 第一個下游 Agent；事件證據、補查、引用與研究結果 |
