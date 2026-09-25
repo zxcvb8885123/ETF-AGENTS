@@ -12,7 +12,17 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 ./start.sh
 ```
 
-這會建立 Docker 映像、初始化 SQLite、抓取 TWSE／TPEx 最新行情、增量更新兩年歷史行情，再顯示資料狀態。
+首次執行會建立 Docker 映像；之後只有映像不存在、依賴或 Dockerfile 變更才重建。腳本接著初始化 SQLite、抓取 TWSE／TPEx 最新行情、增量更新兩年歷史行情，再顯示資料狀態。程式碼直接從工作區掛載進容器，修改 Python 程式不需重建映像。
+
+本機直接開發或驗證 Skill 時，可使用與 Docker 相同的依賴：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip check
+```
+
+`requirements.txt` 同時包含執行依賴與 Skill 驗證所需的 PyYAML，Docker 建置也安裝這份檔案。已有 `.venv` 時只需重跑安裝指令；修改依賴後執行 `docker compose build` 更新映像。本機完整驗證指令見 [AGENTS.md](AGENTS.md#測試與驗證)。
 
 | 指令 | 用途 |
 | --- | --- |
@@ -45,7 +55,7 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
-| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金與個股曝險；僅在規則明確要求時檢查基準 Active Share |
 | `PYTHONPATH=src python3 cli/account_data.py import --input ACCOUNT.json --cutoff ISO_TIME --run-id RUN_ID --mode fixture` | 匯入標準帳戶 JSON 並封存原始檔與雜湊；正式模式須先在 `config/account_sources.json` 核准 provider／版本 |
 | `PYTHONPATH=src python3 cli/account_data.py reconcile --account ACCOUNT_BUNDLE.json --snapshot SNAPSHOT.json --max-nav-drift-rate RATE --output RECONCILIATION.json` | 以同一 cutoff Snapshot 重算 NAV、現金及價格覆蓋，另產 Markdown 對帳報告 |
 | `PYTHONPATH=src python3 cli/account_data.py export-decision-account --account ACCOUNT_BUNDLE.json --reconciliation RECONCILIATION.json --snapshot SNAPSHOT.json --output DECISION_ACCOUNT.json` | 僅在正式來源且通過對帳、可無損轉換時匯出決策帳戶欄位 |
@@ -54,9 +64,11 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 attach-account --template BUNDLE.json --account-snapshot ACCOUNT.json --snapshot SNAPSHOT.json --output DECISION_INPUT.json` | 綁定虛擬帳戶並完整驗證決策輸入包 |
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 apply-decision --decision-run-id RUN_ID --execution-market EXECUTION.json --close-market CLOSE.json --settlement-date YYYY-MM-DD --run-id CLOSE_RUN` | 驗證已封存 Decision run，模擬成交並保存日終虛擬帳本 |
 | `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
-| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；提供 Decision run 後可接 DailyReport |
+| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；official DailyReport 續跑還須提供最新封存的 VirtualAccount prepare-day run |
+| `.venv/bin/python cli/dplan.py build ...` | 從封存且重建通過的 Decision run 與 Agent 審閱 context 產生 D-Plan v4.0 候選；阻擋缺少策略說明、官方 150 檔交易池、引用或規則不一致 |
+| `.venv/bin/python cli/dplan.py validate --input D-Plan.json` | 執行本地支援的 D-Plan 結構與引用鏈檢查；不等同主辦方伺服器語意驗證 |
 
-自動化報告 Agent 已完成 RPT0～RPT4 的第一版：`daily` 會建立 Snapshot 並封存報告工作流；`report` 可使用既有 Snapshot 續跑；結果固定交付至 `artifacts/reports/latest.md`。沒有研究 Agent 輸出時會留下 `waiting_for_agent`；Research Report 完成但沒有同一 Snapshot／cutoff 的 Decision／Risk 時會留下 `waiting_for_decision`；不會捏造報告或繞過風控。
+自動化報告 Agent 已完成 RPT0～RPT4 的第一版：`daily` 會建立 Snapshot 並封存報告工作流；`report` 可使用既有 Snapshot 續跑；結果固定交付至 `artifacts/reports/latest.md`。沒有研究 Agent 輸出時會留下 `waiting_for_agent`；Research Report 完成但沒有同一 Snapshot／cutoff 的 Decision／Risk 時會留下 `waiting_for_decision`；official DailyReport 續跑會在產生報告前核對 VirtualAccount prepare-day run、Snapshot／cutoff 與決策 AccountSnapshot。新增 `cli/dplan.py` 作為 D-Plan v4.0 候選匯出及本地結構／引用鏈檢查入口；DailyReport 仍是內部報告，D-Plan 候選仍需完整真實資料、已核准策略說明、官方交易池與人工檢視。當前本地檢查不是主辦方 `verify_dplan.py`，不得標示成平台驗證或已送件。
 
 ## 目前完成
 
@@ -72,9 +84,9 @@ AI CUP 2026「Agent 基金經理人」的自動化 Agent。目標是每天完成
 - 市場情緒與分析師研究 Agent MVP：`PerceptionDataBundle`、逐筆情緒標籤、去重聚合、分析師共識修正、事件預期差、`MarketPerceptionResult` validator、Skill 與 CLI。
 - 基本面研究 Agent FR0～FR3 fixture MVP：固定 Snapshot 的 `FundamentalDataBundle`、Decimal 指標重算、`FundamentalResearchResult` validator、CLI、Skill 與不覆寫封存；一般業目前支援營業利益率、負債占資產比率、營收／淨利同比及營業利益率年差。
 - Research Report V0：整合 Snapshot、事件研究與選配市場認知結果，產生同源、可重建驗證且不含交易建議的 JSON／Markdown 報告。
-- Portfolio Decision P0～P6 fixture 驗收：共用輸入、動能、獨立買賣裁決、確定性整張配置／訂單／費稅、部分成交情境重建、必備基準 Guard、完整修正鏈重播及磁碟封存驗證。
+- Portfolio Decision P0～P6 fixture 驗收：共用輸入、動能、獨立買賣裁決、確定性整張配置／訂單／費稅、部分成交情境重建、競賽上限 Guard（基準比較可選）、完整修正鏈重播及磁碟封存驗證。
 - 事件策略 V1：事件評分、價格確認及進攻／防守配置。
-- 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
+- 競賽基本風控：持股檔數、現金、個股權重與交易池；Active Share 為選配比較指標。
 - Docker 與快速啟動流程。
 
 事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；每日虛擬帳本 VA1～VA3 fixture 工具鏈現已具備 10 億 TWD 唯一開帳、決策前帳戶快照、完整 Decision run 驗證、模擬成交與日終封存。每日報告工作流尚未自動串接帳本；交易狀態官方來源核准、150 檔真實覆蓋、有效競賽規則、真實歷史／前向回測及正式排程仍未完成。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
@@ -85,6 +97,20 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已�
 
 ## 資料位置
 
+資料擴充依 [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md)（2026-09-23，待實作）：官方來源加 FinMind，先補日曆與交易狀態；ETF 基準列選配，再擴充歷史財報、現金流與籌碼；FinLab 選配、Fugle 延後。金融資料 API 不改變本地 Codex／Claude 架構；新增 Provider 尚未接入。
+
+下一批按 [正式決策必要資料來源核實計畫](docs/decision_data_readiness_plan.md) 執行 D0／TS0／ETF 來源盤點、小樣本與就緒判定。公開官方來源工作可先進行；FinMind Token 可暫時留空，D1 接入與配額測試再使用，ETF 付費權限須先有覆蓋與授權證據才評估。
+
+2026-09-24 的 [來源稽核紀錄](docs/source_audit/2026-09-24_findings.md)已保存十個官方公開端點的初步回應與 12 檔交易池樣本；空白佔位列與來源完整性仍未核准，正式決策保持 blocked；ETF 權重缺漏不屬競賽上限阻擋。
+
+2026-09-25 的 [休市日跨日稽核](docs/source_audit/2026-09-25_findings.md)已重抓相同十個端點並保存雜湊、固定樣本及就緒判定。TWSE／TPEx 均公告 9/25 與 9/28 休市；多數端點仍為 9/24 資料不能判作當日逾期。來源完整性與持續使用／保存條件仍待核實，交易狀態核准清單維持空白。主辦 30 檔 ETF 清單與外部 ETF 持股權重僅供選配比較；目前取得的 D-Plan 指南沒有將 Active Share 列為每日硬性上限，不能以缺少 ETF 權重阻擋正式決策。
+
+TS0 的[來源核准行動計劃](docs/source_audit/2026-09-25_ts0_approval_plan.md)已完成四份 TPEx 與四份 TWSE 政府開放 CSV／候選 JSON 的指定日期對照；TPEx 注意及處置的 CSV／JSON 範圍不同，須依公告日期處理。下一關是核實完整現況、時點與其餘來源，再於實際交易日驗收 150 檔；目前核准來源仍為 0。
+
+已提供 `scripts/capture_trading_status_candidates.py` 封存八份候選 CSV 的不同抓取時段及 HTTP／內容證據；它只做來源稽核，不會產生可交易判定或修改正式核准清單。
+
+`scripts/normalize_trading_status_candidates.py` 可從封存原檔重建固定 150 檔的候選事實；同時 `trading-status-policy-2` 將注意資訊改為選配提示，不再因缺少注意來源而單獨擋住交易許可。必要限制來源與正式核准仍維持 fail-closed。
+
 目前 M1 官方交易狀態已完成 TS1～TS4 的契約、固定 cutoff 重建、SQLite migration、CLI 與 Guard adapter；[M1 官方交易狀態接入](docs/trading_status_m1_plan.md) 的 TS0 來源核准與 TS5 150 檔真實覆蓋仍未完成。資料不足時阻擋正式決策，保留可用研究資料。
 
 P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新；P7 B0～B2 fixture 回測帳務驗收也已完成。下一批是 B3 策略比較與 B4 Agent 評估；正式資料接入與規則版本仍需另外確認。
@@ -92,8 +118,8 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | 路徑 | 用途 |
 | --- | --- |
 | `var/etf_agent.db` | SQLite 資料庫 |
-| `data/official_universe.csv` | 官方 150 檔交易池，公布後填入 |
-| `data/active_etf_top10.csv` | Active Share 的 ETF 前十大持股資料 |
+| `data/official_universe.csv` | 已填入主辦方 150 檔股票交易池（上市 100、上櫃 50） |
+| `data/active_etf_top10.csv` | 選配 Active Share 比較用 ETF 前十大持股資料（目前空白） |
 | `artifacts/` | 後續每日報告、交易書與稽核檔案 |
 
 資料庫查詢、Docker 指令與容器設定請參閱下方的 Docker 使用說明。
@@ -108,6 +134,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [Data Agent 計畫](docs/data_agent_plan.md) | 資料收集、補查、驗證、版本保存與研究快照 |
 | [M1 第二批：官方財報彙總接入](docs/financial_statements_m1_plan.md) | 已實作：24 個官方端點、業別契約、版本保存、Snapshot 與 CLI；2026 Q2 實測 298/300，3718.TWO 缺兩張報表而降級 |
 | [M1 下一批：官方交易狀態接入](docs/trading_status_m1_plan.md) | **部分完成**：契約、Parser、Bundle／Assessment Validator、SQLite、CLI 與 Guard 已完成；官方來源核准與 150 檔實測待完成 |
+| [正式決策必要資料來源核實](docs/decision_data_readiness_plan.md) | 下一批 D0／TS0／ETF 執行順序、來源證據與 API 依賴；Token 可先留空 |
 | [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 官方行情、財報、事件與新聞來源的實測結果及接入判定 |
 | [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及實作里程碑 |
 | [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 第一個下游 Agent；事件證據、補查、引用與研究結果 |
@@ -122,17 +149,18 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 第四層下游 Agent；執行紀錄、每日／失敗報告、D-Plan 候選檔與排程；交付人工檢視 |
 | [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4：資料／cutoff、研究交接、續跑、固定格式交付與 DailyReport 接線 |
 | [真實研究續跑與決策報告驗收](docs/report_workflow_acceptance_plan.md) | W0～W5 已完成一件真實事件驗收；降級 Research Report 可重建，DailyReport 等待正式決策輸入 |
-| [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA3 fixture 工具鏈已完成；VA4 報告工作流接線、VA5 真實資料與前向驗收待完成 |
+| [正式競賽決策報告與 D-Plan 交付](docs/competition_report_delivery_plan.md) | 已新增 D-Plan v4.0 候選匯出器與本地結構／引用檢查；真實交易池、策略說明、完整決策演練及伺服器驗證仍待完成 |
+| [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA3 fixture 已完成；VA4 報告帳戶呈現與帳本核對已實作、待驗收；自動帳務操作與 VA5 待完成 |
 | [外部帳戶結算檔匯入與對帳計畫](docs/account_data_integration_plan.md) | 選配支線；AC1～AC4 fixture 工具鏈已完成，正式來源核准清單仍為空 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
-自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。D-Plan、正式排程與平台送件仍未接入；入口與輸入要求見[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)。
+自動化排程／報告 Agent 已完成 A0／A1 的 fixture／離線實作；按需研究交付 RPT0～RPT4 已接入 `start.sh daily`／`start.sh report`，可在提供同一 Snapshot／cutoff 的 Decision／Risk run 後呼叫既有 DailyReport／FailureReport。主辦方 D-Plan v4.0 Schema 與指南已取得並盤點，現有候選匯出器與本地結構／引用鏈檢查；正式資料端到端演練、主辦方伺服器語意驗證、正式排程及平台送件仍未完成。請參閱[自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)及[正式競賽決策報告與 D-Plan 交付計畫](docs/competition_report_delivery_plan.md)。
 
 ## 專案結構
 
 ```text
 config/                 競賽與資料來源設定
-data/                   官方交易池與 ETF 基準資料
+data/                   官方交易池與選配 ETF 比較資料
 docs/                   規劃、架構與操作文件
 cli/                    Agent、人工與排程共用的穩定 CLI 入口
 scripts/                初始化、收集與狀態查詢維運指令

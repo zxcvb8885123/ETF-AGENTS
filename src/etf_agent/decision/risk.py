@@ -374,7 +374,7 @@ class CompetitionGuardV2:
                 and not stock_violations
                 and all(value <= sector_limit for value in scenario_sector.values())
                 and not any(symbol in not_tradable or (tradable and symbol not in tradable) for symbol in scenario_weights)
-                and bool(active_results) and all(item["passed"] for item in active_results),
+                and all(item["passed"] for item in active_results),
             })
         self._check(
             checks,
@@ -421,9 +421,8 @@ class CompetitionGuardV2:
             )
         self._check(
             checks,
-            "ACTIVE_SHARE_ALL",
+            "ACTIVE_SHARE_ALL" if required_benchmarks else "ACTIVE_SHARE_NOT_APPLICABLE",
             len(benchmark_results) == len(required_benchmarks)
-            and bool(benchmark_results)
             and all(item["passed"] for item in benchmark_results),
             benchmark_results,
         )

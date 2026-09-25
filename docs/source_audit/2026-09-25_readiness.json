@@ -1,0 +1,68 @@
+{
+  "audit_date": "2026-09-25",
+  "decision_readiness": "blocked",
+  "assessment_emitted": false,
+  "market_session": {
+    "date": "2026-09-25",
+    "twse": "closed",
+    "tpex": "closed",
+    "evidence": [
+      "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=html",
+      "https://www.tpex.org.tw/storage/eb_data/11509/11503027221.html"
+    ]
+  },
+  "universe": {
+    "total": 150,
+    "twse": 100,
+    "tpex": 50
+  },
+  "trading_status": {
+    "approved_sources": 0,
+    "crosschecked_candidate_csv_sources": 8,
+    "candidate_hit_symbols_in_universe": 6,
+    "candidate_fact_report": "artifacts/source-audit/captures/20260925T052714327866Z/candidate-facts.json",
+    "probed_sources": 9,
+    "coverage": "unknown",
+    "official_tradability_assessments": 0,
+    "reason": "八份政府開放 CSV 已完成候選事實正規化，但尚未完成正式交易狀態映射及交易日更新完成／完整現況驗收；OpenAPI JSON 不能直接沿用 CSV 授權，空白佔位列亦不可視為無限制"
+  },
+  "calendar": {
+    "confirmed_closed_dates": [
+      "2026-09-25",
+      "2026-09-28"
+    ],
+    "full_versioned_calendar": false
+  },
+  "etf_benchmarks": {
+    "official_30_fund_source_file_located": false,
+    "approved_weight_rows": 0,
+    "status": "optional_missing"
+  },
+  "finmind_token": "not_required_for_this_audit",
+  "licensing": {
+    "government_open_data_candidates": [
+      "https://data.gov.tw/dataset/11761",
+      "https://data.gov.tw/dataset/11736",
+      "https://data.gov.tw/dataset/11395",
+      "https://data.gov.tw/dataset/11396",
+      "https://data.gov.tw/dataset/48665",
+      "https://data.gov.tw/dataset/11760",
+      "https://data.gov.tw/dataset/29082",
+      "https://data.gov.tw/dataset/11677"
+    ],
+    "license_url": "https://data.gov.tw/license",
+    "direct_openapi_mapping_verified": false,
+    "status": "candidate",
+    "crosschecked_datasets": [
+      "https://data.gov.tw/dataset/11736",
+      "https://data.gov.tw/dataset/11395",
+      "https://data.gov.tw/dataset/11396",
+      "https://data.gov.tw/dataset/48665",
+      "https://data.gov.tw/dataset/11760",
+      "https://data.gov.tw/dataset/29082",
+      "https://data.gov.tw/dataset/11677",
+      "https://data.gov.tw/dataset/11761"
+    ],
+    "crosscheck_path": "docs/source_audit/2026-09-25_ogd_crosscheck.json"
+  }
+}

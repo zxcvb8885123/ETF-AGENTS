@@ -25,6 +25,11 @@ class CompetitionGuardTests(unittest.TestCase):
         self.assertTrue(result.passed, result.errors)
         self.assertGreaterEqual(result.active_share, 0.2)
 
+    def test_competition_limits_do_not_require_external_etf_weights(self):
+        result = self.guard.validate(valid_portfolio())
+        self.assertTrue(result.passed, result.errors)
+        self.assertIsNone(result.active_share)
+
     def test_initial_competition_capital_is_one_billion_twd(self):
         self.assertEqual(self.guard.rules["initial_capital_twd"], 1_000_000_000)
 

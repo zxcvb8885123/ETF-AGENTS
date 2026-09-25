@@ -1,0 +1,152 @@
+{
+  "audit_date": "2026-09-24",
+  "sample_size": 12,
+  "selection": "6 上市＋6 上櫃；含金融業 2881/2882/6023、代號承接 3718、狀態命中與空白列案例",
+  "samples": [
+    {
+      "market": "TWSE",
+      "symbol": "2330",
+      "name": "台積電",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "2454",
+      "name": "聯發科",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "2881",
+      "name": "富邦金",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "2882",
+      "name": "國泰金",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "7769",
+      "name": "鴻勁",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "5871",
+      "name": "中租-KY",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "3718",
+      "name": "中光電投控",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "6023",
+      "name": "元大期",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "3374",
+      "name": "精材",
+      "observed_in": [
+        {
+          "source_id": "TPEX_DISPOSAL",
+          "row_count": 1,
+          "raw_dates": [
+            "1150924"
+          ]
+        },
+        {
+          "source_id": "TPEX_ATTENTION",
+          "row_count": 2,
+          "raw_dates": [
+            "1150923",
+            "1150924"
+          ]
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "4979",
+      "name": "華星光",
+      "observed_in": [
+        {
+          "source_id": "TPEX_DISPOSAL",
+          "row_count": 1,
+          "raw_dates": [
+            "1150924"
+          ]
+        },
+        {
+          "source_id": "TPEX_ATTENTION",
+          "row_count": 2,
+          "raw_dates": [
+            "1150923",
+            "1150924"
+          ]
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "6488",
+      "name": "環球晶",
+      "observed_in": [
+        {
+          "source_id": "TPEX_ATTENTION",
+          "row_count": 2,
+          "raw_dates": [
+            "1150923",
+            "1150924"
+          ]
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "3491",
+      "name": "昇達科",
+      "observed_in": [
+        {
+          "source_id": "TPEX_HALTS_HISTORY",
+          "row_count": 2,
+          "raw_dates": [
+            "115"
+          ]
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "僅比對樣本是否出現在候選來源；尚未核准完整性、歷史可得時間與限制重建"
+    }
+  ]
+}

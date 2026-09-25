@@ -17,7 +17,6 @@
   "default_max_stock_weight": 0.1,
   "tsmc_symbol": "2330.TW",
   "tsmc_max_stock_weight": 0.25,
-  "minimum_active_share": 0.2,
   "commission_rate": 0.001425,
   "sell_transaction_tax_rate": 0.003,
   "submission_start": "19:30",

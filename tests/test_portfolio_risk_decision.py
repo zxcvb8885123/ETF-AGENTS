@@ -111,6 +111,37 @@ def risk_review(bundle, proposal, scenario, guard, decision="approve", revision=
 
 
 class PortfolioRiskDecisionTests(unittest.TestCase):
+    def test_no_official_etf_benchmark_uses_competition_limits_only(self):
+        bundle, _, _, _ = valid_inputs()
+        bundle["rules"]["required_benchmark_ids"] = []
+        bundle["rules"]["minimum_active_share"] = "0"
+        bundle["benchmarks"] = []
+        bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        settings = policy()
+        settings["minimum_active_share"] = "0"
+        settings["content_sha256"] = decision_policy_sha256(settings)
+        momentum = MomentumEngine(bundle).run()
+        debate = debate_bundle(bundle, momentum)
+        intent = trade_intent_result(bundle, momentum, debate)
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(settings), [])
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        self.assertTrue(guard["passed"])
+        checks = {item["rule_id"]: item for item in guard["checks"]}
+        self.assertTrue(checks["STOCK_WEIGHT"]["passed"])
+        self.assertTrue(checks["POSITION_COUNT"]["passed"])
+        self.assertTrue(checks["ACTIVE_SHARE_NOT_APPLICABLE"]["passed"])
+        self.assertEqual(guard["benchmark_results"], [])
+        self.assertEqual(GuardValidator(bundle, settings).validate(proposal, scenario, guard), [])
+
+        bundle["rules"]["minimum_active_share"] = "0.20"
+        bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        from etf_agent.decision import DecisionInputValidator
+        self.assertTrue(any("沒有必備 ETF 基準" in error for error in DecisionInputValidator(bundle).validate()))
+
     def test_policy_proposal_scenario_guard_and_final_decision(self):
         bundle, momentum, debate, intent = valid_inputs()
         settings = policy()

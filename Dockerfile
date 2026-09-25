@@ -8,7 +8,11 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /app/requirements.txt
+
+ARG BUILD_INPUT_SHA=unknown
+LABEL org.etf-agent.build-input-sha="${BUILD_INPUT_SHA}"
 
 RUN groupadd --gid 10001 agent \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin agent

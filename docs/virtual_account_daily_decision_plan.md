@@ -1,6 +1,6 @@
 # 十億虛擬帳戶與每日買賣決策接入計畫
 
-狀態：VA1～VA3 fixture 工具鏈已完成（2026-09-23）；VA4 報告工作流接線及 VA5 多日正式資料驗收待完成。使用者確認競賽使用虛擬帳戶，初始本金為新臺幣 1,000,000,000 元。此計畫取代「必須先取得真實券商／平台帳戶匯出檔」作為每日決策的前置假設；既有外部帳戶匯入工具保留為日後有平台結算檔時的對帳支線。
+狀態：VA1～VA3 fixture 工具鏈已完成（2026-09-23）；VA4 的 DailyReport 帳戶呈現及 workflow 對已封存 prepare-day run 的強制核對已實作、待驗收；workflow 自動 prepare/apply 與 VA5 多日正式資料驗收待完成。使用者確認競賽使用虛擬帳戶，初始本金為新臺幣 1,000,000,000 元。此計畫取代「必須先取得真實券商／平台帳戶匯出檔」作為每日決策的前置假設；既有外部帳戶匯入工具保留為日後有平台結算檔時的對帳支線。
 
 ## 目標與現況
 
@@ -8,7 +8,7 @@
 
 已具備：10 億初始本金設定、Portfolio Decision 的 AccountSnapshot 契約與買賣／配置／風控工具、回測用 `AccountLedger`／`ExecutionSimulator` 的多日 fixture 實作，以及 Research Report → Decision run → DailyReport 的離線接線。
 
-尚缺：DailyReport 的報告工作流自動接線、可追溯的市場 Provider／正式規則來源、多日完整操作驗收及固定版本前向驗證。交易狀態、完整 ETF 基準、核實的規則版本仍是正式決策前置缺口。
+尚缺：report workflow 自動執行 `prepare-day`／`apply-decision`、可追溯的市場 Provider／正式規則來源、多日完整操作驗收及固定版本前向驗證。正式模式接入既有帳本時，已強制驗證當前 prepare-day run、Snapshot／cutoff 與 Decision AccountSnapshot 一致。交易狀態、核實的規則版本仍是正式決策前置缺口；ETF 基準持股僅供選配比較。
 
 ## 每日流程與帳務規則
 
@@ -55,7 +55,7 @@
 - VA2：新增 `prepare-day`，要求可用 Snapshot、較新的 cutoff 與逐檔行情；先結算到期款項／套用有 cutoff 證據的公司行動，再產生可直接接入決策包的 AccountSnapshot。`attach-account` 將該快照綁入同 Snapshot／cutoff 的 DecisionInputBundle 並完整驗證。
 - VA3：新增 `apply-decision`，只接受 DecisionRepository 已封存且完整重建驗證的 Decision run，並要求其 AccountSnapshot 與最新 prepare 狀態完全一致。模擬成交資料必須晚於 decision cutoff，收盤後依成交、費稅與未交割款產生新帳本狀態；拒絕／no_trade 不會產生訂單成交。
 - fixture 端到端測試已涵蓋 10 億開帳、決策前 AccountSnapshot、完整 Decision run 驗證、模擬買入、日終持倉／現金更新、重複開帳、未來狀態分叉拒絕與封存竄改拒絕。
-- VA4 尚未完成：`report_workflow` 尚未自動呼叫虛擬帳戶 CLI，DailyReport 尚未顯示帳戶轉移和成交狀態。VA5 真實 Provider 與前向驗收也未完成。
+- VA4 部分完成：DailyReport 1.1 顯示決策前帳戶，正式 workflow 在呼叫報告 Builder 前核對封存 prepare-day run 的 manifest、latest 狀態、Snapshot／cutoff 與 DecisionInputBundle AccountSnapshot，並記錄帳戶 run lineage；缺失或不一致即停止。CLI 續跑需提供 `--virtual-account-repository`、`--virtual-account-account-id`、`--virtual-account-run-id`。workflow 尚未自動呼叫帳本 `prepare-day`／`apply-decision`，也未呈現成交後帳務轉移；VA4 未整體完成。VA5 真實 Provider 與前向驗收也未完成。
 
 ## 失敗與邊界案例
 
@@ -69,4 +69,4 @@ Python、契約、CLI 或 Skill 實作後依 AGENTS.md 執行全專案 unittest�
 
 ## 使用者可見的結果
 
-完成 VA1～VA3 fixture 工具鏈後，可用 CLI 建立 10 億帳戶、把帳戶快照接入完整 Decision run、模擬成交並查看封存後的收盤狀態。這仍是 fixture 驗收；真實 150 檔行情、事件研究、交易狀態、ETF 基準、規則與風控輸入通過前，不會自動形成正式每日買賣報告。
+完成 VA1～VA3 fixture 工具鏈後，可用 CLI 建立 10 億帳戶、把帳戶快照接入完整 Decision run、模擬成交並查看封存後的收盤狀態。這仍是 fixture 驗收；真實 150 檔行情、事件研究、交易狀態、規則與風控輸入通過前，不會自動形成正式每日買賣報告。

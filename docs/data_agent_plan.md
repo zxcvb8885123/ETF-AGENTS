@@ -1,5 +1,7 @@
 # Data Agent 計畫 V1
 
+2026-09-23 更新：依 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)，優先補官方日曆／交易狀態，ETF 基準另列選配並新增 FinMind 歷史基本面、現金流及籌碼；FinLab 選配，Fugle 延後。D0～D6 補充下述 M1～M4，正式報告必要資料提前驗收。此為待實作計畫，第三方 Provider 尚未接入。
+
 ## 1. 架構決策
 
 第一版 Data Agent 由 **Codex 或 Claude 工作階段**擔任推理與工具選擇引擎，專案本身不串接 OpenAI、Anthropic 或其他模型 API，也不引入 LangChain／LangGraph。CLIProxyAPI 延後評估，不是第一版依賴。

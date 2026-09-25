@@ -74,6 +74,9 @@ class ReportWorkflowApplication:
                 decision_repository=args.decision_repository,
                 decision_run_id=args.decision_run_id,
                 daily_report_repository=args.daily_report_repository,
+                virtual_account_repository=args.virtual_account_repository,
+                virtual_account_account_id=args.virtual_account_account_id,
+                virtual_account_run_id=args.virtual_account_run_id,
             )
             self.emit(result)
             return self._exit_code(result.get("status"))
@@ -157,6 +160,9 @@ class ReportWorkflowApplication:
         )
         parser.add_argument("--decision-repository", type=Path)
         parser.add_argument("--decision-run-id")
+        parser.add_argument("--virtual-account-repository", type=Path)
+        parser.add_argument("--virtual-account-account-id")
+        parser.add_argument("--virtual-account-run-id")
         parser.add_argument(
             "--daily-report-repository",
             type=Path,

@@ -1,0 +1,158 @@
+{
+  "audit_date": "2026-09-25",
+  "sample_size": 12,
+  "session_note": "TWSE 與 TPEx 均公告 2026-09-25 及 2026-09-28 休市；此次取樣是休市日來源形狀與版本檢查，不是交易日可交易判定",
+  "samples": [
+    {
+      "market": "TWSE",
+      "symbol": "2330",
+      "name": "台積電",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "2454",
+      "name": "聯發科",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "2881",
+      "name": "富邦金",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "2882",
+      "name": "國泰金",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "7769",
+      "name": "鴻勁",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TWSE",
+      "symbol": "5871",
+      "name": "中租-KY",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "3718",
+      "name": "中光電投控",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "6023",
+      "name": "元大期",
+      "observed_in": [],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "3374",
+      "name": "精材",
+      "observed_in": [
+        {
+          "source_id": "TPEX_ATTENTION",
+          "row_count": 2,
+          "raw_dates": [
+            "1150923",
+            "1150924"
+          ],
+          "raw_sha256": "2cc89eb5bcfc4df7c0ca8f50b99856440ee0d7d75a27fd2591feb58c03bf8843"
+        },
+        {
+          "source_id": "TPEX_DISPOSAL",
+          "row_count": 1,
+          "raw_dates": [
+            "1150924"
+          ],
+          "raw_sha256": "9c2a5af594eef4cbf4d683b33aa73f6f0f1ab8c6bd1b2bce1e904b76decbe42a"
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "4979",
+      "name": "華星光",
+      "observed_in": [
+        {
+          "source_id": "TPEX_ATTENTION",
+          "row_count": 2,
+          "raw_dates": [
+            "1150923",
+            "1150924"
+          ],
+          "raw_sha256": "2cc89eb5bcfc4df7c0ca8f50b99856440ee0d7d75a27fd2591feb58c03bf8843"
+        },
+        {
+          "source_id": "TPEX_DISPOSAL",
+          "row_count": 1,
+          "raw_dates": [
+            "1150924"
+          ],
+          "raw_sha256": "9c2a5af594eef4cbf4d683b33aa73f6f0f1ab8c6bd1b2bce1e904b76decbe42a"
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "6488",
+      "name": "環球晶",
+      "observed_in": [
+        {
+          "source_id": "TPEX_ATTENTION",
+          "row_count": 2,
+          "raw_dates": [
+            "1150923",
+            "1150924"
+          ],
+          "raw_sha256": "2cc89eb5bcfc4df7c0ca8f50b99856440ee0d7d75a27fd2591feb58c03bf8843"
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    },
+    {
+      "market": "TPEX",
+      "symbol": "3491",
+      "name": "昇達科",
+      "observed_in": [
+        {
+          "source_id": "TPEX_HALTS_HISTORY",
+          "row_count": 2,
+          "raw_dates": [
+            "115"
+          ],
+          "raw_sha256": "4e3747a4a27c1e45542ce476ff7ccd0384e5c420e9f2d5bbfd9257b9cc48e6a2"
+        }
+      ],
+      "tradability": "unknown",
+      "reason": "候選來源、完整性與可得時間尚未核准；命中不等於限制生效，未命中不等於可交易"
+    }
+  ]
+}

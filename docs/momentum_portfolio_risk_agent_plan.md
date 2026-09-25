@@ -75,7 +75,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 - 已通過品質閘門的 `ResearchSnapshot` 與 cutoff 前行情。
 - 零或多份已驗證 `ResearchResult`；Market Perception 若提供，`MarketPerceptionResult` 與 `PerceptionDataBundle` 必須成對且版本一致。
 - `AccountSnapshot`：結算日期、現金、NAV、持股、成本、超限起始日及來源版本。
-- 官方 150 檔交易池、可交易狀態、競賽規則及全部指定 ETF 基準版本。
+- 官方 150 檔交易池、可交易狀態及競賽規則；ETF 基準版本僅供選配比較。
 - 手續費、交易稅、一張 1,000 股的固定交易單位、滑價、成交價、收盤價及壓力情境設定。
 
 市場認知資料為選配；合法資料不存在時保留 `unavailable`，不能阻擋純事件／動能基線。帳戶、必要價格、交易池、規則或基準缺失則必須 fail closed。
@@ -110,7 +110,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 | `OrderPlanner` | 以一張 1,000 股計算買賣量，禁止零股單、超賣、放空及雙向重複訂單 |
 | `FeeTaxCalculator` | 使用十進位規則計算手續費、交易稅與預留現金 |
 | `ScenarioSimulator` | 分開使用預估成交價與收盤價進行壓力情境 |
-| `CompetitionGuard` | 驗證交易池、可交易性、持股數、現金、個股上限及全部 ETF Active Share |
+| `CompetitionGuard` | 驗證交易池、可交易性、持股數、現金與個股上限；Active Share 僅於明確啟用比較時檢查 |
 | `DecisionValidator` | 由原始輸入重建配置、訂單、費稅、情境及最終狀態 |
 | `DecisionRepository` | 保存輸入、Agent packets、修正歷程、結果與內容雜湊 |
 
@@ -142,8 +142,8 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 - Snapshot 不可用、缺少時區、cutoff 或版本／內容雜湊不一致時停止。
 - 研究引用不存在、股票誤配或 Agent packet 依賴不獨立時拒絕。
 - 決策輸入夾帶未知欄位、evidence ID 跨來源碰撞、內容雜湊不一致或 Market Perception cutoff 不完全相同時拒絕。
-- 缺少帳戶、必要價格、競賽規則、交易池、可交易狀態或任一指定 ETF 基準時拒絕。
-- 交易池外、不可交易、超賣、放空、持股數、現金、個股權重或 Active Share 違規時拒絕。
+- 缺少帳戶、必要價格、競賽規則、交易池、可交易狀態時拒絕；ETF 基準缺漏只停用選配比較。
+- 交易池外、不可交易、超賣、放空、持股數、現金、個股權重違規時拒絕。
 - 費稅、整張單位、現金或情境結果無法重算時拒絕。
 - Risk Agent 的文字結論與工具結果衝突時，以硬性工具為準並拒絕結果。
 - `rejected` 不得輸出可送件訂單；`approved` 也只代表可交給回測與人工檢查。
@@ -165,7 +165,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 2. **P1 動能與市場狀態（已完成）**：完成無未來資料的 MomentumEngine、時間隔離、缺值政策及市場狀態 fixture。
 3. **P2 獨立買賣裁決（已完成）**：建立 Momentum、Buy、Sell、Adjudicator Skills 與獨立依賴驗證；不產生權重。
 4. **P3 配置與訂單（已完成 MVP）**：完成目標配置、整張（1,000 股）、費稅、現金、換手及受限重算的確定性工具。
-5. **P4 情境與風控（已完成 MVP）**：建立 Risk Skill、價格／流動性壓力情境、全部輸入基準 Active Share、硬性規則及三次修正上限。
+5. **P4 情境與風控（已完成 MVP）**：建立 Risk Skill、價格／流動性壓力情境、選配基準 Active Share、硬性規則及三次修正上限。
 6. **P5 主控與保存（已完成 MVP）**：擴充 `portfolio-decision` Skill、CLI、DecisionRepository、內容雜湊及完整重建 validator。
 7. **P6 測試與稽核（fixture 驗收已完成）**：涵蓋手算費稅／現金、整張部分成交、賣單未成交而買單成交的資金缺口、規則與基準缺漏、NAV 對帳、完整修正鏈及磁碟竄改／路徑越界；正式 Provider 驗收另行處理。
 8. **P7 回測交接**：固定資料、策略、Agent、工具及規則版本，交給[回測 Agent](backtest_agent_plan.md)與[回測方法規格](backtest_plan_v1.md)驗證。
@@ -189,7 +189,7 @@ P0～P6 fixture 驗收已完成；下一批進入 P7 回測，正式 Provider／
 ### 批次二：P4 壓力情境與 Portfolio Risk
 
 1. **ScenarioSimulator**：依版本化設定模擬成交滑價、收盤估值、價格下跌、流動性不足及部分／無法成交。分開保存參考價、假設成交價與情境收盤價；所有假設標記為情境，不冒充 cutoff 後已知行情。缺少必要行情或分類時明列失敗。
-2. **完整 CompetitionGuard**：驗證全部指定 ETF 基準，以及交易池、可交易性、持股檔數、現金、個股曝險、超限期限與必要限制。逐條保存規則 ID、門檻、重算值及證據；分別檢查取整後組合與必要情境。規則、費稅與 Active Share 計算口徑必須以有來源的有效版本確認，不把現有原型設定視為已完成官方核實。
+2. **完整 CompetitionGuard**：驗證交易池、可交易性、持股檔數、現金、個股曝險、超限期限與必要限制；ETF 基準僅於明確啟用 Active Share 比較時驗證。逐條保存規則 ID、門檻、重算值及證據；分別檢查取整後組合與必要情境。規則、費稅與 Active Share 計算口徑必須以有來源的有效版本確認，不把現有原型設定視為已完成官方核實。
 3. **新增 portfolio-risk-review Skill**：讀取固定的配置、訂單、情境與 Guard 結果，審查集中度、來源／事件重疊、流動性、現金及換手風險。輸出 `RiskReview`，包含 `approve/revise/reject`、論點、證據與結構化修正要求。
 4. **有限修正**：首次提案後最多允許三次修正重算。第一版只允許移除買進候選、降低設定內的風險預算／曝險上限、提高現金緩衝或減少換手；不能新增未裁決標的、提高買進強度或任意填入目標權重。每次變更由程式驗證合法性，再重跑配置、訂單、情境與 Guard；Risk 必須審查新版本。硬性失敗直接拒絕，策略修正只適用於尚未違反硬性規則的風險疑慮。
 

@@ -29,9 +29,10 @@ DEFAULT_REQUIRED_CATEGORIES = (
     "special_trading",
     "split_trading",
     "management",
-    "attention",
     "disposition",
 )
+INFORMATIONAL_CATEGORIES = frozenset({"attention"})
+LEGACY_REQUIRED_CATEGORIES = DEFAULT_REQUIRED_CATEGORIES[:-1] + ("attention", "disposition")
 BLOCKING_CODES = {
     "halted",
     "suspended",
@@ -104,7 +105,7 @@ class TradingStatusRequest:
     target_session_end: str
     required_categories: Tuple[str, ...] = DEFAULT_REQUIRED_CATEGORIES
     source_config_version: str = "unconfigured"
-    policy_version: str = "trading-status-policy-1"
+    policy_version: str = "trading-status-policy-2"
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -157,7 +158,13 @@ class TradingStatusRequest:
         if not isinstance(session, Mapping):
             raise TradingStatusError("TradingStatusRequest 缺少 target_session")
         symbols = payload.get("universe_symbols")
-        categories = payload.get("required_categories", list(DEFAULT_REQUIRED_CATEGORIES))
+        policy_version = payload.get("policy_version", "trading-status-policy-2")
+        default_categories = (
+            LEGACY_REQUIRED_CATEGORIES
+            if policy_version == "trading-status-policy-1"
+            else DEFAULT_REQUIRED_CATEGORIES
+        )
+        categories = payload.get("required_categories", list(default_categories))
         if not isinstance(symbols, list) or not isinstance(categories, list):
             raise TradingStatusError("universe_symbols 與 required_categories 必須是陣列")
         request = cls(
@@ -173,7 +180,7 @@ class TradingStatusRequest:
                 payload.get("source_config_version", "unconfigured"),
                 "source_config_version",
             ),
-            policy_version=_text(payload.get("policy_version", "trading-status-policy-1"), "policy_version"),
+            policy_version=_text(policy_version, "policy_version"),
         )
         errors = request.validate()
         if errors:
@@ -319,10 +326,9 @@ class TradingStatusBundleBuilder:
         for index, item in enumerate(self.coverage):
             key = (str(item["market"]), str(item["category"]))
             coverage_by_key.setdefault(key, []).append(item)
-            if item["approval_status"] != "approved":
-                coverage_degraded = True
-            if item["coverage_status"] != "complete":
-                coverage_degraded = True
+            if item["category"] in self.request.required_categories or item["category"] not in INFORMATIONAL_CATEGORIES:
+                if item["approval_status"] != "approved" or item["coverage_status"] != "complete":
+                    coverage_degraded = True
             if _parse_time(item["as_of"], "as_of") > cutoff:
                 coverage_errors.append("coverage[%d] as_of 晚於 decision_cutoff" % index)
             if _parse_time(item["query_end"], "query_end") > cutoff:
@@ -376,6 +382,18 @@ class TradingStatusBundleBuilder:
                         reasons.append("UNKNOWN_STATUS:%s:%s" % (category, code))
                     for item in category_records:
                         symbol_evidence.append(str(item["evidence_id"]))
+            for category in INFORMATIONAL_CATEGORIES - set(self.request.required_categories):
+                entries = coverage_by_key.get((market, category), [])
+                if not entries or any(
+                    item["approval_status"] != "approved" or item["coverage_status"] != "complete"
+                    for item in entries
+                ):
+                    continue
+                category_records = [item for item in symbol_records if item["category"] == category]
+                active_codes = {str(item["status_code"]).lower() for item in category_records}
+                if len(active_codes) == 1:
+                    reasons.append("ATTENTION:%s" % next(iter(active_codes)))
+                    symbol_evidence.extend(str(item["evidence_id"]) for item in category_records)
             if "unknown" in states:
                 state = "unknown"
             elif "blocked" in states:

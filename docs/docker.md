@@ -19,7 +19,10 @@ docker compose version
 ./start.sh
 ```
 
-腳本會自動建置映像、檢查設定、初始化 SQLite、抓行情，再顯示資料庫狀態。正式模式會先抓 TWSE／TPEx 最新行情，再把 150 檔兩年歷史行情增量更新至兩個官方市場都已完成的最近交易日；官方交易池還空著時，則使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。
+首次執行會建置映像；之後僅在映像不存在、`requirements.txt` 或 Dockerfile 變更時重建。`src/`、`cli/`、`scripts/`、`skills/`、`tests/` 從工作區唯讀掛載，程式碼修改後可直接執行。正式模式會先抓 TWSE／TPEx 最新行情，再把 150 檔兩年歷史行情增量更新至兩個官方市場都已完成的最近交易日；官方交易池還空著時，則使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。
+
+Dockerfile 與本機 `.venv` 共用 `requirements.txt`，其中包含 Skill 驗證使用的 PyYAML。修改依賴後重新執行 `./start.sh check` 就會自動重建；可用 `docker compose run --rm agent python3 -c 'import yaml; print(yaml.__version__)'` 確認新映像已安裝。
+手動要求重建可執行 `FORCE_DOCKER_BUILD=1 ./start.sh check`。Dockerfile 以 pip 下載快取加快後續依賴更新；首次下載仍取決於網路速度。
 
 ```bash
 ./start.sh official  # 只抓官方交易池；空白時停止
@@ -91,6 +94,7 @@ HOST_GID=你的群組 GID
 | --- | --- |
 | 找不到 Docker | 安裝並啟動 Docker Desktop 後重試 |
 | `Docker 尚未啟動` | 開啟 Docker Desktop，等引擎就緒後重試 |
+| 容器顯示 `No module named yaml` | 執行 `docker compose build` 重建映像，再檢查容器內的 PyYAML 版本 |
 | 無法寫入 `var/` 或 `artifacts/` | 使用 `./start.sh`，或檢查 `.env` 的 UID/GID |
 | 抓取失敗 | 檢查網路，再執行 `./start.sh all` 重試 |
 | 正式模式提示交易池空白 | 先把官方名單填入 `data/official_universe.csv` |

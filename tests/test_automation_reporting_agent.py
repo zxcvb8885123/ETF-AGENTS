@@ -98,8 +98,25 @@ class AutomationReportingTests(unittest.TestCase):
             self.assertTrue((run_dir / "daily_report_markdown.md").exists())
             report = json.loads((run_dir / "daily_report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "degraded")
+            self.assertEqual(report["schema_version"], "1.1")
+            self.assertEqual(report["delivery_status"], "internal_review_only")
+            self.assertEqual(
+                report["competition_format_validation"]["status"], "not_available"
+            )
+            self.assertEqual(
+                report["account_snapshot"],
+                json.loads(
+                    (decision_root / "decision-run-1" / "decision_input.json").read_text(
+                        encoding="utf-8"
+                    )
+                )["account_snapshot"],
+            )
+            self.assertEqual(len(report["input_refs"]["account_snapshot_sha256"]), 64)
             self.assertEqual(report["decision"]["status"], decision["status"])
-            self.assertIn("不會送出主辦平台", (run_dir / "daily_report_markdown.md").read_text(encoding="utf-8"))
+            markdown = (run_dir / "daily_report_markdown.md").read_text(encoding="utf-8")
+            self.assertIn("不會送出主辦平台", markdown)
+            self.assertIn("## 決策時帳戶快照", markdown)
+            self.assertIn("模板尚未驗證", markdown)
             self.assertEqual(PipelineRepository(output).verify("pipeline-1"), run_dir)
 
             service = AutomationReportingApplicationService.from_paths(

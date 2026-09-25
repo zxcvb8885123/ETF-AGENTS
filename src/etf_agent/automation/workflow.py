@@ -22,6 +22,8 @@ from etf_agent.reporting import (
     ResearchReportApplicationService,
     ResearchReportError,
 )
+from etf_agent.virtual_account import VirtualAccountRepository
+from etf_agent.decision.finalization import DecisionRepository
 
 
 WORKFLOW_SCHEMA_VERSION = "1.0"
@@ -308,6 +310,9 @@ class ReportWorkflowService:
         decision_repository: Optional[Path] = None,
         decision_run_id: Optional[str] = None,
         daily_report_repository: Optional[Path] = None,
+        virtual_account_repository: Optional[Path] = None,
+        virtual_account_account_id: Optional[str] = None,
+        virtual_account_run_id: Optional[str] = None,
     ) -> Dict[str, object]:
         _validate_id(workflow_run_id, "workflow_run_id")
         if parent_run_id is not None:
@@ -317,6 +322,24 @@ class ReportWorkflowService:
         if (decision_repository is None) != (decision_run_id is None):
             raise ReportWorkflowError(
                 "--decision-repository 與 --decision-run-id 必須同時提供"
+            )
+        account_args = (
+            virtual_account_repository,
+            virtual_account_account_id,
+            virtual_account_run_id,
+        )
+        if any(value is not None for value in account_args) and not all(
+            value is not None for value in account_args
+        ):
+            raise ReportWorkflowError(
+                "--virtual-account-repository、--virtual-account-account-id 與 "
+                "--virtual-account-run-id 必須同時提供"
+            )
+        if execution_mode == "official" and decision_run_id is not None and not all(
+            value is not None for value in account_args
+        ):
+            raise ReportWorkflowError(
+                "official DailyReport 必須提供已封存的 VirtualAccount prepare-day run"
             )
         if lookback_days <= 0:
             raise ReportWorkflowError("lookback_days 必須為正數")
@@ -337,6 +360,20 @@ class ReportWorkflowService:
             if decision_manifest_path is not None
             else None
         )
+        account_manifest_path = (
+            Path(virtual_account_repository)
+            / str(virtual_account_account_id)
+            / "runs"
+            / str(virtual_account_run_id)
+            / "manifest.json"
+            if all(value is not None for value in account_args)
+            else None
+        )
+        account_ref = (
+            _source_ref(account_manifest_path, "VirtualAccountRunManifest")
+            if account_manifest_path is not None
+            else None
+        )
         input_fingerprint = _canonical_hash(
             {
                 "snapshot_sha256": snapshot_ref.get("sha256"),
@@ -344,6 +381,7 @@ class ReportWorkflowService:
                 "perception_sha256": perception_ref.get("sha256") if perception_ref else None,
                 "perception_bundle_sha256": bundle_ref.get("sha256") if bundle_ref else None,
                 "decision_sha256": decision_ref.get("sha256") if decision_ref else None,
+                "virtual_account_sha256": account_ref.get("sha256") if account_ref else None,
                 "database_sha256": _file_hash(Path(database_path)),
             }
         )
@@ -607,6 +645,7 @@ class ReportWorkflowService:
                 failure_report=None,
             )
 
+        failure_stage = "research_report"
         try:
             validation = event_service.validate_file(Path(research_path))
             if not validation.get("valid"):
@@ -674,6 +713,57 @@ class ReportWorkflowService:
                 daily_report_repository or (Path(repository_root).parent / "pipeline_runs")
             )
             pipeline_run_id = "daily-%s" % workflow_run_id
+            account_provenance: Optional[Dict[str, object]] = None
+            if execution_mode == "official":
+                failure_stage = "account_snapshot"
+                assert virtual_account_repository is not None
+                assert virtual_account_account_id is not None
+                assert virtual_account_run_id is not None
+                account_repo = VirtualAccountRepository(
+                    Path(virtual_account_repository), virtual_account_account_id
+                )
+                account_run_dir = account_repo.verify(virtual_account_run_id)
+                latest_account = account_repo.latest()
+                if latest_account is None or latest_account.get("run_id") != virtual_account_run_id:
+                    raise ReportWorkflowError(
+                        "VirtualAccount run 不是帳戶目前 latest 狀態，拒絕產生 official DailyReport"
+                    )
+                account_state = _read_json(account_run_dir / "state.json", "VirtualAccountState")
+                account_snapshot = _read_json(account_run_dir / "account_snapshot.json", "AccountSnapshot")
+                account_source_snapshot = _read_json(account_run_dir / "snapshot.json", "VirtualAccount ResearchSnapshot")
+                provenance = account_state.get("provenance")
+                if not isinstance(provenance, Mapping) or provenance.get("type") != "prepared":
+                    raise ReportWorkflowError("VirtualAccount run 必須是 prepare-day 封存狀態")
+                if (
+                    _canonical_hash(account_source_snapshot) != _canonical_hash(snapshot)
+                    or provenance.get("snapshot_id") != snapshot_id
+                    or provenance.get("snapshot_sha256") != _canonical_hash(snapshot)
+                    or provenance.get("account_snapshot") != account_snapshot
+                    or account_state.get("as_of") != cutoff
+                ):
+                    raise ReportWorkflowError(
+                        "VirtualAccount prepare-day run 與工作流 Snapshot／cutoff／AccountSnapshot 不一致"
+                    )
+                decision_run_dir = DecisionRepository(Path(decision_repository)).verify(
+                    str(decision_run_id)
+                )
+                decision_input = _read_json(
+                    decision_run_dir / "decision_input.json", "DecisionInputBundle"
+                )
+                if decision_input.get("account_snapshot") != account_snapshot:
+                    raise ReportWorkflowError(
+                        "Decision run 使用的 AccountSnapshot 與 VirtualAccount prepare-day run 不一致"
+                    )
+                account_provenance = {
+                    "account_id": virtual_account_account_id,
+                    "run_id": virtual_account_run_id,
+                    "state_id": account_state.get("state_id"),
+                    "account_snapshot_sha256": _canonical_hash(account_snapshot),
+                    "manifest_sha256": _read_json(
+                        account_run_dir / "manifest.json", "VirtualAccount manifest"
+                    ).get("manifest_sha256"),
+                }
+            failure_stage = "daily_report"
             downstream = dict(
                 AutomationReportingApplicationService.execute_from_paths(
                     pipeline_run_id,
@@ -689,6 +779,8 @@ class ReportWorkflowService:
                 )
             )
             downstream["decision_run_id"] = str(decision_run_id)
+            if account_provenance is not None:
+                downstream["virtual_account"] = account_provenance
             output_dir = Path(str(downstream.get("output")))
             daily_report = None
             daily_report_markdown = None
@@ -782,13 +874,13 @@ class ReportWorkflowService:
                 stages=[
                     {"name": "snapshot", "status": "succeeded", "errors": []},
                     {"name": "event_data", "status": "succeeded", "errors": []},
-                    {"name": "research_report", "status": "failed", "errors": [str(error)]},
+                    {"name": failure_stage, "status": "failed", "errors": [str(error)]},
                 ],
                 candidates=candidate_payload,
                 agent_request=agent_request,
                 errors=[str(error)],
                 warnings=[],
-                next_action="修正 ResearchResult 或其引用後，使用新的 workflow_run_id 重跑。",
+                next_action="修正失敗階段的輸入或來源後，使用新的 workflow_run_id 重跑。",
                 research_result=None,
                 research_report=None,
                 research_markdown=None,

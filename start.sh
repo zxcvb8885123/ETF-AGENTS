@@ -14,7 +14,7 @@ case "$MODE" in
     echo "  auto      有官方交易池就正式抓取，否則使用開發模式（預設）" >&2
     echo "  official  僅抓取官方交易池，交易池空白時停止" >&2
     echo "  all       開發用，抓取 TWSE 端點全部可解析證券" >&2
-    echo "  check     建置映像並執行環境檢查與測試，不抓資料" >&2
+    echo "  check     視需要建置映像並執行環境檢查與測試，不抓資料" >&2
     echo "  daily     一鍵驗證來源、更新行情／事件、建立 Snapshot 並交付報告" >&2
     echo "  report    使用既有 Snapshot 執行或續跑報告工作流" >&2
     exit 2
@@ -46,8 +46,19 @@ if [ "$MODE" = "report" ]; then
   REPORT_ONLY=1
 fi
 
-echo "[1/4] 建立 Docker 映像"
-docker compose build
+if command -v shasum >/dev/null 2>&1; then
+  BUILD_INPUT_SHA=$(shasum -a 256 Dockerfile requirements.txt | shasum -a 256 | awk '{print $1}')
+else
+  BUILD_INPUT_SHA=$(sha256sum Dockerfile requirements.txt | sha256sum | awk '{print $1}')
+fi
+IMAGE_INPUT_SHA=$(docker image inspect etf-agent:local \
+  --format '{{ index .Config.Labels "org.etf-agent.build-input-sha" }}' 2>/dev/null || true)
+if [ "${FORCE_DOCKER_BUILD:-0}" = "1" ] || [ "$IMAGE_INPUT_SHA" != "$BUILD_INPUT_SHA" ]; then
+  echo "[1/4] 建立 Docker 映像（依賴或 Dockerfile 已變更）"
+  docker compose build --build-arg "BUILD_INPUT_SHA=$BUILD_INPUT_SHA"
+else
+  echo "[1/4] Docker 映像已是目前依賴版本，略過建置"
+fi
 
 echo "[2/4] 檢查專案設定"
 docker compose run --rm agent
