@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from etf_agent.contracts import (
+from .contracts import (
     SourceFeasibilityReport,
     SourceProbeResult,
     UniverseInstrumentStatus,

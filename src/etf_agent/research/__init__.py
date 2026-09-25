@@ -1,13 +1,10 @@
 """Event Research Agent contracts, deterministic tools, and validation."""
 
-from .event_analysis import (
-    EventResearchApplicationService,
-    HistoricalPriceFeatureRepository,
-    ResearchDebateValidator,
-    ResearchResultValidator,
-    ResearchToolError,
-    SnapshotResearchTools,
-)
+from .contracts import ResearchToolError
+from .repository import HistoricalPriceFeatureRepository
+from .service import EventResearchApplicationService
+from .tools import SnapshotResearchTools
+from .validator import ResearchDebateValidator, ResearchResultValidator
 
 __all__ = [
     "EventResearchApplicationService",

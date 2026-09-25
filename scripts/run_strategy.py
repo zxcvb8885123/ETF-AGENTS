@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run event strategy V1 against a point-in-time research snapshot."""
+"""Run the prototype event strategy V1 against a point-in-time research snapshot (not the formal decision path)."""
 
 import argparse
 import json
@@ -9,8 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from etf_agent.strategy import EventDrivenStrategy, StrategyInputError
-from etf_agent.strategy.event_v1 import stock_from_dict
+from etf_agent.prototype import EventDrivenStrategy, StrategyInputError
+from etf_agent.prototype.event_strategy import stock_from_dict
 
 
 def parse_args():

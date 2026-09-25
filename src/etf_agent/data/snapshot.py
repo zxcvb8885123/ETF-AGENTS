@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
 
-from etf_agent.contracts import SourceEvidence
+from .contracts import SourceEvidence
 
 from .database import MarketDataDatabase
 from .evidence import TAIPEI_TIMEZONE, SourceEvidenceBuilder

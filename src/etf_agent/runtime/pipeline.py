@@ -2,23 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Dict, Mapping, Optional, Sequence
+
+from etf_agent.core import content_sha256
 
 
 class PipelineRuntimeError(ValueError):
     """Raised when a runtime record cannot retain its execution identity."""
-
-
-def content_sha256(payload: Mapping[str, object]) -> str:
-    """Hash a JSON object without its self-referential content hash field."""
-    body = dict(payload)
-    body.pop("content_sha256", None)
-    encoded = json.dumps(
-        body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def build_pipeline_run(

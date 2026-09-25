@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from datetime import datetime
+from decimal import Decimal
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time, parse_decimal
 from etf_agent.perception import (
     MarketPerceptionResultValidator,
     PerceptionDataTools,
@@ -35,15 +34,7 @@ class DecisionToolError(ValueError):
 
 
 def parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise DecisionToolError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise DecisionToolError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise DecisionToolError("%s 必須包含時區" % field)
-    return parsed.astimezone(timezone.utc)
+    return parse_aware_time(value, field, error=DecisionToolError)
 
 
 def required_string(payload: Mapping[str, object], field: str) -> str:
@@ -63,23 +54,7 @@ def string_list(payload: Mapping[str, object], field: str) -> List[str]:
 
 
 def decimal_value(value: object, field: str) -> Decimal:
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as error:
-        raise DecisionToolError("%s 無法解析為數值" % field) from error
-    if not parsed.is_finite():
-        raise DecisionToolError("%s 必須是有限數值" % field)
-    return parsed
-
-
-def canonical_sha256(payload: object) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return parse_decimal(value, field, error=DecisionToolError, parse_message="%(field)s 無法解析為數值")
 
 
 def decision_bundle_sha256(bundle: Mapping[str, object]) -> str:
@@ -95,9 +70,7 @@ def decision_rules_sha256(rules: Mapping[str, object]) -> str:
 
 
 def artifact_content_sha256(artifact: Mapping[str, object]) -> str:
-    payload = dict(artifact)
-    payload.pop("content_sha256", None)
-    return canonical_sha256(payload)
+    return content_sha256(artifact)
 
 
 def reject_unknown_fields(

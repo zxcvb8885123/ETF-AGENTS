@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
+from etf_agent.core import parse_aware_time
 from .database import MarketDataDatabase
 from .universe import Instrument, normalize_symbol
 
@@ -967,10 +968,7 @@ def _decimal_text(value: Optional[Decimal]) -> Optional[str]:
 
 
 def _require_aware_datetime(value: str, field: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError("%s 必須包含時區" % field)
-    return parsed
+    return parse_aware_time(value, field, to_utc=False)
 
 
 def _utc_iso(value: datetime) -> str:

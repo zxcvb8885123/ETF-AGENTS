@@ -1,4 +1,4 @@
-"""One-month event-driven stock selection and target-weight generation."""
+"""原型事件策略 V1：一個月事件選股與目標權重；不在正式決策路徑上。"""
 
 from __future__ import annotations
 

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
+from etf_agent.core import canonical_sha256, parse_aware_time
 from .database import MarketDataDatabase
 from .universe import normalize_symbol
 
@@ -50,23 +51,9 @@ class TradingStatusError(ValueError):
     """交易狀態契約或時間點不安全。"""
 
 
-def _canonical_sha256(payload: object) -> str:
-    encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise TradingStatusError("%s 必須是包含時區的時間字串" % field)
-    try:
-        result = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError as error:
-        raise TradingStatusError("%s 無法解析：%s" % (field, value)) from error
-    if result.tzinfo is None or result.utcoffset() is None:
-        raise TradingStatusError("%s 必須包含時區" % field)
-    return result.astimezone(timezone.utc)
+    text = value.strip() if isinstance(value, str) else value
+    return parse_aware_time(text, field, error=TradingStatusError)
 
 
 def _optional_time(value: object, field: str) -> Optional[datetime]:
@@ -217,7 +204,7 @@ def _normalise_record(record: Mapping[str, object]) -> Dict[str, object]:
         not isinstance(result["raw_payload_id"], int) or isinstance(result["raw_payload_id"], bool)
     ):
         raise TradingStatusError("raw_payload_id 必須是整數或 null")
-    expected_content_sha256 = _canonical_sha256(
+    expected_content_sha256 = canonical_sha256(
         {key: value for key, value in result.items() if key != "content_sha256"}
     )
     if result["content_sha256"] != expected_content_sha256:
@@ -437,8 +424,8 @@ class TradingStatusBundleBuilder:
             "records": bundle["records"],
             "source_coverage": bundle["source_coverage"],
         }
-        bundle["bundle_id"] = "trading-status:" + _canonical_sha256(bundle_seed)[:20]
-        bundle["bundle_sha256"] = _canonical_sha256(bundle)
+        bundle["bundle_id"] = "trading-status:" + canonical_sha256(bundle_seed)[:20]
+        bundle["bundle_sha256"] = canonical_sha256(bundle)
         assessment = {
             "schema_version": TRADING_STATUS_SCHEMA_VERSION,
             "assessment_id": "",
@@ -451,10 +438,10 @@ class TradingStatusBundleBuilder:
             "symbols": assessments,
             "coverage_gaps": sorted(set(missing_coverage)),
         }
-        assessment["assessment_id"] = "tradability:" + _canonical_sha256(
+        assessment["assessment_id"] = "tradability:" + canonical_sha256(
             {"bundle_id": bundle["bundle_id"], "symbols": assessments, "policy_version": self.request.policy_version}
         )[:20]
-        assessment["assessment_sha256"] = _canonical_sha256(assessment)
+        assessment["assessment_sha256"] = canonical_sha256(assessment)
         return bundle, assessment
 
 
@@ -490,7 +477,7 @@ class TradingStatusBundleValidator:
             ):
                 if bundle.get(field) != rebuilt_bundle.get(field):
                     errors.append("TradingStatusBundle.%s 與確定性重建結果不一致" % field)
-            if bundle.get("bundle_sha256") != _canonical_sha256({k: v for k, v in bundle.items() if k != "bundle_sha256"}):
+            if bundle.get("bundle_sha256") != canonical_sha256({k: v for k, v in bundle.items() if k != "bundle_sha256"}):
                 errors.append("TradingStatusBundle.bundle_sha256 不一致")
             if assessment is not None:
                 assessment_allowed = {
@@ -502,7 +489,7 @@ class TradingStatusBundleValidator:
                     errors.append("TradabilityAssessment 含未允許欄位")
                 if dict(assessment) != rebuilt_assessment:
                     errors.append("TradabilityAssessment 與確定性重建結果不一致")
-                if assessment.get("assessment_sha256") != _canonical_sha256({k: v for k, v in assessment.items() if k != "assessment_sha256"}):
+                if assessment.get("assessment_sha256") != canonical_sha256({k: v for k, v in assessment.items() if k != "assessment_sha256"}):
                     errors.append("TradabilityAssessment.assessment_sha256 不一致")
         except (TradingStatusError, TypeError, AttributeError) as error:
             errors.append("交易狀態驗證失敗：%s" % error)
@@ -617,7 +604,7 @@ def parse_trading_status_payload(
             published = row.get(definition.published_at_field) if definition.published_at_field else None
         except TradingStatusError as error:
             raise TradingStatusError("來源第 %d 列：%s" % (index + 1, error)) from error
-        row_hash = _canonical_sha256(row)
+        row_hash = canonical_sha256(row)
         parsed_record = {
             "record_id": "%s:%s" % (definition.source_id, row_hash[:20]),
             "symbol": raw_symbol,
@@ -638,7 +625,7 @@ def parse_trading_status_payload(
             "version": str(row.get("version", "1")),
             "parser_version": TRADING_STATUS_PARSER_VERSION,
         }
-        parsed_record["content_sha256"] = _canonical_sha256(
+        parsed_record["content_sha256"] = canonical_sha256(
             {key: value for key, value in parsed_record.items() if key != "content_sha256"}
         )
         records.append(parsed_record)

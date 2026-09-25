@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Sequence, Tuple
 
-from etf_agent.contracts import SourceFeasibilityReport, SourceProbeResult
+from .contracts import SourceFeasibilityReport, SourceProbeResult
 
 from .corporate import (
     CorporateCollectionResult,

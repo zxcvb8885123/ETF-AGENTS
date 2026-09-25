@@ -5,11 +5,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Dict, Mapping, Sequence
 
-from etf_agent.decision.contracts import artifact_content_sha256, canonical_sha256, parse_time
+from etf_agent.core import canonical_sha256, content_sha256
 from etf_agent.decision.finalization import DecisionResultValidator
+from etf_agent.ledger import AccountLedger, ExecutionSimulator
 
-from .contracts import BACKTEST_SCHEMA_VERSION, BacktestRequestValidator, BacktestToolError, HistoricalClock, decimal_value
-from .engine import AccountLedger, ExecutionSimulator, FixturePointInTimeDataProvider
+from .contracts import BACKTEST_SCHEMA_VERSION, BacktestRequestValidator, BacktestToolError, HistoricalClock, decimal_value, parse_time
+from .engine import FixturePointInTimeDataProvider
 
 
 class BacktestService:
@@ -108,7 +109,7 @@ class BacktestService:
             days.append({"trade_date": trade_date, "research_artifact_id": research["artifact_id"], "decision_id": decision.get("decision_id"), "decision_status": decision.get("status"), "execution": execution, "ledger": snapshot})
         body = {"schema_version": BACKTEST_SCHEMA_VERSION, "backtest_id": "", "request_id": request["request_id"], "request_hash": request["content_sha256"], "status": "completed", "days": days}
         body["backtest_id"] = "backtest:" + canonical_sha256(body)[:20]
-        body["content_sha256"] = artifact_content_sha256(body)
+        body["content_sha256"] = content_sha256(body)
         return body
 
     def validate_fixture(self, request: Mapping[str, object], daily_inputs: Mapping[str, Mapping[str, object]], result: Mapping[str, object]):
@@ -116,7 +117,7 @@ class BacktestService:
         return [] if dict(result) == expected else ["BacktestRun 與確定性重播結果不一致"]
 
     def build_report(self, request: Mapping[str, object], result: Mapping[str, object]) -> Dict[str, object]:
-        if result.get("content_sha256") != artifact_content_sha256(result):
+        if result.get("content_sha256") != content_sha256(result):
             raise BacktestToolError("BacktestRun.content_sha256 與內容不一致")
         if result.get("request_id") != request.get("request_id") or result.get("request_hash") != request.get("content_sha256"):
             raise BacktestToolError("BacktestRun 與 BacktestRequest 不一致")
@@ -130,7 +131,7 @@ class BacktestService:
             statuses[day["decision_status"]] = statuses.get(day["decision_status"], 0) + 1
         body = {"schema_version": BACKTEST_SCHEMA_VERSION, "report_id": "", "backtest_id": result["backtest_id"], "request_id": request["request_id"], "data_mode": request["data_manifest"]["mode"], "days": len(days), "first_end_nav": days[0]["ledger"]["nav"], "last_nav": days[-1]["ledger"]["nav"], "total_commission": str(total_commission.quantize(Decimal("1"))), "total_tax": str(total_tax.quantize(Decimal("1"))), "decision_status_counts": statuses, "limitations": ["本報告只呈現 B0～B2 fixture 帳務驗收，不代表策略有效或可交易。"]}
         body["report_id"] = "backtest-report:" + canonical_sha256(body)[:20]
-        body["content_sha256"] = artifact_content_sha256(body)
+        body["content_sha256"] = content_sha256(body)
         return body
 
     @staticmethod

@@ -109,26 +109,33 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 | 路徑 | 責任 |
 | --- | --- |
-| src/etf_agent/runtime/ | 共用 pipeline run 身分、狀態與未來流程控制邊界 |
-| src/etf_agent/contracts.py | 模組資料契約與驗證 |
-| src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features 及其他來源；每日虛擬帳戶另由帳務模組負責 |
-| src/etf_agent/decision/ | 已有 P0～P5 MVP：共同輸入、動能、獨立買賣裁決、配置／訂單／費稅、情境、完整輸入基準 Guard、RiskReview、最終重建與不可變保存 |
-| src/etf_agent/strategy/ | 既有事件策略原型；後續與 decision 契約整合或拆分 |
-| src/etf_agent/portfolio/ | allocator、order_builder、simulator、repair |
-| src/etf_agent/risk/ | 情境檢查、Active Share、超限日數、MDD |
+| src/etf_agent/core/ | 唯一的 canonical JSON／content hash、含時區時間解析與有限 Decimal 解析，以及 `ImmutableRunStore`（原子寫入、拒絕覆寫、manifest 雜湊與檔案集合驗證）；不依賴任何 Agent 模組，各模組以自己的錯誤型別呼叫。Decision 與 Backtest repository 共用此 store；VirtualAccount（含 latest 指標與鎖）與報告封存格式不同，暫維持各自實作 |
+| src/etf_agent/data/ | Data Agent：TWSE／TPEx 行情、交易池、月營收、重大訊息、財報、交易狀態、來源稽核、SQLite 與不可變 Snapshot；資料契約在 `data/contracts.py` |
+| src/etf_agent/research/ | 事件研究 Fact／Bull／Bear／Adjudicator 的資料包、辯論與 ResearchResult 驗證 |
+| src/etf_agent/perception/ | 市場情緒與分析師共識 PerceptionDataBundle／MarketPerceptionResult |
+| src/etf_agent/fundamentals/ | 基本面資料包、比率計算與 FundamentalResearchResult；尚未接入下游（FR5） |
+| src/etf_agent/decision/ | Portfolio Decision P0～P6：共同輸入、動能、獨立買賣裁決、配置／訂單／費稅（allocation）、情境與 CompetitionGuardV2／RiskReview（risk）、有限修正（revision）、最終重建與不可變保存（finalization） |
+| src/etf_agent/ledger/ | 整張成交、費稅、交割與帳本估值；backtest 與 virtual_account 共用，錯誤為 `LedgerError` |
+| src/etf_agent/backtest/ | 歷史時鐘、時間點資料 Provider、回測 run 與帳務驗收報告 |
+| src/etf_agent/virtual_account/ | 10 億 TWD 虛擬帳戶 genesis、逐日結算與決策前帳戶快照 |
+| src/etf_agent/accounts/ | 主辦方帳戶資料匯入與差異對帳 |
+| src/etf_agent/competition/ | D-Plan 候選匯出與本地結構／引用鏈檢查 |
 | src/etf_agent/reporting/ | Research Report V0 Builder／Validator／Markdown renderer |
-| src/etf_agent/automation/ | PipelineRun、DailyReport／FailureReport、不可變封存與重建驗證；排程、D-Plan 待後續實作 |
-| src/etf_agent/data/database.py | 已有：行情、原始回應與執行紀錄；待擴充其他模組資料表 |
-| src/etf_agent/models.py | 既有：部位與投資組合資料模型 |
-| src/etf_agent/guard.py | 既有：初步風控檢查，後續擴充或轉接 risk |
+| src/etf_agent/automation/ | PipelineRun、DailyReport／FailureReport、報告工作流（分階段方法與單一 `_StageOutcome` 封存）、不可變封存與重建驗證；正式排程待後續實作 |
+| src/etf_agent/runtime/ | 共用 pipeline run 身分、狀態與未來流程控制邊界 |
+| src/etf_agent/dashboard/ | 唯讀績效儀表板 |
+| src/etf_agent/prototype/ | 早期原型：float 版 CompetitionGuard、Portfolio 與事件策略 V1；只供相容測試與 `scripts/run_strategy.py` 對照，不在正式決策路徑 |
 | cli/ | Agent、人工與排程共用的資料、研究、決策、回測與報告 CLI wrapper |
 | scripts/collect_latest_prices.py | 維運用：官方交易池 TWSE／TPEx 最新交易日行情收集入口 |
 | scripts/collect_twse.py | 已有：TWSE 單一來源與全上市證券開發模式入口 |
 | scripts/init_db.py、scripts/data_status.py | 已有：初始化資料庫與查看資料狀態 |
 | scripts/run_daily.py | 預定完整每日執行入口 |
+| scripts/run_strategy.py | 原型事件策略 V1 對照入口；不產生正式決策 |
 | config/strategy.json | 預定策略參數 |
 | config/competition_rules.json | 既有競賽設定 |
 | artifacts/{trade_date}/{run_id}/ | 預定保存快照、提案、風控、報告與回執 |
+
+research、perception、fundamentals 與 reporting 依職責分為 `contracts`、`provider`／`repository`、`tools`（或 builder／metrics／renderer）、`validator` 與 `service` 模組；decision 依決策階段分為 contracts、momentum、trade_intent、allocation、risk、revision、finalization 與 service。`__init__.py` 只匯出公開介面。
 
 ## 8. 現況與實作里程碑
 

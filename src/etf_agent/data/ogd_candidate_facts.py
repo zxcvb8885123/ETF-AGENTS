@@ -5,12 +5,12 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
-import json
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Mapping, Tuple
 
+from etf_agent.core import canonical_sha256
 from .source_audit import roc_date_to_iso, roc_interval_to_iso
 
 
@@ -29,8 +29,7 @@ _TIME = re.compile(r"^[0-9]{6}$")
 
 
 def _row_hash(row: Mapping[str, str]) -> str:
-    payload = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return canonical_sha256(row)
 
 
 def _roc_time(value: str) -> str:

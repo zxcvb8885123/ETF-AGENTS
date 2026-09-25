@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from etf_agent import CompetitionGuard, Portfolio, Position
+from etf_agent.prototype import CompetitionGuard, Portfolio, Position
 
 
 ROOT = Path(__file__).resolve().parents[1]

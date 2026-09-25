@@ -101,6 +101,8 @@ Research Report V0 不代表正式 DailyReport；A0／A1 已完成 fixture／離
 | A4 Daily-report Skill 整合 | **部分完成：RPT0～RPT4 已接入**；工作流可在 Research Report 後呼叫既有 `AutomationReportingApplicationService`，產生 DailyReport 或 FailureReport | `$daily-report` 明確出現在 default_prompt；研究與決策 CLI 支援執行、狀態、驗證與續跑；缺 Decision／Risk 時維持 `waiting_for_decision`，文字不可改寫已驗證事實／決策 |
 | A5 端到端演練與正式啟用驗收 | fixture 故障注入、真實資料 dry-run、固定版本前向驗證證據與正式啟用清單 | fixture 與正式產物明確區隔；正式資料、帳戶、交易狀態、競賽規則與回測／前向驗證均通過，才可啟用正式排程 |
 
+`ReportWorkflowService` 依固定階段執行：snapshot → 父工作流續跑檢查 → idempotency → event_data → research_agent → research_report → account_snapshot（official）→ daily_report。每個階段各為一個方法，共用唯一的 `_RunContext`（輸入指紋於第一階段前固定），並以 `_StageOutcome` 結束、只封存一次；封存的 `stages`、錯誤與下一步行動格式不變。跨 Agent 通用的 Stage 註冊介面留待正式排程（A2 之後）再定義，目前不預先抽象。
+
 核心邏輯放在 `src/etf_agent/automation/` 與 `src/etf_agent/runtime/`，報告 Builder／Validator 延伸 `src/etf_agent/reporting/`；`cli/` 提供人工、排程與 Skill 共用的命令入口，Skill 只定義 Agent 工作流程。A0 起提供最小離線 CLI，各階段同步加入測試，A4 再整合完整操作介面。
 
 ### 已完成的離線入口

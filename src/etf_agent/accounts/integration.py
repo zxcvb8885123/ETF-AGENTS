@@ -10,9 +10,11 @@ import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Set
+
+from etf_agent.core import canonical_sha256, parse_decimal
 
 ACCOUNT_SCHEMA_VERSION = "1.0"
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -20,11 +22,6 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 class AccountDataError(ValueError):
     """帳戶輸入、對帳或封存不符合契約。"""
-
-
-def canonical_sha256(value: object) -> str:
-    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
 
 
 def _time(value: object, field: str) -> datetime:
@@ -40,15 +37,9 @@ def _time(value: object, field: str) -> datetime:
 
 
 def _decimal(value: object, field: str) -> Decimal:
-    if isinstance(value, bool) or value is None:
-        raise AccountDataError("%s 必須是有限數值" % field)
-    try:
-        result = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as error:
-        raise AccountDataError("%s 必須是有限數值" % field) from error
-    if not result.is_finite():
-        raise AccountDataError("%s 必須是有限數值" % field)
-    return result
+    return parse_decimal(
+        value, field, error=AccountDataError, reject_bool=True, parse_message="%(field)s 必須是有限數值"
+    )
 
 
 def _json(path: Path) -> object:

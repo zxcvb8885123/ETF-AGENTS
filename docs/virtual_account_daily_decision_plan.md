@@ -6,7 +6,7 @@
 
 第一個交易日由 `config/competition_rules.json` 的 `initial_capital_twd` 建立空倉虛擬帳戶；以後每次決策只讀前一個已驗證、已封存的帳本狀態。訂單是決策提案，不等同已成交；只有模擬成交或可驗證的外部成交紀錄，才能改變持倉與現金。報告須分清「買賣建議」「模擬成交」「帳戶實際狀態」。
 
-已具備：10 億初始本金設定、Portfolio Decision 的 AccountSnapshot 契約與買賣／配置／風控工具、回測用 `AccountLedger`／`ExecutionSimulator` 的多日 fixture 實作，以及 Research Report → Decision run → DailyReport 的離線接線。
+已具備：10 億初始本金設定、Portfolio Decision 的 AccountSnapshot 契約與買賣／配置／風控工具、回測與虛擬帳戶共用的 `etf_agent.ledger`（`AccountLedger`／`ExecutionSimulator`）多日 fixture 實作，以及 Research Report → Decision run → DailyReport 的離線接線。
 
 尚缺：report workflow 自動執行 `prepare-day`／`apply-decision`、可追溯的市場 Provider／正式規則來源、多日完整操作驗收及固定版本前向驗證。正式模式接入既有帳本時，已強制驗證當前 prepare-day run、Snapshot／cutoff 與 Decision AccountSnapshot 一致。交易狀態、核實的規則版本仍是正式決策前置缺口；ETF 基準持股僅供選配比較。
 

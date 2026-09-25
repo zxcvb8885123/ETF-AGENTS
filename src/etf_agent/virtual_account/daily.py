@@ -13,10 +13,9 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from etf_agent.decision.contracts import parse_time
 from etf_agent.decision.finalization import DecisionRepository
 
-from .service import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
+from .service import VirtualAccountError, VirtualAccountRepository, VirtualAccountService, parse_time
 
 TAIPEI = timezone(timedelta(hours=8))
 CLOSE_TIME = "13:30:00"

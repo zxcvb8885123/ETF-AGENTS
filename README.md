@@ -36,7 +36,7 @@ python3 -m venv .venv
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
 | `PYTHONPATH=src python3 scripts/collect_official_history.py` | 以官方 TWSE／TPEx 月行情增量更新日線；先驗證最近完整交易日，並輸出逐檔覆蓋 JSON |
-| `python3 scripts/run_strategy.py --input snapshot.json` | 以研究快照執行事件策略 V1 |
+| `python3 scripts/run_strategy.py --input snapshot.json` | 以研究快照執行原型事件策略 V1（僅供對照，不在正式決策路徑） |
 | `.venv/bin/python scripts/collect_history.py` | 透過 yfinance 增量更新 150 檔最近兩年日線至最近完整官方交易日 |
 | `.venv/bin/python cli/data_agent.py collect` | 抓取官方月營收與重大訊息 |
 | `.venv/bin/python cli/data_agent.py snapshot --output artifacts/research_snapshot_latest.json` | 建立目前時間的研究快照 |
@@ -170,6 +170,9 @@ cli/                    Agent、人工與排程共用的穩定 CLI 入口
 scripts/                初始化、收集與狀態查詢維運指令
 skills/                 Codex／Claude 工作流程、契約參考與 UI metadata
 src/etf_agent/          Agent 核心程式、runtime 與報告 Builder
+src/etf_agent/core/     共用 canonical hash、含時區時間、有限 Decimal 解析與不可變 run store
+src/etf_agent/ledger/   回測與虛擬帳戶共用的成交、費稅與帳本
+src/etf_agent/prototype/ 早期原型（float Guard、事件策略 V1），不在正式決策路徑
 tests/                  單元測試與測試資料
 var/                    SQLite 資料庫（不納入 Git）
 artifacts/              每日輸出檔案（不納入 Git）

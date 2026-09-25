@@ -12,11 +12,12 @@ import json
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
+from etf_agent.core import content_sha256, parse_aware_time
 from etf_agent.decision import (
     DecisionInputValidator,
     DecisionRepository,
@@ -46,15 +47,7 @@ class AutomationReportingError(ValueError):
 
 
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise AutomationReportingError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise AutomationReportingError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise AutomationReportingError("%s 必須包含時區" % field)
-    return parsed.astimezone(timezone.utc)
+    return parse_aware_time(value, field, error=AutomationReportingError)
 
 
 def _required_string(payload: Mapping[str, object], field: str) -> str:
@@ -62,12 +55,6 @@ def _required_string(payload: Mapping[str, object], field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise AutomationReportingError("缺少必要字串欄位：%s" % field)
     return value.strip()
-
-
-def _content_hash(payload: Mapping[str, object]) -> str:
-    body = dict(payload)
-    body.pop("content_sha256", None)
-    return canonical_sha256(body)
 
 
 def _first_difference(expected: object, actual: object, path: str = "$") -> Optional[str]:
@@ -429,7 +416,7 @@ class DailyReportBuilder:
                 "本流程於人工檢視交付時結束；不會送出主辦平台或執行交易。",
             ],
         }
-        result["content_sha256"] = _content_hash(result)
+        result["content_sha256"] = content_sha256(result)
         return result
 
 
@@ -451,7 +438,7 @@ class DailyReportValidator:
             errors.append("schema_version 必須為 %s" % DAILY_REPORT_SCHEMA_VERSION)
         if report.get("status") not in DAILY_REPORT_STATUSES:
             errors.append("DailyReport.status 不合法")
-        if report.get("content_sha256") != _content_hash(report):
+        if report.get("content_sha256") != content_sha256(report):
             errors.append("DailyReport.content_sha256 與內容不一致")
         try:
             expected = self.builder.build(
@@ -704,7 +691,7 @@ class AutomationReportingApplicationService:
                 "daily_report_content_sha256": daily_report["content_sha256"],
             },
         }
-        result["content_sha256"] = _content_hash(result)
+        result["content_sha256"] = content_sha256(result)
         return result
 
     @staticmethod
@@ -845,7 +832,7 @@ class AutomationReportingApplicationService:
             "input_files": [dict(item) for item in source_refs],
             "required_human_action": "修正錯誤後使用新的 pipeline_run_id 重跑；本次不產生 DailyReport 或 D-Plan 候選檔。",
         }
-        failure["content_sha256"] = _content_hash(failure)
+        failure["content_sha256"] = content_sha256(failure)
         business_date = _business_date(decision_cutoff) if decision_cutoff else None
         input_fingerprint = canonical_sha256({"input_files": failure["input_files"]})
         idempotency_key = (
@@ -882,7 +869,7 @@ class AutomationReportingApplicationService:
                 "failure_report_content_sha256": failure["content_sha256"],
             },
         }
-        manifest["content_sha256"] = _content_hash(manifest)
+        manifest["content_sha256"] = content_sha256(manifest)
         run_dir = PipelineRepository(repository_root).save(
             pipeline_run_id,
             {"pipeline_run": pipeline_run, "run_manifest": manifest, "failure_report": failure},

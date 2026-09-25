@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 
 from etf_agent.backtest import (
-    AccountLedger,
     BacktestRequestValidator,
     BacktestRepository,
     BacktestService,
@@ -16,6 +15,7 @@ from etf_agent.backtest import (
     HistoricalClock,
 )
 from etf_agent.decision import artifact_content_sha256, canonical_sha256
+from etf_agent.ledger import AccountLedger, LedgerError
 
 
 def request():
@@ -134,7 +134,7 @@ class BacktestAgentTests(unittest.TestCase):
     def test_execution_market_cannot_arrive_after_execution_time(self):
         inputs = daily_inputs()
         inputs["2026-09-01"]["execution_market"]["available_at"] = "2026-09-01T09:01:00+08:00"
-        with self.assertRaisesRegex(BacktestToolError, "晚於 execution_at"):
+        with self.assertRaisesRegex(LedgerError, "晚於 execution_at"):
             BacktestService().run_fixture(request(), inputs)
 
     def test_adjusted_or_early_close_market_is_rejected(self):
@@ -152,7 +152,7 @@ class BacktestAgentTests(unittest.TestCase):
         ledger.apply_actions([{"type": "split", "symbol": "2330.TW", "numerator": 2, "denominator": 1}])
         self.assertEqual(ledger.positions["2330.TW"]["shares"], 2000)
         fractional = AccountLedger(request()["initial_account"])
-        with self.assertRaisesRegex(BacktestToolError, "零股"):
+        with self.assertRaisesRegex(LedgerError, "零股"):
             fractional.apply_actions([{"type": "split", "symbol": "2330.TW", "numerator": 3, "denominator": 2}])
 
     def test_historical_verified_mode_requires_full_decision_rebuild_inputs(self):
@@ -184,6 +184,15 @@ class BacktestAgentTests(unittest.TestCase):
         self.assertEqual(report["last_nav"], run["days"][-1]["ledger"]["nav"])
         self.assertEqual(report["content_sha256"], artifact_content_sha256(report))
         self.assertIn("回測帳務驗收報告", service.render_report_markdown(report))
+
+    def test_coverage_marks_naive_market_time_unavailable(self):
+        inputs = daily_inputs()
+        inputs["2026-09-02"]["execution_market"]["available_at"] = "2026-09-02T09:00:00"
+        coverage = BacktestService().inspect_fixture(request(), inputs)
+        self.assertFalse(coverage["valid"])
+        failed = [item for item in coverage["coverage"] if not item["available"]]
+        self.assertEqual([item["trade_date"] for item in failed], ["2026-09-02"])
+        self.assertIn("必須包含時區", failed[0]["reason"])
 
     def test_cli_replay_and_validate(self):
         with tempfile.TemporaryDirectory() as directory:
