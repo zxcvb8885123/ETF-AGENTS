@@ -109,7 +109,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 | 路徑 | 責任 |
 | --- | --- |
-| src/etf_agent/core/ | 唯一的 canonical JSON／content hash、含時區時間解析與有限 Decimal 解析；不依賴任何 Agent 模組，各模組以自己的錯誤型別呼叫 |
+| src/etf_agent/core/ | 唯一的 canonical JSON／content hash、含時區時間解析與有限 Decimal 解析，以及 `ImmutableRunStore`（原子寫入、拒絕覆寫、manifest 雜湊與檔案集合驗證）；不依賴任何 Agent 模組，各模組以自己的錯誤型別呼叫。Decision 與 Backtest repository 共用此 store；VirtualAccount（含 latest 指標與鎖）與報告封存格式不同，暫維持各自實作 |
 | src/etf_agent/data/ | Data Agent：TWSE／TPEx 行情、交易池、月營收、重大訊息、財報、交易狀態、來源稽核、SQLite 與不可變 Snapshot；資料契約在 `data/contracts.py` |
 | src/etf_agent/research/ | 事件研究 Fact／Bull／Bear／Adjudicator 的資料包、辯論與 ResearchResult 驗證 |
 | src/etf_agent/perception/ | 市場情緒與分析師共識 PerceptionDataBundle／MarketPerceptionResult |

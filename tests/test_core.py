@@ -1,8 +1,10 @@
 import hashlib
 import json
+import tempfile
 import unittest
 from datetime import timezone
 from decimal import Decimal
+from pathlib import Path
 
 from etf_agent.core import (
     canonical_json,
@@ -12,6 +14,7 @@ from etf_agent.core import (
     parse_aware_time,
     parse_decimal,
 )
+from etf_agent.core.artifact_store import ImmutableRunStore
 
 
 class SampleError(ValueError):
@@ -84,6 +87,52 @@ class DecimalTests(unittest.TestCase):
         self.assertEqual(decimal_string(Decimal("1.2300")), "1.23")
         self.assertEqual(decimal_string(Decimal("1E+3")), "1000")
         self.assertEqual(decimal_string(Decimal("-0.00")), "0")
+
+
+class ImmutableRunStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.store = ImmutableRunStore(self.root, schema_version="1.0", error=SampleError)
+        self.artifacts = {"result": {"status": "completed", "note": "台積電"}}
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_save_is_idempotent_and_verifiable(self):
+        path = self.store.save("run-1", self.artifacts)
+        self.assertEqual(self.store.save("run-1", self.artifacts), path)
+        self.assertEqual(self.store.verify("run-1"), path)
+        manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["artifacts"]["result"]["sha256"], canonical_sha256(self.artifacts["result"]))
+
+    def test_rejects_conflicting_content_and_unsafe_names(self):
+        self.store.save("run-1", self.artifacts)
+        with self.assertRaisesRegex(SampleError, "不同內容"):
+            self.store.save("run-1", {"result": {"status": "failed"}})
+        with self.assertRaisesRegex(SampleError, "run_id"):
+            self.store.save("../escape", self.artifacts)
+        with self.assertRaisesRegex(SampleError, "artifact 名稱"):
+            self.store.save("run-2", {"../x": {}})
+
+    def test_detects_tampering_extra_files_and_schema_mismatch(self):
+        path = self.store.save("run-1", self.artifacts)
+        (path / "extra.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(SampleError, "檔案集合"):
+            self.store.verify("run-1")
+        (path / "extra.json").unlink()
+        (path / "result.json").write_text('{"status":"tampered"}', encoding="utf-8")
+        with self.assertRaisesRegex(SampleError, "manifest 不一致"):
+            self.store.verify("run-1")
+        other = ImmutableRunStore(self.root, schema_version="2.0", error=SampleError)
+        with self.assertRaisesRegex(SampleError, "身分欄位"):
+            other.verify("run-1")
+
+    def test_rejects_symlinked_run_directory(self):
+        target = self.store.save("run-1", self.artifacts)
+        (self.root / "linked").symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(SampleError, "符號連結"):
+            self.store.verify("linked")
 
 
 if __name__ == "__main__":

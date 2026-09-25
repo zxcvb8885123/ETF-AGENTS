@@ -553,7 +553,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
     def test_repository_cleans_temporary_directory_after_interrupted_replace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repository = DecisionRepository(Path(temp_dir))
-            with patch("etf_agent.decision.finalization.os.replace", side_effect=OSError("stop")):
+            with patch("etf_agent.core.artifact_store.os.replace", side_effect=OSError("stop")):
                 with self.assertRaisesRegex(OSError, "stop"):
                     repository.save("interrupted", {"decision": {"status": "approved"}})
             self.assertFalse((Path(temp_dir) / "interrupted").exists())
