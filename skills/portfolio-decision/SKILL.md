@@ -9,6 +9,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
 
 ## 工作流程
 
+0. 尚無輸入包時，以 `build-input` 由 Snapshot、SQLite 歷史行情與 `config/decision_rules.json` 建立樣板，再用 `virtual_account.py attach-account` 綁入同 cutoff 的帳戶快照；不得手寫價格序列或規則。
 1. 執行 `validate-input`。任何 Snapshot、cutoff、內容雜湊、帳戶、規則或行情錯誤都停止；只有啟用比較基準時才驗證該基準。
 2. 執行 `compute-momentum`，再執行 `validate-momentum`。子 Agent 不得自行計算或改寫技術指標。
 3. 呼叫 `$momentum-regime` 解讀確定性結果；不可在市場狀態 `unavailable` 時補猜 regime。
@@ -29,6 +30,17 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
 從專案根目錄執行：
 
 ```bash
+.venv/bin/python cli/portfolio_decision.py \
+  --bundle artifacts/decision_input_template.json build-input \
+  --research artifacts/event_research_validated.json \
+  --trading-status artifacts/trading_status.json
+
+PYTHONPATH=src .venv/bin/python cli/virtual_account.py attach-account \
+  --template artifacts/decision_input_template.json \
+  --account-snapshot artifacts/virtual_accounts/ai-cup-2026/account_snapshot_latest.json \
+  --snapshot artifacts/research_snapshot_latest.json \
+  --output artifacts/decision_input.json
+
 .venv/bin/python cli/portfolio_decision.py \
   --bundle artifacts/decision_input.json validate-input
 

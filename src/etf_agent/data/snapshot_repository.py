@@ -7,6 +7,16 @@ from typing import Sequence
 from .database import MarketDataDatabase
 
 
+# 同一股票同一交易日有多個來源時，官方逐檔月行情優先，Yahoo 只作備援。
+_SOURCE_PRIORITY_SQL = """CASE daily_prices.source
+                               WHEN 'TPEX_TRADING_STOCK' THEN 1
+                               WHEN 'TWSE_STOCK_DAY' THEN 1
+                               WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
+                               WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
+                               WHEN 'YAHOO_FINANCE' THEN 3
+                               ELSE 9
+                           END"""
+
 class SnapshotRepository:
     """集中管理快照查詢與不可變版本關聯。"""
 
@@ -97,14 +107,7 @@ class SnapshotRepository:
                 SELECT daily_prices.*, instruments.code,
                        ROW_NUMBER() OVER (
                            PARTITION BY daily_prices.symbol, daily_prices.trade_date
-                           ORDER BY CASE daily_prices.source
-                               WHEN 'TPEX_TRADING_STOCK' THEN 1
-                               WHEN 'TWSE_STOCK_DAY' THEN 1
-                               WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
-                               WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
-                               WHEN 'YAHOO_FINANCE' THEN 3
-                               ELSE 9
-                           END
+                           ORDER BY %s
                        ) AS source_rank
                 FROM daily_prices
                 JOIN instruments USING(symbol)
@@ -119,8 +122,47 @@ class SnapshotRepository:
             JOIN raw_payloads ON raw_payloads.id = ranked.raw_payload_id
             WHERE source_rank = 1
             ORDER BY ranked.symbol
-            """,
+            """ % _SOURCE_PRIORITY_SQL,
             (trade_date, cutoff),
+        ).fetchall()
+
+    @staticmethod
+    def load_price_history(
+        connection: sqlite3.Connection,
+        before_date: str,
+        cutoff: str,
+        bars_per_symbol: int,
+    ):
+        """每檔取 before_date 前最近 N 個交易日，來源優先序與 load_prices 相同。"""
+        return connection.execute(
+            """
+            WITH ranked AS (
+                SELECT daily_prices.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY daily_prices.symbol, daily_prices.trade_date
+                           ORDER BY %s
+                       ) AS source_rank
+                FROM daily_prices
+                JOIN instruments USING(symbol)
+                WHERE instruments.in_competition_universe = 1
+                  AND daily_prices.trade_date < ?
+                  AND daily_prices.fetched_at <= ?
+            ), recent AS (
+                SELECT ranked.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY symbol ORDER BY trade_date DESC
+                       ) AS recency
+                FROM ranked
+                WHERE source_rank = 1
+            )
+            SELECT symbol, trade_date, open_price, high_price, low_price,
+                   close_price, adjusted_close_price, volume_shares, source,
+                   fetched_at
+            FROM recent
+            WHERE recency <= ?
+            ORDER BY symbol, trade_date
+            """ % _SOURCE_PRIORITY_SQL,
+            (before_date, cutoff, bars_per_symbol),
         ).fetchall()
 
     @staticmethod

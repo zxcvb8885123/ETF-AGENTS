@@ -64,6 +64,9 @@
 - 收盤價未公布時回 `waiting_for_close_data` 並阻擋新 prepare；沒有對應 Decision run 時直接以新 Snapshot 續接估值。持股缺官方收盤價時 fail-closed。
 - 修正 `apply-decision` 未傳 `reuse_sell_proceeds` 給成交模擬器（賣單成交時會 KeyError），並將日終狀態交易日改用執行日收盤資料的 `trade_date`。
 - 新增唯讀 FastAPI 儀表板（`cli/dashboard.py`、`./start.sh dashboard`）顯示本金、NAV、今日／累積報酬、現金、持倉與每日紀錄。
+- 新增 `portfolio_decision.py build-input`，補上 `attach-account` 所需的 DecisionInputBundle 樣板來源：內嵌 Snapshot、`config/decision_rules.json`、已驗證 ResearchResult、選配交易狀態包，以及與 Snapshot 相同來源優先序、`fetched_at <= cutoff` 的 SQLite 歷史行情（預設 120 根，最後一根直接取 Snapshot 最新行情與證據）。有還原收盤價的列以同一比例還原開高低價；缺少 OHLC 時停止，不以收盤價補值。
+- `config/decision_rules.json` 與 `competition_rules.json` 分開保存，避免改變 genesis 的規則雜湊。其中最低手續費 20 元、產業上限 1（不限制）、`reuse_sell_proceeds=false` 與 `max_nav_drift_rate` 為暫定值，規則發布時間暫以交易池 PDF 日期 2026-09-14 表示，待正式規則確認後升版。
+- 真實資料演練（Snapshot `3061d9e0…`、cutoff 2026-09-22T14:21:56Z，在帳本副本上 `prepare-day` 後 `attach-account`）：150 檔價格序列、規則、帳戶與事件研究結果均通過驗證（3718.TWO 僅 13 根，動能會標為不足）；唯一錯誤為缺少 `trading_status_bundle`，與 TS0 核准來源為 0 的狀態一致，正式決策維持阻擋。
 
 ## 失敗與邊界案例
 

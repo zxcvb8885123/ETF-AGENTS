@@ -23,6 +23,7 @@ ROOT = ProjectRootLocator(Path(__file__)).locate()
 sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.decision import (  # noqa: E402
+    DEFAULT_LOOKBACK_BARS,
     DecisionToolError,
     PortfolioDecisionApplicationService,
 )
@@ -35,6 +36,19 @@ class PortfolioDecisionApplication:
     def run(self, argv: Optional[Sequence[str]] = None) -> int:
         args = self.build_parser().parse_args(argv)
         try:
+            if args.command == "build-input":
+                result = PortfolioDecisionApplicationService.build_input_file(
+                    args.snapshot,
+                    args.database,
+                    args.rules,
+                    args.bundle,
+                    research_paths=args.research,
+                    trading_status_path=args.trading_status,
+                    account_path=args.account_snapshot,
+                    lookback_bars=args.lookback_bars,
+                )
+                self.emit(result)
+                return 0 if result["valid"] else 2
             service = PortfolioDecisionApplicationService.from_path(args.bundle)
             if args.command == "validate-input":
                 result = service.validate_input()
@@ -185,6 +199,25 @@ class PortfolioDecisionApplication:
             default=self.root / "artifacts" / "decision_input_latest.json",
         )
         commands = parser.add_subparsers(dest="command", required=True)
+        build_input = commands.add_parser(
+            "build-input",
+            help="由 Snapshot、SQLite 歷史行情與決策規則建立 DecisionInputBundle（寫入 --bundle）；未附帳戶時輸出供 attach-account 使用的樣板",
+        )
+        build_input.add_argument(
+            "--snapshot", type=Path, default=self.root / "artifacts" / "research_snapshot_latest.json"
+        )
+        build_input.add_argument("--database", type=Path, default=self.root / "var" / "etf_agent.db")
+        build_input.add_argument(
+            "--rules", type=Path, default=self.root / "config" / "decision_rules.json"
+        )
+        build_input.add_argument(
+            "--research", type=Path, action="append", default=[],
+            help="已驗證 ResearchResult，可重複指定",
+        )
+        build_input.add_argument("--trading-status", type=Path, help="trading_status.py build-bundle 的輸出")
+        build_input.add_argument("--account-snapshot", type=Path)
+        build_input.add_argument("--lookback-bars", type=int, default=DEFAULT_LOOKBACK_BARS)
+
         commands.add_parser("validate-input", help="驗證共用 DecisionInputBundle")
 
         momentum = commands.add_parser(

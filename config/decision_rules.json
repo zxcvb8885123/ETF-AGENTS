@@ -1,0 +1,22 @@
+{
+  "version": "decision-rules-2026-09-25",
+  "source_url": "config/competition_rules.json",
+  "published_at": "2026-09-14T00:00:00+08:00",
+  "available_at": "2026-09-14T00:00:00+08:00",
+  "required_benchmark_ids": [],
+  "lot_size": 1000,
+  "commission_rate": "0.001425",
+  "sell_tax_rate": "0.003",
+  "minimum_commission": "20",
+  "max_stock_weight": "0.1",
+  "special_weight_limits": {
+    "2330.TW": "0.25"
+  },
+  "max_sector_weight": "1",
+  "min_positions": 20,
+  "max_positions": 30,
+  "cash_weight_must_be_below": "0.25",
+  "minimum_active_share": "0",
+  "reuse_sell_proceeds": false,
+  "max_nav_drift_rate": "0.000001"
+}

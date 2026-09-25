@@ -52,6 +52,7 @@ python3 -m venv .venv
 | `.venv/bin/python cli/fundamental_research.py compute-metrics ...` | 重算基本面指標及其來源依賴 |
 | `.venv/bin/python cli/fundamental_research.py validate-result ...` | 驗證基本面研究草稿、引用與內容雜湊 |
 | `.venv/bin/python cli/research_report.py build` | 將已驗證研究結果建立成 ResearchReport JSON 與 Markdown |
+| `.venv/bin/python cli/portfolio_decision.py --bundle TEMPLATE.json build-input --research RESULT.json [--trading-status STATUS.json]` | 由 Snapshot、SQLite 歷史行情（預設 120 根）與 `config/decision_rules.json` 建立 DecisionInputBundle 樣板，再以 `virtual_account.py attach-account` 綁入帳戶；未提供交易狀態包時回報缺口（exit 2） |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
@@ -93,7 +94,7 @@ python3 -m venv .venv
 - 競賽基本風控：持股檔數、現金、個股權重與交易池；Active Share 為選配比較指標。
 - Docker 與快速啟動流程。
 
-事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；每日虛擬帳本 VA1～VA3 fixture 工具鏈現已具備 10 億 TWD 唯一開帳、決策前帳戶快照、完整 Decision run 驗證、模擬成交與日終封存。每日報告工作流尚未自動串接帳本；交易狀態官方來源核准、150 檔真實覆蓋、有效競賽規則、真實歷史／前向回測及正式排程仍未完成。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
+事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；每日虛擬帳本 VA1～VA3 fixture 工具鏈現已具備 10 億 TWD 唯一開帳、決策前帳戶快照、完整 Decision run 驗證、模擬成交與日終封存。決策輸入包已可由 `portfolio_decision.py build-input` 從真實 Snapshot 與歷史行情建立，2026-09-25 以真實資料演練時僅剩交易狀態包缺口；每日報告工作流尚未自動串接帳本；交易狀態官方來源核准、150 檔真實覆蓋、有效競賽規則、真實歷史／前向回測及正式排程仍未完成。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
 
 Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已接入，目前接續財報彙總、交易狀態與細粒度工具。官方歷史 CLI 只驗證保存區間與終止日覆蓋；尚無版本化交易日曆，不能宣稱期間內每個交易日完整，也不能用於正式歷史回測。之後才依序進行新聞候選（M2）與    Codex／Claude Skill 工具循環（M3）。官方 2026-09-14 版交易池已將 `5371 中光電` 更新為 `3718 中光電投控`，設定檔同步完成。
 

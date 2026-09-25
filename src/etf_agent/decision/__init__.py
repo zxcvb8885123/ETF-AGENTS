@@ -10,6 +10,7 @@ from .contracts import (
     decision_rules_sha256,
     artifact_content_sha256,
 )
+from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
 from .trade_intent import (
     BuyIntentPacketValidator,
@@ -49,6 +50,8 @@ __all__ = [
     "decision_bundle_sha256",
     "decision_rules_sha256",
     "artifact_content_sha256",
+    "DEFAULT_LOOKBACK_BARS",
+    "DecisionInputBuilder",
     "MomentumEngine",
     "MomentumResultValidator",
     "BuyIntentPacketValidator",

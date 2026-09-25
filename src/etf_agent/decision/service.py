@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Sequence
+
+from etf_agent.data import MarketDataDatabase, SnapshotRepository
 
 from .contracts import (
     DecisionInputValidator,
     DecisionToolError,
     artifact_content_sha256,
 )
+from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
 from .allocation import AllocationOrderEngine, ProposalValidator
 from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
@@ -61,6 +64,64 @@ class PortfolioDecisionApplicationService:
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    @classmethod
+    def build_input_file(
+        cls,
+        snapshot_path: Path,
+        database_path: Path,
+        rules_path: Path,
+        output: Path,
+        research_paths: Sequence[Path] = (),
+        trading_status_path: Optional[Path] = None,
+        account_path: Optional[Path] = None,
+        lookback_bars: int = DEFAULT_LOOKBACK_BARS,
+    ) -> Dict[str, object]:
+        """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。"""
+        if lookback_bars < 1:
+            raise DecisionToolError("lookback_bars 必須至少為 1")
+        snapshot = cls.read_json(snapshot_path, " ResearchSnapshot")
+        latest_date = snapshot.get("latest_trade_date")
+        cutoff = snapshot.get("decision_cutoff")
+        if not isinstance(latest_date, str) or not isinstance(cutoff, str):
+            raise DecisionToolError("Snapshot 缺少 latest_trade_date 或 decision_cutoff")
+        if not database_path.is_file():
+            raise DecisionToolError("找不到行情資料庫：%s" % database_path)
+        repository = SnapshotRepository(MarketDataDatabase(database_path))
+        with repository.connect() as connection:
+            # 最後一根 K 線取自 Snapshot，歷史只需 lookback - 1 根。
+            history = [
+                dict(row)
+                for row in repository.load_price_history(
+                    connection, latest_date, cutoff, lookback_bars - 1
+                )
+            ]
+        builder = DecisionInputBuilder(
+            snapshot,
+            cls.read_json(rules_path, " DecisionRules"),
+            history,
+            research_results=[cls.read_json(path, " ResearchResult") for path in research_paths],
+            trading_status=(
+                cls.read_json(trading_status_path, " 交易狀態包")
+                if trading_status_path is not None
+                else None
+            ),
+            account_snapshot=(
+                cls.read_json(account_path, " AccountSnapshot")
+                if account_path is not None
+                else None
+            ),
+        )
+        bundle = builder.build()
+        errors = builder.validate(bundle)
+        cls._write(bundle, output)
+        return {
+            "valid": not errors,
+            "errors": errors,
+            "output": str(output),
+            "bundle_id": bundle["bundle_id"],
+            "template": "account_snapshot" not in bundle,
+        }
 
     def validate_input(self) -> Dict[str, object]:
         errors = DecisionInputValidator(self.bundle).validate()
