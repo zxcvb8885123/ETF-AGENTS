@@ -55,7 +55,7 @@ python3 -m venv .venv
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-scenarios --policy POLICY.json --proposal PROPOSAL.json` | 建立價格與流動性壓力情境 |
-| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金、曝險及全部基準 Active Share |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-guard --policy POLICY.json --proposal PROPOSAL.json --scenario SCENARIO.json` | 檢查交易池、可交易性、現金與個股曝險；僅在規則明確要求時檢查基準 Active Share |
 | `PYTHONPATH=src python3 cli/account_data.py import --input ACCOUNT.json --cutoff ISO_TIME --run-id RUN_ID --mode fixture` | 匯入標準帳戶 JSON 並封存原始檔與雜湊；正式模式須先在 `config/account_sources.json` 核准 provider／版本 |
 | `PYTHONPATH=src python3 cli/account_data.py reconcile --account ACCOUNT_BUNDLE.json --snapshot SNAPSHOT.json --max-nav-drift-rate RATE --output RECONCILIATION.json` | 以同一 cutoff Snapshot 重算 NAV、現金及價格覆蓋，另產 Markdown 對帳報告 |
 | `PYTHONPATH=src python3 cli/account_data.py export-decision-account --account ACCOUNT_BUNDLE.json --reconciliation RECONCILIATION.json --snapshot SNAPSHOT.json --output DECISION_ACCOUNT.json` | 僅在正式來源且通過對帳、可無損轉換時匯出決策帳戶欄位 |
@@ -84,9 +84,9 @@ python3 -m venv .venv
 - 市場情緒與分析師研究 Agent MVP：`PerceptionDataBundle`、逐筆情緒標籤、去重聚合、分析師共識修正、事件預期差、`MarketPerceptionResult` validator、Skill 與 CLI。
 - 基本面研究 Agent FR0～FR3 fixture MVP：固定 Snapshot 的 `FundamentalDataBundle`、Decimal 指標重算、`FundamentalResearchResult` validator、CLI、Skill 與不覆寫封存；一般業目前支援營業利益率、負債占資產比率、營收／淨利同比及營業利益率年差。
 - Research Report V0：整合 Snapshot、事件研究與選配市場認知結果，產生同源、可重建驗證且不含交易建議的 JSON／Markdown 報告。
-- Portfolio Decision P0～P6 fixture 驗收：共用輸入、動能、獨立買賣裁決、確定性整張配置／訂單／費稅、部分成交情境重建、必備基準 Guard、完整修正鏈重播及磁碟封存驗證。
+- Portfolio Decision P0～P6 fixture 驗收：共用輸入、動能、獨立買賣裁決、確定性整張配置／訂單／費稅、部分成交情境重建、競賽上限 Guard（基準比較可選）、完整修正鏈重播及磁碟封存驗證。
 - 事件策略 V1：事件評分、價格確認及進攻／防守配置。
-- 競賽基本風控：持股檔數、現金、個股權重、交易池與 Active Share。
+- 競賽基本風控：持股檔數、現金、個股權重與交易池；Active Share 為選配比較指標。
 - Docker 與快速啟動流程。
 
 事件研究 Agent 可研究目前 Snapshot 中的月營收與重大訊息；MoM／YoY 只作歷史基準，不能直接等同市場預期或方向。市場情緒與分析師研究 Agent 已完成契約與 fixture 驗證，但真實社群／券商資料仍須通過授權、歷史版本與時間點可得性審查。目前可將已保存且已驗證的研究 artifact 建立成 Research Report V0；2026-09-22 已完成一次 3 件真實事件的可重建演練，因沒有合法、歷史化市場認知資料而降級，且三件均未成為交易候選。Portfolio Decision 已完成 P0～P6 fixture 驗收，可把已驗證裁決轉成整張配置、模擬訂單、依成交重建的情境、風控、完整修正歷程與最終結果。回測 Agent B0～B2 fixture MVP 已能以歷史時鐘重播決策、模擬整張成交、交割、公司行動與帳務，並封存可重建的帳務驗收結果；每日虛擬帳本 VA1～VA3 fixture 工具鏈現已具備 10 億 TWD 唯一開帳、決策前帳戶快照、完整 Decision run 驗證、模擬成交與日終封存。每日報告工作流尚未自動串接帳本；交易狀態官方來源核准、150 檔真實覆蓋、有效競賽規則、真實歷史／前向回測及正式排程仍未完成。架構不設「主辦平台送件／交易執行 Agent」；系統交付報告與已驗證候選檔，平台送件與交易由人工在系統外處理，人工確認也不會觸發自動送件或下單。
@@ -97,11 +97,13 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已�
 
 ## 資料位置
 
-資料擴充依 [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md)（2026-09-23，待實作）：官方來源加 FinMind，先補日曆、交易狀態、ETF 基準，再擴充歷史財報、現金流與籌碼；FinLab 選配、Fugle 延後。金融資料 API 不改變本地 Codex／Claude 架構；新增 Provider 尚未接入。
+資料擴充依 [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md)（2026-09-23，待實作）：官方來源加 FinMind，先補日曆與交易狀態；ETF 基準列選配，再擴充歷史財報、現金流與籌碼；FinLab 選配、Fugle 延後。金融資料 API 不改變本地 Codex／Claude 架構；新增 Provider 尚未接入。
 
 下一批按 [正式決策必要資料來源核實計畫](docs/decision_data_readiness_plan.md) 執行 D0／TS0／ETF 來源盤點、小樣本與就緒判定。公開官方來源工作可先進行；FinMind Token 可暫時留空，D1 接入與配額測試再使用，ETF 付費權限須先有覆蓋與授權證據才評估。
 
-2026-09-24 的 [來源稽核紀錄](docs/source_audit/2026-09-24_findings.md)已保存十個官方公開端點的初步回應與 12 檔交易池樣本；空白佔位列、來源完整性及 ETF 權重仍未核准，正式決策保持 blocked。
+2026-09-24 的 [來源稽核紀錄](docs/source_audit/2026-09-24_findings.md)已保存十個官方公開端點的初步回應與 12 檔交易池樣本；空白佔位列與來源完整性仍未核准，正式決策保持 blocked；ETF 權重缺漏不屬競賽上限阻擋。
+
+2026-09-25 的 [休市日跨日稽核](docs/source_audit/2026-09-25_findings.md)已重抓相同十個端點並保存雜湊、固定樣本及就緒判定。TWSE／TPEx 均公告 9/25 與 9/28 休市；多數端點仍為 9/24 資料不能判作當日逾期。來源完整性與持續使用／保存條件仍待核實，交易狀態核准清單維持空白。主辦 30 檔 ETF 清單與外部 ETF 持股權重僅供選配比較；目前取得的 D-Plan 指南沒有將 Active Share 列為每日硬性上限，不能以缺少 ETF 權重阻擋正式決策。
 
 目前 M1 官方交易狀態已完成 TS1～TS4 的契約、固定 cutoff 重建、SQLite migration、CLI 與 Guard adapter；[M1 官方交易狀態接入](docs/trading_status_m1_plan.md) 的 TS0 來源核准與 TS5 150 檔真實覆蓋仍未完成。資料不足時阻擋正式決策，保留可用研究資料。
 
@@ -111,7 +113,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | --- | --- |
 | `var/etf_agent.db` | SQLite 資料庫 |
 | `data/official_universe.csv` | 已填入主辦方 150 檔股票交易池（上市 100、上櫃 50） |
-| `data/active_etf_top10.csv` | Active Share 的 ETF 前十大持股資料 |
+| `data/active_etf_top10.csv` | 選配 Active Share 比較用 ETF 前十大持股資料（目前空白） |
 | `artifacts/` | 後續每日報告、交易書與稽核檔案 |
 
 資料庫查詢、Docker 指令與容器設定請參閱下方的 Docker 使用說明。
@@ -152,7 +154,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 
 ```text
 config/                 競賽與資料來源設定
-data/                   官方交易池與 ETF 基準資料
+data/                   官方交易池與選配 ETF 比較資料
 docs/                   規劃、架構與操作文件
 cli/                    Agent、人工與排程共用的穩定 CLI 入口
 scripts/                初始化、收集與狀態查詢維運指令

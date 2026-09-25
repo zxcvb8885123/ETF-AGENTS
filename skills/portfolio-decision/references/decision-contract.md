@@ -25,8 +25,8 @@
 - `snapshot_sha256` 使用排序 key、無多餘空白的 canonical JSON 計算。
 - `bundle_sha256` 鎖定整份輸入內容；頂層與帳戶、規則、基準、行情物件使用嚴格欄位白名單，不能夾帶 peer packet 或執行指令。
 - `account_snapshot` 必須有 `account_id`、`available_at`、`valuation_at`、`source_evidence_id`、`cash`、`settled_cash`、`unsettled_cash`、`nav` 與不重複的正股數持股。`cash=settled_cash+unsettled_cash`，NAV 必須在規則容許誤差內等於 cutoff 行情重算值；配置只能使用 settled cash。
-- `rules` 必須保存來源 URL、發布／可得時間、必備基準 ID、不可放寬限制及排除自身欄位後的 `config_sha256`。任何必備基準缺漏即拒絕。
-- `benchmarks` 至少一筆；每筆保存 `benchmark_id`、版本、可得時間及成分權重。
+- `rules` 必須保存來源 URL、發布／可得時間、不可放寬限制及排除自身欄位後的 `config_sha256`。`required_benchmark_ids` 可為空；只有明確啟用有來源的基準約束時才列 ID，所列基準缺漏即拒絕。
+- `benchmarks` 可為空；若提供，每筆保存 `benchmark_id`、版本、可得時間及成分權重。空必備基準時 `minimum_active_share` 必須為 0。
 - `price_series` 必須覆蓋 Snapshot 全交易池，每個序列以 `series_sha256` 鎖定並依日期嚴格遞增；最後交易日、收盤價與證據必須等於 Snapshot 最新行情。
 - `research_results` 若提供，必須通過既有 ResearchResult 2.1 validator。
 - `perception_inputs` 若提供，必須成對包含資料 bundle 與結果，兩者 cutoff 必須和主決策完全相同，並通過既有授權與重算 validator。
@@ -104,7 +104,7 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 
 ## DecisionPolicy 與 ProposalBundle
 
-`DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的策略／執行設定。可調策略包含現金緩衝、預設目標權重、減碼比例、滑價、換手與壓力情境；手續費、交易稅、最低費用、交易單位、個股／產業／持股檔數／現金／Active Share 限制及賣款可否重用是硬規則，Policy 的重複欄位必須與 `DecisionInputBundle.rules` 完全一致，不能藉 Policy 放寬。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。
+`DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的策略／執行設定。可調策略包含現金緩衝、預設目標權重、減碼比例、滑價、換手與壓力情境；手續費、交易稅、最低費用、交易單位、個股／產業／持股檔數／現金限制及賣款可否重用是硬規則；Active Share 僅在有來源規則明確要求時才成為額外約束，Policy 的重複欄位必須與 `DecisionInputBundle.rules` 完全一致，不能藉 Policy 放寬。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。
 
 第一版 `lot_size` 必須固定為 `1000`，也就是一張。`OrderProposal` 同時輸出 `lots` 與 `shares=lots*1000`；不產生零股單。帳戶既有持股若不是 1,000 股的整數倍，配置流程停止並要求先提供明確的零股處理政策。
 
@@ -133,7 +133,7 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
   "min_positions": 20,
   "max_positions": 30,
   "cash_weight_ceiling": "0.25",
-  "minimum_active_share": "0.20",
+  "minimum_active_share": "0",
   "stress_price_decline_rate": "0.10",
   "stress_slippage_multiplier": "2",
   "liquidity_fill_rate": "0.50",
@@ -147,7 +147,7 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 
 ## ScenarioResult、GuardResult 與 RiskReview
 
-`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力。每個情境從 cutoff 帳戶重建：成交率以張為單位向下取整，滑價獨立套用，逐筆重算成交價、費稅、可用現金、總現金、持股、收盤估值、NAV 與未成交張數；不能從「假設全部成交」的配置直接乘跌幅。`GuardResult` 對提案及每個情境檢查交易池、明確可交易狀態、持股數、現金／買力、個股與產業權重、換手、強制退出流動性，以及規則指定每一份必備基準的 Active Share。
+`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力。每個情境從 cutoff 帳戶重建：成交率以張為單位向下取整，滑價獨立套用，逐筆重算成交價、費稅、可用現金、總現金、持股、收盤估值、NAV 與未成交張數；不能從「假設全部成交」的配置直接乘跌幅。`GuardResult` 對提案及每個情境檢查交易池、明確可交易狀態、持股數、現金／買力、個股與產業權重、換手、強制退出流動性；若規則另有明確基準要求，再檢查每一份必備基準的 Active Share。
 
 Portfolio Risk Agent 只輸出 `RiskReview`：
 

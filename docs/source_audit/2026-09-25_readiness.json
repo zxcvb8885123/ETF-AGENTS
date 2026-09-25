@@ -1,0 +1,56 @@
+{
+  "audit_date": "2026-09-25",
+  "decision_readiness": "blocked",
+  "assessment_emitted": false,
+  "market_session": {
+    "date": "2026-09-25",
+    "twse": "closed",
+    "tpex": "closed",
+    "evidence": [
+      "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=html",
+      "https://www.tpex.org.tw/storage/eb_data/11509/11503027221.html"
+    ]
+  },
+  "universe": {
+    "total": 150,
+    "twse": 100,
+    "tpex": 50
+  },
+  "trading_status": {
+    "approved_sources": 0,
+    "probed_sources": 9,
+    "coverage": "unknown",
+    "official_tradability_assessments": 0,
+    "reason": "OpenAPI schema 與單次／休市日回應不能證明完整現況、歷史可得時間或自動化保存授權；空白佔位列存在"
+  },
+  "calendar": {
+    "confirmed_closed_dates": [
+      "2026-09-25",
+      "2026-09-28"
+    ],
+    "full_versioned_calendar": false
+  },
+  "etf_benchmarks": {
+    "official_30_fund_source_file_located": false,
+    "approved_weight_rows": 0,
+    "status": "optional_missing"
+  },
+  "finmind_token": "not_required_for_this_audit",
+  "licensing": {
+    "government_open_data_candidates": [
+      "https://data.gov.tw/dataset/11761",
+      "https://data.gov.tw/dataset/11736",
+      "https://data.gov.tw/dataset/11395",
+      "https://data.gov.tw/dataset/11396",
+      "https://data.gov.tw/dataset/48665"
+    ],
+    "license_url": "https://data.gov.tw/license",
+    "direct_openapi_mapping_verified": false,
+    "status": "candidate",
+    "crosschecked_datasets": [
+      "https://data.gov.tw/dataset/11736",
+      "https://data.gov.tw/dataset/11395"
+    ],
+    "crosscheck_path": "docs/source_audit/2026-09-25_ogd_crosscheck.json"
+  }
+}

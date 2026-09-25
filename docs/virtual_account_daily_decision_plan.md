@@ -8,7 +8,7 @@
 
 已具備：10 億初始本金設定、Portfolio Decision 的 AccountSnapshot 契約與買賣／配置／風控工具、回測用 `AccountLedger`／`ExecutionSimulator` 的多日 fixture 實作，以及 Research Report → Decision run → DailyReport 的離線接線。
 
-尚缺：report workflow 自動執行 `prepare-day`／`apply-decision`、可追溯的市場 Provider／正式規則來源、多日完整操作驗收及固定版本前向驗證。正式模式接入既有帳本時，已強制驗證當前 prepare-day run、Snapshot／cutoff 與 Decision AccountSnapshot 一致。交易狀態、完整 ETF 基準、核實的規則版本仍是正式決策前置缺口。
+尚缺：report workflow 自動執行 `prepare-day`／`apply-decision`、可追溯的市場 Provider／正式規則來源、多日完整操作驗收及固定版本前向驗證。正式模式接入既有帳本時，已強制驗證當前 prepare-day run、Snapshot／cutoff 與 Decision AccountSnapshot 一致。交易狀態、核實的規則版本仍是正式決策前置缺口；ETF 基準持股僅供選配比較。
 
 ## 每日流程與帳務規則
 
@@ -69,4 +69,4 @@ Python、契約、CLI 或 Skill 實作後依 AGENTS.md 執行全專案 unittest�
 
 ## 使用者可見的結果
 
-完成 VA1～VA3 fixture 工具鏈後，可用 CLI 建立 10 億帳戶、把帳戶快照接入完整 Decision run、模擬成交並查看封存後的收盤狀態。這仍是 fixture 驗收；真實 150 檔行情、事件研究、交易狀態、ETF 基準、規則與風控輸入通過前，不會自動形成正式每日買賣報告。
+完成 VA1～VA3 fixture 工具鏈後，可用 CLI 建立 10 億帳戶、把帳戶快照接入完整 Decision run、模擬成交並查看封存後的收盤狀態。這仍是 fixture 驗收；真實 150 檔行情、事件研究、交易狀態、規則與風控輸入通過前，不會自動形成正式每日買賣報告。

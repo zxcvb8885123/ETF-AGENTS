@@ -511,8 +511,12 @@ class DecisionInputValidator:
             errors.append("rules.config_sha256 與規則內容不一致")
         try:
             required = string_list(rules, "required_benchmark_ids")
-            if not required or len(required) != len(set(required)):
-                errors.append("rules.required_benchmark_ids 必須非空且不得重複")
+            if len(required) != len(set(required)):
+                errors.append("rules.required_benchmark_ids 不得重複")
+            if not required and decimal_value(
+                rules.get("minimum_active_share"), "rules.minimum_active_share"
+            ) != 0:
+                errors.append("沒有必備 ETF 基準時，rules.minimum_active_share 必須為 0")
         except DecisionToolError as error:
             errors.append(str(error))
         for field in ("lot_size", "min_positions", "max_positions"):
@@ -556,8 +560,8 @@ class DecisionInputValidator:
 
     def _validate_benchmarks(self, errors: List[str]) -> None:
         benchmarks = self.bundle.get("benchmarks")
-        if not isinstance(benchmarks, list) or not benchmarks:
-            errors.append("benchmarks 必須是非空陣列")
+        if not isinstance(benchmarks, list):
+            errors.append("benchmarks 必須是陣列")
             return
         seen: Set[str] = set()
         for index, benchmark in enumerate(benchmarks):

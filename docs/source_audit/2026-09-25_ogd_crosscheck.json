@@ -1,0 +1,49 @@
+{
+  "audit_date": "2026-09-25",
+  "status": "candidate",
+  "sources": [
+    {
+      "source_id": "TPEX_SPECIAL_OGD",
+      "url": "https://www.tpex.org.tw/web/stock/aftertrading/cmode/chtm_result.php?l=zh-tw&o=data",
+      "dataset_url": "https://data.gov.tw/dataset/11736",
+      "http_status": 200,
+      "content_type": "application/csv;charset=utf-8",
+      "response_date": "Fri, 25 Sep 2026 04:18:20 GMT",
+      "last_modified": null,
+      "fetched_at": "2026-09-25T04:18:20.443366+00:00",
+      "sha256": "c6eb0bfd3f5a6fb4c6a8d2374b7ff22421b80c3315d777a280935f69cafbb80b",
+      "size": 1294,
+      "raw_path": "artifacts/source-audit/2026-09-25/TPEX_SPECIAL_OGD.csv",
+      "row_count": 21,
+      "json_source_id": "TPEX_SPECIAL",
+      "json_row_count": 21,
+      "same_code_multiset": true,
+      "csv_date_counts": {
+        "1150924": 21
+      },
+      "comparison_note": "CSV 與 JSON 代號重數及列數相同；尚未證明全部欄位與更新時點等價。"
+    },
+    {
+      "source_id": "TPEX_ATTENTION_OGD",
+      "url": "https://www.tpex.org.tw/www/zh-tw/bulletin/attention?response=data",
+      "dataset_url": "https://data.gov.tw/dataset/11395",
+      "http_status": 200,
+      "content_type": "application/csv;charset=utf-8",
+      "response_date": "Fri, 25 Sep 2026 04:18:20 GMT",
+      "last_modified": null,
+      "fetched_at": "2026-09-25T04:18:20.546141+00:00",
+      "sha256": "9262a131a811b01a73481215e4598c4ea6247b48dbdc8f9ed265224473a69d2d",
+      "size": 4687,
+      "raw_path": "artifacts/source-audit/2026-09-25/TPEX_ATTENTION_OGD.csv",
+      "row_count": 20,
+      "json_source_id": "TPEX_ATTENTION",
+      "json_row_count": 38,
+      "same_code_multiset": false,
+      "csv_date_counts": {
+        "1150924": 20
+      },
+      "same_code_multiset_after_json_date_filter": true,
+      "comparison_note": "CSV 僅 1150924；JSON 同時含 1150923 與 1150924。僅比較代號重數，尚未證明全部欄位與更新時點等價。"
+    }
+  ]
+}

@@ -1,19 +1,19 @@
 # 下一批：正式決策必要資料來源核實（D0／TS0／ETF）
 
-日期：2026-09-24。狀態：D0／TS0 初步公開端點與 12 檔樣本已探測，結果見[來源稽核紀錄](source_audit/2026-09-24_findings.md)；正式來源核准、ETF 權重與 TS5 未完成。本文件是執行計畫，不代表 API 已接入或正式決策可用。承接 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)、[官方交易狀態計畫](trading_status_m1_plan.md)及[正式報告交付計畫](competition_report_delivery_plan.md)。
+日期：2026-09-24。狀態：D0／TS0 初步公開端點與 12 檔樣本已探測，9/25 休市日跨日重測見[最新來源稽核](source_audit/2026-09-25_findings.md)；正式來源核准與 TS5 未完成；ETF 權重屬選配比較資料。本文件是執行計畫，不代表 API 已接入或正式決策可用。承接 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)、[官方交易狀態計畫](trading_status_m1_plan.md)及[正式報告交付計畫](competition_report_delivery_plan.md)。
 
 ## 目標與交付順序
 
-先確定正式決策所需資料的來源、授權、可得時間與完整性，再接 Provider。每個候選來源有明確的 `approved`、`candidate` 或 `rejected` 結論及原始證據；沒有證據時維持 `candidate`。研究可用與正式決策可用分開報告。
+先確定正式決策所需資料的來源、授權、可得時間與完整性，再接 Provider。依 2026-09-25 規則核對，外部 ETF 持股權重與 Active Share 不列為每日 D-Plan 硬性風控；缺少權重不阻擋競賽持股上限檢查。每個候選來源有明確的 `approved`、`candidate` 或 `rejected` 結論及原始證據；沒有證據時維持 `candidate`。研究可用與正式決策可用分開報告。
 
 | 批次 | 工作 | 可檢查的交付物與通過條件 |
 | --- | --- | --- |
 | 1. D0 來源矩陣 | 盤點官方交易日曆、TWSE／TPEx 交易狀態、競賽指定 ETF 的投信持股揭露；另記 FinMind 候選資料集 | 每列列出官方文件／端點、涵蓋市場與標的、查詢期間、分頁與空回應語意、發布／可得／抓取時間、使用與保存條件、核准狀態及待查問題；保留原始樣本 ID／SHA-256 |
 | 2. TS0 小樣本 | 對各市場與必要交易限制類別重測；抽 6 上市＋6 上櫃，涵蓋金融業、缺值與代號承接 | 證明端點是完整現況或增量、更新頻率、日期欄位、取消／更正語意；無法證明完整性者不核准，空陣列不推論全部可交易 |
-| 3. ETF 基準小樣本 | 從主辦方要求的 ETF 集合逐一找到投信或主辦原始揭露，核對完整持股與權重 | 記錄每檔 ETF 的揭露日期、`available_at` 證據、權重口徑、現金與非股票資產、原始檔及授權；部分或缺漏持股不得正規化為完整基準 |
-| 4. 就緒判定 | 把日曆、交易狀態、ETF 基準與規則逐項對照正式 Decision／Guard 輸入 | 輸出固定 150 檔及全部必備 ETF 的 `complete／missing／conflict` 和具體缺口；缺任一必要輸入時保持 blocked，不產生正式候選 |
+| 3. ETF 基準小樣本（選配、可延後） | 從主辦方要求的 ETF 集合逐一找到投信或主辦原始揭露，核對完整持股與權重 | 記錄每檔 ETF 的揭露日期、`available_at` 證據、權重口徑、現金與非股票資產、原始檔及授權；部分或缺漏持股不得正規化為完整基準 |
+| 4. 就緒判定 | 把日曆、交易狀態與競賽規則逐項對照正式 Decision／Guard 輸入；ETF 基準另列選配狀態 | 輸出固定 150 檔的 `complete／missing／conflict` 和具體缺口；缺任一真正必要輸入時保持 blocked，不產生正式候選 |
 
-股票交易池已在 `data/official_universe.csv` 設定 150 檔，`config/competition_rules.json` 亦記錄分母與來源；本批缺的是這 150 檔的正式交易狀態驗證。小樣本通過後才擴至 TS5 的 150 檔必要類別及全部必備 ETF。交易日曆須提供應有交易日分母；僅有起訖日行情不能宣稱整段完整。ETF 持股權重是另一項資料，現有 `data/active_etf_top10.csv` 只有標頭，不能拿股票交易池、ETF 名單或第三方估算填入權重。
+股票交易池已在 `data/official_universe.csv` 設定 150 檔，`config/competition_rules.json` 亦記錄分母與來源；本批缺的是這 150 檔的正式交易狀態驗證。小樣本通過後才擴至 TS5 的 150 檔必要類別。交易日曆須提供應有交易日分母；僅有起訖日行情不能宣稱整段完整。ETF 持股權重是另一項選配比較資料，現有 `data/active_etf_top10.csv` 只有標頭；不以其缺少阻擋每日決策，也不能拿股票交易池、ETF 名單或第三方估算填入權重。
 
 ## API 與使用者需要準備的資料
 
@@ -30,8 +30,8 @@ FinMind [官方快速開始](https://finmind.github.io/quickstart/)目前列出�
 
 - 來源矩陣每列保存 `source_id`、文件／URL、授權或使用條件、資料口徑、查詢參數、樣本 raw ID／SHA-256、`published_at`、`available_at`、`fetched_at`、檢查時間、核准人與理由；無法證明的時間欄位留空並標記缺口。
 - 交易狀態固定分母為 150 檔 × 各市場所需類別；完整來源覆蓋與個股 `allowed／blocked／unknown` 分開統計。只把已核准且 cutoff 前可得的來源餵給正式 Guard。
-- ETF 基準先核實主辦方指定集合、全持股或前十大規則及 Active Share 公式。原始權重、交易池外持股、現金與其他資產均保留；缺完整基準時阻擋正式 Active Share。
-- 12 檔小樣本及 ETF 樣本均保存成功、缺漏、衝突案例。來源結論可重建且留下明確未解項，才進入 D1／D2 實作與 TS5 全量覆蓋。
+- 若日後啟用選配 Active Share，比較基準須核實集合、全持股或前十大口徑及公式，保留原始權重、交易池外持股、現金與其他資產；缺完整基準時僅阻擋 Active Share 指標，不阻擋競賽上限檢查。
+- 12 檔交易狀態小樣本保存成功、缺漏、衝突案例；選配 ETF 樣本另行保存。來源結論可重建且留下明確未解項，才進入 D1／D2 實作與 TS5 全量覆蓋。
 - 完成資料來源驗收後，仍須同 cutoff 的研究、10 億虛擬帳本、Decision／Risk run、核實競賽規則與 D-Plan 本地驗證；本批不能宣稱策略有效或主辦方已收件。
 
 ## 立即開始的工作

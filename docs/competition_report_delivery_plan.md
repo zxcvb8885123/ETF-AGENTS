@@ -1,6 +1,6 @@
 # 正式競賽決策報告與交易書交付計畫
 
-日期：2026-09-23。狀態：執行中；官方策略說明書格式、D-Plan v4.0 Schema／指南、正反例及 ETF 清單已盤點。DailyReport 帳戶呈現與正式工作流帳本綁定已實作；D-Plan 候選匯出 CLI 與本地結構／引用鏈檢查已新增並有合成測試。官方 150 檔個股清單已在專案中，9/22 官方日線亦已補齊；尚缺已確認的隊伍策略、ETF 基準持股、正式交易狀態與可重建的真實決策 run。目標仍是用真實、可追溯資料及連續 10 億元虛擬帳本交付主辦方策略說明書與每日 D-Plan JSON，供人工檢視。
+日期：2026-09-23。狀態：執行中；官方策略說明書格式、D-Plan v4.0 Schema／指南、正反例及 ETF 清單已盤點。DailyReport 帳戶呈現與正式工作流帳本綁定已實作；D-Plan 候選匯出 CLI 與本地結構／引用鏈檢查已新增並有合成測試。官方 150 檔個股清單已在專案中，9/22 官方日線亦已補齊；尚缺已確認的隊伍策略、正式交易狀態與可重建的真實決策 run；ETF 基準持股屬選配比較資料。目標仍是用真實、可追溯資料及連續 10 億元虛擬帳本交付主辦方策略說明書與每日 D-Plan JSON，供人工檢視。
 
 ## 完成定義
 
@@ -31,7 +31,7 @@
 
 1. 從官方活動頁、參賽平台或使用者提供的主辦方附件，取得競賽辦法、決策報告模板、交易書範例、欄位／schema 及驗證說明。
 2. 保存原始檔、來源 URL、取得時間、生效期間、版本與 SHA-256；建立規則對照表，逐條標明來源頁碼或欄位。
-3. 核對本金、交易池、持股與現金限制、基準／Active Share、股數單位、費稅、成交／交割口徑、零交易格式、提交時區與截止時間。現有設定值逐項對照，不把設定檔本身當作官方證據。
+3. 核對本金、交易池、持股與現金限制、股數單位、費稅、成交／交割口徑、零交易格式、提交時區與截止時間。現有設定值逐項對照，不把設定檔本身當作官方證據。
 4. 建立「官方欄位 → 上游契約 → 轉換／計算 → 驗證方式」映射表。未取得的必填規格列為阻擋項。
 
 驗收：每個官方欄位與規則都有版本化來源和上游映射；未取得的語意檢查器不得假稱已重現。**狀態：格式文件已取得，F0 文件盤點完成；程式化欄位映射及驗證器仍待 F4。**
@@ -55,17 +55,17 @@
 ### F1：補齊正式決策資料
 
 - 完成交易狀態 TS0／TS5：核准官方來源並驗收 150 檔必要類別覆蓋；未知、過期及衝突保持不可交易。
-- 補齊官方要求的全部 ETF 基準成分、權重、生效時間及來源版本，重算 Active Share。
+- 外部 ETF 持股與 Active Share 僅作選配策略比較；目前取得的 D-Plan 指南未將其列為每日硬性上限，不以缺少 ETF 權重阻擋正式決策。
 - 固定研究 Snapshot、完整交易日行情、帳戶及規則版本；建立逐項 readiness 結果，區分缺資料、未驗證、驗證失敗。
 - 記錄研究範圍及排除理由；不把部分事件研究宣稱為全交易池研究。市場情緒／分析師資料缺少可降級；若官方列為必填，再依 F0 改為必要輸入。
 
 驗收：所有必要輸入可追溯且在 cutoff 前可得，數字可重算；缺任一必要項停止正式決策。基本面 FR5 尚未完成前，不直接插入舊版報告或決策契約。
 
-執行盤點（2026-09-23）：TS1～TS4 工具已存在，但 TS0 官方交易狀態來源核准及 TS5 150 檔實測未完成。主辦方提供的 30 檔主動型 ETF 清單不是 D-Plan 的四位數股票標的清單，也沒有基準權重；不可把它當完整 ETF 基準。`config/competition_rules.json` 所列 150 檔來源為 2026-09-14 的另一份 100 上市＋50 上櫃清單，與本次 ETF 清單是不同用途。手續費 0.1425%、賣出稅 0.3%、持股 20–30 檔、個股權重上限等已能與指南比對；但設定的現金嚴格 `<25%` 與 Schema 的 target cash range `≤25%` 邊界不同，設定的提交開始時間 19:30 與 Schema 描述的 05:00–08:55 範圍也尚待完整競賽辦法釐清。min successful days 等設定值亦未由本次附件確認。已建立 9/22 同日 150 檔官方價格 Snapshot，但尚無正式 ETF 基準、交易狀態、研究與決策 artifacts；F1 readiness 仍 blocked。
+執行盤點（2026-09-23）：TS1～TS4 工具已存在，但 TS0 官方交易狀態來源核准及 TS5 150 檔實測未完成。主辦方提供的 30 檔主動型 ETF 清單不是 D-Plan 的四位數股票標的清單，也沒有基準權重；不可把它當完整 ETF 基準。`config/competition_rules.json` 所列 150 檔來源為 2026-09-14 的另一份 100 上市＋50 上櫃清單，與本次 ETF 清單是不同用途。手續費 0.1425%、賣出稅 0.3%、持股 20–30 檔、個股權重上限等已能與指南比對；但設定的現金嚴格 `<25%` 與 Schema 的 target cash range `≤25%` 邊界不同，設定的提交開始時間 19:30 與 Schema 描述的 05:00–08:55 範圍也尚待完整競賽辦法釐清。min successful days 等設定值亦未由本次附件確認。已建立 9/22 同日 150 檔官方價格 Snapshot，但尚無正式交易狀態、研究與決策 artifacts；F1 readiness 仍 blocked。
 
 9/23 行情回補：`scripts/collect_latest_prices.py` 保存 TWSE 9/22 的 100 檔與 TPEx 9/23 的 50 檔最新回應；由於兩市場回應日期不同，以最近共同官方日 9/22 執行 `scripts/collect_official_history.py --start 2026-09-18 --end 2026-09-22`。封存的 `artifacts/official-history/coverage-2026-09-22.json` 記錄 150/150 檔終止日覆蓋、450 筆新增官方日線、零缺漏；9/18、9/21、9/22 各日皆有 150 檔。`artifacts/research_snapshot_2026-09-23_194119.json` 的 cutoff 為 2026-09-23 19:41:19 +08:00、行情日期同為 9/22、150/150 覆蓋且 `usable=true`。此 Snapshot 僅供目前資料研究；尚未取得 9/23 TWSE 同日官方價，不得拿 9/22 TWSE 與 9/23 TPEx 混成 9/23 決策價。歷史區間沒有版本化交易日曆，覆蓋報告也不宣稱每個應有交易日完整。
 
-ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投資組合，且指出投資人可到各投信網站查詢；參見 [主動式 ETF 商品說明](https://wwwc.twse.com.tw/zh/products/securities/etf/products/active-list.html) 與 [證交所觀點](https://wwwc.twse.com.tw/market_insights/zh/detail/8a8216d69517ec0c01954108487600b0)。這只確認有公開揭露義務，不等於已取得本賽事所需全部 ETF 的完整、可版本化持股權重。現有 `data/active_etf_top10.csv` 僅有標頭；後續須逐一核對主辦方要求的 ETF 集合、各投信來源、揭露日期／可得時間、完整權重與授權，再接入 Active Share。不可用第三方估算或主辦方的 ETF 名單代填權重。
+ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投資組合，且指出投資人可到各投信網站查詢；參見 [主動式 ETF 商品說明](https://wwwc.twse.com.tw/zh/products/securities/etf/products/active-list.html) 與 [證交所觀點](https://wwwc.twse.com.tw/market_insights/zh/detail/8a8216d69517ec0c01954108487600b0)。這只確認有公開揭露義務，不等於已取得選配比較所需的完整、可版本化持股權重。現有 `data/active_etf_top10.csv` 僅有標頭；若選配 Active Share 比較，後續須逐一核對比較集合、各投信來源、揭露日期／可得時間、完整權重與授權。不可用第三方估算或主辦方的 ETF 名單代填權重。
 
 交易狀態檢查：`config/data_sources.json` 的 `trading_status.sources` 仍為空，TPEx 四個端點只列 candidate；`cli/trading_status.py status` 尚無正式收集 run。TS1～TS4 的 parser 與 Guard 雖可重建資料，但不能把候選端點、空回應或行情存在推定為 150 檔可交易。TS0 官方來源語意／授權核准與 TS5 固定分母實測仍是正式決策阻擋項。
 
@@ -121,7 +121,7 @@ ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投�
 
 `dplan_context.json` 需要 `sources`、`observations`、`market_view`、`inferences`、`inference_refs_by_ticker`、`agent_metadata`、`eligible_tickers`（恰為 150 個官方四位數個股代碼）、`eligible_universe_source_refs` 及 `strategy_statement`。策略說明物件需包含 `name`、`theme`、`philosophy`、`approved_at`、`sha256`；內容必須與使用者確認並保存的主辦方格式文件一致。CLI 不接受 TEAM_042／TEAM_043 範例當真實輸入。`validate` 只回報本地支援子集，輸出 `local-v4-subset-not-organizer-server`。
 
-截至 2026-09-23，`data/official_universe.csv` 已有 150 檔（TWSE 100、TPEX 50），同日官方 9/22 行情也已覆蓋 150/150；`artifacts/research_snapshot_latest.json` 仍是 9/17 的舊檔，新 Snapshot 另存於 `artifacts/research_snapshot_2026-09-23_194119.json`。TS0／TS5 交易狀態驗收尚未完成、`data/active_etf_top10.csv` 只有標頭、沒有已驗證 Decision run。隊伍代號與核准策略亦未提供。故此版提供匯出能力與阻擋檢查，**目前不能聲稱已產生可繳交的正式候選**。
+截至 2026-09-23，`data/official_universe.csv` 已有 150 檔（TWSE 100、TPEX 50），同日官方 9/22 行情也已覆蓋 150/150；`artifacts/research_snapshot_latest.json` 仍是 9/17 的舊檔，新 Snapshot 另存於 `artifacts/research_snapshot_2026-09-23_194119.json`。TS0／TS5 交易狀態驗收尚未完成、沒有已驗證 Decision run。外部 ETF 權重僅供選配比較。隊伍代號與核准策略亦未提供。故此版提供匯出能力與阻擋檢查，**目前不能聲稱已產生可繳交的正式候選**。
 
 ### F5：固定入口與操作體驗
 

@@ -19,7 +19,7 @@ RPT0～RPT4 已有工作流、CLI、Skill 與下游報告接線；仍缺本輪�
 | W2 明確研究範圍 | 保留完整 187 件清單；首輪依既有工具支援及證據可驗證性選最多 5 件，可得時間由新到舊，同時間按 event_id 排序 | 保存選取規則、入選／未入選理由、候選總數與實際研究數；不得宣稱已研究全部 187 件，不依多空方向挑選 |
 | W3 執行研究角色 | 主控讀取 daily-report、event-analysis 與角色契約；Fact 後由隔離的 Bull／Bear 工作階段或子 Agent 讀同一 FactPacket，再交 Adjudicator | 保存角色輸入、輸出、工作階段識別與工具紀錄；Bull／Bear 不含對方輸出或歷史。無法隔離時維持等待 |
 | W4 驗證與報告交付 | debate／result 雙重驗證後封存 ResearchResult，使用明確的封存 Snapshot 路徑續跑，建立並重建驗證 Research Report | 至少一件真實事件通過；JSON／Markdown 同源、引用與數字可重算；報告列研究範圍、限制與缺漏，固定入口可找到本輪報告 |
-| W5 決策前置盤點 | 核對帳戶、持倉、現金、交割、交易狀態、基準與競賽規則；列明回測／前向驗收證據 | 每項保存來源、版本、available_at、cutoff、驗證結果與缺漏取得方式；必備項缺少則交付研究報告與缺口清單，維持 waiting_for_decision |
+| W5 決策前置盤點 | 核對帳戶、持倉、現金、交割、交易狀態與競賽規則；ETF 基準另列選配；列明回測／前向驗收證據 | 每項保存來源、版本、available_at、cutoff、驗證結果與缺漏取得方式；必備項缺少則交付研究報告與缺口清單，維持 waiting_for_decision |
 | W6 條件式 DailyReport | 僅在 W5 通過後，用同一 Snapshot／cutoff 建立 Portfolio Decision 輸入，完成 Momentum、隔離 Buy／Sell、裁決與 Risk，再接報告 Builder | 確定性計算配置、股數、費稅、現金與情境；Guard／Risk 與結果重建通過才交付 DailyReport，拒絕時保存 FailureReport |
 
 本次執行範圍為 W0～W5；W6 僅於正式前置資料與驗收齊備時執行。盤點結果須區分「缺資料」「有資料但未驗證」「驗證失敗」，不可只列籠統的待完成。
@@ -30,7 +30,7 @@ RPT0～RPT4 已有工作流、CLI、Skill 與下游報告接線；仍缺本輪�
 | --- | --- |
 | 帳戶與持倉 | 首日由 10 億本金設定建立一次空倉虛擬帳戶；後續由已驗證的前次帳本、交割與模擬成交續接，固定 cutoff 的股數、可動用現金、未交割款與 NAV 須可重算；詳見[虛擬帳戶計畫](virtual_account_daily_decision_plan.md) |
 | 交易狀態 | 官方來源核准及 150 檔覆蓋；未知、衝突或時間不符維持不可交易 |
-| 基準 | 所有必備 ETF 基準成分與權重、有效日期、版本及證據 |
+| 基準 | 選配 ETF 比較才需基準成分與權重、有效日期、版本及證據 |
 | 競賽規則 | 有效版本、來源與雜湊、持股／現金／交易限制；不能只用 fixture 規則 |
 | 研究與行情 | 相同 Snapshot／cutoff、已驗證 ResearchResult、必要歷史行情覆蓋 |
 | 正式驗收 | 所需歷史回測與固定版本前向驗證證據；離線帳務測試不能代替策略有效性驗收 |
