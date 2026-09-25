@@ -3,7 +3,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import quote
 
-from etf_agent.contracts import SourceEvidence
+from .contracts import SourceEvidence
 
 
 TAIPEI_TIMEZONE = timezone(timedelta(hours=8))

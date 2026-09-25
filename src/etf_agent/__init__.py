@@ -1,6 +1,5 @@
-"""Risk controls for the AI CUP 2026 ETF Agent competition."""
+"""AI CUP 2026 台股 ETF Agent 核心套件。
 
-from .guard import CompetitionGuard, GuardResult
-from .models import Portfolio, Position
-
-__all__ = ["CompetitionGuard", "GuardResult", "Portfolio", "Position"]
+各 Agent 位於子套件（data、research、perception、fundamentals、decision、ledger、
+backtest、virtual_account、reporting、automation）；共用基礎在 ``core``。
+"""

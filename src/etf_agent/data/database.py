@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Optional, Sequence, Tuple
 
-from etf_agent.contracts import SourceFeasibilityReport, UniverseValidationResult
+from .contracts import SourceFeasibilityReport, UniverseValidationResult
 
 from .twse import DailyPrice
 from .universe import Instrument

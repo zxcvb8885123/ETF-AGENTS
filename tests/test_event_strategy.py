@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from etf_agent.strategy import EventDrivenStrategy, StrategyInputError, StockResearch
+from etf_agent.prototype import EventDrivenStrategy, StrategyInputError, StockResearch
 
 
 ROOT = Path(__file__).resolve().parents[1]

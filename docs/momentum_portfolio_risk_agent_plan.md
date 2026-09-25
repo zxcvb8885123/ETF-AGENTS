@@ -114,7 +114,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 | `DecisionValidator` | 由原始輸入重建配置、訂單、費稅、情境及最終狀態 |
 | `DecisionRepository` | 保存輸入、Agent packets、修正歷程、結果與內容雜湊 |
 
-既有 `EventDrivenStrategy` 與 `CompetitionGuard` 只作為原型基礎。實作時必須拆開候選評分、買賣裁決、配置、訂單、情境與硬性風控，避免單一物件同時決定全部結果。
+既有 `EventDrivenStrategy` 與 float 版 `CompetitionGuard` 只作為原型基礎，已移至 `src/etf_agent/prototype/`；正式規則檢查為 `decision/risk.py` 的 `CompetitionGuardV2`。實作時必須拆開候選評分、買賣裁決、配置、訂單、情境與硬性風控，避免單一物件同時決定全部結果。
 
 ## 執行與修正流程
 
@@ -207,7 +207,7 @@ P0～P6 fixture 驗收已完成；下一批進入 P7 回測，正式 Provider／
 
 ### 檔案與交付安排
 
-- 核心程式放在 `src/etf_agent/decision/`，按配置、訂單／費稅、情境、風控與保存分模組；既有 `guard.py` 的原型呼叫端需保留相容測試。
+- 核心程式放在 `src/etf_agent/decision/`，按配置、訂單／費稅、情境、風控與保存分模組；原型 `prototype/guard.py` 的呼叫端需保留相容測試。
 - 新增 `skills/portfolio-risk-review/`，擴充 `skills/portfolio-decision/` 的 CLI 與契約參考；同步更新 README、架構與回測交接文件。
 - 每批完成均執行全專案 unittest、compileall、`git diff --check`；新增／大幅修改的 Skills 另跑結構驗證。P6 的稽核測試併入每一批，不留到所有程式完成後才補。
 - 先以清楚標示的 fixtures 驗證完整流程，再接真實帳戶、可交易狀態、有效規則與全部基準；未接妥的 Provider 明確標記缺漏，不能宣稱正式資料端到端完成。

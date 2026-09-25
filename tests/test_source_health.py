@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from etf_agent.contracts import SourceFeasibilityReport
+from etf_agent.data.contracts import SourceFeasibilityReport
 from etf_agent.data import (
     DataAgentService,
     Instrument,

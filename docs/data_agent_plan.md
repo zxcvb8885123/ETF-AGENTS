@@ -415,7 +415,7 @@ src/etf_agent/data/                # 抓取、解析、驗證、版本與 Snapsh
 ├── snapshot_repository.py         # Snapshot 專用 SQLite Repository
 ├── status.py                      # DataAgentStatus 與狀態查詢 Repository
 └── evidence.py                    # SourceEvidenceBuilder 與無狀態時間／URL 工具
-src/etf_agent/contracts.py         # Request／Result／SourceCandidate／NewsCandidate／SourceFeasibilityReport 契約
+src/etf_agent/data/contracts.py    # Request／Result／SourceCandidate／NewsCandidate／SourceFeasibilityReport 契約
 scripts/install_agent_skills.py    # 安裝／同步並檢查 Skill 版本
 artifacts/data-agent/{agent_run_id}/
 ├── request.json
@@ -478,7 +478,7 @@ CLI 只包裝 `src/etf_agent/data/` 的正式功能，不複製資料邏輯。Co
 
 ##### M0 已交付內容
 
-1. 在 `src/etf_agent/contracts.py` 建立 `SourceFeasibilityReport`、`UniverseInstrumentStatus` 與 `UniverseValidationResult`，先固定 JSON schema、列舉值與時間格式。
+1. 在 `src/etf_agent/data/contracts.py` 建立 `SourceFeasibilityReport`、`UniverseInstrumentStatus` 與 `UniverseValidationResult`，先固定 JSON schema、列舉值與時間格式。
 2. 先把已核准的 TWSE／TPEx 探測端點加入 `config/data_sources.json` allowlist，再新增 `scripts/probe_data_sources.py`；輸出 HTTP 狀態、schema、資料日期、筆數、交易池覆蓋、耗時及錯誤，不在探測時產生投資結論。
 3. 新增交易池驗證器，合併 TWSE 與 TPEx 最新行情結果，對每檔股票輸出 `tradable`、`not_tradable` 或 `universe_mismatch` 及來源證據。
 4. 將舊版 `5371` 缺漏、`3718` 存在但不得自行替換做成固定 fixture；另驗證新版正式交易池確實使用 `3718`，並保留空交易池、來源失敗、重複代號與跨市場錯配測試。

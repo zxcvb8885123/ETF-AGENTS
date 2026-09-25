@@ -1,4 +1,4 @@
-"""Fail-closed competition checks used before a decision can be submitted."""
+"""原型 float 版競賽規則檢查；正式流程使用 decision.risk.CompetitionGuardV2。"""
 
 import json
 from dataclasses import dataclass
