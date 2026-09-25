@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ETF Agent 績效</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #1c2230; --muted: #6b7385; --line: #e3e6ec;
+    --up: #d4343c; --down: #16915a; --accent: #3a63d8;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --card: #1b1f29; --ink: #e8ebf2; --muted: #9098aa; --line: #2b3140;
+      --up: #ff5a5f; --down: #2fc27f; --accent: #7d9bff;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .label { color: var(--muted); font-size: 12px; }
+  .value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .sub { font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .hero .value { font-size: 30px; }
+  .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
+  section.card { margin-bottom: 16px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .error { border-color: var(--up); color: var(--up); }
+  svg text { fill: var(--muted); font-size: 11px; }
+  code { background: var(--line); padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>虛擬帳戶績效</h1>
+    <span class="meta" id="meta">載入中…</span>
+  </header>
+  <div id="notice"></div>
+  <div class="grid" id="kpis"></div>
+  <section class="card">
+    <h2>總資產（NAV）走勢</h2>
+    <div id="chart"></div>
+  </section>
+  <section class="card">
+    <h2>目前持倉</h2>
+    <div class="scroll" id="positions"></div>
+  </section>
+  <section class="card">
+    <h2>每日紀錄</h2>
+    <div class="scroll" id="history"></div>
+  </section>
+</main>
+<script>
+const nf = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 0 });
+const money = v => v == null ? "—" : nf.format(Number(v));
+const signed = v => v == null ? "—" : (Number(v) > 0 ? "+" : "") + nf.format(Number(v));
+const pct = v => v == null ? "—" : (Number(v) > 0 ? "+" : "") + (Number(v) * 100).toFixed(2) + "%";
+const plain = v => v == null ? "—" : (Number(v) * 100).toFixed(2) + "%";
+const tone = v => v == null || Number(v) === 0 ? "flat" : Number(v) > 0 ? "up" : "down";
+const time = v => v ? new Date(v).toLocaleString("zh-TW", { hour12: false }) : "—";
+const TYPE = { genesis: "開帳", close: "收盤成交", prepared: "收盤估值" };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function tile(label, value, sub, cls = "", subCls = "") {
+  return `<div class="card ${cls}"><div class="label">${label}</div>
+    <div class="value ${subCls && cls.includes("hero") ? subCls : ""}">${value}</div>
+    ${sub ? `<div class="sub ${subCls}">${sub}</div>` : ""}</div>`;
+}
+
+function renderChart(history) {
+  const el = document.getElementById("chart");
+  if (history.length < 2) { el.innerHTML = '<div class="empty">至少需要兩個交易日的估值才會出現走勢。</div>'; return; }
+  const W = 1000, H = 240, P = { l: 90, r: 16, t: 12, b: 28 };
+  const ys = history.map(h => Number(h.nav));
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const x = i => P.l + (W - P.l - P.r) * i / (history.length - 1);
+  const y = v => P.t + (H - P.t - P.b) * (1 - (v - lo) / (hi - lo));
+  const base = Number(history[0].nav);
+  const pts = ys.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const last = ys[ys.length - 1];
+  const color = last >= base ? "var(--up)" : "var(--down)";
+  const ticks = [lo + pad, (lo + hi) / 2, hi - pad].map(v =>
+    `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/>
+     <text x="${P.l - 8}" y="${y(v) + 4}" text-anchor="end">${nf.format(v)}</text>`).join("");
+  const step = Math.max(1, Math.ceil(history.length / 8));
+  const labels = history.map((h, i) => i % step && i !== history.length - 1 ? "" :
+    `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${h.trade_date.slice(5)}</text>`).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="NAV 走勢">
+    ${ticks}
+    <line x1="${P.l}" x2="${W - P.r}" y1="${y(base)}" y2="${y(base)}" stroke="var(--muted)" stroke-dasharray="4 4"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"/>
+    ${ys.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${color}"><title>${history[i].trade_date}  ${nf.format(v)}</title></circle>`).join("")}
+    ${labels}</svg>`;
+}
+
+function render(d) {
+  document.getElementById("meta").textContent =
+    `帳戶 ${d.account_id}・資料時間 ${time(d.as_of)}・狀態 ${d.latest_state_type}・${new Date().toLocaleTimeString("zh-TW", { hour12: false })} 更新`;
+  const t = d.today;
+  document.getElementById("kpis").innerHTML = [
+    tile(t ? `今日報酬率（${t.trade_date}）` : "今日報酬率", t ? pct(t.return) : "—", t ? `今日損益 ${signed(t.pnl)} 元` : "開帳後尚無收盤估值", "hero", t ? tone(t.return) : ""),
+    tile("累積報酬率", pct(d.total_return), `累積損益 ${signed(d.total_pnl)} 元`, "hero", tone(d.total_return)),
+    tile("目前總資產（NAV）", money(d.nav), `起始本金 ${money(d.initial_capital)} 元`),
+    tile("現金", money(d.cash), `現金比 ${plain(d.cash_weight)}・未交割 ${money(d.unsettled_cash)}`),
+    tile("持股市值", money(d.market_value), `${d.positions.length} 檔持股`),
+    tile("累計費稅", money(Number(d.fees.commission) + Number(d.fees.tax)), `手續費 ${money(d.fees.commission)}・證交稅 ${money(d.fees.tax)}・${d.fees.fill_count} 筆成交`),
+  ].join("");
+  renderChart(d.history);
+  document.getElementById("positions").innerHTML = d.positions.length ? `<table>
+    <tr><th>代號</th><th>張數</th><th>均價</th><th>現價</th><th>成本</th><th>市值</th><th>未實現損益</th><th>報酬率</th></tr>
+    ${d.positions.map(p => `<tr><td>${esc(p.symbol)}</td><td>${nf.format(p.lots)}</td>
+      <td>${Number(p.average_cost).toFixed(2)}</td><td>${p.price == null ? "—" : Number(p.price).toFixed(2)}</td>
+      <td>${money(p.cost_value)}</td><td>${money(p.market_value)}</td>
+      <td class="${tone(p.unrealized_pnl)}">${signed(p.unrealized_pnl)}</td>
+      <td class="${tone(p.unrealized_return)}">${pct(p.unrealized_return)}</td></tr>`).join("")}
+  </table>` : '<div class="empty">目前空倉。</div>';
+  document.getElementById("history").innerHTML = `<table>
+    <tr><th>交易日</th><th>類型</th><th>NAV</th><th>當日損益</th><th>當日報酬率</th><th>累積報酬率</th></tr>
+    ${d.history.slice().reverse().map(h => `<tr><td>${esc(h.trade_date)}</td><td>${TYPE[h.type] || esc(h.type)}</td>
+      <td>${money(h.nav)}</td><td class="${tone(h.daily_pnl)}">${signed(h.daily_pnl)}</td>
+      <td class="${tone(h.daily_return)}">${pct(h.daily_return)}</td>
+      <td class="${tone(h.cumulative_return)}">${pct(h.cumulative_return)}</td></tr>`).join("")}
+  </table>`;
+}
+
+async function load() {
+  const notice = document.getElementById("notice");
+  try {
+    const res = await fetch("/api/performance", { cache: "no-store" });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || res.statusText);
+    if (body.status === "uninitialized") {
+      notice.innerHTML = `<div class="card">帳戶 <b>${esc(body.account_id)}</b> 尚未開帳。請先執行
+        <code>PYTHONPATH=src python3 cli/virtual_account.py --account-id ${esc(body.account_id)} init --started-at ISO_TIME</code></div>`;
+      document.getElementById("meta").textContent = "尚未開帳";
+      return;
+    }
+    notice.innerHTML = "";
+    render(body);
+  } catch (error) {
+    notice.innerHTML = `<div class="card error">無法讀取帳本：${esc(error.message)}</div>`;
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

@@ -32,6 +32,7 @@ python3 -m venv .venv
 | `./start.sh check` | 只建置、檢查與執行測試 |
 | `./start.sh daily` | 一鍵驗證來源、更新行情／事件並建立 `artifacts/research_snapshot_latest.json` |
 | `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
+| `./start.sh dashboard` | 啟動唯讀績效儀表板 <http://127.0.0.1:8000>：起始本金、目前 NAV、今日／累積報酬率、現金、持倉與每日紀錄 |
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
 | `PYTHONPATH=src python3 scripts/collect_official_history.py` | 以官方 TWSE／TPEx 月行情增量更新日線；先驗證最近完整交易日，並輸出逐檔覆蓋 JSON |
@@ -59,10 +60,13 @@ python3 -m venv .venv
 | `PYTHONPATH=src python3 cli/account_data.py import --input ACCOUNT.json --cutoff ISO_TIME --run-id RUN_ID --mode fixture` | 匯入標準帳戶 JSON 並封存原始檔與雜湊；正式模式須先在 `config/account_sources.json` 核准 provider／版本 |
 | `PYTHONPATH=src python3 cli/account_data.py reconcile --account ACCOUNT_BUNDLE.json --snapshot SNAPSHOT.json --max-nav-drift-rate RATE --output RECONCILIATION.json` | 以同一 cutoff Snapshot 重算 NAV、現金及價格覆蓋，另產 Markdown 對帳報告 |
 | `PYTHONPATH=src python3 cli/account_data.py export-decision-account --account ACCOUNT_BUNDLE.json --reconciliation RECONCILIATION.json --snapshot SNAPSHOT.json --output DECISION_ACCOUNT.json` | 僅在正式來源且通過對帳、可無損轉換時匯出決策帳戶欄位 |
+| `.venv/bin/python cli/dashboard.py --account-id ai-cup-2026 --port 8000` | 本機啟動 FastAPI 績效儀表板；`/api/performance` 提供同一份 JSON。只讀已驗證的虛擬帳本，驗證失敗回 409，不寫入帳本 |
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --started-at ISO_TIME` | 只用一次設定本金建立 10 億 TWD 虛擬帳戶 |
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 prepare-day --snapshot SNAPSHOT.json --run-id RUN_ID --account-output ACCOUNT.json` | 續接前帳本、結算到期款項並建立決策前帳戶快照 |
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 attach-account --template BUNDLE.json --account-snapshot ACCOUNT.json --snapshot SNAPSHOT.json --output DECISION_INPUT.json` | 綁定虛擬帳戶並完整驗證決策輸入包 |
 | `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 apply-decision --decision-run-id RUN_ID --execution-market EXECUTION.json --close-market CLOSE.json --settlement-date YYYY-MM-DD --run-id CLOSE_RUN` | 驗證已封存 Decision run，模擬成交並保存日終虛擬帳本 |
+| `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle` | 找出使用最新 prepare AccountSnapshot 的封存 Decision run，於 cutoff 後第一個交易日以 TWSE／TPEx 官方未還原收盤價模擬成交（量能上限＝當日成交張數，T+2 工作日交割）；收盤價未公布回 `waiting_for_close_data` |
+| `PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 daily --snapshot SNAPSHOT.json --run-id RUN_ID --account-output ACCOUNT.json` | `./start.sh daily` 使用：先 `settle`，再 `prepare-day`；有待結算決策但收盤價未到時不建立新 prepare，以免覆蓋未成交決策 |
 | `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
 | `.venv/bin/python cli/report_workflow.py run` | 封存事件候選，等待／接收已驗證研究結果並交付 Research Report；official DailyReport 續跑還須提供最新封存的 VirtualAccount prepare-day run |
 | `.venv/bin/python cli/dplan.py build ...` | 從封存且重建通過的 Decision run 與 Agent 審閱 context 產生 D-Plan v4.0 候選；阻擋缺少策略說明、官方 150 檔交易池、引用或規則不一致 |

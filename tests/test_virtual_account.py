@@ -14,6 +14,54 @@ from test_portfolio_decision_agent import debate_bundle, decision_bundle, trade_
 from test_portfolio_risk_decision import policy, risk_review
 
 
+def prepare_and_decide(service, root):
+    """封存 prepare-day 並建立一個以該 AccountSnapshot 核准買入 2317 的 Decision run。"""
+    bundle = decision_bundle()
+    snapshot = bundle["snapshot"]
+    snapshot["tradable_symbols"] = ["2330.TW", "2317.TW"]
+    snapshot["not_tradable_symbols"] = []
+    snapshot["decision_cutoff"] = "2026-09-20T00:55:00+00:00"
+    bundle["decision_cutoff"] = snapshot["decision_cutoff"]
+    bundle["snapshot_sha256"] = canonical_sha256(snapshot)
+    bundle["snapshot_sha256"] = canonical_sha256(snapshot)
+    snapshot_path = root / "decision-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    prepared = service.prepare_day(snapshot_path, "prepare-with-orders")
+    bundle["account_snapshot"] = prepared["account_snapshot"]
+    from etf_agent.decision import decision_bundle_sha256
+    bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+
+    momentum = MomentumEngine(bundle).run()
+    debate = debate_bundle(bundle, momentum)
+    debate["packets"][0]["items"] = [item for item in debate["packets"][0]["items"] if item["symbol"] == "2317.TW"]
+    debate["packets"][1]["items"] = []
+    for packet in debate["packets"]:
+        packet["content_sha256"] = artifact_content_sha256(packet)
+    debate["content_sha256"] = artifact_content_sha256(debate)
+    intent = trade_intent_result(bundle, momentum, debate)
+    intent["items"] = [item for item in intent["items"] if item["symbol"] == "2317.TW"]
+    intent["content_sha256"] = artifact_content_sha256(intent)
+    settings = policy()
+    settings["liquidity_fill_rate"] = "1"
+    settings["content_sha256"] = decision_policy_sha256(settings)
+    proposal = AllocationOrderEngine(bundle, settings).run(intent)
+    scenario = ScenarioEngine(bundle, settings).run(proposal)
+    guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+    review = risk_review(bundle, proposal, scenario, guard)
+    history = RevisionHistoryBuilder(bundle, settings, intent).create(proposal, scenario, guard, review)
+    decision = DecisionFinalizer(bundle, settings, momentum, debate, intent).run(proposal, scenario, guard, review, history)
+    assert decision["status"] == "approved"
+    decision_root = root / "decisions"
+    DecisionRepository(decision_root).save("decision-1", {
+        "decision_input": bundle, "policy": settings, "momentum": momentum,
+        "debate": debate, "intent": intent, "proposal": proposal,
+        "scenario": scenario, "guard": guard, "risk_review": review,
+        "revision_history": history, "decision": decision,
+    })
+
+    return snapshot, decision_root
+
+
 class VirtualAccountTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -82,49 +130,7 @@ class VirtualAccountTests(unittest.TestCase):
 
     def test_validated_decision_is_simulated_and_rolls_into_next_account_state(self):
         self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
-        bundle = decision_bundle()
-        snapshot = bundle["snapshot"]
-        snapshot["tradable_symbols"] = ["2330.TW", "2317.TW"]
-        snapshot["not_tradable_symbols"] = []
-        snapshot["decision_cutoff"] = "2026-09-20T00:55:00+00:00"
-        bundle["decision_cutoff"] = snapshot["decision_cutoff"]
-        bundle["snapshot_sha256"] = canonical_sha256(snapshot)
-        bundle["snapshot_sha256"] = canonical_sha256(snapshot)
-        snapshot_path = self.root / "decision-snapshot.json"
-        snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
-        prepared = self.service.prepare_day(snapshot_path, "prepare-with-orders")
-        bundle["account_snapshot"] = prepared["account_snapshot"]
-        from etf_agent.decision import decision_bundle_sha256
-        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        debate["packets"][0]["items"] = [item for item in debate["packets"][0]["items"] if item["symbol"] == "2317.TW"]
-        debate["packets"][1]["items"] = []
-        for packet in debate["packets"]:
-            packet["content_sha256"] = artifact_content_sha256(packet)
-        debate["content_sha256"] = artifact_content_sha256(debate)
-        intent = trade_intent_result(bundle, momentum, debate)
-        intent["items"] = [item for item in intent["items"] if item["symbol"] == "2317.TW"]
-        intent["content_sha256"] = artifact_content_sha256(intent)
-        settings = policy()
-        settings["liquidity_fill_rate"] = "1"
-        settings["content_sha256"] = decision_policy_sha256(settings)
-        proposal = AllocationOrderEngine(bundle, settings).run(intent)
-        scenario = ScenarioEngine(bundle, settings).run(proposal)
-        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
-        review = risk_review(bundle, proposal, scenario, guard)
-        history = RevisionHistoryBuilder(bundle, settings, intent).create(proposal, scenario, guard, review)
-        decision = DecisionFinalizer(bundle, settings, momentum, debate, intent).run(proposal, scenario, guard, review, history)
-        self.assertEqual(decision["status"], "approved")
-        decision_root = self.root / "decisions"
-        DecisionRepository(decision_root).save("decision-1", {
-            "decision_input": bundle, "policy": settings, "momentum": momentum,
-            "debate": debate, "intent": intent, "proposal": proposal,
-            "scenario": scenario, "guard": guard, "risk_review": review,
-            "revision_history": history, "decision": decision,
-        })
-
+        snapshot, decision_root = prepare_and_decide(self.service, self.root)
         execution_quotes = {}
         close_quotes = {}
         for row in snapshot["latest_prices"]:

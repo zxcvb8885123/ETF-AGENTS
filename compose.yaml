@@ -27,3 +27,23 @@ services:
       - /tmp
     init: true
     command: ["python3", "scripts/check_setup.py"]
+
+  dashboard:
+    image: etf-agent:local
+    user: "${HOST_UID:-501}:${HOST_GID:-20}"
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: Asia/Taipei
+    volumes:
+      - ./src:/app/src:ro
+      - ./cli:/app/cli:ro
+      - ./artifacts:/app/artifacts:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8000}:8000"
+    command: ["python3", "cli/dashboard.py", "--host", "0.0.0.0", "--port", "8000"]

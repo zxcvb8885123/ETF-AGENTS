@@ -319,6 +319,7 @@ class VirtualAccountService:
         assumptions = {
             "lot_size": rules["lot_size"], "commission_rate": rules["commission_rate"],
             "sell_tax_rate": rules["sell_tax_rate"], "minimum_commission": rules["minimum_commission"],
+            "reuse_sell_proceeds": bool(rules["reuse_sell_proceeds"]),
         }
         simulator = ExecutionSimulator(assumptions)
         execution = simulator.run(decision, market, ledger.buying_power(bool(rules["reuse_sell_proceeds"])), market["execution_at"])
@@ -327,13 +328,20 @@ class VirtualAccountService:
         if not isinstance(close_quotes, Mapping):
             raise VirtualAccountError("CloseMarketData.quotes 必須是物件")
         close_prices = {symbol: row.get("close_price") for symbol, row in close_quotes.items() if isinstance(row, Mapping)}
-        state_snapshot = ledger.snapshot(close_prices, trade_date.isoformat())
+        close_trade_date = str(close_market.get("trade_date", trade_date.isoformat()))
+        try:
+            close_day = date.fromisoformat(close_trade_date)
+        except ValueError as error:
+            raise VirtualAccountError("CloseMarketData.trade_date 格式錯誤") from error
+        if close_day < trade_date:
+            raise VirtualAccountError("CloseMarketData.trade_date 不得早於決策 Snapshot 交易日")
+        state_snapshot = ledger.snapshot(close_prices, close_trade_date)
         next_state = self._state(
             account_id=self.repository.root.name, sequence=int(state["sequence"]) + 1,
             parent_state_id=state["state_id"], as_of=close_market["available_at"],
             settled_cash=Decimal(state_snapshot["settled_cash"]), unsettled_cash=Decimal(state_snapshot["unsettled_cash"]),
             pending_settlements=ledger.pending_settlements, positions=state_snapshot["positions"], nav=Decimal(state_snapshot["nav"]),
-            provenance={"type": "close", "parent_run_id": prepared["run_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution_sha256": execution["content_sha256"], "execution_at": market["execution_at"], "close_market_sha256": canonical_sha256(close_market)},
+            provenance={"type": "close", "parent_run_id": prepared["run_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution_sha256": execution["content_sha256"], "execution_at": market["execution_at"], "trade_date": close_trade_date, "settlement_date": str(settlement_date), "close_market_sha256": canonical_sha256(close_market)},
         )
         transition = {"schema_version": "1.0", "parent_state_id": state["state_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution": execution, "close_ledger": state_snapshot, "state_sha256": next_state["content_sha256"]}
         transition["content_sha256"] = canonical_sha256(transition)
