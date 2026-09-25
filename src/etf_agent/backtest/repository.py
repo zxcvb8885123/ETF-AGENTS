@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Mapping
 
-from etf_agent.decision.contracts import canonical_sha256
+from etf_agent.core import canonical_sha256
 
 from .contracts import BACKTEST_SCHEMA_VERSION, BacktestToolError
 

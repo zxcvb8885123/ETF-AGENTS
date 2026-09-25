@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
+from etf_agent.core import content_sha256, parse_aware_time
 from etf_agent.automation.reporting import AutomationReportingApplicationService
 from etf_agent.research import EventResearchApplicationService, ResearchToolError
 from etf_agent.reporting import (
@@ -41,15 +42,6 @@ class ReportWorkflowError(ValueError):
     """Raised when a report workflow cannot preserve its provenance."""
 
 
-def _canonical_hash(payload: Mapping[str, object]) -> str:
-    body = dict(payload)
-    body.pop("content_sha256", None)
-    encoded = json.dumps(
-        body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _file_hash(path: Path) -> Optional[str]:
     if not path.exists() or not path.is_file():
         return None
@@ -71,15 +63,7 @@ def _read_json(path: Path, label: str) -> Mapping[str, object]:
 
 
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise ReportWorkflowError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ReportWorkflowError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ReportWorkflowError("%s 必須包含時區" % field)
-    return parsed
+    return parse_aware_time(value, field, error=ReportWorkflowError, to_utc=False)
 
 
 def _validate_id(value: str, field: str) -> str:
@@ -139,7 +123,7 @@ class ReportWorkflowRepository:
                 for name, (filename, content_type, encoded) in sorted(normalized.items())
             },
         }
-        manifest["manifest_sha256"] = _canonical_hash(manifest)
+        manifest["manifest_sha256"] = content_sha256(manifest)
         run_dir = self.root / run_id
         if run_dir.is_symlink():
             raise ReportWorkflowError("workflow run 目錄不得是符號連結")
@@ -186,7 +170,7 @@ class ReportWorkflowRepository:
         manifest = self._read_manifest(run_dir)
         body = dict(manifest)
         recorded = body.pop("manifest_sha256", None)
-        if recorded != _canonical_hash(body):
+        if recorded != content_sha256(body):
             raise ReportWorkflowError("workflow manifest_sha256 與內容不一致")
         if (
             manifest.get("schema_version") != WORKFLOW_SCHEMA_VERSION
@@ -374,7 +358,7 @@ class ReportWorkflowService:
             if account_manifest_path is not None
             else None
         )
-        input_fingerprint = _canonical_hash(
+        input_fingerprint = content_sha256(
             {
                 "snapshot_sha256": snapshot_ref.get("sha256"),
                 "research_sha256": research_ref.get("sha256") if research_ref else None,
@@ -453,7 +437,7 @@ class ReportWorkflowService:
                 parent_report.get("snapshot_id") != snapshot_id
                 or parent_report.get("decision_cutoff") != cutoff
                 or parent_report.get("execution_mode") != execution_mode
-                or _canonical_hash(parent_snapshot) != _canonical_hash(snapshot)
+                or content_sha256(parent_snapshot) != content_sha256(snapshot)
             ):
                 raise ReportWorkflowError("續跑輸入與父工作流 Snapshot／cutoff／模式不一致")
             parent_research = parent_report.get("input_refs", {}).get("research")
@@ -735,9 +719,9 @@ class ReportWorkflowService:
                 if not isinstance(provenance, Mapping) or provenance.get("type") != "prepared":
                     raise ReportWorkflowError("VirtualAccount run 必須是 prepare-day 封存狀態")
                 if (
-                    _canonical_hash(account_source_snapshot) != _canonical_hash(snapshot)
+                    content_sha256(account_source_snapshot) != content_sha256(snapshot)
                     or provenance.get("snapshot_id") != snapshot_id
-                    or provenance.get("snapshot_sha256") != _canonical_hash(snapshot)
+                    or provenance.get("snapshot_sha256") != content_sha256(snapshot)
                     or provenance.get("account_snapshot") != account_snapshot
                     or account_state.get("as_of") != cutoff
                 ):
@@ -758,7 +742,7 @@ class ReportWorkflowService:
                     "account_id": virtual_account_account_id,
                     "run_id": virtual_account_run_id,
                     "state_id": account_state.get("state_id"),
-                    "account_snapshot_sha256": _canonical_hash(account_snapshot),
+                    "account_snapshot_sha256": content_sha256(account_snapshot),
                     "manifest_sha256": _read_json(
                         account_run_dir / "manifest.json", "VirtualAccount manifest"
                     ).get("manifest_sha256"),
@@ -988,7 +972,7 @@ class ReportWorkflowService:
             "next_action": next_action,
             "downstream": dict(downstream) if downstream is not None else None,
         }
-        report["content_sha256"] = _canonical_hash(report)
+        report["content_sha256"] = content_sha256(report)
         markdown = self._render_markdown(report, candidates, research_markdown)
         artifacts["execution_report"] = report
         artifacts["execution_report_markdown"] = markdown

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import statistics
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
+
+from etf_agent.core import decimal_string, parse_aware_time, parse_decimal
 
 
 RESULT_STATUSES = {"completed", "degraded", "failed"}
@@ -35,15 +37,7 @@ class PerceptionToolError(ValueError):
 
 
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise PerceptionToolError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise PerceptionToolError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise PerceptionToolError("%s 必須包含時區" % field)
-    return parsed.astimezone(timezone.utc)
+    return parse_aware_time(value, field, error=PerceptionToolError)
 
 
 def _required_string(payload: Mapping[str, object], field: str) -> str:
@@ -63,13 +57,7 @@ def _string_list(payload: Mapping[str, object], field: str) -> List[str]:
 
 
 def _decimal(value: object, field: str) -> Decimal:
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as error:
-        raise PerceptionToolError("%s 無法解析數值：%s" % (field, value)) from error
-    if not parsed.is_finite():
-        raise PerceptionToolError("%s 必須是有限數值" % field)
-    return parsed
+    return parse_decimal(value, field, error=PerceptionToolError)
 
 
 def _round_optional(value: Optional[float]) -> Optional[float]:
@@ -84,12 +72,6 @@ def _median_decimal(values: Sequence[Decimal]) -> Decimal:
     if len(ordered) % 2:
         return ordered[midpoint]
     return (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2")
-
-
-def _decimal_string(value: Decimal) -> str:
-    normalized = value.normalize()
-    text = format(normalized, "f")
-    return "0" if text in {"-0", ""} else text
 
 
 class PerceptionDataProvider(Protocol):
@@ -591,11 +573,11 @@ class PerceptionDataTools:
             "forecast_period": forecast_period,
             "unit": next(iter(units)),
             "currency": next(iter(currencies)),
-            "median": _decimal_string(current_median),
+            "median": decimal_string(current_median),
             "contributor_count": len(current),
             "dispersion_pct": _round_optional(dispersion_pct),
             "revision_window_days": revision_window_days,
-            "prior_median": _decimal_string(prior_median) if prior_median is not None else None,
+            "prior_median": decimal_string(prior_median) if prior_median is not None else None,
             "prior_contributor_count": len(prior),
             "revision_pct": _round_optional(revision_pct),
             "evidence_ids": sorted({str(item["evidence_id"]) for item in current}),

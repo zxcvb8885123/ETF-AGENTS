@@ -185,6 +185,15 @@ class BacktestAgentTests(unittest.TestCase):
         self.assertEqual(report["content_sha256"], artifact_content_sha256(report))
         self.assertIn("回測帳務驗收報告", service.render_report_markdown(report))
 
+    def test_coverage_marks_naive_market_time_unavailable(self):
+        inputs = daily_inputs()
+        inputs["2026-09-02"]["execution_market"]["available_at"] = "2026-09-02T09:00:00"
+        coverage = BacktestService().inspect_fixture(request(), inputs)
+        self.assertFalse(coverage["valid"])
+        failed = [item for item in coverage["coverage"] if not item["available"]]
+        self.assertEqual([item["trade_date"] for item in failed], ["2026-09-02"])
+        self.assertIn("必須包含時區", failed[0]["reason"])
+
     def test_cli_replay_and_validate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

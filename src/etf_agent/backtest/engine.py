@@ -6,9 +6,9 @@ from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Sequence
 
-from etf_agent.decision.contracts import artifact_content_sha256, canonical_sha256, parse_time
+from etf_agent.core import canonical_sha256, content_sha256
 
-from .contracts import BacktestToolError, decimal_value
+from .contracts import BacktestToolError, decimal_value, parse_time
 
 
 MONEY = Decimal("1")
@@ -63,7 +63,7 @@ class ExecutionSimulator:
         buying_power: Decimal,
         execution_at: str,
     ) -> Dict[str, object]:
-        if decision.get("content_sha256") != artifact_content_sha256(decision):
+        if decision.get("content_sha256") != content_sha256(decision):
             raise BacktestToolError("DecisionResult.content_sha256 與內容不一致")
         if decision.get("status") not in {"approved", "no_trade", "rejected"}:
             raise BacktestToolError("DecisionResult.status 不合法")
@@ -114,7 +114,7 @@ class ExecutionSimulator:
             if unfilled_lots:
                 unfilled.append({"symbol": symbol, "side": side, "unfilled_shares": unfilled_lots * self.lot_size, "reason": "LIQUIDITY_OR_CASH"})
         body = {"fills": fills, "unfilled_orders": unfilled, "remaining_buying_power": _money(available)}
-        body["content_sha256"] = artifact_content_sha256(body)
+        body["content_sha256"] = content_sha256(body)
         return body
 
     def _fill(self, symbol: str, side: str, shares: int, price: Decimal) -> Dict[str, object]:
@@ -224,5 +224,5 @@ class AccountLedger:
             positions.append({"symbol": symbol, "shares": item["shares"], "cost_basis": str(item["cost_basis"]), "close_price": str(price), "market_value": _money(value)})
         cash = self.settled_cash + self.unsettled_cash
         body = {"trade_date": trade_date, "settled_cash": _money(self.settled_cash), "unsettled_cash": _money(self.unsettled_cash), "cash": _money(cash), "positions": positions, "nav": _money(cash + market_value)}
-        body["content_sha256"] = artifact_content_sha256(body)
+        body["content_sha256"] = content_sha256(body)
         return body

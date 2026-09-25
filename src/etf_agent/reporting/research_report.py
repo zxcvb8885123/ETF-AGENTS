@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from etf_agent.core import parse_aware_time
+
 
 REPORT_STATUSES = {"completed", "degraded"}
 UPSTREAM_STATUSES = {"completed", "degraded"}
@@ -28,15 +30,7 @@ class ResearchReportError(ValueError):
 
 
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise ResearchReportError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ResearchReportError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ResearchReportError("%s 必須包含時區" % field)
-    return parsed.astimezone(timezone.utc)
+    return parse_aware_time(value, field, error=ResearchReportError)
 
 
 def _required_string(payload: Mapping[str, object], field: str) -> str:

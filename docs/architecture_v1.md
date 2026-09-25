@@ -109,6 +109,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 
 | 路徑 | 責任 |
 | --- | --- |
+| src/etf_agent/core/ | 唯一的 canonical JSON／content hash、含時區時間解析與有限 Decimal 解析；不依賴任何 Agent 模組，各模組以自己的錯誤型別呼叫 |
 | src/etf_agent/runtime/ | 共用 pipeline run 身分、狀態與未來流程控制邊界 |
 | src/etf_agent/contracts.py | 模組資料契約與驗證 |
 | src/etf_agent/data/ | 已有：TWSE／TPEx 最新行情、交易池讀取、SQLite 與收集流程；待補 quality、features 及其他來源；每日虛擬帳戶另由帳務模組負責 |

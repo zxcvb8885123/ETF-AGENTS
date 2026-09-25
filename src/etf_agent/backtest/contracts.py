@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Dict, List, Mapping, Sequence
 
-from etf_agent.decision.contracts import artifact_content_sha256, canonical_sha256, parse_time
+from etf_agent.core import canonical_sha256, parse_aware_time, parse_decimal
 
 
 BACKTEST_SCHEMA_VERSION = "1.0"
@@ -17,13 +17,11 @@ class BacktestToolError(ValueError):
 
 
 def decimal_value(value: object, field: str) -> Decimal:
-    try:
-        result = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as error:
-        raise BacktestToolError("%s 必須是有限數值" % field) from error
-    if not result.is_finite():
-        raise BacktestToolError("%s 必須是有限數值" % field)
-    return result
+    return parse_decimal(value, field, error=BacktestToolError, parse_message="%(field)s 必須是有限數值")
+
+
+def parse_time(value: object, field: str) -> datetime:
+    return parse_aware_time(value, field, error=BacktestToolError)
 
 
 def required_string(payload: Mapping[str, object], field: str) -> str:

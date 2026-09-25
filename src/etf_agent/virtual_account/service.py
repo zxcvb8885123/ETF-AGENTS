@@ -8,18 +8,14 @@ import os
 import re
 import shutil
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
 from etf_agent.backtest.engine import AccountLedger, ExecutionSimulator
-from etf_agent.decision.contracts import (
-    DecisionInputValidator,
-    artifact_content_sha256,
-    canonical_sha256,
-    parse_time,
-)
+from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time
+from etf_agent.decision.contracts import DecisionInputValidator
 from etf_agent.decision.finalization import DecisionRepository, DecisionResultValidator
 
 
@@ -28,6 +24,10 @@ RUN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 class VirtualAccountError(ValueError):
     """虛擬帳戶契約或狀態轉移無效。"""
+
+
+def parse_time(value: object, field: str) -> datetime:
+    return parse_aware_time(value, field, error=VirtualAccountError)
 
 
 def _read(path: Path, label: str) -> Mapping[str, object]:
@@ -43,12 +43,6 @@ def _read(path: Path, label: str) -> Mapping[str, object]:
 def _write(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def _hash_without(payload: Mapping[str, object], field: str) -> str:
-    body = dict(payload)
-    body.pop(field, None)
-    return canonical_sha256(body)
 
 
 class VirtualAccountRepository:
@@ -144,7 +138,7 @@ class VirtualAccountRepository:
         manifest = _read(path / "manifest.json", "manifest")
         if manifest.get("run_id") != run_id or manifest.get("account_id") != self.root.name:
             raise VirtualAccountError("manifest 身分不一致")
-        if manifest.get("manifest_sha256") != _hash_without(manifest, "manifest_sha256"):
+        if manifest.get("manifest_sha256") != content_sha256(manifest, "manifest_sha256"):
             raise VirtualAccountError("manifest 雜湊錯誤")
         expected = {"manifest.json"}
         artifacts = manifest.get("artifacts")
@@ -164,7 +158,7 @@ class VirtualAccountRepository:
         if actual != expected:
             raise VirtualAccountError("run 檔案集合與 manifest 不一致")
         state = _read(path / "state.json", "state")
-        if state.get("content_sha256") != _hash_without(state, "content_sha256"):
+        if state.get("content_sha256") != content_sha256(state, "content_sha256"):
             raise VirtualAccountError("VirtualAccountState 雜湊錯誤")
         state_seed = dict(state)
         state_seed.pop("content_sha256", None)
@@ -388,5 +382,5 @@ class VirtualAccountService:
             "provenance": dict(provenance),
         }
         body["state_id"] = "virtual-state:" + canonical_sha256(body)[:20]
-        body["content_sha256"] = artifact_content_sha256(body)
+        body["content_sha256"] = content_sha256(body)
         return body

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+from etf_agent.core import canonical_json, content_sha256, decimal_string, parse_aware_time, parse_decimal
 
 
 BUNDLE_SCHEMA_VERSION = "1.0"
@@ -48,31 +49,14 @@ class FundamentalToolError(ValueError):
     """Raised when a fundamental-research artifact is unsafe to use."""
 
 
-def _canonical_json(payload: Mapping[str, object]) -> str:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _content_sha256(payload: Mapping[str, object]) -> str:
-    unsigned = {key: value for key, value in payload.items() if key != "content_sha256"}
-    return hashlib.sha256(_canonical_json(unsigned).encode("utf-8")).hexdigest()
-
-
 def _with_content_sha256(payload: Mapping[str, object]) -> Dict[str, object]:
     result = dict(payload)
-    result["content_sha256"] = _content_sha256(result)
+    result["content_sha256"] = content_sha256(result)
     return result
 
 
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise FundamentalToolError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise FundamentalToolError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise FundamentalToolError("%s 必須包含時區" % field)
-    return parsed.astimezone(timezone.utc)
+    return parse_aware_time(value, field, error=FundamentalToolError)
 
 
 def _required_string(payload: Mapping[str, object], field: str) -> str:
@@ -101,19 +85,7 @@ def _optional_string_list(payload: Mapping[str, object], field: str) -> List[str
 
 
 def _decimal(value: object, field: str) -> Decimal:
-    try:
-        result = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as error:
-        raise FundamentalToolError("%s 無法解析數值：%s" % (field, value)) from error
-    if not result.is_finite():
-        raise FundamentalToolError("%s 必須是有限數值" % field)
-    return result
-
-
-def _decimal_string(value: Decimal) -> str:
-    normalized = value.normalize()
-    text = format(normalized, "f")
-    return "0" if text in {"-0", ""} else text
+    return parse_decimal(value, field, error=FundamentalToolError)
 
 
 def _same_time(left: object, right: object, label: str) -> bool:
@@ -316,7 +288,7 @@ class FundamentalSnapshotTools:
             "schema_version": BUNDLE_SCHEMA_VERSION,
             "bundle_id": bundle_id.strip(),
             "snapshot_id": self.snapshot_id,
-            "snapshot_sha256": _content_sha256(self.snapshot),
+            "snapshot_sha256": content_sha256(self.snapshot),
             "decision_cutoff": self.decision_cutoff,
             "generated_at": generated_at,
             "status": status,
@@ -353,7 +325,7 @@ class FundamentalSnapshotTools:
                 raise FundamentalToolError(
                     "FundamentalDataBundle.decision_cutoff 與 Snapshot 不一致"
                 )
-            if payload.get("snapshot_sha256") != _content_sha256(self.snapshot):
+            if payload.get("snapshot_sha256") != content_sha256(self.snapshot):
                 raise FundamentalToolError("FundamentalDataBundle.snapshot_sha256 不一致")
             bundle_id = _required_string(payload, "bundle_id")
             generated_at = _required_string(payload, "generated_at")
@@ -365,10 +337,10 @@ class FundamentalSnapshotTools:
                 bundle_id=bundle_id,
                 generated_at=generated_at,
             )
-            if _canonical_json(dict(payload)) != _canonical_json(expected):
+            if canonical_json(dict(payload)) != canonical_json(expected):
                 errors.append("FundamentalDataBundle 未通過確定性重建")
             supplied_hash = payload.get("content_sha256")
-            if supplied_hash != _content_sha256(payload):
+            if supplied_hash != content_sha256(payload):
                 errors.append("FundamentalDataBundle.content_sha256 不一致")
         except FundamentalToolError as error:
             errors.append(str(error))
@@ -582,9 +554,9 @@ class FundamentalMetricsCalculator:
                 metrics_id=_required_string(payload, "metrics_id"),
                 computed_at=_required_string(payload, "computed_at"),
             )
-            if _canonical_json(dict(payload)) != _canonical_json(expected):
+            if canonical_json(dict(payload)) != canonical_json(expected):
                 errors.append("FundamentalMetrics 未通過確定性重算")
-            if payload.get("content_sha256") != _content_sha256(payload):
+            if payload.get("content_sha256") != content_sha256(payload):
                 errors.append("FundamentalMetrics.content_sha256 不一致")
         except FundamentalToolError as error:
             errors.append(str(error))
@@ -789,7 +761,7 @@ class FundamentalMetricsCalculator:
             "fact_key": fact_key,
             "currency": _required_string(fact, "currency"),
             "unit_multiplier": multiplier,
-            "value": _decimal_string(value),
+            "value": decimal_string(value),
             "absolute_value": value * Decimal(multiplier),
             "source_evidence_id": _required_string(statement, "source_evidence_id"),
         }
@@ -824,7 +796,7 @@ class FundamentalMetricsCalculator:
             "symbol": symbol,
             "metric_key": metric_key,
             "status": "available",
-            "value": _decimal_string(value),
+            "value": decimal_string(value),
             "unit": unit,
             "period": company["period"],
             "comparison_period": company["comparison_period"],
@@ -963,7 +935,7 @@ class FundamentalResearchResultValidator:
         ):
             raise FundamentalToolError("FundamentalResearchResult.errors 必須是字串陣列")
         supplied_hash = payload.get("content_sha256")
-        if supplied_hash is not None and supplied_hash != _content_sha256(payload):
+        if supplied_hash is not None and supplied_hash != content_sha256(payload):
             raise FundamentalToolError("FundamentalResearchResult.content_sha256 不一致")
 
     def _validate_item(self, item: Mapping[str, object]) -> str:
@@ -1113,11 +1085,11 @@ class FundamentalResearchApplicationService:
             raise FundamentalToolError("archive 輸出已存在，拒絕覆寫：%s" % output)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("x", encoding="utf-8") as handle:
-            handle.write(_canonical_json(result["result"]))
+            handle.write(canonical_json(result["result"]))
             handle.write("\n")
         return result
 
     @staticmethod
     def _write_json(path: Path, payload: Mapping[str, object]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_canonical_json(payload) + "\n", encoding="utf-8")
+        path.write_text(canonical_json(payload) + "\n", encoding="utf-8")

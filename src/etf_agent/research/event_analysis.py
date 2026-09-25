@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
+from etf_agent.core import parse_aware_time, parse_decimal
 from etf_agent.data import MarketDataDatabase
 
 
@@ -46,15 +47,7 @@ class ResearchToolError(ValueError):
 
 
 def _parse_time(value: object, field: str) -> datetime:
-    if not isinstance(value, str) or not value:
-        raise ResearchToolError("%s 必須是包含時區的時間字串" % field)
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ResearchToolError("%s 無法解析：%s" % (field, value)) from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ResearchToolError("%s 必須包含時區" % field)
-    return parsed.astimezone(timezone.utc)
+    return parse_aware_time(value, field, error=ResearchToolError)
 
 
 def _required_string(payload: Mapping[str, object], field: str) -> str:
@@ -74,10 +67,7 @@ def _string_list(payload: Mapping[str, object], field: str) -> List[str]:
 
 
 def _decimal(value: object) -> Decimal:
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as error:
-        raise ResearchToolError("無法解析數值：%s" % value) from error
+    return parse_decimal(value, "數值", error=ResearchToolError, parse_message="無法解析數值：%(value)s")
 
 
 class HistoricalPriceFeatureRepository:
