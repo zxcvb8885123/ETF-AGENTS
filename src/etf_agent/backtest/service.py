@@ -7,9 +7,10 @@ from typing import Dict, Mapping, Sequence
 
 from etf_agent.core import canonical_sha256, content_sha256
 from etf_agent.decision.finalization import DecisionResultValidator
+from etf_agent.ledger import AccountLedger, ExecutionSimulator
 
 from .contracts import BACKTEST_SCHEMA_VERSION, BacktestRequestValidator, BacktestToolError, HistoricalClock, decimal_value, parse_time
-from .engine import AccountLedger, ExecutionSimulator, FixturePointInTimeDataProvider
+from .engine import FixturePointInTimeDataProvider
 
 
 class BacktestService:

@@ -74,8 +74,8 @@ LLM 只能選擇已核准的實驗、要求診斷與解釋確定性結果，不�
 | `HistoricalClock` | 產生交易日與當日 decision cutoff |
 | `PointInTimeDataProvider` | 只提供當時可得的資料版本 |
 | `ReplayOrchestrator` | 使用與每日流程相同的研究、決策與風控介面 |
-| `ExecutionSimulator` | 模擬成交、未成交、費稅、滑價及公司行動 |
-| `AccountLedger` | 更新現金、持股、成本與每日估值 |
+| `ExecutionSimulator` | 模擬成交、未成交、費稅、滑價及公司行動；位於共用的 `etf_agent.ledger`，與虛擬帳戶使用同一套規則 |
+| `AccountLedger` | 更新現金、持股、成本與每日估值；位於 `etf_agent.ledger` |
 | `PerformanceAnalyzer` | 計算研究品質、績效、風險與策略差異 |
 | `BacktestRepository` | 保存 run、每日輸入輸出、交易、淨值與 artifact |
 

@@ -171,6 +171,7 @@ scripts/                初始化、收集與狀態查詢維運指令
 skills/                 Codex／Claude 工作流程、契約參考與 UI metadata
 src/etf_agent/          Agent 核心程式、runtime 與報告 Builder
 src/etf_agent/core/     共用 canonical hash、含時區時間與有限 Decimal 解析
+src/etf_agent/ledger/   回測與虛擬帳戶共用的成交、費稅與帳本
 tests/                  單元測試與測試資料
 var/                    SQLite 資料庫（不納入 Git）
 artifacts/              每日輸出檔案（不納入 Git）

@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 
 from etf_agent.backtest import (
-    AccountLedger,
     BacktestRequestValidator,
     BacktestRepository,
     BacktestService,
@@ -16,6 +15,7 @@ from etf_agent.backtest import (
     HistoricalClock,
 )
 from etf_agent.decision import artifact_content_sha256, canonical_sha256
+from etf_agent.ledger import AccountLedger, LedgerError
 
 
 def request():
@@ -134,7 +134,7 @@ class BacktestAgentTests(unittest.TestCase):
     def test_execution_market_cannot_arrive_after_execution_time(self):
         inputs = daily_inputs()
         inputs["2026-09-01"]["execution_market"]["available_at"] = "2026-09-01T09:01:00+08:00"
-        with self.assertRaisesRegex(BacktestToolError, "晚於 execution_at"):
+        with self.assertRaisesRegex(LedgerError, "晚於 execution_at"):
             BacktestService().run_fixture(request(), inputs)
 
     def test_adjusted_or_early_close_market_is_rejected(self):
@@ -152,7 +152,7 @@ class BacktestAgentTests(unittest.TestCase):
         ledger.apply_actions([{"type": "split", "symbol": "2330.TW", "numerator": 2, "denominator": 1}])
         self.assertEqual(ledger.positions["2330.TW"]["shares"], 2000)
         fractional = AccountLedger(request()["initial_account"])
-        with self.assertRaisesRegex(BacktestToolError, "零股"):
+        with self.assertRaisesRegex(LedgerError, "零股"):
             fractional.apply_actions([{"type": "split", "symbol": "2330.TW", "numerator": 3, "denominator": 2}])
 
     def test_historical_verified_mode_requires_full_decision_rebuild_inputs(self):
