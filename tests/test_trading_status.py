@@ -284,6 +284,33 @@ class TradingStatusTests(unittest.TestCase):
             self.assertEqual(validation.returncode, 0, validation.stderr)
             self.assertTrue(json.loads(validation.stdout)["valid"])
 
+    def test_cli_snapshot_mode_without_sources_marks_every_symbol_unknown(self):
+        snapshot = decision_fixture()["snapshot"]
+        snapshot["universe_version"] = "universe-fixture"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(__file__).resolve().parents[1]
+            snapshot_path = Path(directory) / "snapshot.json"
+            bundle_path = Path(directory) / "bundle.json"
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            base = [
+                sys.executable, str(root / "cli" / "trading_status.py"), "build-bundle",
+                "--snapshot", str(snapshot_path), "--output", str(bundle_path),
+            ]
+            missing_session = subprocess.run(base, capture_output=True, text=True, check=False)
+            self.assertEqual(missing_session.returncode, 1)
+            built = subprocess.run(
+                base + [
+                    "--session-start", "2026-09-21T09:00:00+08:00",
+                    "--session-end", "2026-09-21T13:30:00+08:00",
+                ],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(built.returncode, 2, built.stderr)
+            payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["bundle"]["request"]["universe_symbols"], ["2330.TW", "2317.TW"])
+        self.assertEqual({item["state"] for item in payload["assessment"]["symbols"]}, {"unknown"})
+        self.assertEqual(TradingStatusBundleValidator().validate(payload["bundle"], payload["assessment"]), [])
+
     def test_collector_saves_raw_payload_before_degraded_bundle(self):
         with tempfile.TemporaryDirectory() as directory:
             directory_path = Path(directory)

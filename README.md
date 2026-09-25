@@ -53,6 +53,7 @@ python3 -m venv .venv
 | `.venv/bin/python cli/fundamental_research.py validate-result ...` | 驗證基本面研究草稿、引用與內容雜湊 |
 | `.venv/bin/python cli/research_report.py build` | 將已驗證研究結果建立成 ResearchReport JSON 與 Markdown |
 | `.venv/bin/python cli/portfolio_decision.py --bundle TEMPLATE.json build-input --research RESULT.json [--trading-status STATUS.json]` | 由 Snapshot、SQLite 歷史行情（預設 120 根）與 `config/decision_rules.json` 建立 DecisionInputBundle 樣板，再以 `virtual_account.py attach-account` 綁入帳戶；未提供交易狀態包時回報缺口（exit 2） |
+| `PYTHONPATH=src python3 cli/trading_status.py build-bundle --snapshot SNAPSHOT.json --session-start ISO --session-end ISO --output STATUS.json` | 以 Snapshot 交易池建立交易狀態包；未提供已核准 records／coverage 時逐檔 `unknown`，供決策輸入誠實表示缺口 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |

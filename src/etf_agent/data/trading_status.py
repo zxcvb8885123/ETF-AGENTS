@@ -140,6 +140,33 @@ class TradingStatusRequest:
         return errors
 
     @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: Mapping[str, object],
+        target_session_start: str,
+        target_session_end: str,
+        source_config_version: str = "unconfigured",
+    ) -> "TradingStatusRequest":
+        """以 Snapshot 的固定交易池與 cutoff 建立請求；目標時段須由呼叫端明確提供。"""
+        prices = snapshot.get("latest_prices")
+        if not isinstance(prices, list):
+            raise TradingStatusError("Snapshot 缺少 latest_prices")
+        snapshot_id = _text(snapshot.get("snapshot_id"), "snapshot_id")
+        return cls.from_dict(
+            {
+                "request_id": "trading-status-request:%s" % snapshot_id,
+                "snapshot_id": snapshot_id,
+                "universe_version": snapshot.get("universe_version"),
+                "universe_symbols": [
+                    item.get("symbol") for item in prices if isinstance(item, Mapping)
+                ],
+                "decision_cutoff": snapshot.get("decision_cutoff"),
+                "target_session": {"start": target_session_start, "end": target_session_end},
+                "source_config_version": source_config_version,
+            }
+        )
+
+    @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "TradingStatusRequest":
         session = payload.get("target_session")
         if not isinstance(session, Mapping):
