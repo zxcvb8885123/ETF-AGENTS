@@ -135,6 +135,8 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | config/competition_rules.json | 既有競賽設定 |
 | artifacts/{trade_date}/{run_id}/ | 預定保存快照、提案、風控、報告與回執 |
 
+research、perception、fundamentals 與 reporting 依職責分為 `contracts`、`provider`／`repository`、`tools`（或 builder／metrics／renderer）、`validator` 與 `service` 模組；decision 依決策階段分為 contracts、momentum、trade_intent、allocation、risk、revision、finalization 與 service。`__init__.py` 只匯出公開介面。
+
 ## 8. 現況與實作里程碑
 
 目前已有基本資料模型、部分規則檢查、SQLite schema、150 檔交易池匯入、TWSE／TPEx 最新行情、Yahoo 兩年行情每日增量刷新、TWSE／TPEx 歷史行情 provider、月營收、重大訊息、原始回應、版本紀錄與不可變 Snapshot。Portfolio Decision P0～P6 fixture MVP 已加入共同輸入雜湊、確定性動能、獨立買賣裁決、配置／訂單／費稅、壓力情境、全部輸入基準 Guard、Portfolio Risk、有限修正與執行 manifest。VA1～VA3 fixture 虛擬帳本也已可建立唯一 10 億 TWD genesis、續接帳戶、接入決策前快照並模擬成交；尚未串入每日報告工作流，且交易狀態官方來源、規則口徑、真實資料與前向回測仍待驗收，因此 `approved` 只代表 fixture／契約層可交給回測與人工檢查。

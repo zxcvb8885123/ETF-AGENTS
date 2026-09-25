@@ -65,6 +65,7 @@
 - 可重複的數值計算、時間檢查、引用驗證及停止條件必須由 Python 實作，不只寫在 prompt。
 - Canonical JSON／content hash、含時區時間解析與有限 Decimal 解析一律使用 `etf_agent.core`，不得在模組內另寫一份；需要模組專屬錯誤時以 `error=` 傳入。
 - 新 Agent 優先提供：計畫文件、資料契約、Provider 邊界、確定性工具、Validator、Skill、CLI 與測試。
+- Agent 子套件依職責分檔：`contracts.py`（列舉、錯誤型別、欄位解析）、`provider.py`／`repository.py`（資料來源與保存）、`tools.py`（確定性工具）、`validator.py`（重建驗證）、`service.py`（對外應用服務），由 `__init__.py` 匯出公開介面；不要再把整個 Agent 寫在單一檔案。
 - Skill 使用小寫連字號命名，並包含精簡的 `SKILL.md`；需要詳細 schema 時放在 `references/`。
 - `agents/openai.yaml` 的 `default_prompt` 必須明確提到 `$skill-name`，UI 描述要與 Skill 邊界一致。
 - 不直接在專案內串接模型 API、LangChain 或 LangGraph；除非計畫明確變更並完成測試與安全審查。
