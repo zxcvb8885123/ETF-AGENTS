@@ -105,6 +105,12 @@ Data Agent M0 已完成；M1 的 TPEx 最新行情與官方歷史行情 CLI 已�
 
 2026-09-25 的 [休市日跨日稽核](docs/source_audit/2026-09-25_findings.md)已重抓相同十個端點並保存雜湊、固定樣本及就緒判定。TWSE／TPEx 均公告 9/25 與 9/28 休市；多數端點仍為 9/24 資料不能判作當日逾期。來源完整性與持續使用／保存條件仍待核實，交易狀態核准清單維持空白。主辦 30 檔 ETF 清單與外部 ETF 持股權重僅供選配比較；目前取得的 D-Plan 指南沒有將 Active Share 列為每日硬性上限，不能以缺少 ETF 權重阻擋正式決策。
 
+TS0 的[來源核准行動計劃](docs/source_audit/2026-09-25_ts0_approval_plan.md)已完成四份 TPEx 與四份 TWSE 政府開放 CSV／候選 JSON 的指定日期對照；TPEx 注意及處置的 CSV／JSON 範圍不同，須依公告日期處理。下一關是核實完整現況、時點與其餘來源，再於實際交易日驗收 150 檔；目前核准來源仍為 0。
+
+已提供 `scripts/capture_trading_status_candidates.py` 封存八份候選 CSV 的不同抓取時段及 HTTP／內容證據；它只做來源稽核，不會產生可交易判定或修改正式核准清單。
+
+`scripts/normalize_trading_status_candidates.py` 可從封存原檔重建固定 150 檔的候選事實；同時 `trading-status-policy-2` 將注意資訊改為選配提示，不再因缺少注意來源而單獨擋住交易許可。必要限制來源與正式核准仍維持 fail-closed。
+
 目前 M1 官方交易狀態已完成 TS1～TS4 的契約、固定 cutoff 重建、SQLite migration、CLI 與 Guard adapter；[M1 官方交易狀態接入](docs/trading_status_m1_plan.md) 的 TS0 來源核准與 TS5 150 檔真實覆蓋仍未完成。資料不足時阻擋正式決策，保留可用研究資料。
 
 P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新；P7 B0～B2 fixture 回測帳務驗收也已完成。下一批是 B3 策略比較與 B4 Agent 評估；正式資料接入與規則版本仍需另外確認。

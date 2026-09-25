@@ -18,10 +18,13 @@
   },
   "trading_status": {
     "approved_sources": 0,
+    "crosschecked_candidate_csv_sources": 8,
+    "candidate_hit_symbols_in_universe": 6,
+    "candidate_fact_report": "artifacts/source-audit/captures/20260925T052714327866Z/candidate-facts.json",
     "probed_sources": 9,
     "coverage": "unknown",
     "official_tradability_assessments": 0,
-    "reason": "OpenAPI schema 與單次／休市日回應不能證明完整現況、歷史可得時間或自動化保存授權；空白佔位列存在"
+    "reason": "八份政府開放 CSV 已完成候選事實正規化，但尚未完成正式交易狀態映射及交易日更新完成／完整現況驗收；OpenAPI JSON 不能直接沿用 CSV 授權，空白佔位列亦不可視為無限制"
   },
   "calendar": {
     "confirmed_closed_dates": [
@@ -42,14 +45,23 @@
       "https://data.gov.tw/dataset/11736",
       "https://data.gov.tw/dataset/11395",
       "https://data.gov.tw/dataset/11396",
-      "https://data.gov.tw/dataset/48665"
+      "https://data.gov.tw/dataset/48665",
+      "https://data.gov.tw/dataset/11760",
+      "https://data.gov.tw/dataset/29082",
+      "https://data.gov.tw/dataset/11677"
     ],
     "license_url": "https://data.gov.tw/license",
     "direct_openapi_mapping_verified": false,
     "status": "candidate",
     "crosschecked_datasets": [
       "https://data.gov.tw/dataset/11736",
-      "https://data.gov.tw/dataset/11395"
+      "https://data.gov.tw/dataset/11395",
+      "https://data.gov.tw/dataset/11396",
+      "https://data.gov.tw/dataset/48665",
+      "https://data.gov.tw/dataset/11760",
+      "https://data.gov.tw/dataset/29082",
+      "https://data.gov.tw/dataset/11677",
+      "https://data.gov.tw/dataset/11761"
     ],
     "crosscheck_path": "docs/source_audit/2026-09-25_ogd_crosscheck.json"
   }

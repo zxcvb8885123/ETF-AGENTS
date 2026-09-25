@@ -2,6 +2,12 @@
 
 狀態：TS1～TS4 已完成契約／重建器／SQLite migration／CLI／Guard adapter 的 fixture 驗收；TS0 官方端點核准與 TS5 150 檔真實覆蓋尚未完成。接續官方歷史行情與財報彙總，先補來源重測與真實保存，再收尾 M1 細粒度工具、進入 M2／M3。
 
+2026-09-25 進度：已取得四份 TPEx 與四份 TWSE 政府開放 CSV，與同日官方 OpenAPI JSON 完成指定日期對應欄位比對；TPEx 注意、處置兩組的整體日期範圍不同。[TS0 來源核准行動計劃](source_audit/2026-09-25_ts0_approval_plan.md)列明各來源剩餘的授權、完整性、更新時點與 TS5 關口；目前核准來源仍為 0。
+
+同日政策修正：`trading-status-policy-2` 的預設必要類別移除 `attention`。注意資訊依[證交所注意／處置作業要點](https://twse-regulation.twse.com.tw/TW/law/DAT0201_print.aspx?FLCODE=FL007225)與本計劃的提示定位，只在來源已核准且資料完整時加入提示與證據；缺少注意來源本身不使交易許可變成 `unknown`。若明確版本化政策把注意列為必要類別，請求仍可指定；舊 `trading-status-policy-1` 的預設類別保留。停牌、變更交易、分盤、管理及處置的必要覆蓋與 fail-closed 不變。
+
+已新增八份政府開放 CSV 的日期精度候選事實正規化：保留公告日與暫定處置區間、停復牌事件日期／時間、原始列雜湊及抓取時間；五、六碼非股票證券不混入 150 檔股票交易池。候選事實沒有完整現況或正式生效時間證據，不能轉成 `allowed`、`blocked` 或正式來源核准。
+
 ## 1. 目標與範圍
 
 在固定 `decision_cutoff` 下，回答官方交易池每檔股票於指定交易時段的已知交易狀態，交付可重建的資料包與確定性決策閘門。這是 Data Agent 與 Portfolio Guard 的能力擴充，不新增推理 Agent。

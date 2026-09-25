@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from etf_agent.data import (
+    DEFAULT_REQUIRED_CATEGORIES,
     MarketDataDatabase,
     TradingStatusBundleBuilder,
     TradingStatusBundleValidator,
@@ -101,6 +102,48 @@ def refresh_record_hash(value):
 
 
 class TradingStatusTests(unittest.TestCase):
+    def test_default_policy_treats_attention_as_optional_information(self):
+        self.assertNotIn("attention", DEFAULT_REQUIRED_CATEGORIES)
+        base = {
+            "request_id": "r",
+            "snapshot_id": "s",
+            "universe_version": "u",
+            "universe_symbols": ["2330.TW"],
+            "decision_cutoff": CUTOFF,
+            "target_session": {"start": SESSION_START, "end": SESSION_END},
+        }
+        current = TradingStatusRequest.from_dict(base)
+        self.assertEqual(current.policy_version, "trading-status-policy-2")
+        self.assertNotIn("attention", current.required_categories)
+        legacy = TradingStatusRequest.from_dict({**base, "policy_version": "trading-status-policy-1"})
+        self.assertIn("attention", legacy.required_categories)
+
+    def test_optional_attention_is_reported_only_from_approved_coverage(self):
+        attention = record(category="attention", status_code="attention")
+        candidate_coverage = coverage() + [{
+            **coverage()[0],
+            "source_id": "TWSE_ATTENTION",
+            "category": "attention",
+            "approval_status": "candidate",
+        }]
+        bundle, assessment = TradingStatusBundleBuilder(
+            request(), [attention], candidate_coverage
+        ).build()
+        self.assertEqual(bundle["status"], "completed")
+        item = next(item for item in assessment["symbols"] if item["symbol"] == "2330.TW")
+        self.assertEqual(item["state"], "allowed")
+        self.assertNotIn("ATTENTION:attention", item["reason_codes"])
+        approved_coverage = copy.deepcopy(candidate_coverage)
+        approved_coverage[-1]["approval_status"] = "approved"
+        bundle, assessment = TradingStatusBundleBuilder(
+            request(), [attention], approved_coverage
+        ).build()
+        item = next(item for item in assessment["symbols"] if item["symbol"] == "2330.TW")
+        self.assertEqual(item["state"], "allowed")
+        self.assertIn("ATTENTION:attention", item["reason_codes"])
+        self.assertIn(attention["evidence_id"], item["evidence_ids"])
+        self.assertEqual(TradingStatusBundleValidator().validate(bundle, assessment), [])
+
     def test_rebuilds_blocked_and_allowed_separately(self):
         bundle, assessment = TradingStatusBundleBuilder(
             request(), [record()], coverage()

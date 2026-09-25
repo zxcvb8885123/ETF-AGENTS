@@ -2,6 +2,8 @@
 
 日期：2026-09-24。狀態：D0／TS0 初步公開端點與 12 檔樣本已探測，9/25 休市日跨日重測見[最新來源稽核](source_audit/2026-09-25_findings.md)；正式來源核准與 TS5 未完成；ETF 權重屬選配比較資料。本文件是執行計畫，不代表 API 已接入或正式決策可用。承接 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)、[官方交易狀態計畫](trading_status_m1_plan.md)及[正式報告交付計畫](competition_report_delivery_plan.md)。
 
+TS0 的現階段逐來源缺口與下個實際交易日驗收，依[2026-09-25 來源核准行動計劃](source_audit/2026-09-25_ts0_approval_plan.md)執行；四份 TPEx 與四份 TWSE 政府開放 CSV 已完成指定日期對應欄位對照，但尚不滿足正式核准條件。
+
 ## 目標與交付順序
 
 先確定正式決策所需資料的來源、授權、可得時間與完整性，再接 Provider。依 2026-09-25 規則核對，外部 ETF 持股權重與 Active Share 不列為每日 D-Plan 硬性風控；缺少權重不阻擋競賽持股上限檢查。每個候選來源有明確的 `approved`、`candidate` 或 `rejected` 結論及原始證據；沒有證據時維持 `candidate`。研究可用與正式決策可用分開報告。

@@ -312,7 +312,7 @@
     ],
     "trading_status": {
       "schema_version": "1.0",
-      "policy_version": "trading-status-policy-1",
+      "policy_version": "trading-status-policy-2",
       "approval_rule": "only_approved_sources",
       "sources": [],
       "candidate_endpoints": [
