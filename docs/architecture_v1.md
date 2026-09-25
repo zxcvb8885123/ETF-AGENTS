@@ -121,7 +121,7 @@ LLM 不負責金額加總或整張數量計算。其輸出必須符合結構化�
 | src/etf_agent/accounts/ | 主辦方帳戶資料匯入與差異對帳 |
 | src/etf_agent/competition/ | D-Plan 候選匯出與本地結構／引用鏈檢查 |
 | src/etf_agent/reporting/ | Research Report V0 Builder／Validator／Markdown renderer |
-| src/etf_agent/automation/ | PipelineRun、DailyReport／FailureReport、報告工作流、不可變封存與重建驗證；正式排程待後續實作 |
+| src/etf_agent/automation/ | PipelineRun、DailyReport／FailureReport、報告工作流（分階段方法與單一 `_StageOutcome` 封存）、不可變封存與重建驗證；正式排程待後續實作 |
 | src/etf_agent/runtime/ | 共用 pipeline run 身分、狀態與未來流程控制邊界 |
 | src/etf_agent/dashboard/ | 唯讀績效儀表板 |
 | src/etf_agent/prototype/ | 早期原型：float 版 CompetitionGuard、Portfolio 與事件策略 V1；只供相容測試與 `scripts/run_strategy.py` 對照，不在正式決策路徑 |

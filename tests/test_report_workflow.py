@@ -10,6 +10,7 @@ from etf_agent.automation import (
     ReportWorkflowService,
 )
 from etf_agent.data import MarketDataDatabase
+from etf_agent.research import ResearchToolError
 
 
 class _FakeTools:
@@ -228,6 +229,106 @@ class ReportWorkflowTests(unittest.TestCase):
                 )
             )
             self.assertEqual(report["downstream"]["decision_run_id"], decision_run_id)
+
+    def _run(self, root, snapshot_path, database_path, run_id, **kwargs):
+        return ReportWorkflowService(ReportWorkflowRepository(root / "runs")).run(
+            workflow_run_id=run_id,
+            repository_root=root / "runs",
+            reports_root=root / "reports",
+            snapshot_path=snapshot_path,
+            database_path=database_path,
+            generated_at="2026-09-20T01:00:00+00:00",
+            **kwargs,
+        )
+
+    def _execution_report(self, root, run_id):
+        return json.loads(
+            (root / "runs" / run_id / "execution_report.json").read_text(encoding="utf-8")
+        )
+
+    def test_unusable_snapshot_is_failed_at_snapshot_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = _snapshot()
+            snapshot["usable"] = False
+            snapshot["quality_flags"] = ["MISSING_PRICES"]
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            database_path = root / "prices.db"
+            MarketDataDatabase(database_path).initialize()
+            result = self._run(root, snapshot_path, database_path, "unusable-1")
+            self.assertEqual(result["status"], "failed")
+            report = self._execution_report(root, "unusable-1")
+            self.assertEqual([stage["name"] for stage in report["stages"]], ["snapshot"])
+            self.assertIn("MISSING_PRICES", report["errors"][0])
+
+    def test_event_data_error_is_failed_at_event_data_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path, database_path = self.write_snapshot(root)
+            with patch(
+                "etf_agent.automation.workflow.EventResearchApplicationService.from_paths",
+                side_effect=ResearchToolError("資料庫不可讀"),
+            ):
+                result = self._run(root, snapshot_path, database_path, "event-fail-1")
+            self.assertEqual(result["status"], "failed")
+            report = self._execution_report(root, "event-fail-1")
+            self.assertEqual(
+                [(stage["name"], stage["status"]) for stage in report["stages"]],
+                [("event_data", "failed")],
+            )
+
+    def test_invalid_research_result_is_failed_without_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path, database_path = self.write_snapshot(root)
+            research_path = root / "research.json"
+            research_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            invalid = _FakeEventService()
+            invalid.validate_file = lambda path: {"valid": False, "errors": ["引用不存在"]}
+            with patch(
+                "etf_agent.automation.workflow.EventResearchApplicationService.from_paths",
+                return_value=invalid,
+            ):
+                result = self._run(
+                    root, snapshot_path, database_path, "invalid-research-1",
+                    research_path=research_path,
+                )
+            self.assertEqual(result["status"], "failed")
+            report = self._execution_report(root, "invalid-research-1")
+            self.assertEqual(
+                [(stage["name"], stage["status"]) for stage in report["stages"]],
+                [("snapshot", "succeeded"), ("event_data", "succeeded"), ("research_report", "failed")],
+            )
+            self.assertIn("引用不存在", report["errors"][0])
+            self.assertFalse((root / "runs" / "invalid-research-1" / "research_report.json").exists())
+
+    def test_official_missing_virtual_account_run_fails_at_account_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_path, database_path = self.write_snapshot(root)
+            research_path = root / "research.json"
+            research_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            with patch(
+                "etf_agent.automation.workflow.EventResearchApplicationService.from_paths",
+                return_value=_FakeEventService(),
+            ), patch(
+                "etf_agent.automation.workflow.ResearchReportApplicationService.from_paths",
+                return_value=_FakeResearchService(),
+            ):
+                result = self._run(
+                    root, snapshot_path, database_path, "account-fail-1",
+                    research_path=research_path,
+                    decision_repository=root / "decisions",
+                    decision_run_id="decision-1",
+                    virtual_account_repository=root / "accounts",
+                    virtual_account_account_id="ai-cup-2026",
+                    virtual_account_run_id="missing-run",
+                )
+            self.assertEqual(result["status"], "failed")
+            report = self._execution_report(root, "account-fail-1")
+            self.assertEqual(report["stages"][-1]["name"], "account_snapshot")
+            self.assertEqual(report["stages"][-1]["status"], "failed")
 
     def test_official_daily_report_requires_virtual_account_run(self):
         with tempfile.TemporaryDirectory() as directory:
