@@ -7,16 +7,17 @@ cd "$PROJECT_DIR"
 MODE=${1:-auto}
 
 case "$MODE" in
-  auto|official|all|check|daily|report)
+  auto|official|all|check|daily|report|dashboard)
     ;;
   *)
-    echo "用法：./start.sh [auto|official|all|check|daily|report]" >&2
+    echo "用法：./start.sh [auto|official|all|check|daily|report|dashboard]" >&2
     echo "  auto      有官方交易池就正式抓取，否則使用開發模式（預設）" >&2
     echo "  official  僅抓取官方交易池，交易池空白時停止" >&2
     echo "  all       開發用，抓取 TWSE 端點全部可解析證券" >&2
     echo "  check     視需要建置映像並執行環境檢查與測試，不抓資料" >&2
     echo "  daily     一鍵驗證來源、更新行情／事件、建立 Snapshot 並交付報告" >&2
     echo "  report    使用既有 Snapshot 執行或續跑報告工作流" >&2
+    echo "  dashboard 啟動唯讀績效儀表板 http://127.0.0.1:8000" >&2
     exit 2
     ;;
 esac
@@ -58,6 +59,11 @@ if [ "${FORCE_DOCKER_BUILD:-0}" = "1" ] || [ "$IMAGE_INPUT_SHA" != "$BUILD_INPUT
   docker compose build --build-arg "BUILD_INPUT_SHA=$BUILD_INPUT_SHA"
 else
   echo "[1/4] Docker 映像已是目前依賴版本，略過建置"
+fi
+
+if [ "$MODE" = "dashboard" ]; then
+  echo "[2/2] 啟動績效儀表板：http://127.0.0.1:${DASHBOARD_PORT:-8000}"
+  exec docker compose up dashboard
 fi
 
 echo "[2/4] 檢查專案設定"
@@ -126,6 +132,18 @@ if [ "$DAILY_RUN" -eq 1 ]; then
   docker compose run --rm agent python3 cli/data_agent.py snapshot \
     --decision-cutoff "$DAILY_CUTOFF" \
     --output artifacts/research_snapshot_latest.json
+  ACCOUNT_ID=${ACCOUNT_ID:-ai-cup-2026}
+  ACCOUNT_RUN_ID=${ACCOUNT_RUN_ID:-prepare-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
+  echo "[3c+/4] 推進虛擬帳本：以收盤價結算前一份決策，並建立決策前帳戶快照"
+  set +e
+  docker compose run --rm agent python3 cli/virtual_account.py \
+    --account-id "$ACCOUNT_ID" daily \
+    --snapshot artifacts/research_snapshot_latest.json \
+    --database var/etf_agent.db \
+    --run-id "$ACCOUNT_RUN_ID" \
+    --account-output "artifacts/virtual_accounts/$ACCOUNT_ID/account_snapshot_latest.json"
+  ACCOUNT_EXIT=$?
+  set -e
   REPORT_RUN_ID=${REPORT_RUN_ID:-daily-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
   REPORT_GENERATED_AT=${REPORT_GENERATED_AT:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
   echo "[3d/4] 執行報告工作流：$REPORT_RUN_ID"
@@ -145,6 +163,10 @@ fi
 
 echo "[4/4] 顯示資料狀態"
 docker compose run --rm agent python3 scripts/data_status.py
+
+if [ "$DAILY_RUN" -eq 1 ] && [ "${ACCOUNT_EXIT:-0}" -ne 0 ]; then
+  echo "虛擬帳本推進失敗，績效儀表板不會更新；請查看上方錯誤訊息。" >&2
+fi
 
 if [ "$DAILY_RUN" -eq 1 ] && [ "${WORKFLOW_EXIT:-0}" -ne 0 ]; then
   echo "報告工作流尚未完成；請查看 artifacts/reports/latest.md。" >&2

@@ -57,6 +57,14 @@
 - fixture 端到端測試已涵蓋 10 億開帳、決策前 AccountSnapshot、完整 Decision run 驗證、模擬買入、日終持倉／現金更新、重複開帳、未來狀態分叉拒絕與封存竄改拒絕。
 - VA4 部分完成：DailyReport 1.1 顯示決策前帳戶，正式 workflow 在呼叫報告 Builder 前核對封存 prepare-day run 的 manifest、latest 狀態、Snapshot／cutoff 與 DecisionInputBundle AccountSnapshot，並記錄帳戶 run lineage；缺失或不一致即停止。CLI 續跑需提供 `--virtual-account-repository`、`--virtual-account-account-id`、`--virtual-account-run-id`。workflow 尚未自動呼叫帳本 `prepare-day`／`apply-decision`，也未呈現成交後帳務轉移；VA4 未整體完成。VA5 真實 Provider 與前向驗收也未完成。
 
+## 執行紀錄（2026-09-25）
+
+- 新增 `virtual_account.py settle／daily` 與 `start.sh daily` 帳本步驟：收集行情後，先以 Decision cutoff 後第一個交易日的官方收盤價（13:30 +08:00）結算最新 prepare 狀態對應的 Decision run，再以新 Snapshot 建立 prepare 狀態。成交價只取 `TWSE_STOCK_DAY`／`TWSE_STOCK_DAY_ALL`／`TPEX_TRADING_STOCK`／`TPEX_MAINBOARD_QUOTES`，不用 Yahoo；費稅、整張與賣款再用沿用 Decision run 的 rules。
+- 假設（尚無官方依據）：可成交張數上限為當日成交量；交割日以週一至週五近似 T+2，不含國定假日。
+- 收盤價未公布時回 `waiting_for_close_data` 並阻擋新 prepare；沒有對應 Decision run 時直接以新 Snapshot 續接估值。持股缺官方收盤價時 fail-closed。
+- 修正 `apply-decision` 未傳 `reuse_sell_proceeds` 給成交模擬器（賣單成交時會 KeyError），並將日終狀態交易日改用執行日收盤資料的 `trade_date`。
+- 新增唯讀 FastAPI 儀表板（`cli/dashboard.py`、`./start.sh dashboard`）顯示本金、NAV、今日／累積報酬、現金、持倉與每日紀錄。
+
 ## 失敗與邊界案例
 
 - 第一日資金不是 10 億、使用錯誤版本的設定檔、第二日又注入 10 億、父狀態被改寫或同日重複成交。

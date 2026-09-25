@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.decision.contracts import DecisionInputValidator, canonical_sha256, decision_bundle_sha256  # noqa: E402
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService  # noqa: E402
+from etf_agent.virtual_account.daily import DailyAccountRunner  # noqa: E402
 
 
 def read_json(path: Path) -> Mapping[str, object]:
@@ -59,6 +60,19 @@ def main(argv=None) -> int:
     apply.add_argument("--settlement-date", required=True)
     apply.add_argument("--run-id", required=True)
 
+    for name, help_text in (
+        ("settle", "以執行日官方收盤價結算最新 prepare 狀態對應的 Decision run"),
+        ("daily", "每日推進：先結算前一份決策，再以新 Snapshot 建立決策前帳戶快照"),
+    ):
+        daily = commands.add_parser(name, help=help_text)
+        daily.add_argument("--database", type=Path, default=ROOT / "var" / "etf_agent.db")
+        daily.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts" / "portfolio_decisions")
+        daily.add_argument("--settlement-days", type=int, default=2)
+        if name == "daily":
+            daily.add_argument("--snapshot", type=Path, required=True)
+            daily.add_argument("--run-id", required=True)
+            daily.add_argument("--account-output", type=Path, required=True)
+
     commands.add_parser("status", help="顯示已驗證的最新帳戶狀態")
     verify = commands.add_parser("verify", help="驗證最新帳本 run 與 manifest")
     verify.add_argument("--run-id")
@@ -102,6 +116,11 @@ def main(argv=None) -> int:
         if args.command == "apply-decision":
             result = service.apply_decision(args.decision_repository, args.decision_run_id, args.execution_market, args.close_market, args.settlement_date, args.run_id)
             print(json.dumps({"run_id": result["run_id"], "state": result["state"], "transition": result["transition"]}, ensure_ascii=False, indent=2))
+            return 0
+        if args.command in {"settle", "daily"}:
+            runner = DailyAccountRunner(repository, args.database, args.decision_repository, args.settlement_days)
+            result = runner.settle() if args.command == "settle" else runner.run(args.snapshot, args.run_id, args.account_output)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "status":
             current = repository.latest()
