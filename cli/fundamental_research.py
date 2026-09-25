@@ -28,7 +28,7 @@ from etf_agent.fundamentals import (  # noqa: E402
     FundamentalResearchApplicationService,
     FundamentalToolError,
 )
-from etf_agent.fundamentals.analysis import METRIC_KEYS, POLICY_VERSION  # noqa: E402
+from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION  # noqa: E402
 
 
 class FundamentalResearchApplication:
