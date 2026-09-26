@@ -1,0 +1,4 @@
+interface:
+  display_name: "多頭研究員"
+  short_description: "依分析報告對每檔提出最強且有證據的做多論點與強度"
+  default_prompt: "使用 $bull-researcher 讀取本批分析摘要，對每一檔提出做多論點與強度，不讀空頭輸出。"

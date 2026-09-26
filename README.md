@@ -154,7 +154,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [基本面研究 Agent 計畫](docs/fundamental_research_agent_plan.md) | FR0～FR3 fixture MVP：財報研究、確定性比率、時間與引用驗證；有限演練及下游升版待完成 |
 | [Research Report V0 計畫](docs/research_report_plan.md) | 將研究層輸出整合為可稽核 JSON／Markdown，不包含交易決策 |
 | [本地 Agent 真實資料研究演練](docs/local_research_dry_run_plan.md) | 已完成：固定快照、3 件事件獨立研究、雙重驗證、降級 Research Report 與決策缺口清單 |
-| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **實作中（R1 財報每日收集與分批、R2 分析團隊與重大事件研究已完成）**：初篩 → 技術／基本面／事件／情緒分析師 → 多空研究員 → 交易 Agent → 風險 Agent；解決新買標的沒有反方論點、分析層未接入決策的問題 |
+| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **實作中（R1 財報每日收集與分批、R2 分析團隊與重大事件研究、R3 多空研究員已完成）**：初篩 → 技術／基本面／事件／情緒分析師 → 多空研究員 → 交易 Agent → 風險 Agent；解決新買標的沒有反方論點、分析層未接入決策的問題 |
 | [投資組合買賣決策與風控多子 Agent 計畫](docs/momentum_portfolio_risk_agent_plan.md) | Portfolio Decision 主控、五個子 Agent、確定性配置／訂單及競賽風控 |
 | [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
 | [P7 回測 Agent 第一批計畫](docs/backtest_mvp_plan.md) | B0～B2 fixture MVP 已完成：歷史時鐘、時間點資料、整張成交、交割與多日帳務重播 |

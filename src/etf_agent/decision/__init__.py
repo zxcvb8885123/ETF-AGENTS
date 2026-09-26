@@ -22,6 +22,14 @@ from .analysts import (
     seal_report,
     sentiment_unavailable_report,
 )
+from .stance import (
+    STANCE_ROLES,
+    ResearchDebateBundleValidator,
+    StancePacketValidator,
+    build_research_debate,
+    build_stance_brief,
+    seal_stance_packet,
+)
 from .sizing import SIZING_METHOD, SizingPlanValidator, apply_sizing_plan
 from .policy_builder import build_decision_policy
 from .trade_intent import (
@@ -79,6 +87,12 @@ __all__ = [
     "high_materiality_events",
     "seal_report",
     "sentiment_unavailable_report",
+    "STANCE_ROLES",
+    "ResearchDebateBundleValidator",
+    "StancePacketValidator",
+    "build_research_debate",
+    "build_stance_brief",
+    "seal_stance_packet",
     "SIZING_METHOD",
     "SizingPlanValidator",
     "apply_sizing_plan",

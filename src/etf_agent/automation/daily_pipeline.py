@@ -36,14 +36,20 @@ from etf_agent.decision import (
     build_analyst_brief,
     build_decision_policy,
     build_role_brief,
+    build_research_debate,
     build_role_input_artifact,
+    build_stance_brief,
     compute_fundamental_metrics,
     decision_policy_sha256,
     revision_effects,
+    ResearchDebateBundleValidator,
+    StancePacketValidator,
     seal_report,
+    seal_stance_packet,
     sentiment_unavailable_report,
 )
 from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS
+from etf_agent.decision.stance import STANCE_ROLES, STRENGTHS
 from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, sizing_candidates
 from etf_agent.decision.trade_intent import (
@@ -163,6 +169,20 @@ _EVENT_ITEM = {
 }
 EVENT_ANALYST_SCHEMA = _object(
     {"items": {"type": "array", "items": _object(_EVENT_ITEM, list(_EVENT_ITEM))}},
+    ("items",),
+)
+_STANCE_CLAIM = _object(
+    {"claim_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1), "finding_ids": _strings()},
+    ("claim_id", "text", "evidence_ids", "finding_ids"),
+)
+_STANCE_ITEM = {
+    "symbol": _TEXT,
+    "strength": {"enum": list(STRENGTHS)},
+    "claims": {"type": "array", "items": _STANCE_CLAIM},
+    "invalidation_conditions": _strings(),
+}
+STANCE_SCHEMA = _object(
+    {"items": {"type": "array", "items": _object(_STANCE_ITEM, list(_STANCE_ITEM))}},
     ("items",),
 )
 REVIEW_SCHEMA = _object(
@@ -474,6 +494,59 @@ class DailyDecisionPipeline:
         reports["sentiment"] = sentiment
         self.save_artifact("analyst_sentiment", sentiment)
         return reports
+
+    # ------------------------------------------------------------------ research team
+    def run_research_team(
+        self,
+        bundle: Mapping[str, object],
+        momentum: Mapping[str, object],
+        analyst_reports: Mapping[str, Mapping[str, object]],
+        research_result: Mapping[str, object],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """多頭與空頭研究員各自逐批對全部股票表態；兩方讀同一輸入、互相隔離。"""
+        batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
+        packets: Dict[str, Dict[str, object]] = {}
+        for role in STANCE_ROLES:
+            brief = build_stance_brief(bundle, momentum, analyst_reports, research_result, role)
+            outputs: List[List[Dict[str, object]]] = []
+            for batch in batches:
+                members = set(batch["symbols"])
+                name = "%s_b%d" % (role, batch["batch_index"])
+                brief_path = self.save_artifact(
+                    "brief_%s" % name,
+                    {**brief, "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
+                     "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members]},
+                )
+                validator = StancePacketValidator(
+                    bundle, momentum, analyst_reports, research_result, role, symbols=batch["symbols"]
+                )
+                task = AgentTask(
+                    name,
+                    "你是 $%s-researcher。先讀 %s，再讀本批輸入摘要 %s（不得讀取或推測另一方研究員的輸出）。"
+                    "對本批 %d 檔股票（%s）逐檔提出%s，每一檔都必須出現一次；claim_id 以 %s- 開頭且在整份輸出唯一，"
+                    "建議 %s-<代號>-<序號>（第 %d 批）。%s"
+                    % (
+                        role, self.root / ("skills/%s-researcher/SKILL.md" % role), brief_path,
+                        len(batch["symbols"]), "、".join(batch["symbols"]),
+                        "最強的做多（值得持有或買進）論點" if role == "bull" else "最強的反對（不宜持有或應避開）論點",
+                        role, role, batch["batch_index"], _SHARED_RULES,
+                    ),
+                    STANCE_SCHEMA,
+                )
+                partial = self.agent_step(
+                    task, lambda output: seal_stance_packet(brief["packet_envelope"], output["items"]), validator.validate
+                )
+                outputs.append(partial["items"])
+            packet = seal_stance_packet(brief["packet_envelope"], merge_batch_items(batches, outputs, role))
+            packets[role] = packet
+            self.save_artifact("%s_stance" % role, packet)
+        debate = build_research_debate(bundle, packets["bull"], packets["bear"], "research-debate:%s" % run_id)
+        errors = ResearchDebateBundleValidator(bundle, momentum, analyst_reports, research_result).validate(debate)
+        if errors:
+            raise DailyPipelineError("ResearchDebateBundle 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("research_debate", debate)
+        return debate
 
     # ------------------------------------------------------------------ agents
     def _role_brief(self, bundle: Mapping[str, object], momentum: Mapping[str, object], role: str) -> Dict[str, object]:
