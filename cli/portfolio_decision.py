@@ -94,6 +94,18 @@ class PortfolioDecisionApplication:
                     }
                 )
                 return 0
+            if args.command == "build-policy":
+                result = service.build_policy_file(args.template, args.sector, args.output)
+                self.emit(result)
+                return 0
+            if args.command == "validate-sizing":
+                result = service.validate_sizing_file(args.intent, args.input)
+                self.emit(result)
+                return 0 if result["valid"] else 2
+            if args.command == "apply-sizing":
+                result = service.apply_sizing_file(args.policy, args.intent, args.sizing, args.output)
+                self.emit(result)
+                return 0
             if args.command == "compute-proposal":
                 result = service.compute_proposal_file(
                     args.momentum, args.debate, args.intent, args.policy, args.output
@@ -281,6 +293,31 @@ class PortfolioDecisionApplication:
         intent.add_argument("--debate", type=Path, required=True)
         intent.add_argument("--input", type=Path, required=True)
         intent.add_argument("--output", type=Path)
+
+        build_policy = commands.add_parser(
+            "build-policy", help="由策略樣板、bundle 硬性規則與官方產業分類建立 DecisionPolicy"
+        )
+        build_policy.add_argument(
+            "--template", type=Path, default=self.root / "config" / "decision_policy.json"
+        )
+        build_policy.add_argument(
+            "--sector", type=Path, default=self.root / "data" / "sector_classification.json"
+        )
+        build_policy.add_argument("--output", type=Path, required=True)
+
+        validate_sizing = commands.add_parser(
+            "validate-sizing", help="驗證風控子 Agent 的 SizingPlan 等級、候選覆蓋與證據"
+        )
+        validate_sizing.add_argument("--intent", type=Path, required=True)
+        validate_sizing.add_argument("--input", type=Path, required=True)
+
+        apply_sizing = commands.add_parser(
+            "apply-sizing", help="將已驗證 SizingPlan 綁入新版 DecisionPolicy（不輸出權重）"
+        )
+        apply_sizing.add_argument("--policy", type=Path, required=True)
+        apply_sizing.add_argument("--intent", type=Path, required=True)
+        apply_sizing.add_argument("--sizing", type=Path, required=True)
+        apply_sizing.add_argument("--output", type=Path, required=True)
 
         proposal = commands.add_parser(
             "compute-proposal", help="由交易意圖以一張 1,000 股計算配置、訂單、費稅與現金"

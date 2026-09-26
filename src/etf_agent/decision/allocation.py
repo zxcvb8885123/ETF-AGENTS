@@ -16,6 +16,8 @@ from .contracts import (
     reject_unknown_fields,
     required_string,
 )
+from .momentum import MomentumEngine
+from .sizing import CONVICTION_LEVELS, SIZING_METHOD, conviction_weights, validate_position_sizing
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -73,6 +75,7 @@ class DecisionPolicyValidator:
         "liquidity_fill_rate",
         "reuse_sell_proceeds",
         "max_revisions",
+        "position_sizing",
         "content_sha256",
     }
 
@@ -175,6 +178,8 @@ class DecisionPolicyValidator:
                     errors.append("sector_by_symbol 含交易池外股票：%s" % symbol)
                 if not isinstance(sector, str) or not sector.strip():
                     errors.append("sector_by_symbol.%s 必須是非空字串" % symbol)
+        if "position_sizing" in policy:
+            validate_position_sizing(policy["position_sizing"], self.context.universe, errors)
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):
             errors.append("DecisionPolicy.cash_buffer_rate 必須小於 1")
         rules = self.context.bundle.get("rules", {})
@@ -222,6 +227,7 @@ class AllocationOrderEngine:
             raise DecisionToolError("DecisionPolicy 驗證失敗：" + "；".join(errors))
         self.policy = dict(policy)
         self.prices = self._latest_prices()
+        self._volatility: Optional[Dict[str, Decimal]] = None
 
     def run(
         self,
@@ -294,19 +300,28 @@ class AllocationOrderEngine:
             for symbol in sorted(intents)
             if intents[symbol] in {"buy", "add"} and symbol not in excluded
         ]
+        sized_weights: Optional[Dict[str, Decimal]] = None
+        if "position_sizing" in self.policy:
+            candidates, sized_weights = self._conviction_targets(
+                candidates, active_symbols, target_shares, marked_nav, max_positions, effective
+            )
         for symbol in candidates:
             if symbol not in self.prices:
                 constraint_flags.append(
                     {"symbol": symbol, "code": "MISSING_PRICE", "detail": "缺少 cutoff 行情"}
                 )
                 continue
-            if symbol not in active_symbols and len(active_symbols) >= max_positions:
+            if (symbol not in active_symbols and len(active_symbols) >= max_positions) or (
+                sized_weights is not None and symbol not in sized_weights
+            ):
                 constraint_flags.append(
                     {"symbol": symbol, "code": "MAX_POSITIONS", "detail": "持股檔數已達上限"}
                 )
                 continue
             limit = self._weight_limit(symbol, effective)
-            target_weight = min(default_weight, limit)
+            target_weight = (
+                min(default_weight, limit) if sized_weights is None else sized_weights[symbol]
+            )
             desired = self._shares_for_value(marked_nav * target_weight, self.prices[symbol])
             if symbol in current:
                 desired = max(current[symbol], desired)
@@ -389,6 +404,15 @@ class AllocationOrderEngine:
             },
             "errors": [],
         }
+        if sized_weights is not None:
+            sizing = self.policy["position_sizing"]
+            body["position_sizing"] = {
+                "method": sizing["method"],
+                "sizing_plan_id": sizing["sizing_plan_id"],
+                "target_weights": {
+                    symbol: _rate(weight) for symbol, weight in sorted(sized_weights.items())
+                },
+            }
         body["proposal_id"] = "proposal:" + canonical_sha256(body)[:20]
         body["content_sha256"] = artifact_content_sha256(body)
         return body
@@ -439,6 +463,64 @@ class AllocationOrderEngine:
         for key, raw in overrides.items():
             result[key] = int(raw) if key == "max_positions" else decimal_value(raw, key)
         return result
+
+    def _conviction_targets(
+        self,
+        candidates: List[str],
+        active_symbols: Set[str],
+        target_shares: Mapping[str, int],
+        marked_nav: Decimal,
+        max_positions: int,
+        effective: Mapping[str, object],
+    ) -> Tuple[List[str], Dict[str, Decimal]]:
+        """依風控等級排序候選，並以等級乘數／ATR 分配扣除現金緩衝後的資金。"""
+        sizing = self.policy["position_sizing"]
+        tiers = sizing.get("conviction_by_symbol")
+        if tiers is None:
+            raise DecisionToolError("DecisionPolicy 已啟用 position_sizing，但尚未套用 SizingPlan")
+        missing = [symbol for symbol in candidates if symbol not in tiers]
+        if missing:
+            raise DecisionToolError("SizingPlan 缺少候選等級：" + ", ".join(missing))
+        ordered = sorted(candidates, key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), symbol))
+        volatility = self._atr_pct()
+        slots = max_positions - len(active_symbols - set(ordered))
+        eligible: List[str] = []
+        for symbol in ordered:
+            if symbol not in self.prices or len(eligible) >= slots:
+                continue
+            if symbol not in volatility:
+                raise DecisionToolError("%s 缺少可用 ATR，不能依波動度配置" % symbol)
+            eligible.append(symbol)
+        held_outside = sum(
+            (
+                Decimal(target_shares[symbol]) * self.prices[symbol] / marked_nav
+                for symbol in active_symbols - set(eligible)
+            ),
+            Decimal("0"),
+        )
+        weights = conviction_weights(
+            eligible,
+            tiers,
+            {
+                level: decimal_value(sizing["conviction_multipliers"][level], level)
+                for level in CONVICTION_LEVELS
+            },
+            volatility,
+            decimal_value(sizing["volatility_floor"], "volatility_floor"),
+            {symbol: self._weight_limit(symbol, effective) for symbol in eligible},
+            Decimal("1") - effective["cash_buffer_rate"] - held_outside,  # type: ignore[operator]
+        )
+        return ordered, weights
+
+    def _atr_pct(self) -> Dict[str, Decimal]:
+        if self._volatility is None:
+            items = MomentumEngine(self.context.bundle).run()["items"]
+            self._volatility = {
+                str(item["symbol"]).upper(): Decimal(str(item["atr_14_pct"]))
+                for item in items
+                if item.get("status") == "available" and item.get("atr_14_pct") is not None
+            }
+        return self._volatility
 
     def _weight_limit(self, symbol: str, effective: Mapping[str, object]) -> Decimal:
         special = self.policy.get("special_weight_limits", {})

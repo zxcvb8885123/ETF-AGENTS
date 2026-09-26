@@ -56,6 +56,8 @@ python3 -m venv .venv
 | `PYTHONPATH=src python3 cli/trading_status.py build-bundle --snapshot SNAPSHOT.json --session-start ISO --session-end ISO --output STATUS.json` | 以 Snapshot 交易池建立交易狀態包；未提供已核准 records／coverage 時逐檔 `unknown`，供決策輸入誠實表示缺口 |
 | `.venv/bin/python cli/portfolio_decision.py build-role-brief --role-input ROLE_INPUT.json --output BRIEF.json` | 由單一 Buy／Sell 角色輸入產生子 Agent 可讀的精簡摘要（真實 150 檔約 6MB → 210KB），含 packet envelope、動能、交易狀態、文件與研究的原始 evidence ID |
 | `.venv/bin/python scripts/collect_sector_classification.py` | 抓取 TWSE／TPEx 官方公司基本資料（t187ap03），原始回應封存至 `artifacts/source-audit/sector-classification/`，輸出 150 檔 `industry:<代碼>` 分類至 `data/sector_classification.json` 供 DecisionPolicy 使用；不翻譯產業名稱，缺漏時列出並 exit 2 |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json build-policy --output POLICY.json` | 由 `config/decision_policy.json` 策略樣板、bundle 硬性規則與 `data/sector_classification.json` 建立 DecisionPolicy；產業分類晚於 cutoff 或未覆蓋交易池時停止 |
+| `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-sizing --intent INTENT.json --input SIZING.json`／`apply-sizing --policy POLICY.json --intent INTENT.json --sizing SIZING.json --output POLICY_SIZED.json` | 驗證 Portfolio Risk 對 buy／add 候選的 high／medium／low 分級並綁入新版 policy；權重由 Python 依等級乘數 ÷ ATR14% 分配 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |

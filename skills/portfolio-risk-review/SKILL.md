@@ -7,6 +7,12 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 只讀同一 Snapshot／cutoff 的 `ProposalBundle`、`ScenarioResult`、`GuardResult` 與它們綁定的共同輸入。把市場、集中、事件、來源、流動性、換手與現金風險整理成 `RiskReview`，再由 `$portfolio-decision` 驗證。
 
+## 配置前分級（SizingPlan）
+
+Policy 啟用 `position_sizing` 時，主控在 `compute-proposal` 前請本 Skill 對 `TradeIntentResult` 的**全部** buy／add 候選逐檔給 `conviction`：`high`、`medium` 或 `low`，附 `rationale` 與屬於該股票的 `evidence_ids`。依動能品質、波動、流動性、事件與資料缺口判斷相對信心；不得輸出權重、股數、金額或排名數字，也不得新增或刪除候選。
+
+Envelope 欄位為 `schema_version`、`plan_id`、`bundle_id`、`snapshot_id`、`decision_cutoff`、`bundle_hash`、`trade_intent_result_id`、`trade_intent_sha256`、`items`、`errors`（須為空陣列）與 `content_sha256`；主控執行 `validate-sizing` 後才以 `apply-sizing` 綁入 policy。權重由 Python 依等級乘數除以 ATR14% 分配。
+
 ## 審查方式
 
 1. 先確認三個輸入的 bundle、proposal、policy、版本與內容雜湊一致。不同版本停止，不拼接結論。

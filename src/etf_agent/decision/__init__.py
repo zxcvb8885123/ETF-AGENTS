@@ -13,6 +13,8 @@ from .contracts import (
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
 from .role_brief import build_role_brief
+from .sizing import SIZING_METHOD, SizingPlanValidator, apply_sizing_plan
+from .policy_builder import build_decision_policy
 from .trade_intent import (
     BuyIntentPacketValidator,
     SellIntentPacketValidator,
@@ -61,6 +63,10 @@ __all__ = [
     "TradeIntentResultValidator",
     "build_role_input_artifact",
     "build_role_brief",
+    "SIZING_METHOD",
+    "SizingPlanValidator",
+    "apply_sizing_plan",
+    "build_decision_policy",
     "AllocationOrderEngine",
     "DecisionPolicyValidator",
     "ProposalValidator",

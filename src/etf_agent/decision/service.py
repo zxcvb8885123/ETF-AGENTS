@@ -15,6 +15,9 @@ from .contracts import (
 )
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .role_brief import build_role_brief
+from .policy_builder import build_decision_policy
+from .allocation import DecisionPolicyValidator, decision_policy_sha256
+from .sizing import SizingPlanValidator, apply_sizing_plan
 from .momentum import MomentumEngine, MomentumResultValidator
 from .allocation import AllocationOrderEngine, ProposalValidator
 from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
@@ -132,6 +135,41 @@ class PortfolioDecisionApplicationService:
         brief = build_role_brief(cls.read_json(role_input_path, " 角色輸入"))
         cls._write(brief, output)
         return brief
+
+    def build_policy_file(
+        self, template_path: Path, sector_path: Path, output: Path
+    ) -> Dict[str, object]:
+        policy = build_decision_policy(
+            self.read_json(template_path, " 策略樣板"),
+            self.bundle,
+            self.read_json(sector_path, " 產業分類"),
+        )
+        self._write(policy, output)
+        return {"ok": True, "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"], "output": str(output)}
+
+    def validate_sizing_file(self, intent_path: Path, sizing_path: Path) -> Dict[str, object]:
+        errors = SizingPlanValidator(
+            self.bundle, self.read_json(intent_path, " TradeIntentResult")
+        ).validate(self.read_json(sizing_path, " SizingPlan"))
+        return {"valid": not errors, "errors": errors}
+
+    def apply_sizing_file(
+        self, policy_path: Path, intent_path: Path, sizing_path: Path, output: Path
+    ) -> Dict[str, object]:
+        """驗證 SizingPlan 後綁入新版 policy；權重仍於 compute-proposal 時由 Python 計算。"""
+        plan = self.read_json(sizing_path, " SizingPlan")
+        errors = SizingPlanValidator(
+            self.bundle, self.read_json(intent_path, " TradeIntentResult")
+        ).validate(plan)
+        if errors:
+            raise DecisionToolError("SizingPlan 驗證失敗：" + "；".join(errors))
+        policy = apply_sizing_plan(self.read_json(policy_path, " DecisionPolicy"), plan)
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        policy_errors = DecisionPolicyValidator(self.bundle).validate(policy)
+        if policy_errors:
+            raise DecisionToolError("套用後 DecisionPolicy 驗證失敗：" + "；".join(policy_errors))
+        self._write(policy, output)
+        return {"ok": True, "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"], "output": str(output)}
 
     def validate_input(self) -> Dict[str, object]:
         errors = DecisionInputValidator(self.bundle).validate()
