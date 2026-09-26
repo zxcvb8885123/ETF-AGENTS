@@ -5,7 +5,7 @@ description: 根據同一 DecisionInputBundle、目前持股、已驗證研究�
 
 # 獨立續抱與退出子 Agent
 
-只讀主控以 `build-role-input --role sell` 產生的隔離 artifact，不讀任何 Buy packet；輸出的 `dependencies.role_input_sha256` 必須完全相同。
+只讀主控以 `build-role-input --role sell` 產生的隔離 artifact，不讀任何 Buy packet；輸出的 `dependencies.role_input_sha256` 必須完全相同。完整 artifact 內嵌全部 K 線而過大時，改讀主控以 `build-role-brief` 由同一 artifact 產生的摘要：把 `packet_envelope` 原樣填入 packet，只引用摘要列出的 evidence ID。
 
 - 必須剛好覆蓋全部目前持股，不得加入未持有股票。
 - 依 thesis、事件期間、動能反轉、波動、流動性、可交易性與資料缺口提出 `hold`、`trim`、`exit` 或 `forced_exit`。

@@ -14,6 +14,7 @@ from .contracts import (
     artifact_content_sha256,
 )
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
+from .role_brief import build_role_brief
 from .momentum import MomentumEngine, MomentumResultValidator
 from .allocation import AllocationOrderEngine, ProposalValidator
 from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
@@ -122,6 +123,15 @@ class PortfolioDecisionApplicationService:
             "bundle_id": bundle["bundle_id"],
             "template": "account_snapshot" not in bundle,
         }
+
+    @classmethod
+    def build_role_brief_file(
+        cls, role_input_path: Path, output: Optional[Path] = None
+    ) -> Dict[str, object]:
+        """只讀單一角色輸入產生精簡摘要，不需要也不讀取另一方資料。"""
+        brief = build_role_brief(cls.read_json(role_input_path, " 角色輸入"))
+        cls._write(brief, output)
+        return brief
 
     def validate_input(self) -> Dict[str, object]:
         errors = DecisionInputValidator(self.bundle).validate()

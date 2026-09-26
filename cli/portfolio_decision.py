@@ -49,6 +49,20 @@ class PortfolioDecisionApplication:
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
+            if args.command == "build-role-brief":
+                result = PortfolioDecisionApplicationService.build_role_brief_file(
+                    args.role_input, args.output
+                )
+                self.emit(
+                    {
+                        "ok": True,
+                        "role": result["role"],
+                        "symbol_count": len(result["symbols"]),
+                        "brief_sha256": result["brief_sha256"],
+                        "output": str(args.output) if args.output else None,
+                    }
+                )
+                return 0
             service = PortfolioDecisionApplicationService.from_path(args.bundle)
             if args.command == "validate-input":
                 result = service.validate_input()
@@ -236,6 +250,13 @@ class PortfolioDecisionApplication:
         role_input.add_argument("--role", choices=("buy", "sell"), required=True)
         role_input.add_argument("--momentum", type=Path, required=True)
         role_input.add_argument("--output", type=Path)
+
+        role_brief = commands.add_parser(
+            "build-role-brief",
+            help="由單一 Buy／Sell 角色輸入產生給子 Agent 閱讀的精簡摘要（不讀 --bundle）",
+        )
+        role_brief.add_argument("--role-input", type=Path, required=True)
+        role_brief.add_argument("--output", type=Path, required=True)
 
         seal = commands.add_parser(
             "seal-artifact", help="為 Policy、Agent packet 或決策 artifact 計算內容雜湊"

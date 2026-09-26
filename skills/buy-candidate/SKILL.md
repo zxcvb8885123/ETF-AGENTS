@@ -5,7 +5,7 @@ description: 根據同一 DecisionInputBundle、已驗證研究與 MomentumResul
 
 # 獨立買進候選子 Agent
 
-只讀主控以 `build-role-input --role buy` 產生的隔離 artifact，不讀任何 Sell packet；輸出的 `dependencies.role_input_sha256` 必須完全相同。
+只讀主控以 `build-role-input --role buy` 產生的隔離 artifact，不讀任何 Sell packet；輸出的 `dependencies.role_input_sha256` 必須完全相同。完整 artifact 內嵌全部 K 線而過大時，改讀主控以 `build-role-brief` 由同一 artifact 產生的摘要：把 `packet_envelope` 原樣填入 packet，只引用摘要列出的 evidence ID。
 
 - 新標的用 `buy`，目前持股加碼用 `add`；證據或動能不足時使用 `watch`／`exclude`。
 - 每個 item 提供 `catalyst_summary`、horizon、風險、失效條件與至少一個具唯一 ID 的 claim。

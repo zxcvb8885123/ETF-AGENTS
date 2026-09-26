@@ -13,7 +13,7 @@ description: 主控台股投資組合的研究裁決、確定性配置／訂單�
 1. 執行 `validate-input`。任何 Snapshot、cutoff、內容雜湊、帳戶、規則或行情錯誤都停止；只有啟用比較基準時才驗證該基準。
 2. 執行 `compute-momentum`，再執行 `validate-momentum`。子 Agent 不得自行計算或改寫技術指標。
 3. 呼叫 `$momentum-regime` 解讀確定性結果；不可在市場狀態 `unavailable` 時補猜 regime。
-4. 分別執行 `build-role-input --role buy` 與 `--role sell`。以兩個分開的子 Agent 執行環境呼叫 `$buy-candidate`、`$sell-exit`，每個環境只提供自己的 role input artifact，不提供另一方 packet。
+4. 分別執行 `build-role-input --role buy` 與 `--role sell`。以兩個分開的子 Agent 執行環境呼叫 `$buy-candidate`、`$sell-exit`，每個環境只提供自己的 role input artifact（或由它以 `build-role-brief` 產生的精簡摘要），不提供另一方 packet。
 5. 對 Buy／Sell packet 執行 `seal-artifact`，再執行 `validate-buy` 與 `validate-sell`；組成 `TradeDebateBundle` 後再次 seal，再執行 `validate-debate`。
 6. 呼叫 `$trade-adjudication`；它只能裁決既有股票、claim ID 與 evidence ID。
 7. 對結果執行 `seal-artifact` 與 `validate-intent`。只有 `valid=true` 且 `status=completed` 的 `TradeIntentResult` 可進入配置。

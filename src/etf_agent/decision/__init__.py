@@ -12,6 +12,7 @@ from .contracts import (
 )
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
+from .role_brief import build_role_brief
 from .trade_intent import (
     BuyIntentPacketValidator,
     SellIntentPacketValidator,
@@ -59,6 +60,7 @@ __all__ = [
     "TradeDebateValidator",
     "TradeIntentResultValidator",
     "build_role_input_artifact",
+    "build_role_brief",
     "AllocationOrderEngine",
     "DecisionPolicyValidator",
     "ProposalValidator",
