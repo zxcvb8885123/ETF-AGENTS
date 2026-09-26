@@ -548,6 +548,14 @@ class ResearchDebateValidator:
             errors.append("adjudicator 必須讀取 fact、bull、bear 三個 packet")
         return errors
 
+    def validate_packet(self, packet: Mapping[str, object]) -> List[str]:
+        """逐一驗證單一子 Agent packet，讓主控能在組成 bundle 前重跑失敗的角色。"""
+        errors: List[str] = []
+        if packet.get("role") not in SUBAGENT_ROLES:
+            errors.append("packet.role 不在允許清單")
+        self._validate_packet(packet, "packet", errors)
+        return errors
+
     def _validate_packet(
         self, packet: Mapping[str, object], prefix: str, errors: List[str]
     ) -> None:

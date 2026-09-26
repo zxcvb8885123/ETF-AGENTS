@@ -1,0 +1,4 @@
+interface:
+  display_name: "技術分析師"
+  short_description: "解讀程式計算的動能與波動特徵，逐檔給出技術面看法"
+  default_prompt: "使用 $technical-analyst 解讀本批股票已計算的動能特徵與市場 regime，逐檔輸出 AnalystReport。"

@@ -13,6 +13,15 @@ from .contracts import (
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
 from .role_brief import build_role_brief
+from .analysts import (
+    ANALYSTS,
+    AnalystReportValidator,
+    build_analyst_brief,
+    compute_fundamental_metrics,
+    high_materiality_events,
+    seal_report,
+    sentiment_unavailable_report,
+)
 from .sizing import SIZING_METHOD, SizingPlanValidator, apply_sizing_plan
 from .policy_builder import build_decision_policy
 from .trade_intent import (
@@ -63,6 +72,13 @@ __all__ = [
     "TradeIntentResultValidator",
     "build_role_input_artifact",
     "build_role_brief",
+    "ANALYSTS",
+    "AnalystReportValidator",
+    "build_analyst_brief",
+    "compute_fundamental_metrics",
+    "high_materiality_events",
+    "seal_report",
+    "sentiment_unavailable_report",
     "SIZING_METHOD",
     "SizingPlanValidator",
     "apply_sizing_plan",

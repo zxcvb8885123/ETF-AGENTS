@@ -1,0 +1,4 @@
+interface:
+  display_name: "事件／新聞分析師"
+  short_description: "逐則標示重大訊息的重大程度並逐檔給出事件面看法"
+  default_prompt: "使用 $event-analyst 閱讀本批股票 cutoff 前的重大訊息，逐則標示重大程度並輸出 AnalystReport。"

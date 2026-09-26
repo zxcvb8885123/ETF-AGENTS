@@ -276,6 +276,7 @@ class DecisionInputValidator:
                             "content_sha256",
                             "source_evidence_id",
                             "monthly_revenue",
+                            "financial_statement",
                         },
                         "snapshot.documents[%d]" % index,
                         errors,
