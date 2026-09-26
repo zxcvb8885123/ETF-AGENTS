@@ -18,6 +18,7 @@ from .financial import (
     FinancialCoverageGap,
     FinancialStatementCollector,
     FinancialStatementRequest,
+    latest_due_quarter,
 )
 from .historical import (
     HistoricalPriceProvider,
@@ -113,6 +114,7 @@ __all__ = [
     "FinancialCoverageGap",
     "FinancialStatementCollector",
     "FinancialStatementRequest",
+    "latest_due_quarter",
     "CollectionRunStatus",
     "DataAgentStatus",
     "DataAgentStatusRepository",

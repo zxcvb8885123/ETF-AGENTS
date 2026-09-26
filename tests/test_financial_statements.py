@@ -301,5 +301,26 @@ class FinancialStatementTests(unittest.TestCase):
             self.assertEqual([row["version"] for row in rows], [1, 2])
 
 
+class LatestDueQuarterTests(unittest.TestCase):
+    def test_quarter_switches_only_after_statutory_deadline(self):
+        from datetime import date
+
+        from etf_agent.data import latest_due_quarter
+
+        cases = {
+            "2026-01-10": (2025, 3),
+            "2026-03-31": (2025, 3),
+            "2026-04-01": (2025, 4),
+            "2026-05-15": (2025, 4),
+            "2026-05-16": (2026, 1),
+            "2026-08-14": (2026, 1),
+            "2026-08-15": (2026, 2),
+            "2026-11-14": (2026, 2),
+            "2026-11-15": (2026, 3),
+        }
+        for day, expected in cases.items():
+            self.assertEqual(latest_due_quarter(date.fromisoformat(day)), expected, day)
+
+
 if __name__ == "__main__":
     unittest.main()

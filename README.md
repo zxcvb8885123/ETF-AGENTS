@@ -30,7 +30,7 @@ python3 -m venv .venv
 | `./start.sh official` | 只抓官方交易池；名單空白時停止 |
 | `./start.sh all` | 開發模式：抓 TWSE 最新行情端點的全部可解析證券 |
 | `./start.sh check` | 只建置、檢查與執行測試 |
-| `./start.sh daily` | 一鍵驗證來源、更新行情／事件並建立 `artifacts/research_snapshot_latest.json` |
+| `./start.sh daily` | 一鍵驗證來源、更新行情／事件／最近到期季度財報（`collect_financial_statements.py --latest-due`，覆蓋不完整不阻擋）並建立 `artifacts/research_snapshot_latest.json` |
 | `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
 | `.venv/bin/python scripts/run_daily_pipeline.py` | 每日一鍵：`./start.sh daily` → 決策子 Agent（`claude -p`，結構化輸出並由 Validator 驗證）→ 封存 Decision run → DailyReport → macOS 通知；結果在 `artifacts/daily_runs/<run_id>/pipeline.json` 與 `artifacts/reports/latest.md`。`--skip-data` 沿用既有資料，`--model` 指定模型、`--max-budget-usd` 為單次 Agent 估算用量上限（防失控；claude.ai 訂閱登入不另計費）；排程樣板見 `scripts/launchd/` |
 | `./start.sh dashboard` | 啟動唯讀績效儀表板 <http://127.0.0.1:8000>：起始本金、目前 NAV、今日／累積報酬率、現金、持倉與每日紀錄 |
