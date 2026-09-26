@@ -55,6 +55,7 @@ python3 -m venv .venv
 | `.venv/bin/python cli/portfolio_decision.py --bundle TEMPLATE.json build-input --research RESULT.json [--trading-status STATUS.json]` | 由 Snapshot、SQLite 歷史行情（預設 120 根）與 `config/decision_rules.json` 建立 DecisionInputBundle 樣板，再以 `virtual_account.py attach-account` 綁入帳戶；未提供交易狀態包時回報缺口（exit 2） |
 | `PYTHONPATH=src python3 cli/trading_status.py build-bundle --snapshot SNAPSHOT.json --session-start ISO --session-end ISO --output STATUS.json` | 以 Snapshot 交易池建立交易狀態包；未提供已核准 records／coverage 時逐檔 `unknown`，供決策輸入誠實表示缺口 |
 | `.venv/bin/python cli/portfolio_decision.py build-role-brief --role-input ROLE_INPUT.json --output BRIEF.json` | 由單一 Buy／Sell 角色輸入產生子 Agent 可讀的精簡摘要（真實 150 檔約 6MB → 210KB），含 packet envelope、動能、交易狀態、文件與研究的原始 evidence ID |
+| `.venv/bin/python scripts/collect_sector_classification.py` | 抓取 TWSE／TPEx 官方公司基本資料（t187ap03），原始回應封存至 `artifacts/source-audit/sector-classification/`，輸出 150 檔 `industry:<代碼>` 分類至 `data/sector_classification.json` 供 DecisionPolicy 使用；不翻譯產業名稱，缺漏時列出並 exit 2 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
@@ -126,6 +127,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | --- | --- |
 | `var/etf_agent.db` | SQLite 資料庫 |
 | `data/official_universe.csv` | 已填入主辦方 150 檔股票交易池（上市 100、上櫃 50） |
+| `data/sector_classification.json` | 官方公司基本資料的產業代碼分類（2026-09-25 版 150／150；兩市場共用公開資訊觀測站代碼，半導體 24 共 45 檔） |
 | `data/active_etf_top10.csv` | 選配 Active Share 比較用 ETF 前十大持股資料（目前空白） |
 | `artifacts/` | 後續每日報告、交易書與稽核檔案 |
 
