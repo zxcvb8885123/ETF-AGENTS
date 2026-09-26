@@ -1,6 +1,6 @@
 # 決策層 Agent 團隊重構計畫
 
-日期：2026-09-26。狀態：**已確認，實作中（R1～R3 已完成）**。本計畫把決策層改為「分析團隊 → 多空研究 → 交易 → 風險」的分工，參考 [TradingAgents 的團隊分工](https://github.com/TauricResearch/TradingAgents#tradingagents-framework)；安全層（數值由 Python 計算、每一步 Validator、時間點檢查、不可變封存、不自動下單）完全保留。
+日期：2026-09-26。狀態：**已確認，實作中（R1～R4 已完成）**。本計畫把決策層改為「分析團隊 → 多空研究 → 交易 → 風險」的分工，參考 [TradingAgents 的團隊分工](https://github.com/TauricResearch/TradingAgents#tradingagents-framework)；安全層（數值由 Python 計算、每一步 Validator、時間點檢查、不可變封存、不自動下單）完全保留。
 
 ## 0. 設計原則：確定性歸程式，不確定性歸 LLM
 
@@ -112,7 +112,7 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 | R1 資料與分批 | **已完成（2026-09-27）**：`start.sh daily` 以 `--latest-due` 每日收集財報（副本實測 2026 Q2 298／300，3718.TWO 缺兩張）；`automation/batching` 分批與合併 | 財報進入 Snapshot；分批可重算；合併後缺漏或重複即拒絕 |
 | R2 分析團隊 | **R2a 已完成（2026-09-27）**：`decision/analysts`（AnalystReport 2.0、Validator、確定性摘要、基本面指標由 `fundamentals` 工具計算）、`technical-analyst`／`fundamental-analyst`／`event-analyst` Skill、`DailyDecisionPipeline.run_analyst_team`（逐批執行、單批重跑、合併驗證）、情緒確定性 unavailable；另修正 DecisionInputValidator 未允許 Snapshot 財報文件欄位。**R2b 已完成（2026-09-27）**：`automation/event_research_runner` 對 high 事件依序跑 Fact → Bull／Bear（只讀 FactPacket、互相隔離）→ Adjudicator，程式建立事件脈絡、價格特徵與 packet envelope 並組裝 ResearchResult 2.1；單一事件失敗時結果降級並記錄。ResearchResult 為獨立 artifact（不回寫已封存的 DecisionInputBundle），供多空、交易與報告使用 | 覆蓋全部 150 檔；引用歸屬正確；缺資料標 unknown；high 事件都有已驗證 ResearchResult |
 | R3 多空研究 | **已完成（2026-09-27）**：`decision/stance`（StancePacket 2.0：每檔 strength strong／moderate／weak／none 與 claims；兩方共用 `shared_input_sha256`、role input 只差角色、`peer_packet_ids` 為空；claim_id 以 bull-／bear- 開頭、證據與 finding 須屬於該股票）、ResearchDebateBundle 2.0 Validator、`bull-researcher`／`bear-researcher` Skill、`DailyDecisionPipeline.run_research_team`（逐批、單批重跑、合併驗證） | 兩方覆蓋全部股票；互相隔離；claim 唯一 |
-| R4 交易 Agent | `TradeDecision` 契約與 Validator，轉接既有配置 | 每個 claim 剛好採納或否決一次；等級可綁入 policy |
+| R4 交易 Agent | **已完成（2026-09-27）**：`decision/trader`（TradeDecision 2.0：逐檔 intent、buy／add 的 conviction、每個多空 claim 剛好採納或否決一次；持股、動能與採納方向規則）、`allocation_intents` 與 `apply_trade_decision`（信心等級＋風險 Agent 現金姿態綁入既有 `position_sizing`，配置引擎不變）、共用 `validate_cash_stance`、`trader` Skill、`DailyDecisionPipeline.run_trader` | 每個 claim 剛好採納或否決一次；等級可綁入 policy |
 | R5 風險與鏈接 | 現金姿態與審查接新鏈；Finalizer／Repository 升版；下游核對 | 新鏈 fixture 端到端 approved／rejected 均可重建 |
 | R6 每日腳本 | `daily_pipeline` 改用新鏈，真實資料演練一次 | 真實 Snapshot 跑完並產出 DailyReport；舊鏈測試仍通過 |
 

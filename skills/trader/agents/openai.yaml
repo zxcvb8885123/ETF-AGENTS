@@ -1,0 +1,4 @@
+interface:
+  display_name: "交易 Agent"
+  short_description: "權衡多空論點，逐檔決定買賣意圖與信心等級"
+  default_prompt: "使用 $trader 讀取本批多空論點，逐檔決定 intent 與 buy／add 的信心等級，並逐一採納或否決每個 claim。"

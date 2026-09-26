@@ -30,6 +30,14 @@ from .stance import (
     build_stance_brief,
     seal_stance_packet,
 )
+from .trader import (
+    TRADE_INTENTS,
+    TradeDecisionValidator,
+    allocation_intents,
+    apply_trade_decision,
+    seal_trade_decision,
+    trade_decision_envelope,
+)
 from .sizing import SIZING_METHOD, SizingPlanValidator, apply_sizing_plan
 from .policy_builder import build_decision_policy
 from .trade_intent import (
@@ -93,6 +101,12 @@ __all__ = [
     "build_research_debate",
     "build_stance_brief",
     "seal_stance_packet",
+    "TRADE_INTENTS",
+    "TradeDecisionValidator",
+    "allocation_intents",
+    "apply_trade_decision",
+    "seal_trade_decision",
+    "trade_decision_envelope",
     "SIZING_METHOD",
     "SizingPlanValidator",
     "apply_sizing_plan",

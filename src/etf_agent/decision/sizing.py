@@ -47,7 +47,6 @@ class SizingPlanValidator:
         "items", "errors", "content_sha256",
     }
     ITEM = {"symbol", "conviction", "rationale", "evidence_ids"}
-    STANCE = {"level", "rationale", "evidence_ids"}
 
     def __init__(self, bundle: Mapping[str, object], intent_result: Mapping[str, object]):
         self.context = DecisionContext(bundle)
@@ -115,24 +114,27 @@ class SizingPlanValidator:
         return errors
 
     def _validate_cash_stance(self, stance: object, errors: List[str]) -> None:
-        if not isinstance(stance, Mapping):
-            errors.append("SizingPlan.cash_stance 必須是物件")
-            return
-        reject_unknown_fields(stance, self.STANCE, "SizingPlan.cash_stance", errors)
-        if stance.get("level") not in CASH_STANCES:
-            errors.append("SizingPlan.cash_stance.level 必須是 %s" % "／".join(CASH_STANCES))
-        try:
-            required_string(stance, "rationale")
-            evidence = string_list(stance, "evidence_ids")
-        except DecisionToolError as error:
-            errors.append("SizingPlan.cash_stance.%s" % error)
-            return
-        if not evidence:
-            errors.append("SizingPlan.cash_stance.evidence_ids 不得為空")
-        # 市場層級判斷可引用任一股票的共同輸入證據，但不得引用不存在的 ID。
-        unknown = [item for item in evidence if item not in self.context.evidence_symbols]
-        if unknown:
-            errors.append("SizingPlan.cash_stance 引用不存在：%s" % ", ".join(unknown))
+        validate_cash_stance(self.context, stance, "SizingPlan.cash_stance", errors)
+
+def validate_cash_stance(context: DecisionContext, stance: object, prefix: str, errors: List[str]) -> None:
+    """現金姿態：level 三選一、理由與共同輸入中存在的證據（市場層級可引用任一股票）。"""
+    if not isinstance(stance, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(stance, {"level", "rationale", "evidence_ids"}, prefix, errors)
+    if stance.get("level") not in CASH_STANCES:
+        errors.append("%s.level 必須是 %s" % (prefix, "／".join(CASH_STANCES)))
+    try:
+        required_string(stance, "rationale")
+        evidence = string_list(stance, "evidence_ids")
+    except DecisionToolError as error:
+        errors.append("%s.%s" % (prefix, error))
+        return
+    if not evidence:
+        errors.append("%s.evidence_ids 不得為空" % prefix)
+    unknown = [item for item in evidence if item not in context.evidence_symbols]
+    if unknown:
+        errors.append("%s 引用不存在：%s" % (prefix, ", ".join(unknown)))
 
 
 def apply_sizing_plan(

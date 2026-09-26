@@ -44,12 +44,16 @@ from etf_agent.decision import (
     revision_effects,
     ResearchDebateBundleValidator,
     StancePacketValidator,
+    TradeDecisionValidator,
     seal_report,
     seal_stance_packet,
+    seal_trade_decision,
+    trade_decision_envelope,
     sentiment_unavailable_report,
 )
 from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS
 from etf_agent.decision.stance import STANCE_ROLES, STRENGTHS
+from etf_agent.decision.trader import TRADE_INTENTS
 from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, sizing_candidates
 from etf_agent.decision.trade_intent import (
@@ -183,6 +187,20 @@ _STANCE_ITEM = {
 }
 STANCE_SCHEMA = _object(
     {"items": {"type": "array", "items": _object(_STANCE_ITEM, list(_STANCE_ITEM))}},
+    ("items",),
+)
+_TRADE_ITEM = {
+    "symbol": _TEXT,
+    "intent": {"enum": list(TRADE_INTENTS)},
+    "conviction": {"enum": list(CONVICTION_LEVELS) + [None]},
+    "rationale": _TEXT,
+    "adopted_claim_ids": _strings(),
+    "rejected_claim_ids": _strings(),
+    "unresolved_questions": _strings(),
+    "invalidation_conditions": _strings(),
+}
+TRADE_SCHEMA = _object(
+    {"items": {"type": "array", "items": _object(_TRADE_ITEM, list(_TRADE_ITEM))}},
     ("items",),
 )
 REVIEW_SCHEMA = _object(
@@ -547,6 +565,80 @@ class DailyDecisionPipeline:
             raise DailyPipelineError("ResearchDebateBundle 驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("research_debate", debate)
         return debate
+
+    # ------------------------------------------------------------------ trader
+    def run_trader(
+        self,
+        bundle: Mapping[str, object],
+        momentum: Mapping[str, object],
+        analyst_reports: Mapping[str, Mapping[str, object]],
+        debate: Mapping[str, object],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """交易 Agent 逐批權衡多空論點，決定意圖與 buy／add 信心等級。"""
+        envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
+        held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
+        momentum_status = {str(item.get("symbol", "")).upper(): item.get("status") for item in momentum.get("items", [])}
+        tradability = {
+            str(item.get("symbol", "")).upper(): item.get("state")
+            for item in (bundle.get("tradability_assessment") or {}).get("symbols", [])
+        }
+        stances = {
+            packet["role"]: {str(item["symbol"]).upper(): item for item in packet["items"]}
+            for packet in debate["packets"]
+        }
+        outlooks = {
+            name: {str(item["symbol"]).upper(): item.get("outlook") for item in report.get("items", [])}
+            for name, report in analyst_reports.items()
+        }
+        batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
+        outputs: List[List[Dict[str, object]]] = []
+        for batch in batches:
+            name = "trader_b%d" % batch["batch_index"]
+            brief_path = self.save_artifact(
+                "brief_%s" % name,
+                {
+                    "regime_assessment": momentum.get("regime_assessment"),
+                    "account": {key: bundle["account_snapshot"].get(key) for key in ("cash", "nav", "positions")},
+                    "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
+                    "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
+                    "symbols": [
+                        {
+                            "symbol": symbol,
+                            "held_shares": held.get(symbol, 0),
+                            "momentum_status": momentum_status.get(symbol),
+                            "tradability_state": tradability.get(symbol),
+                            "analyst_outlooks": {analyst: values.get(symbol) for analyst, values in outlooks.items()},
+                            "bull": {key: stances["bull"][symbol][key] for key in ("strength", "claims", "invalidation_conditions")},
+                            "bear": {key: stances["bear"][symbol][key] for key in ("strength", "claims", "invalidation_conditions")},
+                        }
+                        for symbol in batch["symbols"]
+                    ],
+                },
+            )
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"])
+            task = AgentTask(
+                name,
+                "你是 $trader 交易 Agent。先讀 %s，再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔權衡多空論點，"
+                "決定 intent；buy／add 必須給 conviction，其他意圖 conviction 為 null。每檔的每個 claim_id 都必須剛好出現在"
+                " adopted_claim_ids 或 rejected_claim_ids 其中之一。已持股不得 buy，未持股只能 buy 或 no_trade；"
+                "buy／add 須採納至少一個多頭 claim 且 momentum_status=available；trim／exit／forced_exit 須採納至少一個空頭 claim。%s"
+                % (
+                    self.root / "skills/trader/SKILL.md", brief_path,
+                    len(batch["symbols"]), "、".join(batch["symbols"]), _SHARED_RULES,
+                ),
+                TRADE_SCHEMA,
+            )
+            partial = self.agent_step(
+                task, lambda output: seal_trade_decision(envelope, output["items"]), validator.validate
+            )
+            outputs.append(partial["items"])
+        decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
+        errors = TradeDecisionValidator(bundle, momentum, debate).validate(decision)
+        if errors:
+            raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("trade_decision", decision)
+        return decision
 
     # ------------------------------------------------------------------ agents
     def _role_brief(self, bundle: Mapping[str, object], momentum: Mapping[str, object], role: str) -> Dict[str, object]:
