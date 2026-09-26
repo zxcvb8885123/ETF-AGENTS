@@ -216,7 +216,8 @@ P0～P6 fixture 驗收已完成；下一批進入 P7 回測，正式 Provider／
 ## 配置前信心分級（2026-09-26）
 
 - 使用者決定單檔權重由風控 Agent 分級、Python 計算：新增 `SizingPlan`（high／medium／low、理由、證據，不含數字）、`validate-sizing`、`apply-sizing` 與 Policy 選配 `position_sizing`（`conviction_volatility_v1`）。權重 ∝ 等級乘數 ÷ max(ATR14%, floor)，扣除現金緩衝與非候選持股後按比例分配，超過個股上限者固定於上限並重新分配。未啟用時維持 `default_target_weight` 等權重，既有 fixture 與封存 run 重算不變。
-- 新增 `build-policy` 與 `config/decision_policy.json` 策略樣板；硬性欄位一律自 bundle rules 複製，產業分類取自 `data/sector_classification.json` 且必須在 cutoff 前可得。樣板暫定現金緩衝 5%、換手上限 1.0（Guard 沒有初始建倉例外，上限過低會讓 10 億空倉永遠無法同時滿足 20 檔與現金 <25%）、減碼 50%、滑價 10 bps、等級乘數 1.5／1／0.5、ATR 下限 1%。
+- 使用者再決定：現金 <25% 是競賽規範（Guard 強制），實際保留多少現金是策略判斷，交由 Agent。SizingPlan 新增 `cash_stance`（aggressive／neutral／defensive，附證據），`apply-sizing` 依 Policy 的 `cash_buffer_by_stance`（暫定 3%／10%／20%，皆須低於現金上限）設定 `cash_buffer_rate`；換手上限 1.0 只是保護上限，不是投入目標。
+- 新增 `build-policy` 與 `config/decision_policy.json` 策略樣板；硬性欄位一律自 bundle rules 複製，產業分類取自 `data/sector_classification.json` 且必須在 cutoff 前可得。樣板基礎現金緩衝 5%（套用 SizingPlan 後由現金姿態取代）、換手上限 1.0（Guard 沒有初始建倉例外，上限過低會讓 10 億空倉永遠無法同時滿足 20 檔與現金 <25%）、減碼 50%、滑價 10 bps、等級乘數 1.5／1／0.5、ATR 下限 1%。
 
 ## 完成條件
 

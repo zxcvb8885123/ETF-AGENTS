@@ -25,6 +25,8 @@ from .trade_intent import _validate_forbidden_keys
 
 SIZING_METHOD = "conviction_volatility_v1"
 CONVICTION_LEVELS = ("high", "medium", "low")
+# 現金姿態由積極到防守；對應的現金緩衝由 Policy 設定，必須低於競賽現金上限。
+CASH_STANCES = ("aggressive", "neutral", "defensive")
 SIZED_INTENTS = {"buy", "add"}
 
 
@@ -41,10 +43,11 @@ class SizingPlanValidator:
 
     ENVELOPE = {
         "schema_version", "plan_id", "bundle_id", "snapshot_id", "decision_cutoff",
-        "bundle_hash", "trade_intent_result_id", "trade_intent_sha256", "items",
-        "errors", "content_sha256",
+        "bundle_hash", "trade_intent_result_id", "trade_intent_sha256", "cash_stance",
+        "items", "errors", "content_sha256",
     }
     ITEM = {"symbol", "conviction", "rationale", "evidence_ids"}
+    STANCE = {"level", "rationale", "evidence_ids"}
 
     def __init__(self, bundle: Mapping[str, object], intent_result: Mapping[str, object]):
         self.context = DecisionContext(bundle)
@@ -76,6 +79,7 @@ class SizingPlanValidator:
             errors.append("SizingPlan.content_sha256 與內容不一致")
         if plan.get("errors") != []:
             errors.append("SizingPlan.errors 必須為空陣列；無法分級時不得產生 SizingPlan")
+        self._validate_cash_stance(plan.get("cash_stance"), errors)
         items = plan.get("items")
         if not isinstance(items, list):
             errors.append("SizingPlan.items 必須是陣列")
@@ -110,6 +114,26 @@ class SizingPlanValidator:
             errors.append("SizingPlan 含非 buy／add 候選：%s" % ", ".join(extra))
         return errors
 
+    def _validate_cash_stance(self, stance: object, errors: List[str]) -> None:
+        if not isinstance(stance, Mapping):
+            errors.append("SizingPlan.cash_stance 必須是物件")
+            return
+        reject_unknown_fields(stance, self.STANCE, "SizingPlan.cash_stance", errors)
+        if stance.get("level") not in CASH_STANCES:
+            errors.append("SizingPlan.cash_stance.level 必須是 %s" % "／".join(CASH_STANCES))
+        try:
+            required_string(stance, "rationale")
+            evidence = string_list(stance, "evidence_ids")
+        except DecisionToolError as error:
+            errors.append("SizingPlan.cash_stance.%s" % error)
+            return
+        if not evidence:
+            errors.append("SizingPlan.cash_stance.evidence_ids 不得為空")
+        # 市場層級判斷可引用任一股票的共同輸入證據，但不得引用不存在的 ID。
+        unknown = [item for item in evidence if item not in self.context.evidence_symbols]
+        if unknown:
+            errors.append("SizingPlan.cash_stance 引用不存在：%s" % ", ".join(unknown))
+
 
 def apply_sizing_plan(
     policy: Mapping[str, object], plan: Mapping[str, object]
@@ -120,9 +144,16 @@ def apply_sizing_plan(
         raise DecisionToolError("DecisionPolicy 未啟用 position_sizing，不能套用 SizingPlan")
     if "conviction_by_symbol" in sizing:
         raise DecisionToolError("DecisionPolicy 已套用 SizingPlan，須從基礎 policy 重新套用")
+    stance = plan.get("cash_stance")
+    buffers = sizing.get("cash_buffer_by_stance")
+    if not isinstance(stance, Mapping) or not isinstance(buffers, Mapping) or stance.get("level") not in buffers:
+        raise DecisionToolError("SizingPlan.cash_stance 無法對應 position_sizing.cash_buffer_by_stance")
     result = dict(policy)
+    # 現金緩衝由 Agent 選擇的姿態確定性對應；硬性現金上限仍由 Guard 檢查。
+    result["cash_buffer_rate"] = buffers[stance["level"]]
     result["position_sizing"] = {
         **dict(sizing),
+        "cash_stance": stance["level"],
         "sizing_plan_id": plan.get("plan_id"),
         "sizing_plan_sha256": plan.get("content_sha256"),
         "conviction_by_symbol": {
@@ -136,16 +167,17 @@ def apply_sizing_plan(
 
 
 def validate_position_sizing(
-    sizing: object, universe: Sequence[str], errors: List[str]
+    policy: Mapping[str, object], universe: Sequence[str], errors: List[str]
 ) -> None:
+    sizing = policy.get("position_sizing")
     if not isinstance(sizing, Mapping):
         errors.append("DecisionPolicy.position_sizing 必須是物件")
         return
     reject_unknown_fields(
         sizing,
         {
-            "method", "conviction_multipliers", "volatility_floor",
-            "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
+            "method", "conviction_multipliers", "volatility_floor", "cash_buffer_by_stance",
+            "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
         },
         "DecisionPolicy.position_sizing",
         errors,
@@ -173,14 +205,41 @@ def validate_position_sizing(
             errors.append("position_sizing.volatility_floor 必須介於 0 與 1（不含）")
     except DecisionToolError as error:
         errors.append(str(error))
+    buffers = sizing.get("cash_buffer_by_stance")
+    if not isinstance(buffers, Mapping) or set(buffers) != set(CASH_STANCES):
+        errors.append("position_sizing.cash_buffer_by_stance 必須剛好包含 aggressive／neutral／defensive")
+        buffers = None
+    else:
+        try:
+            values = [decimal_value(buffers[level], "cash_buffer_by_stance.%s" % level) for level in CASH_STANCES]
+            ceiling = decimal_value(policy.get("cash_weight_ceiling"), "cash_weight_ceiling")
+            if any(value < 0 or value >= ceiling for value in values):
+                errors.append("position_sizing.cash_buffer_by_stance 必須不小於 0 且低於 cash_weight_ceiling")
+            if not values[0] <= values[1] <= values[2]:
+                errors.append("position_sizing.cash_buffer_by_stance 必須 aggressive ≤ neutral ≤ defensive")
+        except DecisionToolError as error:
+            errors.append(str(error))
     tiers = sizing.get("conviction_by_symbol")
-    bound = [field for field in ("sizing_plan_id", "sizing_plan_sha256") if sizing.get(field)]
+    bound = [
+        field for field in ("sizing_plan_id", "sizing_plan_sha256", "cash_stance") if sizing.get(field)
+    ]
     if tiers is None:
         if bound:
             errors.append("position_sizing 有 SizingPlan 綁定卻缺少 conviction_by_symbol")
         return
-    if len(bound) != 2:
-        errors.append("position_sizing.conviction_by_symbol 必須綁定 sizing_plan_id 與 sizing_plan_sha256")
+    if len(bound) != 3:
+        errors.append("position_sizing.conviction_by_symbol 必須綁定 sizing_plan_id、sizing_plan_sha256 與 cash_stance")
+    stance = sizing.get("cash_stance")
+    if stance not in CASH_STANCES:
+        errors.append("position_sizing.cash_stance 必須是 %s" % "／".join(CASH_STANCES))
+    elif buffers is not None:
+        try:
+            if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != decimal_value(
+                buffers[stance], "cash_buffer_by_stance.%s" % stance
+            ):
+                errors.append("cash_buffer_rate 必須等於 cash_stance 對應的現金緩衝")
+        except DecisionToolError as error:
+            errors.append(str(error))
     if not isinstance(tiers, Mapping):
         errors.append("position_sizing.conviction_by_symbol 必須是物件")
         return

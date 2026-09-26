@@ -179,7 +179,7 @@ class DecisionPolicyValidator:
                 if not isinstance(sector, str) or not sector.strip():
                     errors.append("sector_by_symbol.%s 必須是非空字串" % symbol)
         if "position_sizing" in policy:
-            validate_position_sizing(policy["position_sizing"], self.context.universe, errors)
+            validate_position_sizing(policy, self.context.universe, errors)
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):
             errors.append("DecisionPolicy.cash_buffer_rate 必須小於 1")
         rules = self.context.bundle.get("rules", {})

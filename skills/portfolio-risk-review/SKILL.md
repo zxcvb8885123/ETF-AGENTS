@@ -11,7 +11,9 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 Policy 啟用 `position_sizing` 時，主控在 `compute-proposal` 前請本 Skill 對 `TradeIntentResult` 的**全部** buy／add 候選逐檔給 `conviction`：`high`、`medium` 或 `low`，附 `rationale` 與屬於該股票的 `evidence_ids`。依動能品質、波動、流動性、事件與資料缺口判斷相對信心；不得輸出權重、股數、金額或排名數字，也不得新增或刪除候選。
 
-Envelope 欄位為 `schema_version`、`plan_id`、`bundle_id`、`snapshot_id`、`decision_cutoff`、`bundle_hash`、`trade_intent_result_id`、`trade_intent_sha256`、`items`、`errors`（須為空陣列）與 `content_sha256`；主控執行 `validate-sizing` 後才以 `apply-sizing` 綁入 policy。權重由 Python 依等級乘數除以 ATR14% 分配。
+同一份 SizingPlan 另給市場層級的 `cash_stance`：`aggressive`、`neutral` 或 `defensive`，附 `rationale` 與共同輸入中存在的 `evidence_ids`（例如 regime、市場廣度、事件集中）。它決定要保留多少現金；實際比例由 Policy 的 `cash_buffer_by_stance` 對應，競賽現金上限仍由 Guard 強制檢查，Agent 不得輸出百分比。
+
+Envelope 欄位為 `schema_version`、`plan_id`、`bundle_id`、`snapshot_id`、`decision_cutoff`、`bundle_hash`、`trade_intent_result_id`、`trade_intent_sha256`、`cash_stance`、`items`、`errors`（須為空陣列）與 `content_sha256`；主控執行 `validate-sizing` 後才以 `apply-sizing` 綁入 policy。權重由 Python 依等級乘數除以 ATR14% 分配。
 
 ## 審查方式
 

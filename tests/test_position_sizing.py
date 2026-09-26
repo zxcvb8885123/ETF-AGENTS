@@ -33,10 +33,11 @@ SIZING = {
     "method": "conviction_volatility_v1",
     "conviction_multipliers": {"high": "1.5", "medium": "1", "low": "0.5"},
     "volatility_floor": "0.01",
+    "cash_buffer_by_stance": {"aggressive": "0.03", "neutral": "0.10", "defensive": "0.20"},
 }
 
 
-def sized_inputs(tier_2317="high", tier_2330="low"):
+def sized_inputs(tier_2317="high", tier_2330="low", stance="neutral"):
     bundle, momentum, debate, intent = valid_inputs()
     intent = copy.deepcopy(intent)
     for item in intent["items"]:
@@ -54,6 +55,7 @@ def sized_inputs(tier_2317="high", tier_2330="low"):
         "bundle_hash": bundle["bundle_sha256"],
         "trade_intent_result_id": intent["result_id"],
         "trade_intent_sha256": intent["content_sha256"],
+        "cash_stance": {"level": stance, "rationale": "市場廣度中性。", "evidence_ids": ["price-2330"]},
         "items": [
             {"symbol": "2317.TW", "conviction": tier_2317, "rationale": "動能與流動性較佳。", "evidence_ids": ["price-2317"]},
             {"symbol": "2330.TW", "conviction": tier_2330, "rationale": "已持有，加碼幅度保守。", "evidence_ids": ["price-2330"]},
@@ -94,6 +96,19 @@ class SizingPlanValidatorTests(unittest.TestCase):
         foreign["items"][0]["evidence_ids"] = ["price-2330"]
         cases.append((foreign, "不屬於"))
         for case, message in cases:
+            refresh_artifact_hash(case)
+            errors = SizingPlanValidator(bundle, intent).validate(case)
+            self.assertTrue(any(message in error for error in errors), (message, errors))
+
+    def test_cash_stance_requires_known_level_and_existing_evidence(self):
+        bundle, intent, plan, _ = sized_inputs()
+        bad_level = copy.deepcopy(plan)
+        bad_level["cash_stance"]["level"] = "all_in"
+        missing_evidence = copy.deepcopy(plan)
+        missing_evidence["cash_stance"]["evidence_ids"] = ["price-9999"]
+        absent = copy.deepcopy(plan)
+        absent.pop("cash_stance")
+        for case, message in ((bad_level, "cash_stance.level"), (missing_evidence, "引用不存在"), (absent, "cash_stance 必須是物件")):
             refresh_artifact_hash(case)
             errors = SizingPlanValidator(bundle, intent).validate(case)
             self.assertTrue(any(message in error for error in errors), (message, errors))
@@ -163,6 +178,35 @@ class ConvictionAllocationTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_agent_cash_stance_sets_buffer_and_invested_budget(self):
+        bundle, intent, plan, policy = sized_inputs(stance="aggressive")
+        aggressive = sized_policy(policy, plan)
+        self.assertEqual(aggressive["cash_buffer_rate"], "0.03")
+        self.assertEqual(aggressive["position_sizing"]["cash_stance"], "aggressive")
+        _, _, defensive_plan, defensive_base = sized_inputs(stance="defensive")
+        defensive = sized_policy(defensive_base, defensive_plan)
+        self.assertEqual(defensive["cash_buffer_rate"], "0.20")
+
+        def invested(settings):
+            proposal = AllocationOrderEngine(bundle, settings).run(intent)
+            return sum(Decimal(value) for value in proposal["position_sizing"]["target_weights"].values())
+
+        self.assertGreater(invested(aggressive), invested(defensive))
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(defensive), [])
+
+    def test_policy_rejects_cash_buffer_not_matching_stance_or_above_ceiling(self):
+        bundle, _, plan, policy = sized_inputs()
+        tampered = sized_policy(policy, plan)
+        tampered["cash_buffer_rate"] = "0.01"
+        tampered["content_sha256"] = decision_policy_sha256(tampered)
+        errors = DecisionPolicyValidator(bundle).validate(tampered)
+        self.assertTrue(any("cash_stance 對應" in error for error in errors), errors)
+
+        policy["position_sizing"]["cash_buffer_by_stance"]["defensive"] = policy["cash_weight_ceiling"]
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        errors = DecisionPolicyValidator(bundle).validate(policy)
+        self.assertTrue(any("低於 cash_weight_ceiling" in error for error in errors), errors)
 
     def test_sizing_enabled_without_plan_fails_closed(self):
         bundle, intent, _, policy = sized_inputs()
