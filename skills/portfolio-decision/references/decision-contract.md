@@ -108,6 +108,12 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 
 `SizingPlan` 的 item 只有 `symbol`、`conviction`、`rationale`、`evidence_ids`，禁止權重／股數等欄位；證據必須屬於該股票。`cash_stance` 只有 `level`、`rationale`、`evidence_ids`，證據須存在於共同輸入。配置時候選依等級再依代號排序，受 `max_positions` 限制；原始分數為等級乘數 ÷ max(ATR14%, floor)，按比例分配 `1 − cash_buffer_rate − 非候選持股權重`，超過個股上限者固定在上限並把餘額重新分配。Proposal 另存 `position_sizing.target_weights` 供重算；未啟用 `position_sizing` 時沿用 `default_target_weight` 等權重。
 
+## 分析團隊新鏈（schema 2.0）
+
+新鏈的 Decision run 沿用 `debate` 與 `intent` 檔名：`debate` 是 `ResearchDebateBundle` 2.0（多頭、空頭 StancePacket），`intent` 是 `TradeDecision` 2.0，另存 `team_inputs`（`schema_version`、四份 `analyst_reports`、`research_result`、`cash_stance`）。Finalizer 與 `DecisionResultValidator` 依 `debate.schema_version` 分流：2.0 必須提供 `team_inputs`，重建多空辯論與交易決策，並檢查 policy `position_sizing` 的 `conviction_by_symbol`、`cash_stance`、`sizing_plan_id`／`sizing_plan_sha256` 與交易決策、現金姿態一致；DecisionResult 另含 `team_inputs_sha256`。1.0 舊鏈行為不變。配置引擎直接讀取 TradeDecision 的 symbol／intent。
+
+分級配置封頂時以個股上限 × 0.995 計算，保留手續費造成成交後 NAV 變小的緩衝，避免剛好配到上限的部位被 Guard 拒絕。
+
 ## DecisionPolicy 與 ProposalBundle
 
 `DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的策略／執行設定。可調策略包含現金緩衝、預設目標權重、減碼比例、滑價、換手與壓力情境；手續費、交易稅、最低費用、交易單位、個股／產業／持股檔數／現金限制及賣款可否重用是硬規則；Active Share 僅在有來源規則明確要求時才成為額外約束，Policy 的重複欄位必須與 `DecisionInputBundle.rules` 完全一致，不能藉 Policy 放寬。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。

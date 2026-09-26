@@ -326,6 +326,7 @@ class DailyReportBuilder:
             self.decision["momentum"],
             self.decision["debate"],
             self.decision["intent"],
+            self.decision.get("team_inputs"),
         ).validate(
             self.decision["proposal"],
             self.decision["scenario"],
@@ -642,6 +643,9 @@ class AutomationReportingApplicationService:
             name: cls.read_json(run_dir / (name + ".json"), "Decision %s" % name)
             for name in names
         }
+        # 分析團隊新鏈另存 team_inputs；舊鏈 run 沒有此檔。
+        if (run_dir / "team_inputs.json").exists():
+            artifacts["team_inputs"] = cls.read_json(run_dir / "team_inputs.json", "Decision team_inputs")
         perception = cls.read_json(perception_path, "MarketPerceptionResult") if perception_path else None
         perception_bundle = (
             cls.read_json(perception_bundle_path, "PerceptionDataBundle")

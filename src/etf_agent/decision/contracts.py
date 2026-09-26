@@ -73,6 +73,11 @@ def artifact_content_sha256(artifact: Mapping[str, object]) -> str:
     return content_sha256(artifact)
 
 
+def intent_artifact_id(intent: Mapping[str, object]) -> object:
+    """舊鏈 TradeIntentResult 用 result_id，新鏈 TradeDecision 用 decision_id。"""
+    return intent.get("result_id") if "result_id" in intent else intent.get("decision_id")
+
+
 def reject_unknown_fields(
     payload: Mapping[str, object],
     allowed: Set[str],

@@ -11,6 +11,7 @@ from .contracts import (
     DecisionToolError,
     artifact_content_sha256,
     canonical_sha256,
+    intent_artifact_id,
 )
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator, revision_effects
 
@@ -84,7 +85,7 @@ class RevisionHistoryBuilder:
             "bundle_hash": self.context.bundle_hash,
             "policy_id": self.policy.get("policy_id"),
             "policy_hash": self.policy.get("content_sha256"),
-            "trade_intent_result_id": self.intent.get("result_id"),
+            "trade_intent_result_id": intent_artifact_id(self.intent),
             "engine_version": REVISION_HISTORY_VERSION,
             "entries": entries,
         }
@@ -121,7 +122,7 @@ class RevisionHistoryValidator:
             "bundle_hash": self.context.bundle_hash,
             "policy_id": self.policy.get("policy_id"),
             "policy_hash": self.policy.get("content_sha256"),
-            "trade_intent_result_id": self.intent.get("result_id"),
+            "trade_intent_result_id": intent_artifact_id(self.intent),
         }
         for field, value in expected_links.items():
             if history.get(field) != value:

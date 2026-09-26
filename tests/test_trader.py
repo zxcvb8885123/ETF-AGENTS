@@ -11,7 +11,6 @@ from etf_agent.decision import (
     DecisionToolError,
     ProposalValidator,
     TradeDecisionValidator,
-    allocation_intents,
     apply_trade_decision,
     build_research_debate,
     decision_policy_sha256,
@@ -111,11 +110,12 @@ class TradeDecisionAllocationTests(unittest.TestCase):
         self.assertEqual(DecisionPolicyValidator(bundle).validate(policy), [])
         self.assertEqual(policy["cash_buffer_rate"], "0.10")
         self.assertEqual(policy["position_sizing"]["conviction_by_symbol"], {"2317.TW": "medium"})
-        intents = allocation_intents(trade)
-        proposal = AllocationOrderEngine(bundle, policy).run(intents)
+        # 配置引擎直接讀取 TradeDecision 的 symbol／intent，不需要轉接。
+        proposal = AllocationOrderEngine(bundle, policy).run(trade)
+        self.assertEqual(proposal["trade_intent_result_id"], "trade-1")
         self.assertEqual(list(proposal["position_sizing"]["target_weights"]), ["2317.TW"])
         self.assertGreater(Decimal(proposal["position_sizing"]["target_weights"]["2317.TW"]), 0)
-        self.assertEqual(ProposalValidator(bundle, policy, intents).validate(proposal), [])
+        self.assertEqual(ProposalValidator(bundle, policy, trade).validate(proposal), [])
 
     def test_invalid_cash_stance_is_rejected(self):
         bundle, _, _, debate = world()

@@ -39,6 +39,7 @@
 - 分析團隊（technical／fundamental／event 分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件必須另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
+- 新鏈 Decision run 必須另存 `team_inputs`（四份分析報告、事件研究、現金姿態）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
 - 子 Agent 只輸出市場狀態解讀、買賣意圖、裁決、配置前信心分級或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
 - Buy／Sell 必須使用主控建立的獨立 role input artifact，packet 不得含 peer 依賴；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - Trade Adjudicator 不得新增事實，Portfolio Risk 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。

@@ -33,7 +33,6 @@ from .stance import (
 from .trader import (
     TRADE_INTENTS,
     TradeDecisionValidator,
-    allocation_intents,
     apply_trade_decision,
     seal_trade_decision,
     trade_decision_envelope,
@@ -63,6 +62,7 @@ from .risk import (
 )
 from .finalization import (
     DecisionFinalizer,
+    build_team_inputs,
     DecisionRepository,
     DecisionResultValidator,
 )
@@ -103,7 +103,6 @@ __all__ = [
     "seal_stance_packet",
     "TRADE_INTENTS",
     "TradeDecisionValidator",
-    "allocation_intents",
     "apply_trade_decision",
     "seal_trade_decision",
     "trade_decision_envelope",
@@ -122,6 +121,7 @@ __all__ = [
     "RiskReviewValidator",
     "revision_effects",
     "DecisionFinalizer",
+    "build_team_inputs",
     "DecisionResultValidator",
     "DecisionRepository",
     "RevisionHistoryBuilder",

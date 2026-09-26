@@ -80,7 +80,7 @@ class BacktestService:
                     raise BacktestToolError("正式歷史模式必須提供完整 DecisionResult 重建輸入")
                 errors = DecisionResultValidator(
                     decision_run["bundle"], decision_run["policy"], decision_run["momentum"],
-                    decision_run["debate"], decision_run["intent"],
+                    decision_run["debate"], decision_run["intent"], decision_run.get("team_inputs"),
                 ).validate(
                     decision_run["proposal"], decision_run["scenario"], decision_run["guard"],
                     decision_run["risk_review"], decision_run["history"], decision,

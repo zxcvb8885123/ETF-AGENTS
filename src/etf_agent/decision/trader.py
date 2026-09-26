@@ -171,15 +171,6 @@ class TradeDecisionValidator:
             errors.append("%s %s 必須採納至少一個空頭 claim" % (prefix, intent))
 
 
-def allocation_intents(decision: Mapping[str, object]) -> Dict[str, object]:
-    """轉成 AllocationOrderEngine 讀取的意圖清單；只帶 symbol 與 intent，不含任何數字。"""
-    return {
-        "result_id": decision["decision_id"],
-        "content_sha256": decision["content_sha256"],
-        "items": [{"symbol": item["symbol"], "intent": item["intent"]} for item in decision.get("items", [])],
-    }
-
-
 def apply_trade_decision(
     policy: Mapping[str, object],
     decision: Mapping[str, object],

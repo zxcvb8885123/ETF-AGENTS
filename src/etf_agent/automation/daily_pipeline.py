@@ -55,6 +55,8 @@ from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS
 from etf_agent.decision.stance import STANCE_ROLES, STRENGTHS
 from etf_agent.decision.trader import TRADE_INTENTS
 from etf_agent.decision.allocation import DecisionPolicyValidator
+from etf_agent.decision.contracts import DecisionContext
+from etf_agent.decision.sizing import validate_cash_stance
 from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, sizing_candidates
 from etf_agent.decision.trade_intent import (
     BUY_INTENTS,
@@ -202,6 +204,10 @@ _TRADE_ITEM = {
 TRADE_SCHEMA = _object(
     {"items": {"type": "array", "items": _object(_TRADE_ITEM, list(_TRADE_ITEM))}},
     ("items",),
+)
+CASH_STANCE_SCHEMA = _object(
+    {"level": {"enum": list(CASH_STANCES)}, "rationale": _TEXT, "evidence_ids": _strings(1)},
+    ("level", "rationale", "evidence_ids"),
 )
 REVIEW_SCHEMA = _object(
     {
@@ -639,6 +645,70 @@ class DailyDecisionPipeline:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("trade_decision", decision)
         return decision
+
+    # ------------------------------------------------------------------ risk
+    def run_cash_stance(
+        self,
+        bundle: Mapping[str, object],
+        momentum: Mapping[str, object],
+        analyst_reports: Mapping[str, Mapping[str, object]],
+        research_result: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+    ) -> Dict[str, object]:
+        """風險 Agent 依市場層級摘要給現金姿態；分布與計數由程式統計。"""
+
+        def counts(values: Sequence[object]) -> Dict[str, int]:
+            result: Dict[str, int] = {}
+            for value in values:
+                result[str(value)] = result.get(str(value), 0) + 1
+            return dict(sorted(result.items()))
+
+        price_evidence = sorted(
+            {str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"] if row.get("source_evidence_id")}
+        )
+        brief_path = self.save_artifact(
+            "brief_cash_stance",
+            {
+                "regime_assessment": momentum.get("regime_assessment"),
+                "analyst_outlooks": {
+                    name: counts([item.get("outlook") for item in report.get("items", [])])
+                    for name, report in analyst_reports.items()
+                },
+                "trade_intents": counts([item.get("intent") for item in trade_decision.get("items", [])]),
+                "buy_add_convictions": counts(
+                    [item.get("conviction") for item in trade_decision.get("items", []) if item.get("intent") in {"buy", "add"}]
+                ),
+                "tradability": counts(
+                    [item.get("state") for item in (bundle.get("tradability_assessment") or {}).get("symbols", [])]
+                ),
+                "event_research": [
+                    {key: item.get(key) for key in ("symbol", "event_id", "direction", "research_status", "event_summary", "evidence_ids")}
+                    for item in research_result.get("items", [])
+                ],
+                "account": {key: bundle["account_snapshot"].get(key) for key in ("cash", "nav", "positions")},
+                "rules": {key: bundle["rules"].get(key) for key in ("cash_weight_must_be_below", "min_positions", "max_positions")},
+                "citable_evidence_ids": price_evidence,
+            },
+        )
+        context = DecisionContext(bundle)
+
+        def validate(stance: Mapping[str, object]) -> List[str]:
+            errors: List[str] = []
+            validate_cash_stance(context, stance, "cash_stance", errors)
+            return errors
+
+        task = AgentTask(
+            "cash_stance",
+            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前分級」一節的現金姿態說明），再讀市場層級摘要 %s。"
+            "依 regime、分析師看法分布、交易決策、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive。"
+            "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
+            "evidence_ids 從 citable_evidence_ids 或事件研究的 evidence_ids 中選取。%s"
+            % (self.root / "skills/portfolio-risk-review/SKILL.md", brief_path, _SHARED_RULES),
+            CASH_STANCE_SCHEMA,
+        )
+        stance = self.agent_step(task, lambda output: dict(output), validate)
+        self.save_artifact("cash_stance", stance)
+        return stance
 
     # ------------------------------------------------------------------ agents
     def _role_brief(self, bundle: Mapping[str, object], momentum: Mapping[str, object], role: str) -> Dict[str, object]:

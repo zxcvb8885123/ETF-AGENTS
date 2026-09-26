@@ -28,6 +28,9 @@ CONVICTION_LEVELS = ("high", "medium", "low")
 # 現金姿態由積極到防守；對應的現金緩衝由 Policy 設定，必須低於競賽現金上限。
 CASH_STANCES = ("aggressive", "neutral", "defensive")
 SIZED_INTENTS = {"buy", "add"}
+# 封頂時保留 0.5% 相對緩衝：買進手續費使成交後 NAV 變小，剛好配到上限的部位會以
+# 50.0009% 之類的權重觸發 Guard。全額換手時手續費影響約 0.14%，0.5% 足以涵蓋。
+LIMIT_HEADROOM = Decimal("0.995")
 
 
 def sizing_candidates(intent_result: Mapping[str, object]) -> List[str]:

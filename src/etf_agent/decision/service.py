@@ -565,6 +565,9 @@ class PortfolioDecisionApplicationService:
         missing = sorted(required - set(artifacts))
         if missing:
             raise DecisionToolError("保存前缺少 artifacts：" + ", ".join(missing))
+        unknown = sorted(set(artifacts) - required - {"team_inputs"})
+        if unknown:
+            raise DecisionToolError("保存時含未允許 artifacts：" + ", ".join(unknown))
         errors = MomentumResultValidator(self.bundle).validate(artifacts["momentum"])
         errors.extend(
             DecisionResultValidator(
@@ -573,6 +576,7 @@ class PortfolioDecisionApplicationService:
                 artifacts["momentum"],
                 artifacts["debate"],
                 artifacts["intent"],
+                artifacts.get("team_inputs"),
             ).validate(
                 artifacts["proposal"],
                 artifacts["scenario"],
