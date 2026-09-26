@@ -179,7 +179,8 @@ class AgentCall:
     name: str
     attempt: int
     output: Dict[str, object]
-    cost_usd: float = 0.0
+    # claude -p 回報的 total_cost_usd：以 API 價格估算的用量；claude.ai 訂閱登入時不另計費。
+    estimated_usage_usd: float = 0.0
 
 
 class AgentRunner(Protocol):
@@ -188,7 +189,11 @@ class AgentRunner(Protocol):
 
 
 class ClaudeAgentRunner:
-    """以 ``claude -p`` 執行單次隔離工作階段；只開放 Read 工具與結構化輸出。"""
+    """以 ``claude -p`` 執行單次隔離工作階段；只開放 Read 工具與結構化輸出。
+
+    ``max_budget_usd`` 對應 ``--max-budget-usd``，依估算用量限制單次 Agent 防止失控；
+    claude.ai 訂閱登入時用量計入訂閱額度，不是實際扣款上限。
+    """
 
     def __init__(
         self,
@@ -311,7 +316,7 @@ class DailyDecisionPipeline:
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             call = self.runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
-            self.calls.append({"name": task.name, "attempt": attempt, "cost_usd": call.cost_usd})
+            self.calls.append({"name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd})
             self._save("%s_raw_%d" % (task.name, attempt), call.output)
             artifact = build(call.output)
             errors = validate(artifact)

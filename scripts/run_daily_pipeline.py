@@ -62,7 +62,7 @@ def main() -> int:
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="週末或當日已完成仍執行")
     parser.add_argument("--model", help="子 Agent 使用的 Claude 模型；預設沿用 claude CLI 設定")
-    parser.add_argument("--max-budget-usd", type=float, default=3.0, help="每次子 Agent 呼叫的費用上限")
+    parser.add_argument("--max-budget-usd", type=float, default=3.0, help="單次子 Agent 的估算用量上限（防失控；claude.ai 訂閱登入時不另計費）")
     args = parser.parse_args()
 
     now = datetime.now(TAIPEI_TIMEZONE)
@@ -144,7 +144,7 @@ def main() -> int:
                 "cash_stance": result.cash_stance,
                 "order_count": len(result.orders),
                 "agent_calls": result.agent_calls,
-                "agent_cost_usd": round(sum(call["cost_usd"] for call in result.agent_calls), 4),
+                "agent_estimated_usage_usd": round(sum(call["estimated_usage_usd"] for call in result.agent_calls), 4),
                 "target_session": session,
                 "research_status": research.get("status"),
             }
@@ -182,9 +182,9 @@ def main() -> int:
 
     log("[5/5] 通知")
     if summary["status"] == "completed":
-        message = "決策 %s，%d 筆委託，現金姿態 %s，Agent 費用 $%s" % (
+        message = "決策 %s，%d 筆委託，現金姿態 %s，Agent 估算用量 $%s（訂閱不計費）" % (
             summary.get("decision_status"), summary.get("order_count", 0),
-            summary.get("cash_stance"), summary.get("agent_cost_usd"),
+            summary.get("cash_stance"), summary.get("agent_estimated_usage_usd"),
         )
     else:
         message = "失敗：%s" % str(summary.get("error"))[:120]
