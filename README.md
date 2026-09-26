@@ -32,6 +32,7 @@ python3 -m venv .venv
 | `./start.sh check` | 只建置、檢查與執行測試 |
 | `./start.sh daily` | 一鍵驗證來源、更新行情／事件並建立 `artifacts/research_snapshot_latest.json` |
 | `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
+| `.venv/bin/python scripts/run_daily_pipeline.py` | 每日一鍵：`./start.sh daily` → 決策子 Agent（`claude -p`，結構化輸出並由 Validator 驗證）→ 封存 Decision run → DailyReport → macOS 通知；結果在 `artifacts/daily_runs/<run_id>/pipeline.json` 與 `artifacts/reports/latest.md`。`--skip-data` 沿用既有資料，`--model`／`--max-budget-usd` 控制 Agent；排程樣板見 `scripts/launchd/` |
 | `./start.sh dashboard` | 啟動唯讀績效儀表板 <http://127.0.0.1:8000>：起始本金、目前 NAV、今日／累積報酬率、現金、持倉與每日紀錄 |
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
