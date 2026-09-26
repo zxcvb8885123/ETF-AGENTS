@@ -8,6 +8,8 @@
 
 已新增八份政府開放 CSV 的日期精度候選事實正規化：保留公告日與暫定處置區間、停復牌事件日期／時間、原始列雜湊及抓取時間；五、六碼非股票證券不混入 150 檔股票交易池。候選事實沒有完整現況或正式生效時間證據，不能轉成 `allowed`、`blocked` 或正式來源核准。
 
+2026-09-25 決策接線：`cli/trading_status.py build-bundle` 新增 `--snapshot --session-start --session-end`，以 Snapshot 交易池與 cutoff 建立請求；未提供 records／coverage 時代表沒有核准來源，逐檔 `unknown`（`MISSING_COVERAGE`），exit 2。已封存的 9/24～9/25 候選 CSV 晚於 9/22 Snapshot cutoff，不得用於該 Snapshot。以此誠實狀態包接上 `portfolio_decision.py build-input` 後，真實 150 檔 DecisionInputBundle 首次通過 `validate-input` 並完成動能計算（neutral，MA20／MA60 之上 60%／68%）；後續 Guard 會因 unknown 拒絕正式交易，符合 fail-closed。
+
 ## 1. 目標與範圍
 
 在固定 `decision_cutoff` 下，回答官方交易池每檔股票於指定交易時段的已知交易狀態，交付可重建的資料包與確定性決策閘門。這是 Data Agent 與 Portfolio Guard 的能力擴充，不新增推理 Agent。

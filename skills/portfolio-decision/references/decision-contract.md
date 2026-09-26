@@ -102,6 +102,12 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 - P0～P2 禁止任何權重、股數、費稅或訂單欄位。
 - Buy／Sell packet、TradeDebateBundle 與 TradeIntentResult 都保存 `content_sha256`；內容被改寫但 hash 未更新時拒絕。
 
+## SizingPlan 與 position_sizing
+
+`DecisionPolicy.position_sizing` 為選配：`method=conviction_volatility_v1`、`conviction_multipliers`（剛好 `high`／`medium`／`low`，皆大於 0 且 high ≥ medium ≥ low）、`volatility_floor`（0～1）與 `cash_buffer_by_stance`（剛好 `aggressive`／`neutral`／`defensive`，皆 ≥0 且低於 `cash_weight_ceiling`，依序不遞減）。啟用時必須先以 Portfolio Risk 的 `SizingPlan` 對 `TradeIntentResult` 全部 buy／add 候選分級，`apply-sizing` 再把 `conviction_by_symbol`、`cash_stance`、`sizing_plan_id` 與 `sizing_plan_sha256` 綁入新版 policy，並將 `cash_buffer_rate` 設為該姿態對應值（Validator 檢查兩者一致）（`policy_id` 加上 plan ID，重算 `content_sha256`）；未綁定就執行配置時停止。
+
+`SizingPlan` 的 item 只有 `symbol`、`conviction`、`rationale`、`evidence_ids`，禁止權重／股數等欄位；證據必須屬於該股票。`cash_stance` 只有 `level`、`rationale`、`evidence_ids`，證據須存在於共同輸入。配置時候選依等級再依代號排序，受 `max_positions` 限制；原始分數為等級乘數 ÷ max(ATR14%, floor)，按比例分配 `1 − cash_buffer_rate − 非候選持股權重`，超過個股上限者固定在上限並把餘額重新分配。Proposal 另存 `position_sizing.target_weights` 供重算；未啟用 `position_sizing` 時沿用 `default_target_weight` 等權重。
+
 ## DecisionPolicy 與 ProposalBundle
 
 `DecisionPolicy` 是獨立、版本化且在 cutoff 前可得的策略／執行設定。可調策略包含現金緩衝、預設目標權重、減碼比例、滑價、換手與壓力情境；手續費、交易稅、最低費用、交易單位、個股／產業／持股檔數／現金限制及賣款可否重用是硬規則；Active Share 僅在有來源規則明確要求時才成為額外約束，Policy 的重複欄位必須與 `DecisionInputBundle.rules` 完全一致，不能藉 Policy 放寬。所有比率必須在允許範圍，並以 `content_sha256` 綁定內容。

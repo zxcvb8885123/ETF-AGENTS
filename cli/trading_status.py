@@ -45,10 +45,17 @@ class TradingStatusApplication:
         parser = argparse.ArgumentParser(description=__doc__)
         commands = parser.add_subparsers(dest="command", required=True)
 
-        build = commands.add_parser("build-bundle", help="由保存的官方回應資料建立狀態包")
-        build.add_argument("--request", type=Path, required=True)
-        build.add_argument("--records", type=Path, required=True)
-        build.add_argument("--coverage", type=Path, required=True)
+        build = commands.add_parser(
+            "build-bundle",
+            help="由保存的官方回應資料建立狀態包；未提供 records／coverage 時視為沒有核准來源，逐檔 unknown",
+        )
+        request_source = build.add_mutually_exclusive_group(required=True)
+        request_source.add_argument("--request", type=Path)
+        request_source.add_argument("--snapshot", type=Path, help="以 Snapshot 交易池與 cutoff 建立請求")
+        build.add_argument("--session-start", help="搭配 --snapshot：目標交易時段起點（含時區）")
+        build.add_argument("--session-end", help="搭配 --snapshot：目標交易時段終點（含時區）")
+        build.add_argument("--records", type=Path)
+        build.add_argument("--coverage", type=Path)
         build.add_argument("--output", type=Path, required=True)
         build.add_argument("--database", type=Path)
 
@@ -73,9 +80,16 @@ class TradingStatusApplication:
 
     @staticmethod
     def build_bundle(args: argparse.Namespace) -> int:
-        request = TradingStatusRequest.from_dict(_read_json(args.request))
-        records = _read_json(args.records)
-        coverage = _read_json(args.coverage)
+        if args.snapshot is not None:
+            if not args.session_start or not args.session_end:
+                raise TradingStatusError("--snapshot 需同時提供 --session-start 與 --session-end")
+            request = TradingStatusRequest.from_snapshot(
+                _read_json(args.snapshot), args.session_start, args.session_end
+            )
+        else:
+            request = TradingStatusRequest.from_dict(_read_json(args.request))
+        records = _read_json(args.records) if args.records else []
+        coverage = _read_json(args.coverage) if args.coverage else []
         if not isinstance(records, list) or not isinstance(coverage, list):
             raise TradingStatusError("records 與 coverage JSON 頂層必須是陣列")
         bundle, assessment = TradingStatusBundleBuilder(request, records, coverage).build()

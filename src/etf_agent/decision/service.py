@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Sequence
+
+from etf_agent.data import MarketDataDatabase, SnapshotRepository
 
 from .contracts import (
     DecisionInputValidator,
     DecisionToolError,
     artifact_content_sha256,
 )
+from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
+from .role_brief import build_role_brief
+from .policy_builder import build_decision_policy
+from .allocation import DecisionPolicyValidator, decision_policy_sha256
+from .sizing import SizingPlanValidator, apply_sizing_plan
 from .momentum import MomentumEngine, MomentumResultValidator
 from .allocation import AllocationOrderEngine, ProposalValidator
 from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
@@ -61,6 +68,108 @@ class PortfolioDecisionApplicationService:
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    @classmethod
+    def build_input_file(
+        cls,
+        snapshot_path: Path,
+        database_path: Path,
+        rules_path: Path,
+        output: Path,
+        research_paths: Sequence[Path] = (),
+        trading_status_path: Optional[Path] = None,
+        account_path: Optional[Path] = None,
+        lookback_bars: int = DEFAULT_LOOKBACK_BARS,
+    ) -> Dict[str, object]:
+        """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。"""
+        if lookback_bars < 1:
+            raise DecisionToolError("lookback_bars 必須至少為 1")
+        snapshot = cls.read_json(snapshot_path, " ResearchSnapshot")
+        latest_date = snapshot.get("latest_trade_date")
+        cutoff = snapshot.get("decision_cutoff")
+        if not isinstance(latest_date, str) or not isinstance(cutoff, str):
+            raise DecisionToolError("Snapshot 缺少 latest_trade_date 或 decision_cutoff")
+        if not database_path.is_file():
+            raise DecisionToolError("找不到行情資料庫：%s" % database_path)
+        repository = SnapshotRepository(MarketDataDatabase(database_path))
+        with repository.connect() as connection:
+            # 最後一根 K 線取自 Snapshot，歷史只需 lookback - 1 根。
+            history = [
+                dict(row)
+                for row in repository.load_price_history(
+                    connection, latest_date, cutoff, lookback_bars - 1
+                )
+            ]
+        builder = DecisionInputBuilder(
+            snapshot,
+            cls.read_json(rules_path, " DecisionRules"),
+            history,
+            research_results=[cls.read_json(path, " ResearchResult") for path in research_paths],
+            trading_status=(
+                cls.read_json(trading_status_path, " 交易狀態包")
+                if trading_status_path is not None
+                else None
+            ),
+            account_snapshot=(
+                cls.read_json(account_path, " AccountSnapshot")
+                if account_path is not None
+                else None
+            ),
+        )
+        bundle = builder.build()
+        errors = builder.validate(bundle)
+        cls._write(bundle, output)
+        return {
+            "valid": not errors,
+            "errors": errors,
+            "output": str(output),
+            "bundle_id": bundle["bundle_id"],
+            "template": "account_snapshot" not in bundle,
+        }
+
+    @classmethod
+    def build_role_brief_file(
+        cls, role_input_path: Path, output: Optional[Path] = None
+    ) -> Dict[str, object]:
+        """只讀單一角色輸入產生精簡摘要，不需要也不讀取另一方資料。"""
+        brief = build_role_brief(cls.read_json(role_input_path, " 角色輸入"))
+        cls._write(brief, output)
+        return brief
+
+    def build_policy_file(
+        self, template_path: Path, sector_path: Path, output: Path
+    ) -> Dict[str, object]:
+        policy = build_decision_policy(
+            self.read_json(template_path, " 策略樣板"),
+            self.bundle,
+            self.read_json(sector_path, " 產業分類"),
+        )
+        self._write(policy, output)
+        return {"ok": True, "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"], "output": str(output)}
+
+    def validate_sizing_file(self, intent_path: Path, sizing_path: Path) -> Dict[str, object]:
+        errors = SizingPlanValidator(
+            self.bundle, self.read_json(intent_path, " TradeIntentResult")
+        ).validate(self.read_json(sizing_path, " SizingPlan"))
+        return {"valid": not errors, "errors": errors}
+
+    def apply_sizing_file(
+        self, policy_path: Path, intent_path: Path, sizing_path: Path, output: Path
+    ) -> Dict[str, object]:
+        """驗證 SizingPlan 後綁入新版 policy；權重仍於 compute-proposal 時由 Python 計算。"""
+        plan = self.read_json(sizing_path, " SizingPlan")
+        errors = SizingPlanValidator(
+            self.bundle, self.read_json(intent_path, " TradeIntentResult")
+        ).validate(plan)
+        if errors:
+            raise DecisionToolError("SizingPlan 驗證失敗：" + "；".join(errors))
+        policy = apply_sizing_plan(self.read_json(policy_path, " DecisionPolicy"), plan)
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        policy_errors = DecisionPolicyValidator(self.bundle).validate(policy)
+        if policy_errors:
+            raise DecisionToolError("套用後 DecisionPolicy 驗證失敗：" + "；".join(policy_errors))
+        self._write(policy, output)
+        return {"ok": True, "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"], "output": str(output)}
 
     def validate_input(self) -> Dict[str, object]:
         errors = DecisionInputValidator(self.bundle).validate()

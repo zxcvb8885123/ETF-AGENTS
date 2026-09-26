@@ -23,6 +23,7 @@ ROOT = ProjectRootLocator(Path(__file__)).locate()
 sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.decision import (  # noqa: E402
+    DEFAULT_LOOKBACK_BARS,
     DecisionToolError,
     PortfolioDecisionApplicationService,
 )
@@ -35,6 +36,33 @@ class PortfolioDecisionApplication:
     def run(self, argv: Optional[Sequence[str]] = None) -> int:
         args = self.build_parser().parse_args(argv)
         try:
+            if args.command == "build-input":
+                result = PortfolioDecisionApplicationService.build_input_file(
+                    args.snapshot,
+                    args.database,
+                    args.rules,
+                    args.bundle,
+                    research_paths=args.research,
+                    trading_status_path=args.trading_status,
+                    account_path=args.account_snapshot,
+                    lookback_bars=args.lookback_bars,
+                )
+                self.emit(result)
+                return 0 if result["valid"] else 2
+            if args.command == "build-role-brief":
+                result = PortfolioDecisionApplicationService.build_role_brief_file(
+                    args.role_input, args.output
+                )
+                self.emit(
+                    {
+                        "ok": True,
+                        "role": result["role"],
+                        "symbol_count": len(result["symbols"]),
+                        "brief_sha256": result["brief_sha256"],
+                        "output": str(args.output) if args.output else None,
+                    }
+                )
+                return 0
             service = PortfolioDecisionApplicationService.from_path(args.bundle)
             if args.command == "validate-input":
                 result = service.validate_input()
@@ -65,6 +93,18 @@ class PortfolioDecisionApplication:
                         "output": str(args.output) if args.output else None,
                     }
                 )
+                return 0
+            if args.command == "build-policy":
+                result = service.build_policy_file(args.template, args.sector, args.output)
+                self.emit(result)
+                return 0
+            if args.command == "validate-sizing":
+                result = service.validate_sizing_file(args.intent, args.input)
+                self.emit(result)
+                return 0 if result["valid"] else 2
+            if args.command == "apply-sizing":
+                result = service.apply_sizing_file(args.policy, args.intent, args.sizing, args.output)
+                self.emit(result)
                 return 0
             if args.command == "compute-proposal":
                 result = service.compute_proposal_file(
@@ -185,6 +225,25 @@ class PortfolioDecisionApplication:
             default=self.root / "artifacts" / "decision_input_latest.json",
         )
         commands = parser.add_subparsers(dest="command", required=True)
+        build_input = commands.add_parser(
+            "build-input",
+            help="由 Snapshot、SQLite 歷史行情與決策規則建立 DecisionInputBundle（寫入 --bundle）；未附帳戶時輸出供 attach-account 使用的樣板",
+        )
+        build_input.add_argument(
+            "--snapshot", type=Path, default=self.root / "artifacts" / "research_snapshot_latest.json"
+        )
+        build_input.add_argument("--database", type=Path, default=self.root / "var" / "etf_agent.db")
+        build_input.add_argument(
+            "--rules", type=Path, default=self.root / "config" / "decision_rules.json"
+        )
+        build_input.add_argument(
+            "--research", type=Path, action="append", default=[],
+            help="已驗證 ResearchResult，可重複指定",
+        )
+        build_input.add_argument("--trading-status", type=Path, help="trading_status.py build-bundle 的輸出")
+        build_input.add_argument("--account-snapshot", type=Path)
+        build_input.add_argument("--lookback-bars", type=int, default=DEFAULT_LOOKBACK_BARS)
+
         commands.add_parser("validate-input", help="驗證共用 DecisionInputBundle")
 
         momentum = commands.add_parser(
@@ -203,6 +262,13 @@ class PortfolioDecisionApplication:
         role_input.add_argument("--role", choices=("buy", "sell"), required=True)
         role_input.add_argument("--momentum", type=Path, required=True)
         role_input.add_argument("--output", type=Path)
+
+        role_brief = commands.add_parser(
+            "build-role-brief",
+            help="由單一 Buy／Sell 角色輸入產生給子 Agent 閱讀的精簡摘要（不讀 --bundle）",
+        )
+        role_brief.add_argument("--role-input", type=Path, required=True)
+        role_brief.add_argument("--output", type=Path, required=True)
 
         seal = commands.add_parser(
             "seal-artifact", help="為 Policy、Agent packet 或決策 artifact 計算內容雜湊"
@@ -227,6 +293,31 @@ class PortfolioDecisionApplication:
         intent.add_argument("--debate", type=Path, required=True)
         intent.add_argument("--input", type=Path, required=True)
         intent.add_argument("--output", type=Path)
+
+        build_policy = commands.add_parser(
+            "build-policy", help="由策略樣板、bundle 硬性規則與官方產業分類建立 DecisionPolicy"
+        )
+        build_policy.add_argument(
+            "--template", type=Path, default=self.root / "config" / "decision_policy.json"
+        )
+        build_policy.add_argument(
+            "--sector", type=Path, default=self.root / "data" / "sector_classification.json"
+        )
+        build_policy.add_argument("--output", type=Path, required=True)
+
+        validate_sizing = commands.add_parser(
+            "validate-sizing", help="驗證風控子 Agent 的 SizingPlan 等級、候選覆蓋與證據"
+        )
+        validate_sizing.add_argument("--intent", type=Path, required=True)
+        validate_sizing.add_argument("--input", type=Path, required=True)
+
+        apply_sizing = commands.add_parser(
+            "apply-sizing", help="將已驗證 SizingPlan 綁入新版 DecisionPolicy（不輸出權重）"
+        )
+        apply_sizing.add_argument("--policy", type=Path, required=True)
+        apply_sizing.add_argument("--intent", type=Path, required=True)
+        apply_sizing.add_argument("--sizing", type=Path, required=True)
+        apply_sizing.add_argument("--output", type=Path, required=True)
 
         proposal = commands.add_parser(
             "compute-proposal", help="由交易意圖以一張 1,000 股計算配置、訂單、費稅與現金"

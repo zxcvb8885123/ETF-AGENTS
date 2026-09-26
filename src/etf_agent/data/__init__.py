@@ -63,6 +63,12 @@ from .snapshot import (
     SnapshotQualityPolicy,
 )
 from .snapshot_repository import SnapshotRepository
+from .sector_classification import (
+    SECTOR_SOURCES,
+    SectorClassificationBuilder,
+    SectorClassificationError,
+    capture_sector_sources,
+)
 from .source_health import (
     SourceHealthProbe,
     SourceProbeDefinition,
@@ -142,6 +148,10 @@ __all__ = [
     "SnapshotPrice",
     "SnapshotQualityPolicy",
     "SnapshotRepository",
+    "SECTOR_SOURCES",
+    "SectorClassificationBuilder",
+    "SectorClassificationError",
+    "capture_sector_sources",
     "SourceHealthProbe",
     "SourceProbeDefinition",
     "SourceDocument",
