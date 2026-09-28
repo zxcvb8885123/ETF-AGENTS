@@ -1,6 +1,6 @@
 # TWSE「管理股票」類別不適用之官方依據
 
-日期：2026-09-28。狀態：**依據已查證，待使用者核准後才可寫入 `config/trading_status_approvals.json` 的 `not_applicable`**。
+日期：2026-09-28。狀態：**依據已查證；使用者 Apollo 於 2026-09-28T15:28:52+08:00 核准，已寫入 `config/trading_status_approvals.json` 的 `not_applicable`**。
 
 ## 問題
 
