@@ -9,6 +9,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -54,6 +55,35 @@ def run_data_stage(account_id: str, account_run_id: str, report_run_id: str) -> 
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
 
 
+def latest_resumable_run(runs_root: Path, run_id: str):
+    """同一台北日期中，最近一個未完成且已保存 Agent 原始輸出的 run 目錄；沒有則回 None。"""
+    candidates = []
+    for run_dir in runs_root.glob("%s*" % run_id):
+        summary_path = run_dir / "pipeline.json"
+        if not run_dir.is_dir() or not summary_path.exists() or not any(run_dir.glob("*_raw_*.json")):
+            continue
+        if json.loads(summary_path.read_text(encoding="utf-8")).get("status") == "completed":
+            continue
+        candidates.append((summary_path.stat().st_mtime, run_dir))
+    return max(candidates)[1] if candidates else None
+
+
+def resumed_decision_run_id(run_dir: Path):
+    """續跑目錄先前預定的 decision run ID；舊版 summary 沒記錄時，由已保存的事件研究輸出檔名推回。"""
+    planned = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8")).get("planned_decision_run_id")
+    if planned:
+        return str(planned)
+    found = {
+        match.group(1)
+        for path in run_dir.glob("event-research_decision-*_raw_*.json")
+        for match in [re.match(r"event-research_(decision-\d{8}T\d{6}Z)_", path.name)]
+        if match
+    }
+    if len(found) > 1:
+        raise RuntimeError("續跑目錄含多個 decision run ID，無法判定：%s" % sorted(found))
+    return found.pop() if found else None
+
+
 def prepared_account_run(account_id: str) -> str:
     latest = json.loads((ROOT / "artifacts/virtual_accounts" / account_id / "latest.json").read_text(encoding="utf-8"))
     return str(latest["run_id"])
@@ -92,13 +122,24 @@ def main() -> int:
         if previous.get("status") == "completed":
             log("%s 已完成（%s），不重跑。" % (run_id, previous.get("decision_status")))
             return 0
-    if args.force and run_dir.exists():
+    resumable = latest_resumable_run(runs_root, run_id) if args.resume else None
+    if resumable is not None:
+        # 續跑沿用最近一個未完成且已有 Agent 輸出的 run 目錄，否則新目錄中沒有可沿用的輸出。
+        run_id = resumable.name
+        run_dir = resumable
+        summary_path = run_dir / "pipeline.json"
+        log("續跑沿用 run 目錄：%s" % run_id)
+    elif args.force and run_dir.exists():
         run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
         run_dir = runs_root / run_id
         summary_path = run_dir / "pipeline.json"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    summary = {"run_id": run_id, "started_at": now.isoformat(), "status": "running"}
+    decision_run_id = "decision-%s" % stamp
+    if resumable is not None:
+        # Agent 任務名與 envelope 都含 decision run ID；續跑必須沿用同一個，已驗證輸出才對得上。
+        decision_run_id = resumed_decision_run_id(run_dir) or decision_run_id
+    summary = {"run_id": run_id, "started_at": now.isoformat(), "status": "running", "planned_decision_run_id": decision_run_id}
     write_json(summary_path, summary)
 
     try:
@@ -151,7 +192,7 @@ def main() -> int:
             snapshot_path, account_path, trading_status_path,
             ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
-            "decision-%s" % stamp,
+            decision_run_id,
         )
         summary.update(
             {

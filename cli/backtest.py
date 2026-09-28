@@ -49,6 +49,14 @@ def main(argv=None) -> int:
     report.add_argument("--input", type=Path, required=True)
     report.add_argument("--json-output", type=Path)
     report.add_argument("--markdown-output", type=Path)
+    compare = commands.add_parser("compare-strategies")
+    compare.add_argument("--strategies", type=Path, required=True, help="策略 ID 對應逐日輸入的 JSON 物件")
+    compare.add_argument("--baseline", required=True)
+    compare.add_argument("--output", type=Path)
+    validate_comparison = commands.add_parser("validate-comparison")
+    validate_comparison.add_argument("--strategies", type=Path, required=True)
+    validate_comparison.add_argument("--baseline", required=True)
+    validate_comparison.add_argument("--input", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         request = read_json(args.request, " BacktestRequest")
@@ -57,6 +65,18 @@ def main(argv=None) -> int:
             print(json.dumps({"valid": not errors, "errors": errors}, ensure_ascii=False, indent=2))
             return 0 if not errors else 2
         service = BacktestService()
+        if args.command in {"compare-strategies", "validate-comparison"}:
+            strategies = read_json(args.strategies, " 策略逐日輸入")
+            if args.command == "compare-strategies":
+                result = service.compare_fixture(request, strategies, args.baseline)
+                if args.output:
+                    args.output.parent.mkdir(parents=True, exist_ok=True)
+                    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                print(json.dumps({"ok": True, "data": result}, ensure_ascii=False, indent=2))
+                return 0
+            errors = service.validate_comparison(request, strategies, args.baseline, read_json(args.input, " 策略比較"))
+            print(json.dumps({"valid": not errors, "errors": errors}, ensure_ascii=False, indent=2))
+            return 0 if not errors else 2
         if args.command == "build-report":
             report_data = service.build_report(request, read_json(args.input, " BacktestRun"))
             if args.json_output:

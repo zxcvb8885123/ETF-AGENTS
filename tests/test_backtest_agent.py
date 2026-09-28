@@ -194,6 +194,53 @@ class BacktestAgentTests(unittest.TestCase):
         self.assertEqual([item["trade_date"] for item in failed], ["2026-09-02"])
         self.assertIn("必須包含時區", failed[0]["reason"])
 
+    def test_strategy_comparison_replays_same_market_and_detects_tampering(self):
+        baseline = daily_inputs()
+        candidate = copy.deepcopy(baseline)
+        candidate["2026-09-01"]["decision"] = decision("approved", [
+            {"symbol": "2330.TW", "side": "sell", "shares": 1000},
+        ], suffix="candidate-1")
+        strategies = {"equal_weight_25": baseline, "momentum": candidate}
+        service = BacktestService()
+        result = service.compare_fixture(request(), strategies, "equal_weight_25")
+        self.assertEqual(result["evidence_status"], "insufficient")
+        self.assertEqual(result["session_count"], 3)
+        self.assertNotEqual(
+            result["strategies"]["momentum"]["metrics"]["first_close_to_last_close_return"],
+            result["strategies"]["equal_weight_25"]["metrics"]["first_close_to_last_close_return"],
+        )
+        self.assertEqual(service.validate_comparison(request(), strategies, "equal_weight_25", result), [])
+        tampered = copy.deepcopy(result)
+        tampered["strategies"]["momentum"]["metrics"]["total_commission"] = "0"
+        self.assertTrue(service.validate_comparison(request(), strategies, "equal_weight_25", tampered))
+        mismatched = copy.deepcopy(strategies)
+        mismatched["momentum"]["2026-09-02"]["close_market"]["quotes"]["2317.TW"] = "123"
+        with self.assertRaisesRegex(BacktestToolError, "市場價格或公司行動不一致"):
+            service.compare_fixture(request(), mismatched, "equal_weight_25")
+
+    def test_strategy_comparison_rejects_missing_session_and_baseline(self):
+        strategies = {"baseline": daily_inputs(), "candidate": daily_inputs()}
+        with self.assertRaisesRegex(BacktestToolError, "基準策略"):
+            BacktestService().compare_fixture(request(), strategies, "other")
+        del strategies["candidate"]["2026-09-02"]
+        with self.assertRaisesRegex(BacktestToolError, "缺少交易日輸入"):
+            BacktestService().compare_fixture(request(), strategies, "baseline")
+
+    def test_cli_comparison_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            request_path = root / "request.json"
+            strategies_path = root / "strategies.json"
+            comparison_path = root / "comparison.json"
+            request_path.write_text(json.dumps(request()), encoding="utf-8")
+            strategies_path.write_text(json.dumps({"baseline": daily_inputs(), "candidate": daily_inputs()}), encoding="utf-8")
+            script = Path(__file__).parents[1] / "cli" / "backtest.py"
+            base = [sys.executable, str(script), "--request", str(request_path)]
+            result = subprocess.run(base + ["compare-strategies", "--strategies", str(strategies_path), "--baseline", "baseline", "--output", str(comparison_path)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            validated = subprocess.run(base + ["validate-comparison", "--strategies", str(strategies_path), "--baseline", "baseline", "--input", str(comparison_path)], capture_output=True, text=True)
+            self.assertEqual(validated.returncode, 0, validated.stdout + validated.stderr)
+
     def test_cli_replay_and_validate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

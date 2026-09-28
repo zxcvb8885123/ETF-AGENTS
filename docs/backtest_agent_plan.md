@@ -10,7 +10,7 @@
 
 回測 Agent 負責用歷史時鐘重播 Data、Research、Momentum／Portfolio／Risk 的相同契約，執行策略比較、成交模擬、帳戶更新與績效分析。它回答「Agent 是否正確使用當時可得資料」以及「研究與策略是否在扣除成本後產生穩定增益」。
 
-回測 Agent 不修改正式資料、不調整線上帳戶、不下單，也不能使用回測日期之後的資訊。第一版已提供 `strategy-backtest` Skill 供 Codex 或 Claude 工作階段檢查 fixture 與診斷；歷史時鐘、成交、帳務、費稅與重播驗證一律由確定性 Python 物件執行。績效比較仍未實作。
+回測 Agent 不修改正式資料、不調整線上帳戶、不下單，也不能使用回測日期之後的資訊。第一版已提供 `strategy-backtest` Skill 供 Codex 或 Claude 工作階段檢查 fixture 與診斷；歷史時鐘、成交、帳務、費稅與重播驗證一律由確定性 Python 物件執行。B3 fixture 策略比較第一版已接入；完整策略有效性驗證仍未完成。
 
 詳細統計方法、資料切分、成交假設與比較策略以[回測與驗證方法規格](backtest_plan_v1.md)為準；本文件只定義 Agent 架構與交付流程。
 
@@ -108,9 +108,13 @@ LLM 只能選擇已核准的實驗、要求診斷與解釋確定性結果，不�
 1. **B0 契約與歷史時鐘**：**fixture MVP 已完成**；建立 `BacktestRequest`、`BacktestRun`、交易日曆與 cutoff 測試。
 2. **B1 時間點資料**：**fixture MVP 已完成**；可驗證研究版本與執行價時點，正式歷史資料仍待 Provider。
 3. **B2 成交與帳務**：**fixture MVP 已完成**；完成可手算核對的成交、未成交、費稅、現金、持股、交割及公司行動測試。
-4. **B3 策略比較**：實作必要比較組、績效、回撤、成本、貢獻與不確定性分析。
+4. **B3 策略比較**：**部分完成**。可用同一 `BacktestRequest` 重播多組逐日輸入，市場價格與公司行動必須完全一致；保存請求、市場和策略輸入雜湊，計算首日至末日收盤報酬、回撤、成本及不重疊 24 交易日視窗，並可由原輸入重建驗證。策略 ID 只是一個標籤，尚未驗證固定 25 檔等權等六組策略實作；個股／產業貢獻、區塊抽樣不確定性分析和樣本外驗證待完成。
 5. **B4 Agent 評估**：加入事件測試集、工具行為、引用正確性、重跑穩定度與資源統計。
 6. **B5 Agent 工具循環**：建立 `strategy-backtest` Skill、結構化工具與 Codex／Claude 一致性驗證。
 7. **B6 前向驗證**：凍結通過版本，在未見資料上連續執行並保存完整失敗紀錄。
 
 完成條件：相同保存輸入可重播出相同成交與績效；所有每日結果可追到版本與證據；沒有未來資料；至少完成必要比較組與敏感度測試；保留測試及前向驗證未顯示不可接受的風險後，才交給[自動化排程與報告 Agent](automation_reporting_agent_plan.md)。
+
+### B3 fixture 比較介面
+
+`STRATEGIES.json` 是 `{ "策略 ID": { "YYYY-MM-DD": DailyInput, ... }, ... }`；`DailyInput` 沿用 B0～B2 的逐日輸入。至少兩組，`--baseline` 必須是其中一組。使用 `cli/backtest.py --request REQUEST.json compare-strategies --strategies STRATEGIES.json --baseline ID --output COMPARISON.json` 產生 JSON；以 `validate-comparison` 加 `--input COMPARISON.json` 從原輸入重播檢查。所有組別必須提供相同交易日、市場價格、可成交張數和公司行動；研究資料與決策可以不同，故這一版還不能證明各組使用相同可查資料範圍。首日交易前沒有估值資料，報酬與回撤由首日收盤 NAV 起算；比較結果固定標示 `evidence_status=insufficient`，不可當成策略有效或可交易的結論。

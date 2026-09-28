@@ -14,6 +14,15 @@ from .engine import FixturePointInTimeDataProvider
 
 
 class BacktestService:
+    def compare_fixture(self, request: Mapping[str, object], strategies: Mapping[str, object], baseline_id: str) -> Dict[str, object]:
+        from .comparison import compare_fixture
+
+        return compare_fixture(request, strategies, baseline_id)
+
+    def validate_comparison(self, request: Mapping[str, object], strategies: Mapping[str, object], baseline_id: str, result: Mapping[str, object]):
+        expected = self.compare_fixture(request, strategies, baseline_id)
+        return [] if dict(result) == expected else ["策略比較與確定性重播結果不一致"]
+
     def inspect_fixture(self, request: Mapping[str, object], daily_inputs: Mapping[str, Mapping[str, object]]) -> Dict[str, object]:
         errors = BacktestRequestValidator().validate(request)
         if errors:

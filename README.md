@@ -125,7 +125,7 @@ TS0 的[來源核准行動計劃](docs/source_audit/2026-09-25_ts0_approval_plan
 
 目前 M1 官方交易狀態已完成 TS1～TS4 的契約、固定 cutoff 重建、SQLite migration、CLI 與 Guard adapter；[M1 官方交易狀態接入](docs/trading_status_m1_plan.md) 的 TS0 來源核准與 TS5 150 檔真實覆蓋仍未完成。資料不足時阻擋正式決策，保留可用研究資料。
 
-P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新；P7 B0～B2 fixture 回測帳務驗收也已完成。下一批是 B3 策略比較與 B4 Agent 評估；正式資料接入與規則版本仍需另外確認。
+P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p3p6-實作紀錄2026-09-21fixture-驗收已完成) 已更新；P7 B0～B2 fixture 回測帳務驗收也已完成。B3 已有 fixture 策略比較第一版：`cli/backtest.py --request REQUEST.json compare-strategies --strategies STRATEGIES.json --baseline ID --output COMPARISON.json`，每個策略值是原本 `--daily-inputs` 的逐日物件；`validate-comparison` 可用相同參數加 `--input COMPARISON.json` 重播檢查。比較會拒絕市場價格或公司行動不一致，保存請求、市場與各策略輸入雜湊，計算首日至末日收盤報酬、最大回撤、交易成本及不重疊 24 交易日視窗；目前不驗證策略標籤的實際實作。B3 的六組正式策略、績效貢獻與不確定性分析及 B4 Agent 評估仍未完成；正式資料接入與規則版本亦需另外確認。
 
 | 路徑 | 用途 |
 | --- | --- |
