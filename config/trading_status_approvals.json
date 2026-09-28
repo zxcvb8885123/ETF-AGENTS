@@ -1,7 +1,15 @@
 {
   "version": "trading-status-approvals-2026-09-28",
   "note": "交易狀態來源的人工核准清單。只有在實際交易日核對完整性、更新時點、空回應與更正語意後，才可把來源加入 approved_sources；未列入者一律視為 candidate，Guard 會 fail-closed。每筆需含 source_id、approved_by、approved_at（含時區）、evidence（稽核紀錄路徑）與 max_age_hours（抓取時間距目標時段的允許時效）。 not_applicable 列出經人工核准、有官方依據的不適用市場／類別（例如依證交所營業細則第 52 條，上市股票不會同時是管理股票）；每筆需含 market、category、basis、evidence、approved_by、approved_at。",
-  "approved_sources": [],
+  "approved_sources": [
+    {"source_id": "TPEX_SPECIAL_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72},
+    {"source_id": "TPEX_HALTS_HISTORY_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72},
+    {"source_id": "TPEX_DISPOSAL_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72},
+    {"source_id": "TPEX_ATTENTION_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72},
+    {"source_id": "TWSE_HALTS_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72},
+    {"source_id": "TWSE_SPECIAL_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72},
+    {"source_id": "TWSE_DISPOSAL_OGD", "approved_by": "Apollo", "approved_at": "2026-09-28T15:39:09+08:00", "evidence": "docs/source_audit/2026-09-25_ts0_approval_plan.md", "max_age_hours": 72}
+  ],
   "not_applicable": [
     {
       "market": "TWSE",

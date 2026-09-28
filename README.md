@@ -59,7 +59,7 @@ python3 -m venv .venv
 | `.venv/bin/python scripts/collect_sector_classification.py` | 抓取 TWSE／TPEx 官方公司基本資料（t187ap03），原始回應封存至 `artifacts/source-audit/sector-classification/`，輸出 150 檔 `industry:<代碼>` 分類至 `data/sector_classification.json` 供 DecisionPolicy 使用；不翻譯產業名稱，缺漏時列出並 exit 2 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json build-policy --output POLICY.json` | 由 `config/decision_policy.json` 策略樣板、bundle 硬性規則與 `data/sector_classification.json` 建立 DecisionPolicy；產業分類晚於 cutoff 或未覆蓋交易池時停止 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-sizing --intent INTENT.json --input SIZING.json`／`apply-sizing --policy POLICY.json --intent INTENT.json --sizing SIZING.json --output POLICY_SIZED.json` | 驗證 Portfolio Risk 對 buy／add 候選的 high／medium／low 分級與 aggressive／neutral／defensive 現金姿態並綁入新版 policy；現金緩衝依姿態對應（暫定 3%／10%／20%，競賽上限 25% 由 Guard 強制），權重由 Python 依等級乘數 ÷ ATR14% 分配 |
-| `config/trading_status_approvals.json` | 交易狀態來源的人工核准清單（目前空白）；每日腳本封存八份政府開放 CSV、依 TWSE 開休市日推算目標時段，只有已核准且未過時效的來源 coverage 才完整，其餘 fail-closed。TWSE「管理股票」尚無來源，見 TS0 計畫 |
+| `config/trading_status_approvals.json` | 交易狀態來源核准清單：七個政府開放來源已於 2026-09-28 一次核准（時效 72 小時），TWSE「管理股票」依營業細則第 52 條列為不適用；每日腳本封存八份 CSV、依 TWSE 開休市日推算目標時段，封存過期時仍 fail-closed，見 TS0 計畫 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json validate-input` | 驗證 Portfolio Decision 共用輸入、cutoff 與版本雜湊 |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-momentum` | 確定性計算動能、市場寬度與 regime |
 | `.venv/bin/python cli/portfolio_decision.py --bundle INPUT.json compute-proposal --momentum MOMENTUM.json --debate DEBATE.json --intent INTENT.json --policy POLICY.json` | 重新驗證裁決後，以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
