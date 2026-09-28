@@ -25,6 +25,7 @@ from etf_agent.data import (  # noqa: E402
     build_trading_status_from_capture,
     latest_capture_before,
     load_approvals,
+    load_not_applicable,
 )
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
@@ -125,11 +126,14 @@ def main() -> int:
 
         log("[2/5] 交易狀態包（官方開休市日推算目標時段；未核准來源一律 fail-closed）")
         capture_dir = latest_capture_before(captures_root, snapshot["decision_cutoff"])
-        approvals = load_approvals(ROOT / "config" / "trading_status_approvals.json")
-        status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals)
+        approvals_path = ROOT / "config" / "trading_status_approvals.json"
+        approvals = load_approvals(approvals_path)
+        not_applicable = load_not_applicable(approvals_path)
+        status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals, not_applicable)
         summary["trading_status"] = {
             "capture_dir": str(capture_dir) if capture_dir else None,
             "approved_sources": sorted(approvals),
+            "not_applicable": ["%s/%s" % (item["market"], item["category"]) for item in not_applicable],
             "states": {state: sum(1 for item in assessment["symbols"] if item["state"] == state) for state in ("allowed", "blocked", "unknown")},
         }
         trading_status_path = run_dir / "trading_status.json"

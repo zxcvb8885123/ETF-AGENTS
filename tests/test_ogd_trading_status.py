@@ -10,6 +10,7 @@ from etf_agent.data import (
     closed_dates_from_calendar,
     latest_capture_before,
     load_approvals,
+    load_not_applicable,
     next_trading_session,
 )
 from etf_agent.data.trading_status import TradingStatusBundleValidator, TradingStatusError
@@ -20,6 +21,8 @@ CSV = {
     "TPEX_SPECIAL_OGD": "資料日期,證券代號,證券名稱,變更交易,分盤交易,管理股票,停止交易\n\"1150926\",\"6488\",\"環球晶\",\"\",\"\",\"Ｙ\",\"\"\n",
     "TPEX_DISPOSAL_OGD": "公布日期,證券代號,證券名稱,處置起訖時間,處置內容\n\"1150926\",\"3374\",\"精材\",\"115/09/29～115/10/05\",\"第一次處置\"\n",
     "TWSE_HALTS_OGD": "證券代號,證券名稱,暫停交易日期,暫停交易時間,恢復交易日期,恢復交易時間\n\"2330\",\"台積電\",\"1150926\",\"090000\",\"\",\"\"\n",
+    "TWSE_SPECIAL_OGD": "證券代號,證券名稱,分盤集合競價(以**表示)\n\"1213\",\"大飲\",\"  \"\n",
+    "TWSE_DISPOSAL_OGD": "公布日期,證券代號,證券名稱,處置起迄時間,處置內容\n\"1150926\",\"1213\",\"大飲\",\"115/09/29～115/10/05\",\"第一次處置\"\n",
     "TWSE_CALENDAR_OGD": "名稱,日期,星期,說明\n\"教師節\",\"1150928\",\"一\",\"依規定放假1日。\"\n\"國慶日\",\"1151009\",\"五\",\"補假。\"\n",
 }
 SNAPSHOT = {
@@ -110,6 +113,43 @@ class OgdMapperTests(unittest.TestCase):
         self.assertEqual(bundle["source_coverage"], [])
         self.assertEqual({item["state"] for item in assessment["symbols"]}, {"unknown"})
         self.assertEqual(session["start"], "2026-09-28T09:00:00+08:00")
+
+
+TWSE_MANAGEMENT = {
+    "market": "TWSE", "category": "management",
+    "basis": "臺灣證券交易所營業細則第 52 條：管理股票係經證交所終止上市之有價證券",
+    "evidence": "docs/source_audit/2026-09-28_twse_management_basis.md",
+    "approved_by": "tester", "approved_at": "2026-09-26T00:00:00+08:00",
+}
+
+
+class NotApplicablePolicyTests(unittest.TestCase):
+    def test_approved_not_applicable_policy_lets_clean_twse_stock_become_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = write_capture(Path(directory))
+            bundle, assessment, _ = build_trading_status_from_capture(SNAPSHOT, capture, approvals(), [TWSE_MANAGEMENT])
+        states = {item["symbol"]: item for item in assessment["symbols"]}
+        self.assertEqual(states["2317.TW"]["state"], "allowed")
+        self.assertEqual(states["2330.TW"]["state"], "blocked")
+        self.assertIn("trading_halt", states["2330.TW"]["restriction_categories"])
+        policy = [item for item in bundle["source_coverage"] if item["semantics"] == "not_applicable_policy"]
+        self.assertEqual([item["source_id"] for item in policy], ["POLICY_NOT_APPLICABLE:TWSE:management"])
+        self.assertIn("第 52 條", policy[0]["reason"])
+        self.assertEqual(TradingStatusBundleValidator().validate(bundle, assessment), [])
+
+    def test_not_applicable_requires_evidence_and_cannot_override_a_real_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "approvals.json"
+            path.write_text(json.dumps({"approved_sources": [], "not_applicable": [TWSE_MANAGEMENT]}), encoding="utf-8")
+            self.assertEqual(len(load_not_applicable(path)), 1)
+            for broken, message in (
+                (dict(TWSE_MANAGEMENT, market="TPEX"), "已有對應來源"),
+                ({key: value for key, value in TWSE_MANAGEMENT.items() if key != "basis"}, "basis"),
+                (dict(TWSE_MANAGEMENT, category="unknown"), "市場或類別無效"),
+            ):
+                path.write_text(json.dumps({"not_applicable": [broken]}), encoding="utf-8")
+                with self.assertRaisesRegex(TradingStatusError, message):
+                    load_not_applicable(path)
 
 
 class ApprovalAndCaptureSelectionTests(unittest.TestCase):

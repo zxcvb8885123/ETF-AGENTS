@@ -71,6 +71,7 @@ from .ogd_trading_status import (
     closed_dates_from_calendar,
     latest_capture_before,
     load_approvals,
+    load_not_applicable,
     next_trading_session,
 )
 from .sector_classification import (
@@ -165,6 +166,7 @@ __all__ = [
     "closed_dates_from_calendar",
     "latest_capture_before",
     "load_approvals",
+    "load_not_applicable",
     "next_trading_session",
     "SECTOR_SOURCES",
     "SectorClassificationBuilder",

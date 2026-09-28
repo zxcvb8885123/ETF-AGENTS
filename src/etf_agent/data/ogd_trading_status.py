@@ -17,7 +17,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 from etf_agent.core import canonical_sha256, parse_aware_time
 from .evidence import TAIPEI_TIMEZONE
 from .ogd_candidate_facts import extract_ogd_candidate_facts
-from .trading_status import TradingStatusError, TradingStatusRequest
+from .trading_status import DEFAULT_REQUIRED_CATEGORIES, TradingStatusError, TradingStatusRequest
 
 
 OGD_MAPPING_VERSION = "ogd-trading-status-mapping-1"
@@ -114,6 +114,57 @@ def load_approvals(path: Path) -> Dict[str, Mapping[str, object]]:
             raise TradingStatusError("來源重複核准：%s" % source_id)
         approvals[source_id] = dict(entry)
     return approvals
+
+
+def load_not_applicable(path: Path) -> List[Dict[str, object]]:
+    """讀取人工核准的「不適用類別」政策；每筆需有官方依據、證據與核准者。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entries = payload.get("not_applicable", [])
+    if not isinstance(entries, list):
+        raise TradingStatusError("not_applicable 必須是陣列")
+    result: List[Dict[str, object]] = []
+    seen: Set[Tuple[str, str]] = set()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            raise TradingStatusError("not_applicable[%d] 必須是物件" % index)
+        key = (str(entry.get("market")), str(entry.get("category")))
+        if key[0] not in {"TWSE", "TPEX"} or key[1] not in DEFAULT_REQUIRED_CATEGORIES:
+            raise TradingStatusError("not_applicable[%d] 市場或類別無效：%s" % (index, "／".join(key)))
+        if key in CATEGORY_SOURCES:
+            raise TradingStatusError("not_applicable[%d] 已有對應來源，不得同時列為不適用：%s" % (index, "／".join(key)))
+        for field in ("basis", "evidence", "approved_by", "approved_at"):
+            if not isinstance(entry.get(field), str) or not str(entry[field]).strip():
+                raise TradingStatusError("not_applicable[%d].%s 必須是非空字串" % (index, field))
+        parse_aware_time(entry["approved_at"], "approved_at", error=TradingStatusError)
+        if key in seen:
+            raise TradingStatusError("not_applicable 重複：%s" % "／".join(key))
+        seen.add(key)
+        result.append(dict(entry))
+    return result
+
+
+def not_applicable_coverage(entries: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
+    """已核准的不適用政策以 coverage 表示：完整且沒有紀錄，理由與證據保存在 reason 與雜湊。"""
+    return [
+        {
+            "source_id": "POLICY_NOT_APPLICABLE:%s:%s" % (entry["market"], entry["category"]),
+            "market": entry["market"],
+            "category": entry["category"],
+            "approval_status": "approved",
+            "coverage_status": "complete",
+            "semantics": "not_applicable_policy",
+            "as_of": entry["approved_at"],
+            "query_start": entry["approved_at"],
+            "query_end": entry["approved_at"],
+            "row_count": 0,
+            "page_count": 1,
+            "expected_page_count": 1,
+            "raw_payload_id": None,
+            "raw_payload_sha256": canonical_sha256(dict(entry)),
+            "reason": "%s（證據：%s）" % (entry["basis"], entry["evidence"]),
+        }
+        for entry in entries
+    ]
 
 
 # ---------------------------------------------------------------- records
@@ -294,6 +345,7 @@ def build_trading_status_from_capture(
     snapshot: Mapping[str, object],
     capture_dir: Optional[Path],
     approvals: Mapping[str, Mapping[str, object]],
+    not_applicable: Sequence[Mapping[str, object]] = (),
 ) -> Tuple[Dict[str, object], Dict[str, object], Dict[str, str]]:
     """以封存的官方 CSV 建立狀態包；沒有可用封存時不提供 records／coverage，逐檔 unknown。"""
     from .trading_status import TradingStatusBundleBuilder
@@ -305,8 +357,11 @@ def build_trading_status_from_capture(
     session = next_trading_session(str(snapshot["decision_cutoff"]), closed)
     request = TradingStatusRequest.from_snapshot(
         snapshot, session["start"], session["end"],
-        source_config_version="%s+approvals:%s" % (OGD_MAPPING_VERSION, canonical_sha256(dict(approvals))[:12]),
+        source_config_version="%s+approvals:%s" % (
+            OGD_MAPPING_VERSION, canonical_sha256({"sources": dict(approvals), "not_applicable": list(not_applicable)})[:12]
+        ),
     )
     records, coverage = mapper.build(request, approvals) if mapper is not None else ([], [])
+    coverage = coverage + not_applicable_coverage(not_applicable)
     bundle, assessment = TradingStatusBundleBuilder(request, records, coverage).build()
     return bundle, assessment, session
