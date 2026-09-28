@@ -20,9 +20,13 @@ sys.path.insert(0, str(ROOT / "src"))
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
     DailyDecisionPipeline,
-    next_weekday_session,
 )
-from etf_agent.data import TradingStatusBundleBuilder, TradingStatusRequest  # noqa: E402
+from etf_agent.data import (  # noqa: E402
+    build_trading_status_from_capture,
+    latest_capture_before,
+    load_approvals,
+)
+from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 
 
@@ -99,7 +103,17 @@ def main() -> int:
     try:
         snapshot_path = ROOT / "artifacts" / "research_snapshot_latest.json"
         account_path = ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json"
+        captures_root = ROOT / "artifacts" / "source-audit" / "captures"
         if not args.skip_data:
+            # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
+            log("[0/5] 封存交易狀態與開休市政府開放 CSV")
+            try:
+                report = json.loads((ROOT / "docs" / "source_audit" / "2026-09-25_ogd_crosscheck.json").read_text(encoding="utf-8"))
+                capture = capture_ogd_candidates(report, captures_root)
+                summary["trading_status_capture"] = capture.get("run_id")
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                summary["trading_status_capture_error"] = str(error)
+                log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
             log("[1/5] ./start.sh daily：資料、Snapshot、虛擬帳本")
             run_data_stage(args.account_id, "prepare-%s" % stamp, "daily-%s" % stamp)
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
@@ -109,11 +123,15 @@ def main() -> int:
         if not snapshot.get("usable"):
             raise RuntimeError("Snapshot 不可用：%s" % snapshot.get("quality_flags"))
 
-        log("[2/5] 交易狀態包")
-        session = next_weekday_session(snapshot["decision_cutoff"])
-        # 尚無核准的交易狀態來源：不提供 records／coverage，逐檔 unknown，Guard 會 fail-closed。
-        request = TradingStatusRequest.from_snapshot(snapshot, session["start"], session["end"])
-        status_bundle, assessment = TradingStatusBundleBuilder(request, [], []).build()
+        log("[2/5] 交易狀態包（官方開休市日推算目標時段；未核准來源一律 fail-closed）")
+        capture_dir = latest_capture_before(captures_root, snapshot["decision_cutoff"])
+        approvals = load_approvals(ROOT / "config" / "trading_status_approvals.json")
+        status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals)
+        summary["trading_status"] = {
+            "capture_dir": str(capture_dir) if capture_dir else None,
+            "approved_sources": sorted(approvals),
+            "states": {state: sum(1 for item in assessment["symbols"] if item["state"] == state) for state in ("allowed", "blocked", "unknown")},
+        }
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
 

@@ -45,6 +45,21 @@
 4. **執行 TS5。** 固定 150 檔 × 各市場必要類別分母，逐檔產生同一 Snapshot／cutoff 的 `TradingStatusBundle` 與 `TradabilityAssessment`，分開列 `allowed`、`blocked`、`unknown`、不適用及缺口。只把已核准且時間相符的來源送進正式 Guard；任何必要類別未覆蓋，正式 D-Plan 繼續 blocked。
 5. **接正式決策。** TS5 通過後，仍須核對帳戶、規則、策略說明和研究／決策 artifact，再跑 D-Plan 匯出與本地驗證。來源核准本身不代表可送件，也不需要 FinMind Token 或 ETF 權重。
 
+## 確定性映射與決策接線（2026-09-28）
+
+第 2 步與第 5 步的工程部分已完成，正式核准仍為 0：
+
+- `data/ogd_trading_status.py`（`ogd-trading-status-mapping-1`）由單次封存（manifest 雜湊核對後）產生 `TradingStatusRecord` 與 `source_coverage`。語意不確定處一律保守：TPEx 每日名單與 TWSE 變更交易名單沒有終止日，視為持續到下一份名單；處置提到「順延」時不設終止日；停復牌依股票與時間配對，沒有恢復就持續有效；注意資訊只作提示。
+- 市場 × 類別對應來源：TPEx 停牌（變更交易名單停止交易欄＋歷史停復牌）、變更交易／分盤／管理（變更交易名單）、處置、注意；TWSE 停牌、變更交易／分盤（TWT85U 名單）、處置。**TWSE「管理股票」沒有對應來源**，100 檔上市股票在此類別一律 `MISSING_COVERAGE` → unknown。
+- 核准清單改由 `config/trading_status_approvals.json` 人工維護（目前空白）；每筆須有 `approved_by`、`approved_at`、`evidence`、`max_age_hours`。只有已核准且抓取時間距目標時段不超過 `max_age_hours` 的來源，coverage 才是 `complete`，否則 `partial`（`SOURCE_NOT_APPROVED`／`STALE_CAPTURE`）。
+- 交易日曆：由 TWSE 開休市日期 CSV 推算目標時段（除「開始交易」「最後交易」外列出的日期視為休市）；9/26 cutoff 正確推到 9/29、跳過 9/28 教師節。無封存時退回只跳過週末。
+- 每日腳本在 `./start.sh daily` 前先封存八份 CSV（確保 available_at 早於 cutoff），以 cutoff 前最新成功封存建立狀態包；以 9/25 封存與 9/26 Snapshot 實測：150 檔落出 6 筆紀錄（注意 3、處置 2、已恢復的歷史停牌 1），未核准時全部 unknown。
+
+### 放行前仍須人工決定
+
+1. 9/29 實際交易日依第 3 步分時封存並比對後，逐一決定哪些來源加入核准清單與其 `max_age_hours`。
+2. TWSE「管理股票」：取得官方依據確認上市市場是否有對應制度（或以變更交易／全額交割涵蓋），據以版本化「不適用」政策或補上來源；在此之前上市股票無法成為 allowed，Guard 會因可交易檔數不足而拒絕。
+
 ## 放行條件
 
 只有當每個必要來源都有可保存的授權證據、可重建的完整／增量語意、明確發布與生效時間、空回應及更正規則，且 150 檔固定分母在同一 cutoff 完整驗證時，才可把對應來源設為 `approved`。單次 CSV／JSON 欄位相符、HTTP 200 或股票未出現在名單中，都不足以放行。任何條件未滿足須留下具體原因與 `unknown`，不能以人工推測、行情存在或 Risk Agent 判斷取代。
