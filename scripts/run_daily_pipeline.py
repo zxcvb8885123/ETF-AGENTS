@@ -9,6 +9,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -20,9 +21,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
     DailyDecisionPipeline,
-    next_weekday_session,
 )
-from etf_agent.data import TradingStatusBundleBuilder, TradingStatusRequest  # noqa: E402
+from etf_agent.data import (  # noqa: E402
+    build_trading_status_from_capture,
+    latest_capture_before,
+    load_approvals,
+    load_not_applicable,
+)
+from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 
 
@@ -47,6 +53,37 @@ def run_data_stage(account_id: str, account_run_id: str, report_run_id: str) -> 
     completed = subprocess.run([str(ROOT / "start.sh"), "daily"], cwd=ROOT, env=env, check=False)
     if completed.returncode not in (0, 3):
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
+
+
+def latest_resumable_run(runs_root: Path, run_id: str):
+    """同一台北日期中，最近一個未完成且已保存 Agent 原始輸出的 run 目錄；沒有則回 None。"""
+    candidates = []
+    for run_dir in runs_root.glob("%s*" % run_id):
+        summary_path = run_dir / "pipeline.json"
+        if not run_dir.is_dir() or not summary_path.exists() or not any(run_dir.glob("*_raw_*.json")):
+            continue
+        previous = json.loads(summary_path.read_text(encoding="utf-8"))
+        # 決策被拒的 run 可在規則修正後續跑；被拒封存未移走時重新封存會衝突而停止。
+        if previous.get("status") == "completed" and previous.get("decision_status") != "rejected":
+            continue
+        candidates.append((summary_path.stat().st_mtime, run_dir))
+    return max(candidates)[1] if candidates else None
+
+
+def resumed_decision_run_id(run_dir: Path):
+    """續跑目錄先前預定的 decision run ID；舊版 summary 沒記錄時，由已保存的事件研究輸出檔名推回。"""
+    planned = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8")).get("planned_decision_run_id")
+    if planned:
+        return str(planned)
+    found = {
+        match.group(1)
+        for path in run_dir.glob("event-research_decision-*_raw_*.json")
+        for match in [re.match(r"event-research_(decision-\d{8}T\d{6}Z)_", path.name)]
+        if match
+    }
+    if len(found) > 1:
+        raise RuntimeError("續跑目錄含多個 decision run ID，無法判定：%s" % sorted(found))
+    return found.pop() if found else None
 
 
 def prepared_account_run(account_id: str) -> str:
@@ -87,19 +124,40 @@ def main() -> int:
         if previous.get("status") == "completed":
             log("%s 已完成（%s），不重跑。" % (run_id, previous.get("decision_status")))
             return 0
-    if args.force and run_dir.exists():
+    resumable = latest_resumable_run(runs_root, run_id) if args.resume else None
+    if resumable is not None:
+        # 續跑沿用最近一個未完成且已有 Agent 輸出的 run 目錄，否則新目錄中沒有可沿用的輸出。
+        run_id = resumable.name
+        run_dir = resumable
+        summary_path = run_dir / "pipeline.json"
+        log("續跑沿用 run 目錄：%s" % run_id)
+    elif args.force and run_dir.exists():
         run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
         run_dir = runs_root / run_id
         summary_path = run_dir / "pipeline.json"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    summary = {"run_id": run_id, "started_at": now.isoformat(), "status": "running"}
+    decision_run_id = "decision-%s" % stamp
+    if resumable is not None:
+        # Agent 任務名與 envelope 都含 decision run ID；續跑必須沿用同一個，已驗證輸出才對得上。
+        decision_run_id = resumed_decision_run_id(run_dir) or decision_run_id
+    summary = {"run_id": run_id, "started_at": now.isoformat(), "status": "running", "planned_decision_run_id": decision_run_id}
     write_json(summary_path, summary)
 
     try:
         snapshot_path = ROOT / "artifacts" / "research_snapshot_latest.json"
         account_path = ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json"
+        captures_root = ROOT / "artifacts" / "source-audit" / "captures"
         if not args.skip_data:
+            # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
+            log("[0/5] 封存交易狀態與開休市政府開放 CSV")
+            try:
+                report = json.loads((ROOT / "docs" / "source_audit" / "2026-09-25_ogd_crosscheck.json").read_text(encoding="utf-8"))
+                capture = capture_ogd_candidates(report, captures_root)
+                summary["trading_status_capture"] = capture.get("run_id")
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                summary["trading_status_capture_error"] = str(error)
+                log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
             log("[1/5] ./start.sh daily：資料、Snapshot、虛擬帳本")
             run_data_stage(args.account_id, "prepare-%s" % stamp, "daily-%s" % stamp)
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
@@ -109,11 +167,18 @@ def main() -> int:
         if not snapshot.get("usable"):
             raise RuntimeError("Snapshot 不可用：%s" % snapshot.get("quality_flags"))
 
-        log("[2/5] 交易狀態包")
-        session = next_weekday_session(snapshot["decision_cutoff"])
-        # 尚無核准的交易狀態來源：不提供 records／coverage，逐檔 unknown，Guard 會 fail-closed。
-        request = TradingStatusRequest.from_snapshot(snapshot, session["start"], session["end"])
-        status_bundle, assessment = TradingStatusBundleBuilder(request, [], []).build()
+        log("[2/5] 交易狀態包（官方開休市日推算目標時段；未核准來源一律 fail-closed）")
+        capture_dir = latest_capture_before(captures_root, snapshot["decision_cutoff"])
+        approvals_path = ROOT / "config" / "trading_status_approvals.json"
+        approvals = load_approvals(approvals_path)
+        not_applicable = load_not_applicable(approvals_path)
+        status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals, not_applicable)
+        summary["trading_status"] = {
+            "capture_dir": str(capture_dir) if capture_dir else None,
+            "approved_sources": sorted(approvals),
+            "not_applicable": ["%s/%s" % (item["market"], item["category"]) for item in not_applicable],
+            "states": {state: sum(1 for item in assessment["symbols"] if item["state"] == state) for state in ("allowed", "blocked", "unknown")},
+        }
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
 
@@ -129,7 +194,7 @@ def main() -> int:
             snapshot_path, account_path, trading_status_path,
             ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
-            "decision-%s" % stamp,
+            decision_run_id,
         )
         summary.update(
             {
