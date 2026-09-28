@@ -129,6 +129,10 @@ PYTHONPATH=src python3 cli/daily_report.py run \
 
 `fixture` 只用於契約與故障分支驗收，並非真實資料或正式日常決策。相同執行日、cutoff、模式與策略規格若有相同輸入，會回傳既有封存結果；若輸入內容不同，則封存 FailureReport 並拒絕重複發布。
 
+## 每日決策腳本改接分析團隊新鏈（2026-09-27）
+
+`DailyDecisionPipeline` 主流程改為：DecisionInputBundle（不含研究結果）→ 動能 → 分析團隊（技術／基本面／事件逐批，情緒 unavailable）→ 事件分析師標為 high 的事件跑 Fact／Bull／Bear／Adjudicator → 多頭／空頭研究員 → 交易 Agent → 風險 Agent 現金姿態 → 配置、情境、Guard 與風險審查（最多 3 次修正）→ Finalizer（含 `team_inputs`）→ 封存。舊的買方／賣方／裁決／SizingPlan 流程已自每日腳本移除；事件研究結果交給 DailyReport 工作流，不再使用 `EVENT_RESEARCH_NOT_RUN` 降級結果。一般交易日約 20 次子 Agent 呼叫。
+
 ## 每日決策腳本 A3 第一版（2026-09-26）
 
 - `scripts/run_daily_pipeline.py`：檔案鎖、週末略過、同一台北日期完成後不重跑（`--force` 覆蓋）；依序執行 `./start.sh daily`（資料、Snapshot、虛擬帳本 settle／prepare）→ 交易狀態包 → 決策鏈 → `report_workflow.py run`（接 Decision run 與 prepare-day run）→ macOS 通知。摘要與全部中間 artifact 保存於 `artifacts/daily_runs/<run_id>/`，`pipeline.json` 記錄狀態、決策結果、現金姿態、委託筆數與各子 Agent 的估算用量。

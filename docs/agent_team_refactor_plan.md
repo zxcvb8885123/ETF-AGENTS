@@ -1,6 +1,6 @@
 # 決策層 Agent 團隊重構計畫
 
-日期：2026-09-26。狀態：**已確認，實作中（R1～R5 已完成）**。本計畫把決策層改為「分析團隊 → 多空研究 → 交易 → 風險」的分工，參考 [TradingAgents 的團隊分工](https://github.com/TauricResearch/TradingAgents#tradingagents-framework)；安全層（數值由 Python 計算、每一步 Validator、時間點檢查、不可變封存、不自動下單）完全保留。
+日期：2026-09-26。狀態：**R1～R6 已完成**；正式交易仍受交易狀態核准（TS0／TS5）阻擋。本計畫把決策層改為「分析團隊 → 多空研究 → 交易 → 風險」的分工，參考 [TradingAgents 的團隊分工](https://github.com/TauricResearch/TradingAgents#tradingagents-framework)；安全層（數值由 Python 計算、每一步 Validator、時間點檢查、不可變封存、不自動下單）完全保留。
 
 ## 0. 設計原則：確定性歸程式，不確定性歸 LLM
 
@@ -114,7 +114,7 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 | R3 多空研究 | **已完成（2026-09-27）**：`decision/stance`（StancePacket 2.0：每檔 strength strong／moderate／weak／none 與 claims；兩方共用 `shared_input_sha256`、role input 只差角色、`peer_packet_ids` 為空；claim_id 以 bull-／bear- 開頭、證據與 finding 須屬於該股票）、ResearchDebateBundle 2.0 Validator、`bull-researcher`／`bear-researcher` Skill、`DailyDecisionPipeline.run_research_team`（逐批、單批重跑、合併驗證） | 兩方覆蓋全部股票；互相隔離；claim 唯一 |
 | R4 交易 Agent | **已完成（2026-09-27）**：`decision/trader`（TradeDecision 2.0：逐檔 intent、buy／add 的 conviction、每個多空 claim 剛好採納或否決一次；持股、動能與採納方向規則）、`apply_trade_decision`（信心等級＋風險 Agent 現金姿態綁入既有 `position_sizing`，配置引擎不變）、共用 `validate_cash_stance`、`trader` Skill、`DailyDecisionPipeline.run_trader` | 每個 claim 剛好採納或否決一次；等級可綁入 policy |
 | R5 風險與鏈接 | **已完成（2026-09-27）**：`DailyDecisionPipeline.run_cash_stance`（程式統計市場層級摘要，風險 Agent 給現金姿態）；Decision run 沿用 `debate`／`intent` 名稱（新鏈為 ResearchDebateBundle 2.0／TradeDecision 2.0）並新增 `team_inputs`（四份分析報告、事件研究、現金姿態）；Finalizer／DecisionResultValidator 依 debate 版本分流，新鏈重建多空辯論、交易決策並核對 policy 綁定的等級與姿態，舊鏈 DecisionResult 內容與 ID 不變；配置引擎直接讀 TradeDecision；`save-run --team-inputs`；虛擬帳本、回測與 DailyReport 讀取並傳入 `team_inputs`。修正分級配置剛好封頂時手續費使成交後權重超過上限的問題（`LIMIT_HEADROOM` 0.995） | 新鏈 fixture 端到端 approved／rejected 均可重建 |
-| R6 每日腳本 | `daily_pipeline` 改用新鏈，真實資料演練一次 | 真實 Snapshot 跑完並產出 DailyReport；舊鏈測試仍通過 |
+| R6 每日腳本 | **程式已完成（2026-09-27）**：`DailyDecisionPipeline._run` 改用新鏈並移除舊買賣／裁決／分級流程，`run_daily_pipeline.py` 以新鏈事件研究結果接 DailyReport；pipeline 測試改為新鏈端到端（核准、錯誤回饋重試、連續失敗不封存、交易狀態 unknown 時 Guard 拒絕）；新增 `resume`／`--resume`：同一 run 目錄中已通過目前 Validator 的 Agent 輸出直接沿用，原始輸出只新增不覆寫。**真實資料演練已完成（2026-09-28，資料庫與帳本副本）**：見下方 §10 | 真實 Snapshot 跑完並產出 DailyReport；舊鏈測試仍通過 |
 
 每階段完成後執行完整 unittest、compileall、`git diff --check` 與新增 Skill 的 quick_validate，並同步 README、AGENTS.md 與相關 docs。
 
@@ -123,3 +123,14 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 1. **不初篩**：官方 150 檔全部進入分析、多空與交易；以分批執行控制單次輸出大小。
 2. **財報每日收集**：併入 `start.sh daily`。
 3. **事件研究**：事件分析師處理全部公告並標示重大程度；`materiality=high` 的事件另跑既有 Fact／Bull／Bear／Adjudicator 四子 Agent。
+
+## 10. R6 真實資料演練紀錄（2026-09-28）
+
+在資料庫與虛擬帳本副本上執行，不影響正式資料：Snapshot `a32c4fb3…`（cutoff 2026-09-26T16:04:14Z、行情 9/24、含 249 份 2026 Q2 財報文件）、10 億空倉、交易狀態全部 unknown。
+
+- 首次執行 17.5 分鐘後撞到 claude.ai 工作階段用量上限而停止；以 `resume` 續跑，9 批分析師與第 1 則事件研究全部沿用，只重跑未完成的步驟，續跑 17.8 分鐘完成。兩段估算用量合計約 US$18（訂閱登入不另計費）。
+- 分析師 9 批、多空 6 批、交易 3 批、現金姿態皆第一次通過驗證；Fact Agent 兩則事件都曾把價格特徵列為 verified_facts 並引用行情證據而重試一次，已在提示中明定只能引用正式文件。
+- 技術 outlook：positive 56／neutral 59／negative 34／unknown 1（3718.TWO 行情不足）；基本面 positive 89／neutral 55／negative 5／unknown 1；39 則重大訊息分級 high 2／medium 8／low 29，兩則 high（3374.TWO、6919.TW）研究結果皆 uncertain／pending。
+- 多頭 strength：strong 18／moderate 73／weak 52／none 7（232 claims）；空頭：strong 12／moderate 83／weak 55（236 claims）。交易 Agent：buy 36（high 10、medium 18、low 8）、no_trade 114；風險 Agent 現金姿態 neutral 並引用 regime、看法分布與事件證據。
+- 配置：36 檔 buy 依等級排序截至 30 檔上限（MAX_POSITIONS 6 檔），實際 29 檔、現金 13.7%；Guard 只有 TRADABILITY_COVERAGE 與相關 SCENARIOS 未過，決策 rejected，符合交易狀態未核准時的 fail-closed。
+- 報告工作流因 DecisionResult=rejected 只產出失敗報告與研究報告；失敗報告目前未列出 Guard 拒絕原因，列為後續改進。目標時段仍以下一個平日推算（此次為 9/28 休市日），交易日曆尚未接入。

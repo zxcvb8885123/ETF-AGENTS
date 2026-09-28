@@ -186,7 +186,7 @@ def _research_event(
         _task(
             "%s_fact" % slug,
             "你是 $event-fact-analysis。先讀 %s，再讀事件脈絡 %s。只整理可在引用文件中核對的事實："
-            "verified_facts 的 value 必須是引用文件內原樣出現的字串；reference_frames 的 is_market_expectation 只有在"
+            "verified_facts 的 evidence_id 只能引用正式文件（document: 開頭），value 必須是該文件內原樣出現的字串；價格特徵已由程式提供，不要列入 verified_facts；reference_frames 的 is_market_expectation 只有在"
             "有正式市場預期資料時才可為 true。%s" % (skills / "event-fact-analysis/SKILL.md", context_path, _RULES),
             FACT_SCHEMA,
         ),

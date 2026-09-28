@@ -20,9 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
     DailyDecisionPipeline,
-    degraded_research_result,
     next_weekday_session,
-    validate_research_result,
 )
 from etf_agent.data import TradingStatusBundleBuilder, TradingStatusRequest  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
@@ -61,6 +59,10 @@ def main() -> int:
     parser.add_argument("--account-id", default="ai-cup-2026")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="週末或當日已完成仍執行")
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="沿用同一 run 目錄中先前已通過驗證的 Agent 輸出（例如中途撞到用量上限後續跑）；建議搭配 --skip-data",
+    )
     parser.add_argument("--model", help="子 Agent 使用的 Claude 模型；預設沿用 claude CLI 設定")
     parser.add_argument("--max-budget-usd", type=float, default=3.0, help="單次子 Agent 的估算用量上限（防失控；claude.ai 訂閱登入時不另計費）")
     args = parser.parse_args()
@@ -107,32 +109,24 @@ def main() -> int:
         if not snapshot.get("usable"):
             raise RuntimeError("Snapshot 不可用：%s" % snapshot.get("quality_flags"))
 
-        log("[2/5] 交易狀態包與事件研究輸入")
+        log("[2/5] 交易狀態包")
         session = next_weekday_session(snapshot["decision_cutoff"])
         # 尚無核准的交易狀態來源：不提供 records／coverage，逐檔 unknown，Guard 會 fail-closed。
         request = TradingStatusRequest.from_snapshot(snapshot, session["start"], session["end"])
         status_bundle, assessment = TradingStatusBundleBuilder(request, [], []).build()
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
-        research_path = ROOT / "artifacts" / "event_research_validated.json"
-        research = json.loads(research_path.read_text(encoding="utf-8")) if research_path.exists() else None
-        if research is None or research.get("snapshot_id") != snapshot["snapshot_id"] or validate_research_result(snapshot, research):
-            research = degraded_research_result(snapshot, "%s-research" % run_id)
-            research_path = run_dir / "research_result.json"
-            write_json(research_path, research)
-            errors = validate_research_result(snapshot, research)
-            if errors:
-                raise RuntimeError("降級 ResearchResult 驗證失敗：%s" % errors)
 
-        log("[3/5] 決策鏈（子 Agent 經 claude -p）")
+        log("[3/5] 決策鏈：分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 claude -p）")
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=args.max_budget_usd),
             ROOT / "artifacts" / "portfolio_decisions",
             log=log,
+            resume=args.resume,
         )
         result = pipeline.run(
-            snapshot_path, account_path, trading_status_path, research_path,
+            snapshot_path, account_path, trading_status_path,
             ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
             "decision-%s" % stamp,
@@ -146,11 +140,12 @@ def main() -> int:
                 "agent_calls": result.agent_calls,
                 "agent_estimated_usage_usd": round(sum(call["estimated_usage_usd"] for call in result.agent_calls), 4),
                 "target_session": session,
-                "research_status": research.get("status"),
             }
         )
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
+        research_path = result.research_result_path
+        summary["research_status"] = json.loads(research_path.read_text(encoding="utf-8")).get("status")
 
         log("[4/5] 報告工作流：DailyReport")
         workflow = subprocess.run(

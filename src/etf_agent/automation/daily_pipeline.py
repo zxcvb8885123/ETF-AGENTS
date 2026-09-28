@@ -17,54 +17,41 @@ from etf_agent.data.evidence import TAIPEI_TIMEZONE
 from etf_agent.decision import (
     AllocationOrderEngine,
     AnalystReportValidator,
-    BuyIntentPacketValidator,
     CompetitionGuardV2,
     DecisionFinalizer,
     DecisionResultValidator,
     DecisionToolError,
     MomentumEngine,
     PortfolioDecisionApplicationService,
+    ResearchDebateBundleValidator,
     RevisionHistoryBuilder,
     RiskReviewValidator,
     ScenarioEngine,
-    SellIntentPacketValidator,
-    SizingPlanValidator,
-    TradeDebateValidator,
-    TradeIntentResultValidator,
-    apply_sizing_plan,
+    StancePacketValidator,
+    TradeDecisionValidator,
+    apply_trade_decision,
     artifact_content_sha256,
     build_analyst_brief,
     build_decision_policy,
-    build_role_brief,
     build_research_debate,
-    build_role_input_artifact,
     build_stance_brief,
+    build_team_inputs,
     compute_fundamental_metrics,
     decision_policy_sha256,
+    high_materiality_events,
     revision_effects,
-    ResearchDebateBundleValidator,
-    StancePacketValidator,
-    TradeDecisionValidator,
     seal_report,
     seal_stance_packet,
     seal_trade_decision,
-    trade_decision_envelope,
     sentiment_unavailable_report,
+    trade_decision_envelope,
 )
+from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS
+from etf_agent.decision.contracts import DecisionContext
+from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
 from etf_agent.decision.stance import STANCE_ROLES, STRENGTHS
 from etf_agent.decision.trader import TRADE_INTENTS
-from etf_agent.decision.allocation import DecisionPolicyValidator
-from etf_agent.decision.contracts import DecisionContext
-from etf_agent.decision.sizing import validate_cash_stance
-from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, sizing_candidates
-from etf_agent.decision.trade_intent import (
-    BUY_INTENTS,
-    FINAL_INTENTS,
-    HORIZONS,
-    SELL_INTENTS,
-    THESIS_STATES,
-)
 from etf_agent.research import ResearchResultValidator
 
 from .agent_runner import (  # noqa: F401 — 對外仍由本模組匯出
@@ -78,77 +65,9 @@ from .agent_runner import (  # noqa: F401 — 對外仍由本模組匯出
     _strings,
 )
 from .batching import merge_batch_items, universe_batches
+from .event_research_runner import run_material_event_research
 
 
-_CLAIM = _object(
-    {"claim_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1)},
-    ("claim_id", "text", "evidence_ids"),
-)
-_PACKET_COMMON = {
-    "symbol": _TEXT,
-    "rationale": _TEXT,
-    "status_reason": _TEXT,
-    "horizon": {"enum": sorted(HORIZONS)},
-    "evidence_ids": _strings(1),
-    "risk_flags": _strings(),
-    "invalidation_conditions": _strings(),
-    "claims": {"type": "array", "items": _CLAIM, "minItems": 1},
-}
-BUY_SCHEMA = _object(
-    {
-        "items": {
-            "type": "array",
-            "items": _object(
-                {**_PACKET_COMMON, "intent": {"enum": sorted(BUY_INTENTS)}, "catalyst_summary": _TEXT},
-                list(_PACKET_COMMON) + ["intent", "catalyst_summary"],
-            ),
-        }
-    },
-    ("items",),
-)
-SELL_SCHEMA = _object(
-    {
-        "items": {
-            "type": "array",
-            "items": _object(
-                {**_PACKET_COMMON, "intent": {"enum": sorted(SELL_INTENTS)}, "thesis_status": {"enum": sorted(THESIS_STATES)}},
-                list(_PACKET_COMMON) + ["intent", "thesis_status"],
-            ),
-        }
-    },
-    ("items",),
-)
-_ADJUDICATION_ITEM = {
-    "symbol": _TEXT,
-    "intent": {"enum": sorted(FINAL_INTENTS)},
-    "rationale": _TEXT,
-    "status_reason": _TEXT,
-    "evidence_ids": _strings(),
-    "adopted_claim_ids": _strings(),
-    "rejected_claim_ids": _strings(),
-    "unresolved_questions": _strings(),
-    "invalidation_conditions": _strings(),
-}
-ADJUDICATION_SCHEMA = _object(
-    {"items": {"type": "array", "items": _object(_ADJUDICATION_ITEM, list(_ADJUDICATION_ITEM))}},
-    ("items",),
-)
-SIZING_SCHEMA = _object(
-    {
-        "cash_stance": _object(
-            {"level": {"enum": list(CASH_STANCES)}, "rationale": _TEXT, "evidence_ids": _strings(1)},
-            ("level", "rationale", "evidence_ids"),
-        ),
-        "items": {
-            "type": "array",
-            "items": _object(
-                {"symbol": _TEXT, "conviction": {"enum": list(CONVICTION_LEVELS)}, "rationale": _TEXT, "evidence_ids": _strings(1)},
-                ("symbol", "conviction", "rationale", "evidence_ids"),
-            ),
-        },
-    },
-    ("cash_stance", "items"),
-)
 _FINDING = _object(
     {"finding_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1)},
     ("finding_id", "text", "evidence_ids"),
@@ -270,6 +189,7 @@ class PipelineResult:
     decision_run_id: Optional[str] = None
     orders: List[Dict[str, object]] = field(default_factory=list)
     cash_stance: Optional[str] = None
+    research_result_path: Optional[Path] = None
     agent_calls: List[Dict[str, object]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
@@ -285,13 +205,17 @@ class DailyDecisionPipeline:
         decision_repository: Path,
         max_attempts: int = 2,
         log: Callable[[str], None] = print,
+        resume: bool = False,
     ):
+        """``resume=True`` 時，同一 run 目錄中先前已通過驗證的 Agent 輸出會以目前的
+        Validator 重驗後沿用，不再呼叫 Agent；輸入改變時 envelope 對不上，自然重跑。"""
         self.root = project_root
         self.run_dir = run_dir
         self.runner = runner
         self.decision_repository = decision_repository
         self.max_attempts = max_attempts
         self.log = log
+        self.resume = resume
         self.calls: List[Dict[str, object]] = []
 
     # ------------------------------------------------------------------ helpers
@@ -310,13 +234,25 @@ class DailyDecisionPipeline:
         validate: Callable[[Mapping[str, object]], List[str]],
     ) -> Dict[str, object]:
         """執行 Agent → 補 envelope → 驗證；失敗回饋錯誤重試，仍失敗即停止。"""
+        previous = sorted(
+            self.run_dir.glob("%s_raw_*.json" % task.name),
+            key=lambda path: int(path.stem.rsplit("_", 1)[1]),
+        )
+        if self.resume:
+            for path in reversed(previous):
+                artifact = build(json.loads(path.read_text(encoding="utf-8")))
+                if not validate(artifact):
+                    self.log("  [agent] %s 沿用已驗證輸出 %s" % (task.name, path.name))
+                    return artifact
         prompt = task.prompt
         errors: List[str] = []
+        # 原始輸出只新增、不覆寫，保留每次嘗試供稽核。
+        offset = len(previous)
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             call = self.runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
             self.calls.append({"name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd})
-            self.save_artifact("%s_raw_%d" % (task.name, attempt), call.output)
+            self.save_artifact("%s_raw_%d" % (task.name, offset + attempt), call.output)
             artifact = build(call.output)
             errors = validate(artifact)
             if not errors:
@@ -334,7 +270,6 @@ class DailyDecisionPipeline:
         snapshot_path: Path,
         account_snapshot_path: Path,
         trading_status_path: Path,
-        research_path: Path,
         rules_path: Path,
         database_path: Path,
         policy_template_path: Path,
@@ -344,7 +279,7 @@ class DailyDecisionPipeline:
         result = PipelineResult(status="failed")
         try:
             self._run(
-                result, snapshot_path, account_snapshot_path, trading_status_path, research_path,
+                result, snapshot_path, account_snapshot_path, trading_status_path,
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
             )
             result.status = "completed"
@@ -355,15 +290,15 @@ class DailyDecisionPipeline:
 
     def _run(
         self, result: PipelineResult, snapshot_path: Path, account_snapshot_path: Path,
-        trading_status_path: Path, research_path: Path, rules_path: Path, database_path: Path,
+        trading_status_path: Path, rules_path: Path, database_path: Path,
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
     ) -> None:
         service = PortfolioDecisionApplicationService
         self.log("[decision 1] 建立並驗證 DecisionInputBundle")
+        # 重大事件研究在分析團隊之後才產生，放在 team_inputs，不回寫已封存的輸入包。
         built = service.build_input_file(
             snapshot_path, database_path, rules_path, self._path("decision_input"),
-            research_paths=[research_path], trading_status_path=trading_status_path,
-            account_path=account_snapshot_path,
+            trading_status_path=trading_status_path, account_path=account_snapshot_path,
         )
         if not built["valid"]:
             raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(built["errors"]))
@@ -374,55 +309,48 @@ class DailyDecisionPipeline:
         momentum = MomentumEngine(bundle).run()
         self.save_artifact("momentum", momentum)
 
-        self.log("[decision 3] 買方／賣方隔離子 Agent")
-        buy_packet = self._buy_packet(bundle, momentum)
-        sell_packet = self._sell_packet(bundle, momentum)
+        self.log("[decision 3] 分析團隊：技術／基本面／事件（逐批），情緒無核准來源時 unavailable")
+        analysts = self.run_analyst_team(bundle, momentum)
 
-        debate = {
-            "schema_version": "1.0",
-            "debate_id": "trade-debate:%s" % decision_run_id,
-            "bundle_id": bundle["bundle_id"],
-            "snapshot_id": bundle["snapshot_id"],
-            "decision_cutoff": bundle["decision_cutoff"],
-            "bundle_hash": bundle["bundle_sha256"],
-            "momentum_result_id": momentum["result_id"],
-            "packets": [buy_packet, sell_packet],
-        }
-        debate["content_sha256"] = artifact_content_sha256(debate)
-        errors = TradeDebateValidator(bundle, momentum).validate(debate)
-        if errors:
-            raise DailyPipelineError("TradeDebateBundle 驗證失敗：" + "；".join(errors))
-        self.save_artifact("debate", debate)
+        events = high_materiality_events(analysts["event"])
+        self.log("[decision 4] 重大事件研究：%d 則 high 事件" % len(events))
+        research = run_material_event_research(
+            self, bundle["snapshot"], snapshot_path, database_path, events, "event-research:%s" % decision_run_id
+        )
+        result.research_result_path = self._path("event_research_result")
 
-        self.log("[decision 4] 裁決子 Agent")
-        intent = self._adjudicate(bundle, momentum, debate, decision_run_id)
+        self.log("[decision 5] 多頭／空頭研究員（互相隔離、逐批）")
+        debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
 
-        self.log("[decision 5] 建立 policy 並由風控子 Agent 分級")
+        self.log("[decision 6] 交易 Agent")
+        trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id)
+
+        self.log("[decision 7] 建立 policy，風險 Agent 給現金姿態")
         base_policy = build_decision_policy(
             service.read_json(policy_template_path, " 策略樣板"),
             bundle,
             service.read_json(sector_path, " 產業分類"),
         )
         self.save_artifact("policy_base", base_policy)
-        plan = self._sizing(bundle, intent, decision_run_id)
-        policy = apply_sizing_plan(base_policy, plan)
+        stance = self.run_cash_stance(bundle, momentum, analysts, research, trade)
+        policy = apply_trade_decision(base_policy, trade, stance, bundle)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy)
         if policy_errors:
-            raise DailyPipelineError("套用分級後 policy 無效：" + "；".join(policy_errors))
+            raise DailyPipelineError("綁定交易決策與現金姿態後 policy 無效：" + "；".join(policy_errors))
         self.save_artifact("policy", policy)
-        result.cash_stance = plan["cash_stance"]["level"]
+        result.cash_stance = str(stance["level"])
 
-        self.log("[decision 6] 配置、情境、Guard 與風控審查（最多 %d 次修正）" % int(policy["max_revisions"]))
+        self.log("[decision 8] 配置、情境、Guard 與風險審查（最多 %d 次修正）" % int(policy["max_revisions"]))
         engine = AllocationOrderEngine(bundle, policy)
-        proposal = engine.run(intent)
+        proposal = engine.run(trade)
         history: Optional[Dict[str, object]] = None
-        builder = RevisionHistoryBuilder(bundle, policy, intent)
+        builder = RevisionHistoryBuilder(bundle, policy, trade)
         while True:
             revision = int(proposal["revision_count"])
             scenario = ScenarioEngine(bundle, policy).run(proposal)
             guard = CompetitionGuardV2(bundle, policy).run(proposal, scenario)
-            review = self._review(bundle, policy, intent, proposal, scenario, guard, decision_run_id)
+            review = self._review(bundle, policy, proposal, scenario, guard, decision_run_id)
             for name, payload in (("proposal", proposal), ("scenario", scenario), ("guard", guard), ("risk_review", review)):
                 self.save_artifact("%s_r%d" % (name, revision), payload)
             history = (
@@ -434,26 +362,27 @@ class DailyDecisionPipeline:
                 break
             effects = revision_effects(review, proposal)
             proposal = engine.run(
-                intent,
+                trade,
                 excluded_symbols=effects["excluded_symbols"],
                 overrides=effects["overrides"],
                 revision_count=revision + 1,
                 parent_proposal_id=str(proposal["proposal_id"]),
             )
 
-        self.log("[decision 7] finalize、完整重建驗證與封存")
-        final = DecisionFinalizer(bundle, policy, momentum, debate, intent).run(
+        self.log("[decision 9] finalize、完整重建驗證與封存")
+        team = build_team_inputs(analysts, research, stance)
+        final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team).run(
             proposal, scenario, guard, review, history
         )
-        errors = DecisionResultValidator(bundle, policy, momentum, debate, intent).validate(
+        errors = DecisionResultValidator(bundle, policy, momentum, debate, trade, team).validate(
             proposal, scenario, guard, review, history, final
         )
         if errors:
             raise DailyPipelineError("DecisionResult 驗證失敗：" + "；".join(errors))
         paths = {
             "momentum": self.save_artifact("momentum", momentum),
-            "debate": self._path("debate"),
-            "intent": self._path("trade_intent"),
+            "debate": self.save_artifact("debate", debate),
+            "intent": self.save_artifact("intent", trade),
             "policy": self._path("policy"),
             "proposal": self.save_artifact("proposal", proposal),
             "scenario": self.save_artifact("scenario", scenario),
@@ -461,6 +390,7 @@ class DailyDecisionPipeline:
             "risk_review": self.save_artifact("risk_review", review),
             "revision_history": self.save_artifact("revision_history", history),
             "decision": self.save_artifact("decision", final),
+            "team_inputs": self.save_artifact("team_inputs", team),
         }
         decision.save_run_files(decision_run_id, self.decision_repository, paths)
         result.decision_status = str(final["status"])
@@ -710,162 +640,9 @@ class DailyDecisionPipeline:
         self.save_artifact("cash_stance", stance)
         return stance
 
-    # ------------------------------------------------------------------ agents
-    def _role_brief(self, bundle: Mapping[str, object], momentum: Mapping[str, object], role: str) -> Dict[str, object]:
-        brief = build_role_brief(build_role_input_artifact(bundle, momentum, role))
-        self.save_artifact("%s_brief" % role, brief)
-        return brief
-
-    def _packet(self, brief: Mapping[str, object], items: object) -> Dict[str, object]:
-        packet: Dict[str, object] = {
-            **json.loads(json.dumps(brief["packet_envelope"])),
-            "packet_id": "%s-packet:%s" % (brief["role"], str(brief["role_input_sha256"])[:16]),
-            "status": "completed",
-            "items": items,
-            "errors": [],
-        }
-        packet["content_sha256"] = artifact_content_sha256(packet)
-        return packet
-
-    def _buy_packet(self, bundle: Mapping[str, object], momentum: Mapping[str, object]) -> Dict[str, object]:
-        brief = self._role_brief(bundle, momentum, "buy")
-        validator = BuyIntentPacketValidator(bundle, momentum)
-        rules = brief["rules"]
-        task = AgentTask(
-            "buy",
-            "你是 $buy-candidate 買方子 Agent。先讀 %s 與 %s，再讀角色摘要 %s。"
-            "依摘要的動能、交易狀態、月營收、事件研究與資料缺口，提出 buy（新標的）／add（已持有）候選，"
-            "並可列少數值得觀察的 watch；未列出的股票視為不交易，不必逐檔列 exclude。"
-            "競賽要求持股 %s–%s 檔，只有證據足夠時才列 buy／add，不要為湊檔數降低標準。"
-            "buy／add 必須是 momentum.status=available 的股票；每個 claim_id 在整份輸出中唯一（建議 buy-<代號>-<序號>），"
-            "claim 的 evidence_ids 必須包含在該 item 的 evidence_ids，且都屬於該股票。%s"
-            % (
-                self.root / "skills/buy-candidate/SKILL.md",
-                self.root / "skills/portfolio-decision/references/decision-contract.md",
-                self._path("buy_brief"), rules.get("min_positions"), rules.get("max_positions"), _SHARED_RULES,
-            ),
-            BUY_SCHEMA,
-        )
-        packet = self.agent_step(task, lambda output: self._packet(brief, output["items"]), validator.validate)
-        self.save_artifact("buy_packet", packet)
-        return packet
-
-    def _sell_packet(self, bundle: Mapping[str, object], momentum: Mapping[str, object]) -> Dict[str, object]:
-        brief = self._role_brief(bundle, momentum, "sell")
-        validator = SellIntentPacketValidator(bundle, momentum)
-        if not brief["account"]["positions"]:
-            # 空倉時賣方沒有可判斷的持股，確定性產生空 packet，不呼叫 Agent。
-            packet = self._packet(brief, [])
-            errors = validator.validate(packet)
-            if errors:
-                raise DailyPipelineError("空倉 Sell packet 驗證失敗：" + "；".join(errors))
-        else:
-            task = AgentTask(
-                "sell",
-                "你是 $sell-exit 賣方子 Agent。先讀 %s 與 %s，再讀角色摘要 %s。"
-                "必須剛好覆蓋 account.positions 的全部持股（不得加入未持有股票），逐檔給 hold／trim／exit／forced_exit 與 thesis_status。"
-                "每個 claim_id 在整份輸出中唯一（建議 sell-<代號>-<序號>）；持股相關 claim 可引用 account.source_evidence_id。%s"
-                % (
-                    self.root / "skills/sell-exit/SKILL.md",
-                    self.root / "skills/portfolio-decision/references/decision-contract.md",
-                    self._path("sell_brief"), _SHARED_RULES,
-                ),
-                SELL_SCHEMA,
-            )
-            packet = self.agent_step(task, lambda output: self._packet(brief, output["items"]), validator.validate)
-        self.save_artifact("sell_packet", packet)
-        return packet
-
-    def _adjudicate(
-        self, bundle: Mapping[str, object], momentum: Mapping[str, object],
-        debate: Mapping[str, object], run_id: str,
-    ) -> Dict[str, object]:
-        validator = TradeIntentResultValidator(bundle, momentum, debate)
-
-        def build(output: Mapping[str, object]) -> Dict[str, object]:
-            result: Dict[str, object] = {
-                "schema_version": "1.0",
-                "result_id": "trade-intent:%s" % run_id,
-                "bundle_id": bundle["bundle_id"],
-                "snapshot_id": bundle["snapshot_id"],
-                "decision_cutoff": bundle["decision_cutoff"],
-                "bundle_hash": bundle["bundle_sha256"],
-                "momentum_result_id": momentum["result_id"],
-                "debate_id": debate["debate_id"],
-                "source_packet_ids": [packet["packet_id"] for packet in debate["packets"]],
-                "status": "completed",
-                "items": output["items"],
-                "errors": [],
-            }
-            result["content_sha256"] = artifact_content_sha256(result)
-            return result
-
-        if not any(packet["items"] for packet in debate["packets"]):
-            intent = build({"items": []})
-            errors = validator.validate(intent)
-            if errors:
-                raise DailyPipelineError("空裁決驗證失敗：" + "；".join(errors))
-        else:
-            task = AgentTask(
-                "adjudicate",
-                "你是 $trade-adjudication 裁決子 Agent。先讀 %s 與 %s，再讀已驗證的 TradeDebateBundle %s。"
-                "對 Buy 與 Sell packets 的股票聯集逐檔裁決，不得漏掉或新增股票；每個來源 claim_id 必須剛好出現在"
-                " adopted_claim_ids 或 rejected_claim_ids 其中之一。buy／add／trim／exit／forced_exit 必須採納同方向 claim；"
-                "已持股不能裁決為 buy，未持股不能裁決為 add／hold／trim／exit／forced_exit；證據不足或衝突未解時用 no_trade。"
-                "evidence_ids 只能取自該股票在 packets 中的證據。%s"
-                % (
-                    self.root / "skills/trade-adjudication/SKILL.md",
-                    self.root / "skills/portfolio-decision/references/decision-contract.md",
-                    self._path("debate"), _SHARED_RULES,
-                ),
-                ADJUDICATION_SCHEMA,
-            )
-            intent = self.agent_step(task, build, validator.validate)
-        self.save_artifact("trade_intent", intent)
-        return intent
-
-    def _sizing(self, bundle: Mapping[str, object], intent: Mapping[str, object], run_id: str) -> Dict[str, object]:
-        validator = SizingPlanValidator(bundle, intent)
-
-        def build(output: Mapping[str, object]) -> Dict[str, object]:
-            plan: Dict[str, object] = {
-                "schema_version": "1.0",
-                "plan_id": "sizing:%s" % run_id,
-                "bundle_id": bundle["bundle_id"],
-                "snapshot_id": bundle["snapshot_id"],
-                "decision_cutoff": bundle["decision_cutoff"],
-                "bundle_hash": bundle["bundle_sha256"],
-                "trade_intent_result_id": intent["result_id"],
-                "trade_intent_sha256": intent["content_sha256"],
-                "cash_stance": output["cash_stance"],
-                "items": output["items"],
-                "errors": [],
-            }
-            plan["content_sha256"] = artifact_content_sha256(plan)
-            return plan
-
-        candidates = sizing_candidates(intent)
-        task = AgentTask(
-            "sizing",
-            "你是 $portfolio-risk-review 的配置前分級。先讀 %s（「配置前分級」一節），再讀裁決結果 %s 與買方角色摘要 %s。"
-            "對以下全部 buy／add 候選逐檔給 conviction（high／medium／low），不得增刪：%s。"
-            "再依 regime、市場廣度、交易狀態與事件風險給整體 cash_stance（aggressive／neutral／defensive）；"
-            "競賽要求現金低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
-            "個股 evidence_ids 必須屬於該股票；cash_stance 可引用摘要中任何已存在的證據。%s"
-            % (
-                self.root / "skills/portfolio-risk-review/SKILL.md",
-                self._path("trade_intent"), self._path("buy_brief"),
-                "、".join(candidates) if candidates else "（無候選，items 請輸出空陣列）",
-                _SHARED_RULES,
-            ),
-            SIZING_SCHEMA,
-        )
-        plan = self.agent_step(task, build, validator.validate)
-        self.save_artifact("sizing_plan", plan)
-        return plan
-
+    # ------------------------------------------------------------------ review
     def _review(
-        self, bundle: Mapping[str, object], policy: Mapping[str, object], intent: Mapping[str, object],
+        self, bundle: Mapping[str, object], policy: Mapping[str, object],
         proposal: Mapping[str, object], scenario: Mapping[str, object], guard: Mapping[str, object], run_id: str,
     ) -> Dict[str, object]:
         validator = RiskReviewValidator(bundle, policy)
