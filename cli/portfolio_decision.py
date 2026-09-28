@@ -46,6 +46,8 @@ class PortfolioDecisionApplication:
                     trading_status_path=args.trading_status,
                     account_path=args.account_snapshot,
                     lookback_bars=args.lookback_bars,
+                    perception_bundle_path=args.perception_bundle,
+                    perception_result_path=args.perception,
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
@@ -241,6 +243,8 @@ class PortfolioDecisionApplication:
         )
         build_input.add_argument("--trading-status", type=Path, help="trading_status.py build-bundle 的輸出")
         build_input.add_argument("--account-snapshot", type=Path)
+        build_input.add_argument("--perception-bundle", type=Path)
+        build_input.add_argument("--perception", type=Path)
         build_input.add_argument("--lookback-bars", type=int, default=DEFAULT_LOOKBACK_BARS)
 
         commands.add_parser("validate-input", help="驗證共用 DecisionInputBundle")

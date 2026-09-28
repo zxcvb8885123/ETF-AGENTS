@@ -100,7 +100,7 @@ class DailyAccountRunnerTests(unittest.TestCase):
         snapshot = {
             "snapshot_id": "snapshot-1", "decision_cutoff": "2026-09-21T12:00:00+00:00",
             "usable": True, "latest_trade_date": "2026-09-21",
-            "latest_prices": [{"symbol": "2330.TW", "analysis_close_price": "100"}],
+            "latest_prices": [{"symbol": "2330.TW", "analysis_close_price": "100", "close_price": "100"}],
         }
         path = self.root / "snapshot.json"
         path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -115,14 +115,57 @@ class DailyAccountRunnerTests(unittest.TestCase):
         history = build_performance_summary(self.repository)["history"]
         self.assertEqual([row["trade_date"] for row in history], ["2026-09-18", "2026-09-21", "2026-09-22"])
 
-    def test_close_market_requires_published_market_and_omits_missing_symbols(self):
+    def test_same_snapshot_reuses_state_and_restores_output(self):
+        snapshot = {"snapshot_id": "same", "decision_cutoff": "2026-09-21T00:55:00+00:00",
+                    "usable": True, "latest_trade_date": "2026-09-18",
+                    "latest_prices": [{"symbol": "2330.TW", "close_price": "100"}]}
+        path, output = self.root / "snapshot.json", self.root / "account.json"
+        path.write_text(json.dumps(snapshot), encoding="utf-8")
+        self.runner().run(path, "prepare-first", output)
+        expected = output.read_bytes()
+        output.unlink()
+        repeated = self.runner().run(path, "prepare-second", output)
+        self.assertEqual(repeated["prepare"]["status"], "reused")
+        self.assertEqual(output.read_bytes(), expected)
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-first")
+
+    def test_prices_captured_after_observation_are_not_used(self):
+        create_prices(self.database, [
+            ("2317.TW", "2026-09-21", "120", 1000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+        ])
+        market = OfficialCloseMarket(self.database)
+        self.assertIsNone(market.build("2026-09-21", ["2317.TW"], "2026-09-21T08:00:00+00:00"))
+        self.assertIsNotNone(market.build("2026-09-21", ["2317.TW"], "2026-09-21T12:00:00+00:00"))
+
+    def test_latest_available_price_version_is_independent_of_insert_order(self):
+        create_prices(self.database, [
+            ("2317.TW", "2026-09-21", "121", 1000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+            ("2317.TW", "2026-09-21", "120", 1000, "TWSE_STOCK_DAY_ALL", "2026-09-21T11:00:00+00:00"),
+        ])
+        market = OfficialCloseMarket(self.database)
+        self.assertEqual(market.quotes("2026-09-21")["2317.TW"]["close_price"], "121")
+        self.assertEqual(market.quotes("2026-09-21", "2026-09-21T11:30:00+00:00")["2317.TW"]["close_price"], "120")
+
+    def test_invalid_next_snapshot_does_not_settle_pending_decision(self):
+        snapshot, decisions = prepare_and_decide(self.service, self.root)
+        create_prices(self.database, [
+            ("2317.TW", "2026-09-21", "120", 1000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+        ])
+        snapshot.update(decision_cutoff="2026-09-22T00:55:00+00:00", latest_prices=[])
+        path = self.root / "invalid.json"
+        path.write_text(json.dumps(snapshot), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.runner(decisions).run(path, "bad-prepare", self.root / "output.json")
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-with-orders")
+
+    def test_close_market_waits_for_all_required_symbols(self):
         market = OfficialCloseMarket(self.database)
         self.assertIsNone(market.build("2026-09-21", ["2330.TW"]))
         create_prices(self.database, [
             ("2317.TW", "2026-09-21", "120", 1000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
         ])
-        execution, close = market.build("2026-09-21", ["2330.TW"])
-        self.assertNotIn("2330.TW", close["quotes"])
+        self.assertIsNone(market.build("2026-09-21", ["2330.TW"]))
+        execution, close = market.build("2026-09-21", ["2317.TW"])
         self.assertEqual(execution["execution_at"], "2026-09-21T13:30:00+08:00")
 
 

@@ -169,7 +169,7 @@ class TeamChainDownstreamTests(unittest.TestCase):
             }), encoding="utf-8")
             close = root / "close.json"
             close.write_text(json.dumps({
-                "price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00",
+                "trade_date": "2026-09-20", "price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00",
                 "quotes": {symbol: {"close_price": price} for symbol, price in quotes.items()},
             }), encoding="utf-8")
             applied = service.apply_decision(root / "decisions", "team-decision", execution, close, "2026-09-22", "close-team")

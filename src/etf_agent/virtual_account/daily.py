@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
+from etf_agent.core import canonical_sha256
 from etf_agent.decision.finalization import DecisionRepository
 
 from .service import VirtualAccountError, VirtualAccountRepository, VirtualAccountService, parse_time
@@ -93,7 +94,7 @@ class OfficialCloseMarket:
     def close_at(trade_date: str) -> datetime:
         return datetime.fromisoformat("%sT%s+08:00" % (trade_date, CLOSE_TIME))
 
-    def quotes(self, trade_date: str) -> Dict[str, Mapping[str, object]]:
+    def quotes(self, trade_date: str, observed_at: Optional[str] = None) -> Dict[str, Mapping[str, object]]:
         result: Dict[str, Mapping[str, object]] = {}
         with self._connect() as connection:
             for market, sources in OFFICIAL_SOURCES.items():
@@ -107,15 +108,26 @@ class OfficialCloseMarket:
                         """,
                         (trade_date, source),
                     ):
+                        if observed_at is not None and parse_time(row["fetched_at"], "fetched_at") > parse_time(observed_at, "observed_at"):
+                            continue
                         if _market(row["symbol"]) == market:
-                            result[str(row["symbol"]).upper()] = dict(row)
+                            symbol = str(row["symbol"]).upper()
+                            previous = result.get(symbol)
+                            if previous and previous["source"] == source:
+                                prior_time = parse_time(previous["fetched_at"], "fetched_at")
+                                row_time = parse_time(row["fetched_at"], "fetched_at")
+                                if prior_time > row_time:
+                                    continue
+                                if prior_time == row_time and dict(previous) != dict(row):
+                                    raise VirtualAccountError("同一股票來源及抓取時間存在衝突行情：" + symbol)
+                            result[symbol] = dict(row)
         return result
 
-    def build(self, trade_date: str, required_symbols: Sequence[str]) -> Optional[Tuple[Dict[str, object], Dict[str, object]]]:
+    def build(self, trade_date: str, required_symbols: Sequence[str], observed_at: Optional[str] = None) -> Optional[Tuple[Dict[str, object], Dict[str, object]]]:
         """回傳 (ExecutionMarketData, CloseMarketData)；所需市場尚未公布時回傳 None。"""
-        rows = self.quotes(trade_date)
+        rows = self.quotes(trade_date, observed_at)
         published = {_market(symbol) for symbol in rows}
-        if not rows or not {_market(symbol) for symbol in required_symbols} <= published:
+        if not rows or not {_market(symbol) for symbol in required_symbols} <= published or set(required_symbols) - set(rows):
             return None
         execution_at = self.close_at(trade_date).isoformat()
         execution_quotes: Dict[str, object] = {}
@@ -148,7 +160,7 @@ class DailyAccountRunner:
         self.decision_repository = Path(decision_repository)
         self.settlement_days = settlement_days
 
-    def settle(self) -> Dict[str, object]:
+    def settle(self, observed_at: Optional[str] = None) -> Dict[str, object]:
         """若最新狀態是已有 Decision run 的 prepare，則以執行日收盤價結算。"""
         current = self.repository.latest()
         state = current["state"]
@@ -158,13 +170,18 @@ class DailyAccountRunner:
         decision_run_id = find_decision_run(self.decision_repository, provenance.get("account_snapshot"))
         if decision_run_id is None:
             return {"status": "no_decision", "run_id": current["run_id"]}
-        trade_date = self.market.execution_date(state["as_of"])
+        decision_path = self.decision_repository / decision_run_id
+        bundle = json.loads((decision_path / "decision_input.json").read_text(encoding="utf-8"))
+        target = (bundle.get("trading_status_bundle") or {}).get("target_session", {}).get("end")
+        # 新決策必須在驗證過的目標時段成交，缺行情不得順延到下一個有資料的日子。
+        trade_date = (parse_time(target, "target_session_end").astimezone(TAIPEI).date().isoformat()
+                      if target else self.market.execution_date(state["as_of"]))
         if trade_date is None:
             return {"status": "waiting_for_close_data", "run_id": current["run_id"], "decision_run_id": decision_run_id}
         decision = json.loads((self.decision_repository / decision_run_id / "decision.json").read_text(encoding="utf-8"))
         symbols = sorted({str(row["symbol"]).upper() for row in state.get("positions", [])}
                          | {str(row.get("symbol", "")).upper() for row in decision.get("orders", [])})
-        markets = self.market.build(trade_date, symbols)
+        markets = self.market.build(trade_date, symbols, observed_at)
         if markets is None:
             return {"status": "waiting_for_close_data", "run_id": current["run_id"], "decision_run_id": decision_run_id, "trade_date": trade_date}
         missing = [row["symbol"] for row in state.get("positions", []) if str(row["symbol"]).upper() not in markets[1]["quotes"]]
@@ -183,10 +200,20 @@ class DailyAccountRunner:
         return {"status": "settled", "run_id": result["run_id"], "decision_run_id": decision_run_id,
                 "trade_date": trade_date, "settlement_date": settlement, "nav": result["state"]["nav"],
                 "fills": len(result["transition"]["execution"]["fills"]),
-                "unfilled": len(result["transition"]["execution"]["unfilled_orders"])}
+                "unfilled": len(result["transition"]["execution"]["unfilled_orders"]),
+                "settlement_calendar_basis": "weekday_approximation"}
 
     def run(self, snapshot_path: Path, prepare_run_id: str, account_output: Path) -> Dict[str, object]:
-        settled = self.settle()
+        snapshot = self.service.read_snapshot(snapshot_path)
+        current = self.repository.latest()
+        provenance = current["state"].get("provenance", {})
+        if provenance.get("type") == "prepared" and provenance.get("snapshot_sha256") == canonical_sha256(snapshot):
+            account_output.parent.mkdir(parents=True, exist_ok=True)
+            account_output.write_text(json.dumps(provenance["account_snapshot"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return {"settle": {"status": "already_prepared"}, "prepare": {"status": "reused", "run_id": current["run_id"], "account_snapshot": str(account_output)}}
+        if parse_time(snapshot.get("decision_cutoff"), "decision_cutoff") <= parse_time(current["state"]["as_of"], "state.as_of"):
+            raise VirtualAccountError("新 Snapshot cutoff 必須晚於目前帳戶狀態；同一快照請直接重用")
+        settled = self.settle(snapshot["decision_cutoff"])
         if settled["status"] == "waiting_for_close_data":
             # 已有待成交決策時不得建立新的 prepare，否則會覆蓋尚未結算的決策。
             return {"settle": settled, "prepare": {"status": "blocked_by_pending_decision"}}

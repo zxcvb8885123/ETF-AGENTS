@@ -80,6 +80,8 @@ class PortfolioDecisionApplicationService:
         trading_status_path: Optional[Path] = None,
         account_path: Optional[Path] = None,
         lookback_bars: int = DEFAULT_LOOKBACK_BARS,
+        perception_bundle_path: Optional[Path] = None,
+        perception_result_path: Optional[Path] = None,
     ) -> Dict[str, object]:
         """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。"""
         if lookback_bars < 1:
@@ -100,11 +102,16 @@ class PortfolioDecisionApplicationService:
                     connection, latest_date, cutoff, lookback_bars - 1
                 )
             ]
+        if (perception_bundle_path is None) != (perception_result_path is None):
+            raise DecisionToolError("情緒資料包與研究結果必須成對提供")
         builder = DecisionInputBuilder(
             snapshot,
             cls.read_json(rules_path, " DecisionRules"),
             history,
             research_results=[cls.read_json(path, " ResearchResult") for path in research_paths],
+            perception_inputs=([{"bundle": cls.read_json(perception_bundle_path, " PerceptionDataBundle"),
+                                 "result": cls.read_json(perception_result_path, " MarketPerceptionResult")}]
+                               if perception_bundle_path is not None else []),
             trading_status=(
                 cls.read_json(trading_status_path, " 交易狀態包")
                 if trading_status_path is not None

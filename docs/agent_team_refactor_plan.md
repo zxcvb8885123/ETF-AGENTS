@@ -134,3 +134,7 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 - 多頭 strength：strong 18／moderate 73／weak 52／none 7（232 claims）；空頭：strong 12／moderate 83／weak 55（236 claims）。交易 Agent：buy 36（high 10、medium 18、low 8）、no_trade 114；風險 Agent 現金姿態 neutral 並引用 regime、看法分布與事件證據。
 - 配置：36 檔 buy 依等級排序截至 30 檔上限（MAX_POSITIONS 6 檔），實際 29 檔、現金 13.7%；Guard 只有 TRADABILITY_COVERAGE 與相關 SCENARIOS 未過，決策 rejected，符合交易狀態未核准時的 fail-closed。
 - 報告工作流因 DecisionResult=rejected 只產出失敗報告與研究報告；失敗報告目前未列出 Guard 拒絕原因，列為後續改進。目標時段仍以下一個平日推算（此次為 9/28 休市日），交易日曆尚未接入。
+
+## 2026-09-28 情緒／共識接入補充
+
+情緒分析師已由固定 unavailable 改為已驗證 PerceptionDataBundle／MarketPerceptionResult 的確定性 adapter；每日流程可先透過既有 runner 全量標註，再由 Python 聚合。下游重建核對 adapter 全文，共識只作次級證據。無來源仍 unavailable，真實 Provider 尚待授權確認；見[操作與限制](daily_perception_account_integration.md)。

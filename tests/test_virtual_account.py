@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from decimal import Decimal
 
 from etf_agent.decision.contracts import artifact_content_sha256, canonical_sha256
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
@@ -74,6 +75,30 @@ class VirtualAccountTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_raw_price_is_required_and_adjusted_price_is_not_used(self):
+        snapshot = {"latest_prices": [{"symbol": "2330.TW", "close_price": "100", "analysis_close_price": "70"}]}
+        self.assertEqual(self.service._snapshot_prices(snapshot), {"2330.TW": "100"})
+        del snapshot["latest_prices"][0]["close_price"]
+        with self.assertRaises(ValueError):
+            self.service._snapshot_prices(snapshot)
+
+    def test_morning_prepare_releases_cash_due_today(self):
+        self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        previous = self.repository.latest()["state"]
+        state = self.service._state(
+            account_id="cup-test", sequence=1, parent_state_id=previous["state_id"],
+            as_of="2026-09-21T17:00:00+08:00", settled_cash=Decimal("999999900"),
+            unsettled_cash=Decimal("100"), pending_settlements=[{"settlement_date": "2026-09-22", "amount": "100"}],
+            positions=[], nav=Decimal("1000000000"), provenance={"type": "close"})
+        self.repository.save("pending", {"state": state}, state)
+        path = self.root / "morning.json"
+        path.write_text(json.dumps({"snapshot_id": "morning", "usable": True,
+            "decision_cutoff": "2026-09-22T08:55:00+08:00", "latest_trade_date": "2026-09-21",
+            "latest_prices": [{"symbol": "2330.TW", "close_price": "100"}]}), encoding="utf-8")
+        result = self.service.prepare_day(path, "morning")
+        self.assertEqual(Decimal(result["state"]["settled_cash"]), Decimal("1000000000"))
+        self.assertEqual(result["state"]["pending_settlements"], [])
+
     def test_genesis_uses_ten_billion_once_and_is_idempotent(self):
         first = self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
         self.assertFalse(first["reused"])
@@ -89,7 +114,7 @@ class VirtualAccountTests(unittest.TestCase):
         snapshot = {
             "snapshot_id": "snapshot-20260921", "decision_cutoff": "2026-09-21T00:55:00+00:00",
             "usable": True, "latest_trade_date": "2026-09-18",
-            "latest_prices": [{"symbol": "2330.TW", "analysis_close_price": "100"}],
+            "latest_prices": [{"symbol": "2330.TW", "analysis_close_price": "100", "close_price": "100"}],
         }
         path = self.root / "snapshot.json"
         path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -141,7 +166,7 @@ class VirtualAccountTests(unittest.TestCase):
         execution_path = self.root / "execution.json"
         execution_path.write_text(json.dumps({"price_basis": "unadjusted", "available_at": "2026-09-20T01:30:00+00:00", "execution_at": "2026-09-20T01:31:00+00:00", "quotes": execution_quotes}), encoding="utf-8")
         close_path = self.root / "close.json"
-        close_path.write_text(json.dumps({"price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00", "quotes": close_quotes}), encoding="utf-8")
+        close_path.write_text(json.dumps({"trade_date": "2026-09-20", "price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00", "quotes": close_quotes}), encoding="utf-8")
         result = self.service.apply_decision(decision_root, "decision-1", execution_path, close_path, "2026-09-22", "close-day-1")
         self.assertTrue(result["transition"]["execution"]["fills"])
         self.assertEqual(result["state"]["sequence"], 2)

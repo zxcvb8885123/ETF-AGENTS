@@ -36,7 +36,13 @@ class SentimentResearchApplication:
         args = self.build_parser().parse_args(argv)
         try:
             service = MarketPerceptionApplicationService.from_path(args.bundle)
-            if args.command == "status":
+            if args.command == "build-result":
+                labels = service.read_json(args.labels, " SentimentLabelBundle").get("labels")
+                result = service.build_result(args.symbols, labels, args.run_id)
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                with args.output.open("x", encoding="utf-8") as stream:
+                    json.dump(result, stream, ensure_ascii=False, indent=2)
+            elif args.command == "status":
                 result = service.tools.status()
             elif args.command == "list-covered-symbols":
                 result = service.tools.list_covered_symbols()
@@ -93,6 +99,11 @@ class SentimentResearchApplication:
             default=self.root / "artifacts" / "perception_data_latest.json",
         )
         commands = parser.add_subparsers(dest="command", required=True)
+        build = commands.add_parser("build-result", help="全池聚合情緒與共識並驗證結果，拒絕覆寫")
+        build.add_argument("--symbols", nargs="+", required=True)
+        build.add_argument("--labels", type=Path, required=True)
+        build.add_argument("--run-id", required=True)
+        build.add_argument("--output", type=Path, required=True)
         commands.add_parser("status", help="檢查資料版本、cutoff、來源與覆蓋")
         commands.add_parser("list-covered-symbols", help="列出有情緒或共識資料的股票")
 

@@ -94,3 +94,7 @@ ResearchSnapshot → 事件研究 Agent → ResearchResult
 - 無資料是可測試、可交付的正常狀態。
 - 真實 Provider 接入前完成來源授權與歷史可得性記錄。
 - 前向與歷史評估顯示有穩定增益前，只能作研究資訊，不提高配置權限。
+
+## 2026-09-28 每日接入
+
+已加入全池 `build-result`、每日自動情緒標註、DecisionInputBundle 與 DailyReport 接線，以及情緒分析報告確定性重建。共識修正保留當期及前期證據，內容可得時間不得早於來源證據。S5 真實 Provider 仍需使用者可用資料來源及授權；詳見[每日接入與操作](daily_perception_account_integration.md)。

@@ -93,6 +93,8 @@ def prepared_account_run(account_id: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--perception-bundle", type=Path, help="已核准授權且同 cutoff 的情緒與共識資料包")
+    parser.add_argument("--perception", type=Path, help="與資料包成對的已驗證情緒與共識結果")
     parser.add_argument("--account-id", default="ai-cup-2026")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="週末或當日已完成仍執行")
@@ -103,6 +105,8 @@ def main() -> int:
     parser.add_argument("--model", help="子 Agent 使用的 Claude 模型；預設沿用 claude CLI 設定")
     parser.add_argument("--max-budget-usd", type=float, default=3.0, help="單次子 Agent 的估算用量上限（防失控；claude.ai 訂閱登入時不另計費）")
     args = parser.parse_args()
+    if args.perception is not None and args.perception_bundle is None:
+        parser.error("--perception 必須搭配 --perception-bundle")
 
     now = datetime.now(TAIPEI_TIMEZONE)
     runs_root = ROOT / "artifacts" / "daily_runs"
@@ -195,6 +199,7 @@ def main() -> int:
             ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
             decision_run_id,
+            perception_bundle_path=args.perception_bundle, perception_result_path=args.perception,
         )
         summary.update(
             {
@@ -209,6 +214,9 @@ def main() -> int:
         )
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
+        if args.perception_bundle is not None:
+            args.perception_bundle = run_dir / "perception_bundle.json"
+            args.perception = run_dir / "perception_result.json"
         research_path = result.research_result_path
         summary["research_status"] = json.loads(research_path.read_text(encoding="utf-8")).get("status")
 
@@ -225,7 +233,8 @@ def main() -> int:
                 "--virtual-account-run-id", account_run_id,
                 "--execution-mode", "official",
                 "--run-id", "report-%s" % stamp,
-            ],
+            ] + (["--perception-bundle", str(args.perception_bundle), "--perception", str(args.perception)]
+                 if args.perception_bundle is not None and args.perception is not None else []),
             cwd=ROOT, capture_output=True, text=True, check=False,
             env=dict(os.environ, PYTHONPATH=str(ROOT / "src")),
         )

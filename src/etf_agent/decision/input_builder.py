@@ -36,7 +36,9 @@ class DecisionInputBuilder:
         research_results: Sequence[Mapping[str, object]] = (),
         trading_status: Optional[Mapping[str, object]] = None,
         account_snapshot: Optional[Mapping[str, object]] = None,
+        perception_inputs: Sequence[Mapping[str, object]] = (),
     ):
+        self.perception_inputs = [dict(item) for item in perception_inputs]
         self.snapshot = dict(snapshot)
         self.rules = dict(rules)
         self.history_rows = list(history_rows)
@@ -63,7 +65,7 @@ class DecisionInputBuilder:
             "benchmarks": [],
             "price_series": self._price_series(),
             "research_results": self.research_results,
-            "perception_inputs": [],
+            "perception_inputs": self.perception_inputs,
         }
         if self.account_snapshot is not None:
             bundle["account_snapshot"] = self.account_snapshot

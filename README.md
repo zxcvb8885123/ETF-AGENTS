@@ -95,6 +95,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 - **資料層**：SQLite 保存行情、原始回應、抓取時間與執行紀錄；TWSE／TPEx 最新行情與官方歷史行情增量 CLI（Yahoo 日線為備援）；月營收、重大訊息與官方財報彙總（24 個端點，2026 Q2 實測 298/300）；150 檔交易池逐檔驗證與 Snapshot fail-closed 閘門；產業分類 150／150。
 - **交易狀態**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射與官方開休市交易日曆。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
 - **研究層**：事件研究 Agent（Fact／Bull／Bear／Adjudicator、雙重 validator）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
+- **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實資料商與正式交割日曆尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
 - **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（P0～P6）只保留供封存 run 重建與 fixture 測試。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
 - **報告**：RPT0～RPT4 報告工作流、DailyReport／FailureReport、D-Plan v4.0 候選匯出與本地結構／引用鏈檢查、唯讀績效儀表板。

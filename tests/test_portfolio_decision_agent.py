@@ -75,13 +75,13 @@ def decision_bundle():
             {
                 "symbol": "2330.TW",
                 "trade_date": "2026-09-19",
-                "analysis_close_price": series_2330[-1]["close"],
+                "analysis_close_price": series_2330[-1]["close"], "close_price": series_2330[-1]["close"],
                 "source_evidence_id": "price-2330",
             },
             {
                 "symbol": "2317.TW",
                 "trade_date": "2026-09-19",
-                "analysis_close_price": series_2317[-1]["close"],
+                "analysis_close_price": series_2317[-1]["close"], "close_price": series_2317[-1]["close"],
                 "source_evidence_id": "price-2317",
             },
         ],

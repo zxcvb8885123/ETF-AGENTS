@@ -81,3 +81,7 @@ Python、契約、CLI 或 Skill 實作後依 AGENTS.md 執行全專案 unittest�
 ## 使用者可見的結果
 
 完成 VA1～VA3 fixture 工具鏈後，可用 CLI 建立 10 億帳戶、把帳戶快照接入完整 Decision run、模擬成交並查看封存後的收盤狀態。這仍是 fixture 驗收；真實 150 檔行情、事件研究、交易狀態、規則與風控輸入通過前，不會自動形成正式每日買賣報告。
+
+## 2026-09-28 每日更新補強
+
+每日 runner 已串入 `start.sh daily`；本次補上未還原價格估值、目標成交日固定、全部訂單行情覆蓋、觀測 cutoff 過濾、當日交割款釋放與相同 Snapshot 重跑冪等。完整說明與剩餘限制見[每日接入](daily_perception_account_integration.md)。VA5 多日真實驗收未完成；自動交割日仍是平日近似，不含正式假日及特殊交割日曆。

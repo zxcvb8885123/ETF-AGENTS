@@ -8,12 +8,12 @@ import os
 import re
 import shutil
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
-from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time
+from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time, parse_decimal
 from etf_agent.decision.contracts import DecisionInputValidator
 from etf_agent.decision.finalization import DecisionRepository, DecisionResultValidator
 from etf_agent.ledger import AccountLedger, ExecutionSimulator
@@ -186,6 +186,23 @@ class VirtualAccountService:
     def __init__(self, repository: VirtualAccountRepository):
         self.repository = repository
 
+    @staticmethod
+    def read_snapshot(path: Path) -> Mapping[str, object]:
+        snapshot = _read(path, "ResearchSnapshot")
+        if snapshot.get("usable") is not True:
+            raise VirtualAccountError("ResearchSnapshot 未通過品質閘門")
+        cutoff = parse_time(snapshot.get("decision_cutoff"), "decision_cutoff")
+        if not isinstance(snapshot.get("snapshot_id"), str) or not snapshot["snapshot_id"].strip():
+            raise VirtualAccountError("ResearchSnapshot 缺少 snapshot_id")
+        try:
+            trade_day = date.fromisoformat(snapshot.get("latest_trade_date", ""))
+        except (TypeError, ValueError) as error:
+            raise VirtualAccountError("Snapshot.latest_trade_date 格式錯誤") from error
+        if trade_day > cutoff.astimezone(timezone(timedelta(hours=8))).date():
+            raise VirtualAccountError("Snapshot 行情日晚於 cutoff")
+        VirtualAccountService._snapshot_prices(snapshot)
+        return snapshot
+
     def initialize(self, rules_path: Path, account_id: str, started_at: str) -> Mapping[str, object]:
         if account_id != self.repository.root.name:
             raise VirtualAccountError("account_id 必須與 Repository 帳戶路徑一致")
@@ -218,7 +235,7 @@ class VirtualAccountService:
 
     def prepare_day(self, snapshot_path: Path, run_id: str, corporate_actions: Optional[List[Mapping[str, object]]] = None) -> Mapping[str, object]:
         current = self.repository.latest()
-        snapshot = _read(snapshot_path, "ResearchSnapshot")
+        snapshot = self.read_snapshot(snapshot_path)
         if snapshot.get("usable") is not True:
             raise VirtualAccountError("ResearchSnapshot 未通過品質閘門")
         if not isinstance(snapshot.get("snapshot_id"), str) or not snapshot["snapshot_id"].strip():
@@ -237,7 +254,8 @@ class VirtualAccountService:
             raise VirtualAccountError("Snapshot.latest_trade_date 格式錯誤") from error
         ledger = self._ledger(state)
         before_settlements = list(ledger.pending_settlements)
-        ledger.settle(trade_date)
+        # 開盤前快照也應釋放當天已到期的交割款，不以昨日行情日推遲交割。
+        ledger.settle(cutoff_time.astimezone(timezone(timedelta(hours=8))).date().isoformat())
         actions = list(corporate_actions or [])
         for action in actions:
             if not isinstance(action, Mapping) or parse_time(action.get("available_at"), "corporate_action.available_at") > cutoff_time:
@@ -308,7 +326,15 @@ class VirtualAccountService:
             raise VirtualAccountError("settlement_date／trade_date 格式錯誤") from error
         if execution_date < trade_date:
             raise VirtualAccountError("settlement_date 不得早於交易日")
+        execution_day = parse_time(market["execution_at"], "execution_at").astimezone(timezone(timedelta(hours=8))).date()
+        if execution_date < execution_day:
+            raise VirtualAccountError("settlement_date 不得早於實際成交日")
+        if market.get("trade_date", execution_day.isoformat()) != execution_day.isoformat():
+            raise VirtualAccountError("成交行情 trade_date 與 execution_at 不一致")
+        if close_market.get("trade_date") != execution_day.isoformat():
+            raise VirtualAccountError("日終行情必須與實際成交日一致")
         ledger = self._ledger(state)
+        ledger.settle(execution_day.isoformat())
         rules = bundle["rules"]
         assumptions = {
             "lot_size": rules["lot_size"], "commission_rate": rules["commission_rate"],
@@ -318,6 +344,7 @@ class VirtualAccountService:
         simulator = ExecutionSimulator(assumptions)
         execution = simulator.run(decision, market, ledger.buying_power(bool(rules["reuse_sell_proceeds"])), market["execution_at"])
         ledger.apply_fills(execution, settlement_date, bool(rules["reuse_sell_proceeds"]))
+        ledger.settle(execution_day.isoformat())
         close_quotes = close_market.get("quotes")
         if not isinstance(close_quotes, Mapping):
             raise VirtualAccountError("CloseMarketData.quotes 必須是物件")
@@ -352,9 +379,12 @@ class VirtualAccountService:
             if not isinstance(row, Mapping):
                 raise VirtualAccountError("Snapshot latest_prices 格式錯誤")
             symbol = str(row.get("symbol", "")).upper()
-            price = row.get("analysis_close_price")
+            price = row.get("close_price")
             if not symbol or price is None or symbol in prices:
                 raise VirtualAccountError("Snapshot 股票價格缺漏或重複")
+            parsed = parse_decimal(price, "close_price", error=VirtualAccountError)
+            if parsed <= 0:
+                raise VirtualAccountError("未還原收盤價必須為正數")
             prices[symbol] = price
         return prices
 

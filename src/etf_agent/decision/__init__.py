@@ -21,6 +21,7 @@ from .analysts import (
     high_materiality_events,
     seal_report,
     sentiment_unavailable_report,
+    sentiment_report,
 )
 from .stance import (
     STANCE_ROLES,
@@ -95,6 +96,7 @@ __all__ = [
     "high_materiality_events",
     "seal_report",
     "sentiment_unavailable_report",
+    "sentiment_report",
     "STANCE_ROLES",
     "ResearchDebateBundleValidator",
     "StancePacketValidator",

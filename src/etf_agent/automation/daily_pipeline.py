@@ -43,7 +43,7 @@ from etf_agent.decision import (
     seal_report,
     seal_stance_packet,
     seal_trade_decision,
-    sentiment_unavailable_report,
+    sentiment_report,
     trade_decision_envelope,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
@@ -275,12 +275,15 @@ class DailyDecisionPipeline:
         policy_template_path: Path,
         sector_path: Path,
         decision_run_id: str,
+        perception_bundle_path: Optional[Path] = None,
+        perception_result_path: Optional[Path] = None,
     ) -> PipelineResult:
         result = PipelineResult(status="failed")
         try:
             self._run(
                 result, snapshot_path, account_snapshot_path, trading_status_path,
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
+                perception_bundle_path, perception_result_path,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -292,17 +295,26 @@ class DailyDecisionPipeline:
         self, result: PipelineResult, snapshot_path: Path, account_snapshot_path: Path,
         trading_status_path: Path, rules_path: Path, database_path: Path,
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
+        perception_bundle_path: Optional[Path], perception_result_path: Optional[Path],
     ) -> None:
         service = PortfolioDecisionApplicationService
+        if perception_bundle_path is not None and perception_result_path is None:
+            from .perception_stage import build_daily_perception
+            perception_result_path = build_daily_perception(self, snapshot_path, perception_bundle_path)
         self.log("[decision 1] 建立並驗證 DecisionInputBundle")
         # 重大事件研究在分析團隊之後才產生，放在 team_inputs，不回寫已封存的輸入包。
         built = service.build_input_file(
             snapshot_path, database_path, rules_path, self._path("decision_input"),
             trading_status_path=trading_status_path, account_path=account_snapshot_path,
+            perception_bundle_path=perception_bundle_path, perception_result_path=perception_result_path,
         )
         if not built["valid"]:
             raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(built["errors"]))
         bundle = dict(service.read_json(self._path("decision_input"), " DecisionInputBundle"))
+        if bundle.get("perception_inputs"):
+            pair = bundle["perception_inputs"][0]
+            self.save_artifact("perception_bundle", pair["bundle"])
+            self.save_artifact("perception_result", pair["result"])
         decision = service(bundle)
 
         self.log("[decision 2] 計算動能")
@@ -441,10 +453,10 @@ class DailyDecisionPipeline:
                 raise DailyPipelineError("%s 分析報告合併後驗證失敗：%s" % (analyst, "；".join(errors[:10])))
             reports[analyst] = report
             self.save_artifact("analyst_%s" % analyst, report)
-        sentiment = sentiment_unavailable_report(bundle)
+        sentiment = sentiment_report(bundle)
         errors = AnalystReportValidator(bundle, "sentiment").validate(sentiment)
         if errors:
-            raise DailyPipelineError("情緒 unavailable 報告驗證失敗：" + "；".join(errors))
+            raise DailyPipelineError("情緒與共識報告驗證失敗：" + "；".join(errors))
         reports["sentiment"] = sentiment
         self.save_artifact("analyst_sentiment", sentiment)
         return reports
