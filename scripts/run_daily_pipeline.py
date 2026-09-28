@@ -62,7 +62,9 @@ def latest_resumable_run(runs_root: Path, run_id: str):
         summary_path = run_dir / "pipeline.json"
         if not run_dir.is_dir() or not summary_path.exists() or not any(run_dir.glob("*_raw_*.json")):
             continue
-        if json.loads(summary_path.read_text(encoding="utf-8")).get("status") == "completed":
+        previous = json.loads(summary_path.read_text(encoding="utf-8"))
+        # 決策被拒的 run 可在規則修正後續跑；被拒封存未移走時重新封存會衝突而停止。
+        if previous.get("status") == "completed" and previous.get("decision_status") != "rejected":
             continue
         candidates.append((summary_path.stat().st_mtime, run_dir))
     return max(candidates)[1] if candidates else None

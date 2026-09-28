@@ -142,6 +142,43 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         from etf_agent.decision import DecisionInputValidator
         self.assertTrue(any("沒有必備 ETF 基準" in error for error in DecisionInputValidator(bundle).validate()))
 
+    def test_stress_cash_above_ceiling_is_warning_but_base_is_hard_rule(self):
+        bundle, _, _, _ = valid_inputs()
+        bundle["rules"]["required_benchmark_ids"] = []
+        bundle["rules"]["minimum_active_share"] = "0"
+        bundle["benchmarks"] = []
+        bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        settings = policy()
+        settings["minimum_active_share"] = "0"
+        settings["content_sha256"] = decision_policy_sha256(settings)
+        momentum = MomentumEngine(bundle).run()
+        intent = trade_intent_result(bundle, momentum, debate_bundle(bundle, momentum))
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+
+        def with_cash(name, cash):
+            changed = json.loads(json.dumps(scenario))
+            item = next(row for row in changed["scenarios"] if row["name"] == name)
+            item["cash"] = cash
+            item["nav"] = str(int(cash) + sum(int(row["assumed_value"]) for row in item.get("positions", [])))
+            return changed
+
+        # 全現金建倉部分成交：壓力情境現金超過上限只是警告。
+        stressed = with_cash("liquidity_stress", "100000000")
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, stressed)
+        check = next(item for item in guard["checks"] if item["rule_id"] == "SCENARIOS")
+        stress = next(item for item in check["details"] if item["name"] == "liquidity_stress")
+        self.assertFalse(stress["cash_weight_ok"])
+        self.assertTrue(stress["passed"])
+        self.assertTrue(check["passed"])
+
+        # base 情境代表目標配置，現金超過上限仍 fail-closed。
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, with_cash("base", "100000000"))
+        check = next(item for item in guard["checks"] if item["rule_id"] == "SCENARIOS")
+        self.assertFalse(check["passed"])
+        self.assertFalse(guard["passed"])
+
     def test_policy_proposal_scenario_guard_and_final_decision(self):
         bundle, momentum, debate, intent = valid_inputs()
         settings = policy()

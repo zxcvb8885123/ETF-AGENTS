@@ -558,7 +558,8 @@ class DailyReportMarkdownRenderer:
                             "- 持倉 `%s`：目標權重 `%s`，股數 `%s`"
                             % (
                                 self._text(position.get("symbol")),
-                                self._text(position.get("target_weight")),
+                                # DecisionResult 的 portfolio.positions 以 weight 保存目標權重。
+                                self._text(position.get("target_weight", position.get("weight"))),
                                 self._text(position.get("shares")),
                             )
                         )

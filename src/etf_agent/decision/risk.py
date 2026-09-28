@@ -354,11 +354,16 @@ class CompetitionGuardV2:
                     "minimum": _rate(minimum_active),
                     "passed": active >= minimum_active,
                 })
+            cash_weight_ok = nav > 0 and cash / nav < cash_ceiling
+            # 現金上限是目標配置的硬性規則（CASH_WEIGHT 與 base 情境）；價格下跌或部分成交的
+            # 壓力情境下現金比例偏高是執行風險，只保留 cash_weight_ok=false 作為警告，不否決提案。
+            # 否則從全現金建倉的第一天，成交率 50% 的情境必然使現金超過上限。
+            cash_weight_required = scenario["name"] == "base"
             scenario_checks.append({
                 "name": scenario["name"],
                 "non_negative_cash": cash >= 0,
                 "positive_nav": nav > 0,
-                "cash_weight_ok": nav > 0 and cash / nav < cash_ceiling,
+                "cash_weight_ok": cash_weight_ok,
                 "buying_power_ok": decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0,
                 "position_count_ok": minimum <= position_count <= maximum,
                 "stock_weight_ok": not stock_violations,
@@ -368,7 +373,7 @@ class CompetitionGuardV2:
                     for symbol in scenario_weights
                 ),
                 "active_share_results": active_results,
-                "passed": cash >= 0 and nav > 0 and cash / nav < cash_ceiling
+                "passed": cash >= 0 and nav > 0 and (cash_weight_ok or not cash_weight_required)
                 and decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0
                 and minimum <= position_count <= maximum
                 and not stock_violations

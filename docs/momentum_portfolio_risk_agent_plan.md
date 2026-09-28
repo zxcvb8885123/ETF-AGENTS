@@ -165,7 +165,7 @@ P0～P2 的 Buy 與 Sell 由主控分別建立不含 peer packet 的 role input 
 2. **P1 動能與市場狀態（已完成）**：完成無未來資料的 MomentumEngine、時間隔離、缺值政策及市場狀態 fixture。
 3. **P2 獨立買賣裁決（已完成）**：建立 Momentum、Buy、Sell、Adjudicator Skills 與獨立依賴驗證；不產生權重。
 4. **P3 配置與訂單（已完成 MVP）**：完成目標配置、整張（1,000 股）、費稅、現金、換手及受限重算的確定性工具。
-5. **P4 情境與風控（已完成 MVP）**：建立 Risk Skill、價格／流動性壓力情境、選配基準 Active Share、硬性規則及三次修正上限。
+5. **P4 情境與風控（已完成 MVP）**：建立 Risk Skill、價格／流動性壓力情境、選配基準 Active Share、硬性規則及三次修正上限。2026-09-28 起，現金上限只在頂層 `CASH_WEIGHT` 與 `base` 情境為硬性規則；`price_decline`／`liquidity_stress` 情境現金超標只記 `cash_weight_ok=false` 作警告（全現金建倉時成交率 50% 必然超標），現金不為負、買入能力、持股數、個股／產業權重與可交易性仍為硬性檢查。
 6. **P5 主控與保存（已完成 MVP）**：擴充 `portfolio-decision` Skill、CLI、DecisionRepository、內容雜湊及完整重建 validator。
 7. **P6 測試與稽核（fixture 驗收已完成）**：涵蓋手算費稅／現金、整張部分成交、賣單未成交而買單成交的資金缺口、規則與基準缺漏、NAV 對帳、完整修正鏈及磁碟竄改／路徑越界；正式 Provider 驗收另行處理。
 8. **P7 回測交接**：固定資料、策略、Agent、工具及規則版本，交給[回測 Agent](backtest_agent_plan.md)與[回測方法規格](backtest_plan_v1.md)驗證。

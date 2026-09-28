@@ -117,6 +117,12 @@ class AutomationReportingTests(unittest.TestCase):
             self.assertIn("不會送出主辦平台", markdown)
             self.assertIn("## 決策時帳戶快照", markdown)
             self.assertIn("模板尚未驗證", markdown)
+            positions = report["decision"]["portfolio"]["positions"]
+            self.assertTrue(positions)
+            for position in positions:
+                self.assertIn(
+                    "- 持倉 `%s`：目標權重 `%s`" % (position["symbol"], position["weight"]), markdown
+                )
             self.assertEqual(PipelineRepository(output).verify("pipeline-1"), run_dir)
 
             service = AutomationReportingApplicationService.from_paths(
