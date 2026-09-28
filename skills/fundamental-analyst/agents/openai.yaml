@@ -1,0 +1,4 @@
+interface:
+  display_name: "基本面分析師"
+  short_description: "解讀程式計算的財務比率與月營收，逐檔給出基本面看法"
+  default_prompt: "使用 $fundamental-analyst 解讀本批股票已計算的財務指標與月營收，逐檔輸出 AnalystReport。"

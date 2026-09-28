@@ -30,9 +30,9 @@ python3 -m venv .venv
 | `./start.sh official` | 只抓官方交易池；名單空白時停止 |
 | `./start.sh all` | 開發模式：抓 TWSE 最新行情端點的全部可解析證券 |
 | `./start.sh check` | 只建置、檢查與執行測試 |
-| `./start.sh daily` | 一鍵驗證來源、更新行情／事件並建立 `artifacts/research_snapshot_latest.json` |
+| `./start.sh daily` | 一鍵驗證來源、更新行情／事件／最近到期季度財報（`collect_financial_statements.py --latest-due`，覆蓋不完整不阻擋）並建立 `artifacts/research_snapshot_latest.json` |
 | `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
-| `.venv/bin/python scripts/run_daily_pipeline.py` | 每日一鍵：`./start.sh daily` → 決策子 Agent（`claude -p`，結構化輸出並由 Validator 驗證）→ 封存 Decision run → DailyReport → macOS 通知；結果在 `artifacts/daily_runs/<run_id>/pipeline.json` 與 `artifacts/reports/latest.md`。`--skip-data` 沿用既有資料，`--model`／`--max-budget-usd` 控制 Agent；排程樣板見 `scripts/launchd/` |
+| `.venv/bin/python scripts/run_daily_pipeline.py` | 每日一鍵：`./start.sh daily` → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20 次）→ 封存 Decision run（含 `team_inputs`） → DailyReport → macOS 通知；結果在 `artifacts/daily_runs/<run_id>/pipeline.json` 與 `artifacts/reports/latest.md`。`--skip-data` 沿用既有資料，`--resume` 沿用同一 run 已驗證的 Agent 輸出續跑（例如撞到用量上限後），`--model` 指定模型、`--max-budget-usd` 為單次 Agent 估算用量上限（防失控；claude.ai 訂閱登入不另計費）；排程樣板見 `scripts/launchd/` |
 | `./start.sh dashboard` | 啟動唯讀績效儀表板 <http://127.0.0.1:8000>：起始本金、目前 NAV、今日／累積報酬率、現金、持倉與每日紀錄 |
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
@@ -154,6 +154,7 @@ P3～P6 的 [實作紀錄與邊界](docs/momentum_portfolio_risk_agent_plan.md#p
 | [基本面研究 Agent 計畫](docs/fundamental_research_agent_plan.md) | FR0～FR3 fixture MVP：財報研究、確定性比率、時間與引用驗證；有限演練及下游升版待完成 |
 | [Research Report V0 計畫](docs/research_report_plan.md) | 將研究層輸出整合為可稽核 JSON／Markdown，不包含交易決策 |
 | [本地 Agent 真實資料研究演練](docs/local_research_dry_run_plan.md) | 已完成：固定快照、3 件事件獨立研究、雙重驗證、降級 Research Report 與決策缺口清單 |
+| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **實作中（R1 財報每日收集與分批、R2 分析團隊與重大事件研究、R3 多空研究員、R4 交易 Agent、R5 風險 Agent 與新鏈封存／下游重建、R6 每日腳本改接新鏈與真實資料演練已完成）**：初篩 → 技術／基本面／事件／情緒分析師 → 多空研究員 → 交易 Agent → 風險 Agent；解決新買標的沒有反方論點、分析層未接入決策的問題 |
 | [投資組合買賣決策與風控多子 Agent 計畫](docs/momentum_portfolio_risk_agent_plan.md) | Portfolio Decision 主控、五個子 Agent、確定性配置／訂單及競賽風控 |
 | [回測 Agent 計畫](docs/backtest_agent_plan.md) | 第三個下游 Agent；歷史重播、模擬成交、Agent 評估與前向驗證 |
 | [P7 回測 Agent 第一批計畫](docs/backtest_mvp_plan.md) | B0～B2 fixture MVP 已完成：歷史時鐘、時間點資料、整張成交、交割與多日帳務重播 |

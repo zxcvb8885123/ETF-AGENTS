@@ -6,7 +6,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Sequence, Tuple
 
 from .contracts import SourceFeasibilityReport, SourceProbeResult
@@ -24,6 +24,25 @@ from .universe import Instrument
 
 FINANCIAL_SCHEMA_VERSION = "1.0"
 REQUIRED_STATEMENT_TYPES = ("income_statement", "balance_sheet")
+
+
+
+def latest_due_quarter(today: date) -> Tuple[int, int]:
+    """依法定公告期限回傳最近一個已到期的財報年度季度。
+
+    Q1 5/15、Q2 8/14、Q3 11/14、年度（Q4）隔年 3/31；期限前少數公司提早公布的季度
+    不視為已到期，避免以部分覆蓋當作完整財報。
+    """
+    year = today.year
+    if today >= date(year, 11, 15):
+        return year, 3
+    if today >= date(year, 8, 15):
+        return year, 2
+    if today >= date(year, 5, 16):
+        return year, 1
+    if today >= date(year, 4, 1):
+        return year - 1, 4
+    return year - 1, 3
 
 
 @dataclass(frozen=True)

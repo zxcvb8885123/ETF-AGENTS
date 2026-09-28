@@ -125,6 +125,16 @@ fi
 if [ "$DAILY_RUN" -eq 1 ]; then
   echo "[3b/4] 收集官方月營收與重大訊息"
   docker compose run --rm agent python3 cli/data_agent.py collect
+  echo "[3b+/4] 收集最近已到期季度的官方財報"
+  # 覆蓋不完整（exit 2）屬預期，基本面分析會標示缺口；只有執行失敗才提示，但不中止每日流程。
+  set +e
+  docker compose run --rm agent python3 scripts/collect_financial_statements.py \
+    --latest-due --report artifacts/financial_statements_latest.json >/dev/null
+  FINANCIAL_EXIT=$?
+  set -e
+  if [ "$FINANCIAL_EXIT" -eq 1 ]; then
+    echo "財報收集失敗；本次基本面分析將只使用月營收。詳見 artifacts/financial_statements_latest.json" >&2
+  fi
   # 未指定歷史 cutoff 時，必須在所有資料收集完成後才固定現在時間；
   # 否則本次抓到的文件會因 available_at 晚於 cutoff 而被正確排除。
   DAILY_CUTOFF=${DAILY_CUTOFF:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}

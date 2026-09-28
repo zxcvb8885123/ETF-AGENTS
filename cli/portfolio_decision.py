@@ -160,22 +160,21 @@ class PortfolioDecisionApplication:
                 self.emit(result)
                 return 0 if result["valid"] else 2
             if args.command == "save-run":
-                result = service.save_run_files(
-                    args.run_id,
-                    args.repository,
-                    {
-                        "intent": args.intent,
-                        "momentum": args.momentum,
-                        "debate": args.debate,
-                        "policy": args.policy,
-                        "proposal": args.proposal,
-                        "scenario": args.scenario,
-                        "guard": args.guard,
-                        "risk_review": args.review,
-                        "revision_history": args.history,
-                        "decision": args.decision,
-                    },
-                )
+                paths = {
+                    "intent": args.intent,
+                    "momentum": args.momentum,
+                    "debate": args.debate,
+                    "policy": args.policy,
+                    "proposal": args.proposal,
+                    "scenario": args.scenario,
+                    "guard": args.guard,
+                    "risk_review": args.review,
+                    "revision_history": args.history,
+                    "decision": args.decision,
+                }
+                if args.team_inputs is not None:
+                    paths["team_inputs"] = args.team_inputs
+                result = service.save_run_files(args.run_id, args.repository, paths)
                 self.emit(result)
                 return 0
             if args.command in {"build-history", "append-history"}:
@@ -404,6 +403,10 @@ class PortfolioDecisionApplication:
         self._add_risk_inputs(save, include_intent=True, include_history=True)
         save.add_argument("--decision", type=Path, required=True)
         save.add_argument("--run-id", required=True)
+        save.add_argument(
+            "--team-inputs", type=Path,
+            help="分析團隊新鏈必填：四份分析報告、事件研究與現金姿態，供完整重建驗證",
+        )
         save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "portfolio_decisions")
         return parser
 

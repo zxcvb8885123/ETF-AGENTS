@@ -13,6 +13,30 @@ from .contracts import (
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
 from .role_brief import build_role_brief
+from .analysts import (
+    ANALYSTS,
+    AnalystReportValidator,
+    build_analyst_brief,
+    compute_fundamental_metrics,
+    high_materiality_events,
+    seal_report,
+    sentiment_unavailable_report,
+)
+from .stance import (
+    STANCE_ROLES,
+    ResearchDebateBundleValidator,
+    StancePacketValidator,
+    build_research_debate,
+    build_stance_brief,
+    seal_stance_packet,
+)
+from .trader import (
+    TRADE_INTENTS,
+    TradeDecisionValidator,
+    apply_trade_decision,
+    seal_trade_decision,
+    trade_decision_envelope,
+)
 from .sizing import SIZING_METHOD, SizingPlanValidator, apply_sizing_plan
 from .policy_builder import build_decision_policy
 from .trade_intent import (
@@ -38,6 +62,7 @@ from .risk import (
 )
 from .finalization import (
     DecisionFinalizer,
+    build_team_inputs,
     DecisionRepository,
     DecisionResultValidator,
 )
@@ -63,6 +88,24 @@ __all__ = [
     "TradeIntentResultValidator",
     "build_role_input_artifact",
     "build_role_brief",
+    "ANALYSTS",
+    "AnalystReportValidator",
+    "build_analyst_brief",
+    "compute_fundamental_metrics",
+    "high_materiality_events",
+    "seal_report",
+    "sentiment_unavailable_report",
+    "STANCE_ROLES",
+    "ResearchDebateBundleValidator",
+    "StancePacketValidator",
+    "build_research_debate",
+    "build_stance_brief",
+    "seal_stance_packet",
+    "TRADE_INTENTS",
+    "TradeDecisionValidator",
+    "apply_trade_decision",
+    "seal_trade_decision",
+    "trade_decision_envelope",
     "SIZING_METHOD",
     "SizingPlanValidator",
     "apply_sizing_plan",
@@ -78,6 +121,7 @@ __all__ = [
     "RiskReviewValidator",
     "revision_effects",
     "DecisionFinalizer",
+    "build_team_inputs",
     "DecisionResultValidator",
     "DecisionRepository",
     "RevisionHistoryBuilder",

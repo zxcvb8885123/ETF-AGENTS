@@ -280,7 +280,7 @@ class VirtualAccountService:
         expected_account = state["provenance"].get("account_snapshot")
         if bundle.get("account_snapshot") != expected_account:
             raise VirtualAccountError("Decision run 使用的 AccountSnapshot 與本次 prepare 狀態不一致")
-        verifier = DecisionResultValidator(bundle, decision_files["policy"], decision_files["momentum"], decision_files["debate"], decision_files["intent"])
+        verifier = DecisionResultValidator(bundle, decision_files["policy"], decision_files["momentum"], decision_files["debate"], decision_files["intent"], decision_files.get("team_inputs"))
         decision_errors = verifier.validate(decision_files["proposal"], decision_files["scenario"], decision_files["guard"], decision_files["risk_review"], decision_files["revision_history"], decision_files["decision"])
         if decision_errors:
             raise VirtualAccountError("DecisionResult 重建驗證失敗：" + "；".join(decision_errors))

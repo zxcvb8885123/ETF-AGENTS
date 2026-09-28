@@ -1,0 +1,4 @@
+interface:
+  display_name: "空頭研究員"
+  short_description: "依分析報告對每檔提出最強且有證據的反對論點與強度"
+  default_prompt: "使用 $bear-researcher 讀取本批分析摘要，對每一檔提出不宜持有的論點與強度，不讀多頭輸出。"

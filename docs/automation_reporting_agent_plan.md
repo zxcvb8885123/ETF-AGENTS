@@ -129,10 +129,14 @@ PYTHONPATH=src python3 cli/daily_report.py run \
 
 `fixture` 只用於契約與故障分支驗收，並非真實資料或正式日常決策。相同執行日、cutoff、模式與策略規格若有相同輸入，會回傳既有封存結果；若輸入內容不同，則封存 FailureReport 並拒絕重複發布。
 
+## 每日決策腳本改接分析團隊新鏈（2026-09-27）
+
+`DailyDecisionPipeline` 主流程改為：DecisionInputBundle（不含研究結果）→ 動能 → 分析團隊（技術／基本面／事件逐批，情緒 unavailable）→ 事件分析師標為 high 的事件跑 Fact／Bull／Bear／Adjudicator → 多頭／空頭研究員 → 交易 Agent → 風險 Agent 現金姿態 → 配置、情境、Guard 與風險審查（最多 3 次修正）→ Finalizer（含 `team_inputs`）→ 封存。舊的買方／賣方／裁決／SizingPlan 流程已自每日腳本移除；事件研究結果交給 DailyReport 工作流，不再使用 `EVENT_RESEARCH_NOT_RUN` 降級結果。一般交易日約 20 次子 Agent 呼叫。
+
 ## 每日決策腳本 A3 第一版（2026-09-26）
 
-- `scripts/run_daily_pipeline.py`：檔案鎖、週末略過、同一台北日期完成後不重跑（`--force` 覆蓋）；依序執行 `./start.sh daily`（資料、Snapshot、虛擬帳本 settle／prepare）→ 交易狀態包 → 決策鏈 → `report_workflow.py run`（接 Decision run 與 prepare-day run）→ macOS 通知。摘要與全部中間 artifact 保存於 `artifacts/daily_runs/<run_id>/`，`pipeline.json` 記錄狀態、決策結果、現金姿態、委託筆數與各子 Agent 費用。
-- `src/etf_agent/automation/daily_pipeline.py`：子 Agent 以 `claude -p` 執行，只開放 Read 工具、以 `--json-schema` 限制輸出並設每次費用上限；這是本機 Claude 工作階段，不是在專案內串接模型 API。Agent 只輸出判斷內容，envelope、ID、雜湊、配置與封存由 Python 產生；每份輸出都經既有 Validator，失敗時回饋錯誤重試一次，仍失敗即停止，不以預設值補判斷。
+- `scripts/run_daily_pipeline.py`：檔案鎖、週末略過、同一台北日期完成後不重跑（`--force` 覆蓋）；依序執行 `./start.sh daily`（資料、Snapshot、虛擬帳本 settle／prepare）→ 交易狀態包 → 決策鏈 → `report_workflow.py run`（接 Decision run 與 prepare-day run）→ macOS 通知。摘要與全部中間 artifact 保存於 `artifacts/daily_runs/<run_id>/`，`pipeline.json` 記錄狀態、決策結果、現金姿態、委託筆數與各子 Agent 的估算用量。
+- `src/etf_agent/automation/daily_pipeline.py`：子 Agent 以 `claude -p` 執行，只開放 Read 工具、以 `--json-schema` 限制輸出並以 `--max-budget-usd` 限制單次估算用量防失控（claude.ai 訂閱登入時用量計入訂閱額度，不另計費；`total_cost_usd` 僅為 API 價格估算）；這是本機 Claude 工作階段，不是在專案內串接模型 API。Agent 只輸出判斷內容，envelope、ID、雜湊、配置與封存由 Python 產生；每份輸出都經既有 Validator，失敗時回饋錯誤重試一次，仍失敗即停止，不以預設值補判斷。
 - 確定性分支：空倉時 Sell packet 為空、Buy／Sell 都沒有項目時裁決為空、Guard 硬性失敗時依契約產生 reject 審查，皆不呼叫 Agent。
 - 限制：事件研究四子 Agent 尚未自動化，每日輸入誠實降級的 ResearchResult（`EVENT_RESEARCH_NOT_RUN`）；交易狀態仍無核准來源，每檔 unknown，Guard 會拒絕正式交易；目標時段為 cutoff 後第一個平日，未排除國定假日。
 - 排程：`scripts/launchd/com.etf-agents.daily.plist.template` 為平日 18:00 樣板，需使用者自行替換路徑並安裝；執行時需 Docker Desktop、已登入的 claude CLI 與未休眠的 Mac。

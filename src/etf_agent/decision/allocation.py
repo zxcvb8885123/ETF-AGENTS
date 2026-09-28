@@ -12,12 +12,13 @@ from .contracts import (
     artifact_content_sha256,
     canonical_sha256,
     decimal_value,
+    intent_artifact_id,
     parse_time,
     reject_unknown_fields,
     required_string,
 )
 from .momentum import MomentumEngine
-from .sizing import CONVICTION_LEVELS, SIZING_METHOD, conviction_weights, validate_position_sizing
+from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, conviction_weights, validate_position_sizing
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -367,7 +368,7 @@ class AllocationOrderEngine:
             "snapshot_id": self.context.snapshot_id,
             "decision_cutoff": self.context.decision_cutoff,
             "bundle_hash": self.context.bundle_hash,
-            "trade_intent_result_id": intent_result.get("result_id"),
+            "trade_intent_result_id": intent_artifact_id(intent_result),
             "policy_id": self.policy["policy_id"],
             "policy_hash": self.policy["content_sha256"],
             "engine_version": ALLOCATION_ENGINE_VERSION,
@@ -507,7 +508,7 @@ class AllocationOrderEngine:
             },
             volatility,
             decimal_value(sizing["volatility_floor"], "volatility_floor"),
-            {symbol: self._weight_limit(symbol, effective) for symbol in eligible},
+            {symbol: self._weight_limit(symbol, effective) * LIMIT_HEADROOM for symbol in eligible},
             Decimal("1") - effective["cash_buffer_rate"] - held_outside,  # type: ignore[operator]
         )
         return ordered, weights

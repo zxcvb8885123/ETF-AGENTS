@@ -4,6 +4,7 @@
 import argparse
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -17,6 +18,7 @@ from etf_agent.data import (  # noqa: E402
     MarketDataDatabase,
     OfficialCorporateProviderFactory,
     UniverseLoader,
+    latest_due_quarter,
 )
 
 
@@ -33,8 +35,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--config", type=Path, default=ROOT / "config" / "data_sources.json"
     )
-    parser.add_argument("--fiscal-year", required=True, type=int)
-    parser.add_argument("--fiscal-quarter", required=True, type=int)
+    period = parser.add_mutually_exclusive_group(required=True)
+    period.add_argument(
+        "--latest-due", action="store_true",
+        help="依台北日期與法定公告期限自動選最近已到期的年度季度（每日排程使用）",
+    )
+    period.add_argument("--fiscal-year", type=int)
+    parser.add_argument("--fiscal-quarter", type=int)
     parser.add_argument(
         "--report",
         type=Path,
@@ -45,6 +52,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+    if args.latest_due:
+        args.fiscal_year, args.fiscal_quarter = latest_due_quarter(
+            datetime.now(timezone(timedelta(hours=8))).date()
+        )
+    elif args.fiscal_quarter is None:
+        print("--fiscal-year 需搭配 --fiscal-quarter", file=sys.stderr)
+        return 1
     try:
         config = json.loads(args.config.read_text(encoding="utf-8"))
         financial_config = config.get("financial_statements")
