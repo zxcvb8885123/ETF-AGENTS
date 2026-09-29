@@ -1,8 +1,11 @@
-"""每日帳本推進：以官方收盤價結算前一份決策，再建立下一次決策前狀態。
+"""每日帳本推進：以官方當日成交均價結算前一份決策，再建立下一次決策前狀態。
 
-競賽口徑：決策在收盤後至隔日 08:55 前提交，於下一個交易日以收盤價成交；
-手續費、證交稅、整張單位與賣款可否再用皆沿用 Decision run 內已驗證的 rules。
-只使用 TWSE／TPEx 官方未還原收盤價，不以 Yahoo 等還原價格成交。
+競賽口徑：決策在收盤後至隔日 08:55 前提交，於下一個交易日全部成交，成交價為當日
+成交均價（官方成交金額 ÷ 成交股數，四捨五入到 0.01 元），不設成交量上限；日終以
+官方收盤價估值。當日無成交（成交股數或金額為 0）則沒有均價，視為不可成交。
+手續費、證交稅、整張單位與賣款可否再用皆沿用 Decision run 內已驗證的 rules；
+現金不足時仍由模擬器依買力減少張數。只使用 TWSE／TPEx 官方未還原資料，不以
+Yahoo 等還原價格成交。
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -21,6 +25,8 @@ from .service import VirtualAccountError, VirtualAccountRepository, VirtualAccou
 
 TAIPEI = timezone(timedelta(hours=8))
 CLOSE_TIME = "13:30:00"
+PRICE_TICK = Decimal("0.01")
+EXECUTION_PRICE_RULE = "official_average_price"
 OFFICIAL_SOURCES: Mapping[str, Tuple[str, ...]] = {
     # 同一市場依優先序取第一筆。
     "TWSE": ("TWSE_STOCK_DAY", "TWSE_STOCK_DAY_ALL"),
@@ -41,6 +47,14 @@ def add_business_days(day: date, count: int) -> date:
         if current.weekday() < 5:
             remaining -= 1
     return current
+
+
+def average_price(trade_value: object, volume_shares: object) -> Optional[Decimal]:
+    """官方當日成交均價＝成交金額 ÷ 成交股數，四捨五入到 0.01 元；無成交時回傳 None。"""
+    value, volume = int(trade_value), int(volume_shares)
+    if value <= 0 or volume <= 0:
+        return None
+    return (Decimal(value) / Decimal(volume)).quantize(PRICE_TICK, rounding=ROUND_HALF_UP)
 
 
 def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, object]) -> Optional[str]:
@@ -103,7 +117,7 @@ class OfficialCloseMarket:
                     for row in connection.execute(
                         """
                         SELECT daily_prices.symbol, daily_prices.close_price, daily_prices.volume_shares,
-                               daily_prices.source, daily_prices.fetched_at, raw_payloads.sha256 AS raw_sha256
+                               daily_prices.trade_value, daily_prices.source, daily_prices.fetched_at, raw_payloads.sha256 AS raw_sha256
                         FROM daily_prices JOIN raw_payloads ON raw_payloads.id = daily_prices.raw_payload_id
                         WHERE daily_prices.trade_date = ? AND daily_prices.source = ?
                         """,
@@ -135,13 +149,22 @@ class OfficialCloseMarket:
         close_quotes: Dict[str, object] = {}
         fetched: List[datetime] = []
         for symbol, row in sorted(rows.items()):
-            lots = int(row["volume_shares"]) // 1000
             evidence = {"source": row["source"], "fetched_at": row["fetched_at"], "raw_sha256": row["raw_sha256"]}
-            execution_quotes[symbol] = {"tradable": lots > 0, "available_lots": lots, "execution_price": str(row["close_price"]), **evidence}
+            average = average_price(row["trade_value"], row["volume_shares"])
+            execution_quotes[symbol] = {
+                "tradable": average is not None,
+                "available_lots": None if average is not None else 0,
+                "execution_price": str(average if average is not None else row["close_price"]),
+                "trade_value": int(row["trade_value"]),
+                "volume_shares": int(row["volume_shares"]),
+                **evidence,
+            }
             close_quotes[symbol] = {"close_price": str(row["close_price"]), **evidence}
             fetched.append(parse_time(row["fetched_at"], "%s.fetched_at" % symbol))
         execution = {
-            "price_basis": "unadjusted", "price_rule": "official_close", "trade_date": trade_date,
+            "price_basis": "unadjusted", "price_rule": EXECUTION_PRICE_RULE,
+            "price_formula": "trade_value / volume_shares, ROUND_HALF_UP 0.01", "liquidity_cap": "none",
+            "trade_date": trade_date,
             "execution_at": execution_at, "available_at": execution_at, "quotes": execution_quotes,
         }
         close = {

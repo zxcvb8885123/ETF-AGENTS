@@ -60,7 +60,7 @@
 ## 執行紀錄（2026-09-25）
 
 - 新增 `virtual_account.py settle／daily` 與 `start.sh daily` 帳本步驟：收集行情後，先以 Decision cutoff 後第一個交易日的官方收盤價（13:30 +08:00）結算最新 prepare 狀態對應的 Decision run，再以新 Snapshot 建立 prepare 狀態。成交價只取 `TWSE_STOCK_DAY`／`TWSE_STOCK_DAY_ALL`／`TPEX_TRADING_STOCK`／`TPEX_MAINBOARD_QUOTES`，不用 Yahoo；費稅、整張與賣款再用沿用 Decision run 的 rules。
-- 假設（尚無官方依據）：可成交張數上限為當日成交量；交割日以週一至週五近似 T+2，不含國定假日。
+- 成交口徑（2026-09-29 依使用者確認的比賽帳務改版）：全部成交、不設成交量上限，成交價為官方當日成交均價（成交金額 ÷ 成交股數，ROUND_HALF_UP 到 0.01 元），日終以官方收盤價估值；當日無成交則不可成交；現金不足仍依買力減張。均價的四捨五入位數尚無主辦方原文依據。交割日依官方開休市日曆計算 T+2。既有 `ScenarioEngine` 的 `liquidity_stress`（成交率 50%）仍保留作壓力測試，但已不代表比賽帳務。
 - 收盤價未公布時回 `waiting_for_close_data` 並阻擋新 prepare；沒有對應 Decision run 時直接以新 Snapshot 續接估值。持股缺官方收盤價時 fail-closed。
 - 修正 `apply-decision` 未傳 `reuse_sell_proceeds` 給成交模擬器（賣單成交時會 KeyError），並將日終狀態交易日改用執行日收盤資料的 `trade_date`。
 - 新增唯讀 FastAPI 儀表板（`cli/dashboard.py`、`./start.sh dashboard`）顯示本金、NAV、今日／累積報酬、現金、持倉與每日紀錄。

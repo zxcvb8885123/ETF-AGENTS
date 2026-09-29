@@ -1,5 +1,6 @@
 import json
 import tempfile
+from decimal import Decimal
 import unittest
 from pathlib import Path
 
@@ -200,6 +201,28 @@ class DailyPipelineTests(unittest.TestCase):
         self.assertNotIn("review_r0", [name for name, _ in runner.prompts])
         self.assertEqual(review["decision"], "reject")
         self.assertTrue(any(flag.startswith("GUARD_FAILED") for flag in review["risk_flags"]))
+
+
+class SectorExposureTests(unittest.TestCase):
+    def test_review_sees_sector_weights_computed_from_proposal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertIn("sector_exposure_review_input_r0", dict(runner.prompts)["review_r0"])
+            exposure = json.loads((world.run_dir / "sector_exposure_review_input_r0.json").read_text(encoding="utf-8"))
+            proposal = json.loads((world.run_dir / "proposal_r0.json").read_text(encoding="utf-8"))
+            self.assertEqual(exposure["proposal_id"], proposal["proposal_id"])
+            sectors = {"2330.TW": "industry:24", "2317.TW": "industry:31"}
+            expected = {}
+            for position in proposal["allocation_proposal"]["positions"]:
+                expected[sectors[position["symbol"]]] = position["weight"]
+            self.assertEqual({item["sector"]: item["weight"] for item in exposure["items"]}, expected)
+            weights = [Decimal(item["weight"]) for item in exposure["items"]]
+            self.assertEqual(weights, sorted(weights, reverse=True))
+            for item in exposure["items"]:
+                self.assertEqual(Decimal(item["headroom"]), Decimal(item["limit"]) - Decimal(item["weight"]))
 
 
 class ResumeTests(unittest.TestCase):

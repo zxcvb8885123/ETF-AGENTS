@@ -40,6 +40,37 @@ def _rate(value: Decimal) -> str:
     return str(value.quantize(RATE, rounding=ROUND_HALF_UP))
 
 
+def sector_exposure(proposal: Mapping[str, object], policy: Mapping[str, object]) -> Dict[str, object]:
+    """提案配置後各產業實際權重與距上限空間，供風險審查逐項核對；不改變 Guard 結果。"""
+    sector_by_symbol = {
+        str(symbol).upper(): str(sector) for symbol, sector in policy.get("sector_by_symbol", {}).items()
+    }
+    limit = decimal_value(policy["max_sector_weight"], "max_sector_weight")
+    groups: Dict[str, Dict[str, object]] = {}
+    for position in proposal["allocation_proposal"]["positions"]:
+        symbol = str(position["symbol"]).upper()
+        sector = sector_by_symbol.get(symbol, "UNCLASSIFIED")
+        group = groups.setdefault(sector, {"weight": Decimal("0"), "symbols": []})
+        group["weight"] = group["weight"] + decimal_value(position["weight"], "%s.weight" % symbol)
+        group["symbols"].append(symbol)
+    items = [
+        {
+            "sector": sector,
+            "weight": _rate(group["weight"]),
+            "limit": _rate(limit),
+            "headroom": _rate(limit - group["weight"]),
+            "symbols": sorted(group["symbols"]),
+        }
+        for sector, group in sorted(groups.items(), key=lambda pair: (-pair[1]["weight"], pair[0]))
+    ]
+    return {
+        "proposal_id": proposal["proposal_id"],
+        "policy_hash": policy.get("content_sha256"),
+        "max_sector_weight": _rate(limit),
+        "items": items,
+    }
+
+
 class ScenarioEngine:
     """Apply transparent price and liquidity assumptions to one proposal."""
 

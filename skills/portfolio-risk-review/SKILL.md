@@ -18,7 +18,7 @@ Envelope 欄位為 `schema_version`、`plan_id`、`bundle_id`、`snapshot_id`、
 ## 審查方式
 
 1. 先確認三個輸入的 bundle、proposal、policy、版本與內容雜湊一致。不同版本停止，不拼接結論。
-2. 逐項檢查個股／產業曝險、共同事件或共同來源集中、交易量相對訂單、換手、現金緩衝，以及各情境按實際成交張數重建後的買力、持股、NAV 與 Active Share。
+2. 逐項檢查個股／產業曝險（主控另提供程式計算的 `sector_exposure`：各產業實際權重、上限、剩餘空間與成分股，需逐項核對而非只看 `SECTOR_WEIGHT` 是否通過）、共同事件或共同來源集中、交易量相對訂單、換手、現金緩衝，以及各情境按實際成交張數重建後的買力、持股、NAV 與 Active Share。
 3. `GuardResult.passed=false` 時只能 `reject`；不能將硬性失敗改成警告。
 4. `approve` 表示本次提案可進入完整 Validator；不代表成交、送件或實際投資績效。
 5. `revise` 必須使用結構化 allowlist：`remove_candidate`、`increase_cash_buffer`、`reduce_max_stock_weight`、`reduce_turnover_limit`。每項保留理由；不能增加候選、提高風險或填入權重／股數。

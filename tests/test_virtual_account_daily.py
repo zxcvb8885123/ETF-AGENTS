@@ -6,27 +6,31 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from etf_agent.core import content_sha256
 from etf_agent.dashboard import build_performance_summary
 from etf_agent.data import TradingCalendar, TradingCalendarError
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
-from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days
+from etf_agent.ledger import ExecutionSimulator, LedgerError
+from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price
 from test_virtual_account import prepare_and_decide
 
 
 def create_prices(path, rows):
+    """rows 為 (symbol, date, close, volume, source, fetched[, trade_value])；省略成交金額時均價等於收盤價。"""
     connection = sqlite3.connect(path)
     connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS raw_payloads (id INTEGER PRIMARY KEY, source TEXT, fetched_at TEXT, sha256 TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS daily_prices (
             symbol TEXT, trade_date TEXT, close_price TEXT, volume_shares INTEGER,
-            source TEXT, fetched_at TEXT, raw_payload_id INTEGER
+            source TEXT, fetched_at TEXT, raw_payload_id INTEGER, trade_value INTEGER
         );
         INSERT OR IGNORE INTO raw_payloads (id, sha256) VALUES (1, 'raw-sha');
         """
     )
     connection.executemany(
-        "INSERT INTO daily_prices VALUES (?, ?, ?, ?, ?, ?, 1)", rows,
+        "INSERT INTO daily_prices VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+        [tuple(row[:6]) + ((row[6] if len(row) > 6 else int(Decimal(row[2]) * row[3])),) for row in rows],
     )
     connection.commit()
     connection.close()
@@ -125,6 +129,66 @@ class DailyAccountRunnerTests(unittest.TestCase):
     def test_official_calendar_rejects_uncovered_year(self):
         with self.assertRaisesRegex(TradingCalendarError, "未涵蓋 2026"):
             self.settle_with_calendar([("2027-01-01", "開國紀念日")])
+
+    def test_fills_in_full_at_official_average_price_and_values_at_close(self):
+        snapshot, decisions = prepare_and_decide(self.service, self.root)
+        order = json.loads((decisions / "decision-1" / "decision.json").read_text(encoding="utf-8"))["orders"][0]
+        # 當日只成交 1 張，仍全部成交；成交均價 605,000 ÷ 5,000 = 121，收盤 120。
+        create_prices(self.database, [
+            ("2317.TW", "2026-09-21", "120", 5_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00", 605_000),
+            ("2330.TW", "2026-09-21", "500", 50_000_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+        ])
+        self.assertLess(5_000, order["shares"])
+        result = self.runner(decisions).settle()
+        self.assertEqual((result["fills"], result["unfilled"]), (1, 0))
+        market = json.loads((self.repository.root / "inputs" / "close-2026-09-21" / "execution_market.json").read_text(encoding="utf-8"))
+        self.assertEqual(market["price_rule"], "official_average_price")
+        self.assertEqual(market["liquidity_cap"], "none")
+        self.assertEqual(market["quotes"]["2317.TW"]["execution_price"], "121.00")
+        self.assertIsNone(market["quotes"]["2317.TW"]["available_lots"])
+        state = self.repository.latest()["state"]
+        position = next(row for row in state["positions"] if row["symbol"] == "2317.TW")
+        self.assertEqual(position["shares"], order["shares"])
+        self.assertEqual(position["close_price"], "120")
+        gross = Decimal(121) * order["shares"]
+        commission = (gross * Decimal("0.001425")).to_integral_value(rounding="ROUND_CEILING")
+        self.assertEqual(Decimal(state["settled_cash"]), Decimal(1_000_000_000) - gross - commission)
+
+    def test_symbol_without_trades_has_no_average_price_and_is_not_filled(self):
+        snapshot, decisions = prepare_and_decide(self.service, self.root)
+        create_prices(self.database, [
+            ("2317.TW", "2026-09-21", "120", 0, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00", 0),
+            ("2330.TW", "2026-09-21", "500", 50_000_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+        ])
+        result = self.runner(decisions).settle()
+        self.assertEqual((result["fills"], result["unfilled"]), (0, 1))
+        transition = json.loads((self.repository.root / "runs" / result["run_id"] / "transition.json").read_text(encoding="utf-8"))
+        self.assertEqual(transition["execution"]["unfilled_orders"][0]["reason"], "NOT_TRADABLE")
+
+    def test_average_price_rounds_half_up_to_cent(self):
+        self.assertEqual(average_price(1_000_001, 3_000), Decimal("333.33"))
+        self.assertEqual(average_price(1_000_015, 1_000), Decimal("1000.02"))
+        self.assertIsNone(average_price(0, 1_000))
+        self.assertIsNone(average_price(1_000, 0))
+
+    def test_simulator_liquidity_cap_is_explicit(self):
+        simulator = ExecutionSimulator({"lot_size": 1000, "commission_rate": "0.001425", "minimum_commission": "0",
+                                        "sell_tax_rate": "0.003", "reuse_sell_proceeds": True})
+        decision = {"status": "approved", "orders": [{"symbol": "2330.TW", "side": "buy", "shares": 3000}]}
+        decision["content_sha256"] = content_sha256(decision)
+        def market(lots):
+            return {"price_basis": "unadjusted", "available_at": "2026-09-21T13:30:00+08:00",
+                    "quotes": {"2330.TW": {"tradable": True, "available_lots": lots, "execution_price": "100"}}}
+        uncapped = simulator.run(decision, market(None), Decimal(10_000_000), "2026-09-21T13:30:00+08:00")
+        self.assertEqual(uncapped["fills"][0]["shares"], 3000)
+        capped = simulator.run(decision, market(1), Decimal(10_000_000), "2026-09-21T13:30:00+08:00")
+        self.assertEqual(capped["unfilled_orders"][0]["unfilled_shares"], 2000)
+        # 無量能上限時仍受買力限制。
+        cash_limited = simulator.run(decision, market(None), Decimal(250_000), "2026-09-21T13:30:00+08:00")
+        self.assertEqual(cash_limited["fills"][0]["shares"], 2000)
+        for invalid in (-1, "3", True):
+            with self.assertRaises(LedgerError):
+                simulator.run(decision, market(invalid), Decimal(10_000_000), "2026-09-21T13:30:00+08:00")
 
     def test_prepare_without_decision_carries_forward(self):
         snapshot = {

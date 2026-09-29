@@ -15,7 +15,12 @@ from .contracts import MONEY, LedgerError, decimal_value, money_string, parse_ti
 
 
 class ExecutionSimulator:
-    """Fill approved orders in full lots at explicitly unadjusted market prices."""
+    """Fill approved orders in full lots at explicitly unadjusted market prices.
+
+    A quote's ``available_lots`` caps the fill; ``None`` means no liquidity cap
+    (competition accounting fills every tradable order in full). Buying power
+    still limits buys in every case.
+    """
 
     def __init__(self, assumptions: Mapping[str, object]):
         self.assumptions = dict(assumptions)
@@ -56,10 +61,12 @@ class ExecutionSimulator:
                 continue
             price = decimal_value(quote.get("execution_price"), "%s.execution_price" % symbol)
             available_lots = quote.get("available_lots")
-            if not isinstance(available_lots, int) or isinstance(available_lots, bool) or available_lots < 0:
-                raise LedgerError("%s.available_lots 必須是非負整數" % symbol)
+            if available_lots is not None and (
+                not isinstance(available_lots, int) or isinstance(available_lots, bool) or available_lots < 0
+            ):
+                raise LedgerError("%s.available_lots 必須是非負整數或 null（不設量能上限）" % symbol)
             requested_lots = shares // self.lot_size
-            fill_lots = min(requested_lots, available_lots)
+            fill_lots = requested_lots if available_lots is None else min(requested_lots, available_lots)
             side = order.get("side")
             if side not in {"buy", "sell"}:
                 raise LedgerError("訂單 side 不合法")

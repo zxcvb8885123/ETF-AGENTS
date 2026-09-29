@@ -60,6 +60,7 @@ from .risk import (
     ScenarioEngine,
     ScenarioValidator,
     revision_effects,
+    sector_exposure,
 )
 from .finalization import (
     DecisionFinalizer,
@@ -122,6 +123,7 @@ __all__ = [
     "GuardValidator",
     "RiskReviewValidator",
     "revision_effects",
+    "sector_exposure",
     "DecisionFinalizer",
     "build_team_inputs",
     "DecisionResultValidator",
