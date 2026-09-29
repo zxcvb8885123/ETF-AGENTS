@@ -4,12 +4,14 @@
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from etf_agent.data import TradingCalendar, calendar_from_capture, latest_calendar_capture_before  # noqa: E402
 from etf_agent.decision.contracts import DecisionInputValidator, canonical_sha256, decision_bundle_sha256  # noqa: E402
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService  # noqa: E402
 from etf_agent.virtual_account.daily import DailyAccountRunner  # noqa: E402
@@ -28,6 +30,14 @@ def read_json(path: Path) -> Mapping[str, object]:
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_calendar(captures_root: Path, limit_time: str) -> TradingCalendar:
+    """limit_time 前最近一次封存的官方開休市日曆；找不到時停止，不退回週一至週五近似。"""
+    capture = latest_calendar_capture_before(captures_root, limit_time)
+    if capture is None:
+        raise VirtualAccountError("%s 前沒有封存的官方開休市日期表，不能計算交割日：%s" % (limit_time, captures_root))
+    return calendar_from_capture(capture)
 
 
 def main(argv=None) -> int:
@@ -68,6 +78,10 @@ def main(argv=None) -> int:
         daily.add_argument("--database", type=Path, default=ROOT / "var" / "etf_agent.db")
         daily.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts" / "portfolio_decisions")
         daily.add_argument("--settlement-days", type=int, default=2)
+        daily.add_argument(
+            "--captures-root", type=Path, default=ROOT / "artifacts" / "source-audit" / "captures",
+            help="政府開放 CSV 封存根目錄；使用其中最新的開休市日期表計算交割日",
+        )
         if name == "daily":
             daily.add_argument("--snapshot", type=Path, required=True)
             daily.add_argument("--run-id", required=True)
@@ -118,7 +132,10 @@ def main(argv=None) -> int:
             print(json.dumps({"run_id": result["run_id"], "state": result["state"], "transition": result["transition"]}, ensure_ascii=False, indent=2))
             return 0
         if args.command in {"settle", "daily"}:
-            runner = DailyAccountRunner(repository, args.database, args.decision_repository, args.settlement_days)
+            limit_time = (read_json(args.snapshot).get("decision_cutoff") if args.command == "daily"
+                          else datetime.now(timezone.utc).isoformat())
+            calendar = load_calendar(args.captures_root, str(limit_time))
+            runner = DailyAccountRunner(repository, args.database, args.decision_repository, args.settlement_days, calendar)
             result = runner.settle() if args.command == "settle" else runner.run(args.snapshot, args.run_id, args.account_output)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0

@@ -42,13 +42,15 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 .venv/bin/python scripts/run_daily_pipeline.py
 ```
 
-依序執行：封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ DailyReport → macOS 通知。
+依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ DailyReport → macOS 通知。
 
 | 選項 | 用途 |
 | --- | --- |
-| `--force` | 週末、休市日或當日已完成仍執行 |
+| `--force` | 休市日（週末或官方開休市日期表列出者）或當日已完成仍執行；找不到封存日曆時也須以此執行一次以建立封存 |
 | `--skip-data` | 沿用既有 Snapshot 與帳戶快照，不重抓資料 |
 | `--resume` | 沿用今天最近一個未完成 run 目錄中已驗證的 Agent 輸出與同一個 decision run ID（例如撞到用量上限後），建議搭配 `--skip-data` |
+| `--preflight-only` | 只執行執行前檢查並列出每一項結果；安裝排程前先跑一次 |
+| `--min-free-gb` | 執行前檢查的最低可用磁碟空間，預設 2 GiB |
 | `--model` | 指定子 Agent 模型；預設沿用 `claude` CLI 設定 |
 | `--max-budget-usd` | 單次子 Agent 估算用量上限（防失控；claude.ai 訂閱登入不另計費） |
 
@@ -66,7 +68,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 ```
 
-於 cutoff 後第一個交易日以 TWSE／TPEx 官方未還原收盤價模擬成交（量能上限＝當日成交張數，T+2 工作日交割）；收盤價未公布回 `waiting_for_close_data`。`./start.sh daily` 會先 `settle` 再 `prepare-day`。
+於 cutoff 後第一個交易日以 TWSE／TPEx 官方未還原收盤價模擬成交（量能上限＝當日成交張數，依官方開休市日曆計算 T+2 交割，找不到封存日曆即停止）；收盤價未公布回 `waiting_for_close_data`。`./start.sh daily` 會先 `settle` 再 `prepare-day`。
 
 ### 4. 開啟績效儀表板（網頁）
 
@@ -93,9 +95,9 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 ### 已完成
 
 - **資料層**：SQLite 保存行情、原始回應、抓取時間與執行紀錄；TWSE／TPEx 最新行情與官方歷史行情增量 CLI（Yahoo 日線為備援）；月營收、重大訊息與官方財報彙總（24 個端點，2026 Q2 實測 298/300）；150 檔交易池逐檔驗證與 Snapshot fail-closed 閘門；產業分類 150／150。
-- **交易狀態**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射與官方開休市交易日曆。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
+- **交易狀態與交易日曆**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射。官方開休市日曆（`TradingCalendar`）統一用於每日是否執行、目標交易時段與帳本 T+2 交割，區分休市日與「僅辦理結算交割」日；日曆缺漏或未涵蓋年度時停止。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
 - **研究層**：事件研究 Agent（Fact／Bull／Bear／Adjudicator、雙重 validator）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
-- **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實資料商與正式交割日曆尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
+- **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實情緒／共識資料商尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
 - **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（P0～P6）只保留供封存 run 重建與 fixture 測試。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
 - **報告**：RPT0～RPT4 報告工作流、DailyReport／FailureReport、D-Plan v4.0 候選匯出與本地結構／引用鏈檢查、唯讀績效儀表板。
@@ -109,7 +111,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 ### 尚未完成
 
 - 部分成交後的補單規則；風險審查輸入補上產業實際權重。
-- 虛擬帳本 VA4／VA5 自動化與跨日真實資料驗收；正式排程啟用。
+- 虛擬帳本 VA4／VA5 自動化與跨日真實資料驗收；正式排程啟用。步驟見[每日自動化與回測就緒計畫](docs/automation_backtest_readiness_plan.md)。
 - D-Plan：DailyReport 到「來源→事實→市場姿態→全持股決策」的完整映射、真實資料端到端演練；主辦方伺服器語意驗證（`verify_dplan.py`）未取得，本地檢查不等同平台驗證。
 - 策略說明書（ETF 名稱、投資主題、投資理念）：繳交期間 2026-10-21 至 10-26。
 - 競賽規則待釐清：現金上限 `<25%` 與 Schema `≤25%` 的邊界、提交時間（設定 19:30 與 Schema 05:00–08:55）、min successful days。

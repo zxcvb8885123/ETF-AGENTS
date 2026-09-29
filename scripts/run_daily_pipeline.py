@@ -22,8 +22,17 @@ from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
     DailyDecisionPipeline,
 )
+from etf_agent.automation.preflight import (  # noqa: E402
+    DEFAULT_MIN_FREE_BYTES,
+    checks_to_dict,
+    require_preflight,
+    run_preflight,
+)
 from etf_agent.data import (  # noqa: E402
+    TradingCalendarError,
     build_trading_status_from_capture,
+    calendar_from_capture,
+    latest_calendar_capture_before,
     latest_capture_before,
     load_approvals,
     load_not_applicable,
@@ -91,18 +100,28 @@ def prepared_account_run(account_id: str) -> str:
     return str(latest["run_id"])
 
 
+def trading_day_check(captures_root: Path, now: datetime) -> bool:
+    """依 now 前最近封存的官方開休市日曆判斷今天是否為交易日；日曆缺漏或未涵蓋今年即拋錯。"""
+    capture = latest_calendar_capture_before(captures_root, now.isoformat())
+    if capture is None:
+        raise TradingCalendarError("找不到封存的官方開休市日期表（%s）" % captures_root)
+    return calendar_from_capture(capture).is_trading_day(now.date())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--perception-bundle", type=Path, help="已核准授權且同 cutoff 的情緒與共識資料包")
     parser.add_argument("--perception", type=Path, help="與資料包成對的已驗證情緒與共識結果")
     parser.add_argument("--account-id", default="ai-cup-2026")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
-    parser.add_argument("--force", action="store_true", help="週末或當日已完成仍執行")
+    parser.add_argument("--force", action="store_true", help="休市日（週末或官方開休市日期表列出者）或當日已完成仍執行")
     parser.add_argument(
         "--resume", action="store_true",
         help="沿用同一 run 目錄中先前已通過驗證的 Agent 輸出（例如中途撞到用量上限後續跑）；建議搭配 --skip-data",
     )
     parser.add_argument("--model", help="子 Agent 使用的 Claude 模型；預設沿用 claude CLI 設定")
+    parser.add_argument("--preflight-only", action="store_true", help="只執行執行前檢查（Docker、claude 登入、帳戶、必要檔案、磁碟）後結束")
+    parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
     parser.add_argument("--max-budget-usd", type=float, default=3.0, help="單次子 Agent 的估算用量上限（防失控；claude.ai 訂閱登入時不另計費）")
     args = parser.parse_args()
     if args.perception is not None and args.perception_bundle is None:
@@ -117,9 +136,22 @@ def main() -> int:
     except BlockingIOError:
         log("另一個每日流程正在執行，本次略過。")
         return 0
-    if now.weekday() >= 5 and not args.force:
-        log("週末不執行（--force 可強制）。")
-        return 0
+    min_free_bytes = int(args.min_free_gb * 1024 ** 3)
+    if args.preflight_only:
+        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes)
+        for check in checks:
+            log("%s %s：%s" % ("通過" if check.ok else "失敗", check.name, check.detail))
+        return 0 if all(check.ok for check in checks) else 1
+    captures_root = ROOT / "artifacts" / "source-audit" / "captures"
+    if not args.force:
+        try:
+            if not trading_day_check(captures_root, now):
+                log("%s 依官方開休市日曆休市，不執行（--force 可強制）。" % now.date().isoformat())
+                return 0
+        except (TradingCalendarError, OSError, ValueError) as error:
+            log("無法判定今天是否為交易日，停止：%s" % error)
+            notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
+            return 1
     run_id = "daily-%s" % now.strftime("%Y%m%d")
     run_dir = runs_root / run_id
     summary_path = run_dir / "pipeline.json"
@@ -149,9 +181,13 @@ def main() -> int:
     write_json(summary_path, summary)
 
     try:
+        # 在抓資料與呼叫任何子 Agent 前確認環境；一次列出全部失敗項目。
+        log("[預檢] Docker、claude 登入、帳戶、必要檔案、磁碟空間")
+        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes)
+        summary["preflight"] = checks_to_dict(checks)
+        require_preflight(checks)
         snapshot_path = ROOT / "artifacts" / "research_snapshot_latest.json"
         account_path = ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json"
-        captures_root = ROOT / "artifacts" / "source-audit" / "captures"
         if not args.skip_data:
             # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
             log("[0/5] 封存交易狀態與開休市政府開放 CSV")

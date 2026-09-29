@@ -7,7 +7,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from etf_agent.dashboard import build_performance_summary
-from etf_agent.virtual_account import VirtualAccountRepository, VirtualAccountService
+from etf_agent.data import TradingCalendar, TradingCalendarError
+from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
 from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days
 from test_virtual_account import prepare_and_decide
 
@@ -95,6 +96,35 @@ class DailyAccountRunnerTests(unittest.TestCase):
         self.assertEqual(summary["today"]["trade_date"], "2026-09-21")
         self.assertEqual(summary["fees"]["commission"], "%s.00" % commission)
         self.assertEqual(self.runner(decisions).settle()["status"], "nothing_pending")
+
+    def settle_with_calendar(self, rows):
+        snapshot, decisions = prepare_and_decide(self.service, self.root)
+        create_prices(self.database, [
+            ("2317.TW", "2026-09-21", "120", 50_000_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+            ("2330.TW", "2026-09-21", "500", 50_000_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
+        ])
+        calendar = TradingCalendar.from_ogd_facts(
+            [{"kind": "calendar_event", "event_date": day, "name": name} for day, name in rows], "fixture-sha"
+        )
+        runner = DailyAccountRunner(self.repository, self.database, decisions, calendar=calendar)
+        return runner.settle()
+
+    def test_official_calendar_settlement_skips_holiday_and_counts_settlement_only_day(self):
+        result = self.settle_with_calendar([("2026-09-22", "國定假日"), ("2026-09-23", "市場無交易，僅辦理結算交割作業")])
+        self.assertEqual(result["status"], "settled")
+        self.assertEqual(result["settlement_date"], "2026-09-24")
+        self.assertEqual(result["settlement_calendar_basis"], "twse_ogd_calendar")
+        self.assertEqual(result["settlement_calendar_source_sha256"], "fixture-sha")
+
+    def test_official_calendar_rejects_trade_on_closed_day(self):
+        with self.assertRaisesRegex(VirtualAccountError, "不是交易日"):
+            self.settle_with_calendar([("2026-09-21", "國定假日")])
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-with-orders")
+        self.assertFalse((self.repository.root / "inputs" / "close-2026-09-21").exists())
+
+    def test_official_calendar_rejects_uncovered_year(self):
+        with self.assertRaisesRegex(TradingCalendarError, "未涵蓋 2026"):
+            self.settle_with_calendar([("2027-01-01", "開國紀念日")])
 
     def test_prepare_without_decision_carries_forward(self):
         snapshot = {

@@ -42,7 +42,7 @@
 ## 部分完成與尚未接入
 
 - **真實情緒／共識資料商尚未接入**：目前入口是 `JsonPerceptionDataProvider` 的已授權匯出格式。程式檢查 `license_status=approved` 不等同取得授權；資料供應方、使用權、歷史可得時間及匯出映射仍需確認。測試 fixture 不代表正式來源。
-- **交割日曆尚未接入**：自動 T+N 仍沿用週一至週五近似，結果明確回傳 `settlement_calendar_basis=weekday_approximation`；假日及僅辦理交割的日期尚未驗證，不能宣稱正式交割對帳完成。
+- **交割日曆（2026-09-29 已接入）**：`virtual_account.py settle／daily` 讀取封存的 TWSE 開休市日期表計算 T+N，休市日不計、「僅辦理結算交割」日計入，結果回傳 `settlement_calendar_basis=twse_ogd_calendar` 與日曆雜湊；找不到封存或日期跨入未涵蓋年度（目前只涵蓋 2026）時停止。直接以程式建立 `DailyAccountRunner` 而未傳日曆時仍回退週一至週五近似並標示 `weekday_approximation`，僅供 fixture 測試。
 - 帳戶成交仍是規則驅動的虛擬成交，不是券商成交；公司行動自動資料接入、主辦方對帳及連續多日真實決策驗收仍待完成。
 - 本次未重跑一個月回測，也未呼叫付費資料服務或啟動正式模型決策。
 

@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 from etf_agent.core import canonical_sha256, parse_aware_time
 from .evidence import TAIPEI_TIMEZONE
 from .ogd_candidate_facts import extract_ogd_candidate_facts
+from .trading_calendar import TradingCalendar, TradingCalendarError
 from .trading_status import DEFAULT_REQUIRED_CATEGORIES, TradingStatusError, TradingStatusRequest
 
 
@@ -87,6 +88,41 @@ def next_trading_session(decision_cutoff: str, closed_dates: Set[str]) -> Dict[s
         "start": datetime.combine(day, time(9, 0), TAIPEI_TIMEZONE).isoformat(),
         "end": datetime.combine(day, time(13, 30), TAIPEI_TIMEZONE).isoformat(),
     }
+
+
+CALENDAR_SOURCE_ID = "TWSE_CALENDAR_OGD"
+
+
+def calendar_from_capture(capture_dir: Path) -> TradingCalendar:
+    """只讀封存中的開休市日期表並驗證原始檔雜湊；不需要其他交易狀態來源成功。"""
+    manifest = json.loads((Path(capture_dir) / "manifest.json").read_text(encoding="utf-8"))
+    entries = [item for item in manifest.get("sources", []) if item.get("source_id") == CALENDAR_SOURCE_ID]
+    if len(entries) != 1 or entries[0].get("status") != "captured_candidate_only":
+        raise TradingCalendarError("封存 %s 沒有可用的開休市日期表" % Path(capture_dir).name)
+    entry = entries[0]
+    raw = (Path(capture_dir) / ("%s.csv" % CALENDAR_SOURCE_ID)).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != entry.get("sha256"):
+        raise TradingCalendarError("開休市日期表原始檔雜湊不一致：%s" % Path(capture_dir).name)
+    facts, _ = extract_ogd_candidate_facts(CALENDAR_SOURCE_ID, raw, fetched_at=str(entry["fetch_finished_at"]))
+    return TradingCalendar.from_ogd_facts(facts, str(entry["sha256"]))
+
+
+def latest_calendar_capture_before(captures_root: Path, limit_time: str) -> Optional[Path]:
+    """limit_time 前最近一次成功封存開休市日期表的目錄（其他來源失敗不影響）。"""
+    limit = parse_aware_time(limit_time, "limit_time", error=TradingCalendarError)
+    best: Optional[Tuple[datetime, Path]] = None
+    for manifest_path in sorted(Path(captures_root).glob("*/manifest.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for item in manifest.get("sources", []):
+            if item.get("source_id") != CALENDAR_SOURCE_ID or item.get("status") != "captured_candidate_only":
+                continue
+            finished = parse_aware_time(item["fetch_finished_at"], "fetch_finished_at", error=TradingCalendarError)
+            if finished <= limit and (best is None or finished > best[0]):
+                best = (finished, manifest_path.parent)
+    return best[1] if best else None
 
 
 # ---------------------------------------------------------------- approvals
@@ -190,6 +226,12 @@ class OgdTradingStatusMapper:
 
     def closed_dates(self) -> Set[str]:
         return closed_dates_from_calendar(self.facts.get("TWSE_CALENDAR_OGD", []))
+
+    def calendar(self) -> TradingCalendar:
+        entry = self.entries.get(CALENDAR_SOURCE_ID)
+        if entry is None:
+            raise TradingCalendarError("封存缺少開休市日期表：%s" % CALENDAR_SOURCE_ID)
+        return TradingCalendar.from_ogd_facts(self.facts[CALENDAR_SOURCE_ID], str(entry["sha256"]))
 
     def build(
         self, request: TradingStatusRequest, approvals: Mapping[str, Mapping[str, object]]
@@ -353,8 +395,11 @@ def build_trading_status_from_capture(
     mapper = None
     if capture_dir is not None:
         mapper = OgdTradingStatusMapper(json.loads((capture_dir / "manifest.json").read_text(encoding="utf-8")), capture_dir)
-    closed = mapper.closed_dates() if mapper is not None else set()
-    session = next_trading_session(str(snapshot["decision_cutoff"]), closed)
+    # 有封存時以官方開休市日曆推算並檢查年度涵蓋；沒有封存時狀態包本來就逐檔 unknown。
+    if mapper is not None:
+        session = mapper.calendar().next_trading_session(str(snapshot["decision_cutoff"]))
+    else:
+        session = next_trading_session(str(snapshot["decision_cutoff"]), set())
     request = TradingStatusRequest.from_snapshot(
         snapshot, session["start"], session["end"],
         source_config_version="%s+approvals:%s" % (

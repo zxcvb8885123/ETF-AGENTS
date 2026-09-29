@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256
+from etf_agent.data.trading_calendar import CALENDAR_BASIS, TradingCalendar
 from etf_agent.decision.finalization import DecisionRepository
 
 from .service import VirtualAccountError, VirtualAccountRepository, VirtualAccountService, parse_time
@@ -32,7 +33,7 @@ def _market(symbol: str) -> str:
 
 
 def add_business_days(day: date, count: int) -> date:
-    """以週一至週五近似 T+N 交割日；國定假日不在此計入。"""
+    """以週一至週五近似 T+N 交割日；國定假日不在此計入。只在未提供官方日曆時使用。"""
     current = day
     remaining = count
     while remaining > 0:
@@ -153,12 +154,34 @@ class OfficialCloseMarket:
 class DailyAccountRunner:
     """每日推進帳本；每一步都交由 VirtualAccountService 完整驗證。"""
 
-    def __init__(self, repository: VirtualAccountRepository, database: Path, decision_repository: Path, settlement_days: int = 2):
+    def __init__(
+        self,
+        repository: VirtualAccountRepository,
+        database: Path,
+        decision_repository: Path,
+        settlement_days: int = 2,
+        calendar: Optional[TradingCalendar] = None,
+    ):
+        """``calendar`` 為官方開休市日曆；省略時交割日退回週一至週五近似並在結果標示。"""
         self.repository = repository
         self.service = VirtualAccountService(repository)
         self.market = OfficialCloseMarket(database)
         self.decision_repository = Path(decision_repository)
         self.settlement_days = settlement_days
+        self.calendar = calendar
+
+    def settlement_date(self, trade_date: str) -> Tuple[str, Dict[str, object]]:
+        day = date.fromisoformat(trade_date)
+        if self.calendar is None:
+            return add_business_days(day, self.settlement_days).isoformat(), {"settlement_calendar_basis": "weekday_approximation"}
+        if not self.calendar.is_trading_day(day):
+            raise VirtualAccountError("成交日 %s 依官方開休市日曆不是交易日" % trade_date)
+        provenance = self.calendar.provenance()
+        return self.calendar.add_settlement_days(day, self.settlement_days).isoformat(), {
+            "settlement_calendar_basis": CALENDAR_BASIS,
+            "settlement_calendar_sha256": provenance["calendar_sha256"],
+            "settlement_calendar_source_sha256": provenance["source_sha256"],
+        }
 
     def settle(self, observed_at: Optional[str] = None) -> Dict[str, object]:
         """若最新狀態是已有 Decision run 的 prepare，則以執行日收盤價結算。"""
@@ -178,6 +201,8 @@ class DailyAccountRunner:
                       if target else self.market.execution_date(state["as_of"]))
         if trade_date is None:
             return {"status": "waiting_for_close_data", "run_id": current["run_id"], "decision_run_id": decision_run_id}
+        # 先確認成交日與交割日，日曆不足時在寫入任何輸入檔前停止。
+        settlement, calendar_basis = self.settlement_date(trade_date)
         decision = json.loads((self.decision_repository / decision_run_id / "decision.json").read_text(encoding="utf-8"))
         symbols = sorted({str(row["symbol"]).upper() for row in state.get("positions", [])}
                          | {str(row.get("symbol", "")).upper() for row in decision.get("orders", [])})
@@ -192,7 +217,6 @@ class DailyAccountRunner:
         execution_path, close_path = run_dir / "execution_market.json", run_dir / "close_market.json"
         for path, payload in ((execution_path, markets[0]), (close_path, markets[1])):
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        settlement = add_business_days(date.fromisoformat(trade_date), self.settlement_days).isoformat()
         result = self.service.apply_decision(
             self.decision_repository, decision_run_id, execution_path, close_path,
             settlement, ("close-%s-%s" % (trade_date, decision_run_id))[:80],
@@ -201,7 +225,7 @@ class DailyAccountRunner:
                 "trade_date": trade_date, "settlement_date": settlement, "nav": result["state"]["nav"],
                 "fills": len(result["transition"]["execution"]["fills"]),
                 "unfilled": len(result["transition"]["execution"]["unfilled_orders"]),
-                "settlement_calendar_basis": "weekday_approximation"}
+                **calendar_basis}
 
     def run(self, snapshot_path: Path, prepare_run_id: str, account_output: Path) -> Dict[str, object]:
         snapshot = self.service.read_snapshot(snapshot_path)

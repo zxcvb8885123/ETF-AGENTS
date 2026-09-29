@@ -7,10 +7,9 @@ from etf_agent.automation.daily_pipeline import (
     AgentCall,
     DailyDecisionPipeline,
     degraded_research_result,
-    next_weekday_session,
     validate_research_result,
 )
-from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest
+from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest, next_trading_session
 from etf_agent.data.trading_status import DEFAULT_REQUIRED_CATEGORIES
 from etf_agent.decision import DecisionRepository
 
@@ -102,7 +101,7 @@ class PipelineWorld:
             "available_at": "2026-09-19T00:00:00+00:00",
             "sector_by_symbol": {"2330.TW": "industry:24", "2317.TW": "industry:31"},
         }
-        session = next_weekday_session(snapshot["decision_cutoff"])
+        session = next_trading_session(snapshot["decision_cutoff"], set())
         request = TradingStatusRequest.from_snapshot(snapshot, session["start"], session["end"])
         coverage = [] if not approved_status else [
             {
@@ -256,11 +255,6 @@ class ResumeTests(unittest.TestCase):
 
 
 class DailyPipelineHelperTests(unittest.TestCase):
-    def test_next_weekday_session_skips_weekend(self):
-        session = next_weekday_session("2026-09-25T10:00:00+00:00")  # 週五台北 18:00
-        self.assertEqual(session["start"], "2026-09-28T09:00:00+08:00")
-        self.assertEqual(session["end"], "2026-09-28T13:30:00+08:00")
-
     def test_degraded_research_is_valid_and_states_research_not_run(self):
         snapshot = builder_inputs()[0]
         result = degraded_research_result(snapshot, "research-1")
