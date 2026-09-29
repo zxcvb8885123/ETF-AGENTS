@@ -7,10 +7,10 @@ cd "$PROJECT_DIR"
 MODE=${1:-auto}
 
 case "$MODE" in
-  auto|official|all|check|daily|report|dashboard)
+  auto|official|all|check|daily|dashboard)
     ;;
   *)
-    echo "用法：./start.sh [auto|official|all|check|daily|report|dashboard]" >&2
+    echo "用法：./start.sh [auto|official|all|check|daily|dashboard]" >&2
     echo "  auto      有官方交易池就正式抓取，否則使用開發模式（預設）" >&2
     echo "  official  僅抓取官方交易池，交易池空白時停止" >&2
     echo "  all       開發用，抓取 TWSE 端點全部可解析證券" >&2
@@ -42,11 +42,6 @@ if [ "$MODE" = "daily" ]; then
   MODE=official
 fi
 
-REPORT_ONLY=0
-if [ "$MODE" = "report" ]; then
-  REPORT_ONLY=1
-fi
-
 if command -v shasum >/dev/null 2>&1; then
   BUILD_INPUT_SHA=$(shasum -a 256 Dockerfile requirements.txt | shasum -a 256 | awk '{print $1}')
 else
@@ -74,26 +69,6 @@ if [ "$MODE" = "check" ]; then
   docker compose run --rm agent python3 -m unittest discover -s tests -v
   echo "[4/4] 檢查完成"
   exit 0
-fi
-
-if [ "$REPORT_ONLY" -eq 1 ]; then
-  REPORT_RUN_ID=${REPORT_RUN_ID:-report-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
-  REPORT_GENERATED_AT=${REPORT_GENERATED_AT:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
-  echo "[3/4] 執行報告工作流：$REPORT_RUN_ID"
-  set +e
-  docker compose run --rm agent python3 cli/report_workflow.py run \
-    --snapshot artifacts/research_snapshot_latest.json \
-    --database var/etf_agent.db \
-    --research artifacts/event_research_validated.json \
-    --repository artifacts/report_runs \
-    --reports artifacts/reports \
-    --execution-mode official \
-    --run-id "$REPORT_RUN_ID" \
-    --generated-at "$REPORT_GENERATED_AT"
-  WORKFLOW_EXIT=$?
-  set -e
-  echo "[4/4] 報告工作流完成，狀態檔：artifacts/reports/latest.md"
-  exit "$WORKFLOW_EXIT"
 fi
 
 echo "[3/4] 初始化資料庫並抓取行情"
@@ -154,21 +129,6 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     --account-output "artifacts/virtual_accounts/$ACCOUNT_ID/account_snapshot_latest.json"
   ACCOUNT_EXIT=$?
   set -e
-  REPORT_RUN_ID=${REPORT_RUN_ID:-daily-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
-  REPORT_GENERATED_AT=${REPORT_GENERATED_AT:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
-  echo "[3d/4] 執行報告工作流：$REPORT_RUN_ID"
-  set +e
-  docker compose run --rm agent python3 cli/report_workflow.py run \
-    --snapshot artifacts/research_snapshot_latest.json \
-    --database var/etf_agent.db \
-    --research artifacts/event_research_validated.json \
-    --repository artifacts/report_runs \
-    --reports artifacts/reports \
-    --execution-mode official \
-    --run-id "$REPORT_RUN_ID" \
-    --generated-at "$REPORT_GENERATED_AT"
-  WORKFLOW_EXIT=$?
-  set -e
 fi
 
 echo "[4/4] 顯示資料狀態"
@@ -176,9 +136,5 @@ docker compose run --rm agent python3 scripts/data_status.py
 
 if [ "$DAILY_RUN" -eq 1 ] && [ "${ACCOUNT_EXIT:-0}" -ne 0 ]; then
   echo "虛擬帳本推進失敗，績效儀表板不會更新；請查看上方錯誤訊息。" >&2
-fi
-
-if [ "$DAILY_RUN" -eq 1 ] && [ "${WORKFLOW_EXIT:-0}" -ne 0 ]; then
-  echo "報告工作流尚未完成；請查看 artifacts/reports/latest.md。" >&2
-  exit "$WORKFLOW_EXIT"
+  exit "$ACCOUNT_EXIT"
 fi

@@ -1,5 +1,7 @@
 # 自動化報告 Agent：一鍵研究與報告交付計畫
 
+> **狀態（2026-09-29）**：DailyReport／FailureReport 與報告工作流（`cli/daily_report.py`、`cli/report_workflow.py`、`automation/reporting.py`、`automation/workflow.py`）已移除，比賽交付只使用 D-Plan。本文件保留為歷史紀錄；原本在報告工作流中的帳本一致性檢查已移至 `competition.verify_account_binding`（D-Plan 匯出前）。
+
 日期：2026-09-22。狀態：RPT0～RPT4 第一版已實作。本文件補充既有自動化排程／報告計畫；正式決策及排程仍依前置條件接續。
 
 ## 目標與目前缺口

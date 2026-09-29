@@ -42,7 +42,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 .venv/bin/python scripts/run_daily_pipeline.py
 ```
 
-依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ DailyReport → macOS 通知。
+依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
 
 | 選項 | 用途 |
 | --- | --- |
@@ -87,7 +87,6 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 | `./start.sh all` | 開發模式：抓 TWSE 最新行情端點的全部可解析證券 |
 | `./start.sh check` | 只建置、檢查與執行測試 |
 | `./start.sh daily` | 驗證來源、更新行情／事件／最近到期季度財報（覆蓋不完整不阻擋）、推進虛擬帳本並建立 `artifacts/research_snapshot_latest.json` |
-| `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
 | `./start.sh dashboard` | 啟動唯讀績效儀表板 |
 
 ## 目前進度
@@ -100,11 +99,11 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 - **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實情緒／共識資料商尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
 - **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（P0～P6）只保留供封存 run 重建與 fixture 測試。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
-- **報告**：RPT0～RPT4 報告工作流、DailyReport／FailureReport、D-Plan v4.0 候選匯出與本地結構／引用鏈檢查、唯讀績效儀表板。
+- **交付**：D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（匯出前核對 Decision run 的帳戶快照與帳戶目前 latest 的 prepare-day 封存一致）、唯讀績效儀表板。DailyReport／FailureReport 與報告工作流已於 2026-09-29 移除（比賽只需 D-Plan），舊封存仍留在 `artifacts/report_runs/` 供稽核。
 
 ### 第一次真實資料決策（2026-09-28，目標交易日 9/29）
 
-整條新鏈以真實資料跑完，Decision run `decision-20260928T084128Z` **approved、30 筆買進委託**（現金 11.5%、周轉率 88%、現金姿態 neutral），DailyReport 為 `artifacts/report_runs/report-20260928T120706Z/daily_report_markdown.md`（內部人工檢視，官方格式未驗證）。
+整條新鏈以真實資料跑完，Decision run `decision-20260928T084128Z` **approved、30 筆買進委託**（現金 11.5%、周轉率 88%、現金姿態 neutral）。
 
 第一次執行曾被拒絕：提案通過全部規則，但 `liquidity_stress` 壓力情境（成交率 50%、滑價 2 倍）下現金比例 60% 超過 25% 上限；從全現金建倉時這個情境結構上無法通過。現已改為：現金上限只在頂層 `CASH_WEIGHT` 與 `base` 情境為硬性規則，壓力情境現金超標只記警告，其餘情境檢查仍為硬性。被拒絕的封存與舊報告移至各 repository 的 `.superseded/` 保留稽核，未刪除。風險 Agent 留下兩項未解風險：產業實際權重未提供給審查、部分成交後的補單規則尚未納入下一交易日流程。
 
@@ -112,7 +111,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 
 - 部分成交後的補單規則；風險審查輸入補上產業實際權重。
 - 虛擬帳本 VA4／VA5 自動化與跨日真實資料驗收；正式排程啟用。步驟見[每日自動化與回測就緒計畫](docs/automation_backtest_readiness_plan.md)。
-- D-Plan：DailyReport 到「來源→事實→市場姿態→全持股決策」的完整映射、真實資料端到端演練；主辦方伺服器語意驗證（`verify_dplan.py`）未取得，本地檢查不等同平台驗證。
+- D-Plan：Decision run 到「來源→事實→市場姿態→全持股決策」的完整映射、真實資料端到端演練；主辦方伺服器語意驗證（`verify_dplan.py`）未取得，本地檢查不等同平台驗證。
 - 策略說明書（ETF 名稱、投資主題、投資理念）：繳交期間 2026-10-21 至 10-26。
 - 競賽規則待釐清：現金上限 `<25%` 與 Schema `≤25%` 的邊界、提交時間（設定 19:30 與 Schema 05:00–08:55）、min successful days。
 - 回測 B3 的六組正式策略、績效貢獻、不確定性與樣本外分析；B4 Agent 評估；真實歷史回測（缺版本化歷史交易日曆與歷史交易狀態）。
@@ -189,9 +188,7 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 
 | 指令 | 用途 |
 | --- | --- |
-| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選、等待／接收研究結果並交付報告；official 模式須核對 VirtualAccount prepare-day run |
-| `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
-| `.venv/bin/python cli/dplan.py build ...`／`validate --input D-Plan.json` | D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（不等同主辦方伺服器驗證） |
+| `.venv/bin/python cli/dplan.py build ... --virtual-account-account-id ID --virtual-account-run-id PREPARE_RUN`／`validate --input D-Plan.json` | D-Plan v4.0 候選匯出（須指定決策使用的 prepare-day 帳本 run）與本地結構／引用鏈檢查（不等同主辦方伺服器驗證） |
 | `.venv/bin/python cli/backtest.py --request REQ.json compare-strategies --strategies S.json --baseline ID --output C.json` | B3 fixture 策略比較；`validate-comparison` 加 `--input C.json` 重播檢查。介面見[回測 Agent 計畫](docs/backtest_agent_plan.md) |
 | `python3 scripts/run_strategy.py --input snapshot.json` | 原型事件策略 V1（僅供對照，不在正式決策路徑） |
 
@@ -237,9 +234,7 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | [回測 Agent 計畫](docs/backtest_agent_plan.md)／[P7 第一批](docs/backtest_mvp_plan.md)／[方法規格](docs/backtest_plan_v1.md) | 歷史重播、模擬成交與驗證方法 |
 | [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA5 |
 | [外部帳戶結算檔匯入與對帳計畫](docs/account_data_integration_plan.md) | 選配支線 AC1～AC4 |
-| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 執行紀錄、每日／失敗報告、排程 |
-| [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4 |
-| [真實研究續跑與決策報告驗收](docs/report_workflow_acceptance_plan.md) | W0～W5 |
+| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)、[一鍵研究與報告交付](docs/report_delivery_agent_plan.md)、[報告續跑驗收](docs/report_workflow_acceptance_plan.md) | 已移除的 DailyReport／報告工作流歷史紀錄 |
 | [正式競賽決策報告與 D-Plan 交付](docs/competition_report_delivery_plan.md) | 主辦方規格盤點、D-Plan 候選匯出與待辦 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 

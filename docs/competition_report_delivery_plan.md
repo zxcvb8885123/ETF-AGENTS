@@ -125,7 +125,7 @@ ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投�
 
 ### F5：固定入口與操作體驗
 
-- 延伸既有 start.sh daily／report 與 report_workflow run／status／resume／verify，提供資料準備、研究等待、決策等待、格式阻擋及完成的清楚狀態。
+- （2026-09-29：`start.sh report` 與 report_workflow 已移除，以下改由每日決策鏈與 D-Plan 匯出承接。）延伸既有 start.sh daily，提供資料準備、研究等待、決策等待、格式阻擋及完成的清楚狀態。
 - artifacts/reports/latest.md 顯示本次日期、cutoff、產物連結、驗證狀態與下一步；舊成功報告保留日期，不能替代今日失敗。
 - 發布前驗證所有產物，原子更新索引；同鍵同輸入重用，同鍵不同輸入拒絕覆寫。
 - 操作文件提供從乾淨工作區準備資料、Agent 接手、續跑、產檔及人工檢視的完整範例。明確區分現有命令與新增參數。

@@ -1,12 +1,19 @@
 import copy
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from etf_agent.competition import DPlanError, DPlanExporter, DPlanValidator
+from etf_agent.competition import (
+    DPlanError, DPlanExporter, DPlanValidator, load_decision_run, verify_account_binding,
+)
 from etf_agent.decision import (
     AllocationOrderEngine, CompetitionGuardV2, DecisionFinalizer,
     RevisionHistoryBuilder, ScenarioEngine,
 )
+from etf_agent.virtual_account import VirtualAccountRepository, VirtualAccountService
 from test_portfolio_risk_decision import policy, risk_review, valid_inputs
+from test_virtual_account import prepare_and_decide
 
 
 def valid_context():
@@ -90,6 +97,56 @@ class DPlanContractTests(unittest.TestCase):
         errors = DPlanValidator().validate(plan)
         self.assertTrue(any("引用不存在" in error for error in errors))
         self.assertTrue(any("1,000 股整數倍" in error for error in errors))
+
+
+class DPlanAccountBindingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        rules = self.root / "rules.json"
+        rules.write_text(json.dumps({"initial_capital_twd": 1_000_000_000, "version": "fixture-v1"}), encoding="utf-8")
+        self.accounts = self.root / "accounts"
+        self.repository = VirtualAccountRepository(self.accounts, "cup-test")
+        self.service = VirtualAccountService(self.repository)
+        self.service.initialize(rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        self.genesis_run = self.repository.latest()["run_id"]
+        _, decisions = prepare_and_decide(self.service, self.root)
+        self.artifacts = load_decision_run(str(decisions), "decision-1")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def bind(self, artifacts=None, run_id="prepare-with-orders"):
+        return verify_account_binding(artifacts or self.artifacts, str(self.accounts), "cup-test", run_id)
+
+    def test_accepts_latest_prepare_day_run_used_by_decision(self):
+        binding = self.bind()
+        self.assertEqual(binding["run_id"], "prepare-with-orders")
+        self.assertTrue(binding["account_snapshot_sha256"])
+
+    def test_rejects_run_that_is_not_latest(self):
+        with self.assertRaisesRegex(DPlanError, "latest"):
+            self.bind(run_id=self.genesis_run)
+
+    def test_rejects_changed_account_snapshot(self):
+        changed = copy.deepcopy(self.artifacts)
+        changed["decision_input"]["account_snapshot"]["cash"] = "1"
+        with self.assertRaisesRegex(DPlanError, "AccountSnapshot"):
+            self.bind(changed)
+
+    def test_rejects_snapshot_or_cutoff_mismatch(self):
+        changed = copy.deepcopy(self.artifacts)
+        changed["decision_input"]["decision_cutoff"] = "2026-09-21T00:55:00+00:00"
+        with self.assertRaisesRegex(DPlanError, "Snapshot／cutoff"):
+            self.bind(changed)
+        changed = copy.deepcopy(self.artifacts)
+        changed["decision_input"]["snapshot"]["snapshot_id"] = "other-snapshot"
+        with self.assertRaisesRegex(DPlanError, "Snapshot／cutoff"):
+            self.bind(changed)
+
+    def test_rejects_missing_account_run(self):
+        with self.assertRaisesRegex(DPlanError, "VirtualAccount run 驗證失敗"):
+            self.bind(run_id="prepare-missing")
 
 
 if __name__ == "__main__":

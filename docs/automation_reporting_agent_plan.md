@@ -1,5 +1,7 @@
 # 自動化排程與報告 Agent 計畫 V2
 
+> **狀態（2026-09-29）**：DailyReport／FailureReport 與報告工作流（`cli/daily_report.py`、`cli/report_workflow.py`、`automation/reporting.py`、`automation/workflow.py`）已移除，比賽交付只使用 D-Plan。本文件保留為歷史紀錄；原本在報告工作流中的帳本一致性檢查已移至 `competition.verify_account_binding`（D-Plan 匯出前）。
+
 > 更新日期：2026-09-22。開發順序：可先實作離線契約、報告與 fixture 驗收；正式每日排程須待資料、研究、決策／風控、正式回測及固定版本前向驗證通過後啟用。
 
 > 現況：Research Report V0 與 A0／A1 離線 DailyReport／FailureReport 已完成；RPT0～RPT4 第一版及一件真實事件研究續跑已通過驗收。正式 Decision／Risk 輸入與每日排程尚未接通；詳見[真實研究續跑與決策報告驗收](report_workflow_acceptance_plan.md)。

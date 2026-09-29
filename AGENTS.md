@@ -52,7 +52,7 @@
 - 只整合相同 Snapshot／cutoff 的已驗證研究 artifact，產生同源 JSON 與 Markdown。
 - MarketPerceptionResult 與 PerceptionDataBundle 必須成對提供；缺少時產生明確降級報告。
 - Builder 不增加市場結論；Validator 以原始輸入重建整份報告並拒絕任何改寫。
-- 報告不得包含配置、權重、股數、訂單或聲稱自己是正式 DailyReport／D-Plan。
+- 報告不得包含配置、權重、股數、訂單或聲稱自己是正式 D-Plan。
 
 ## 時間點與證據規則
 

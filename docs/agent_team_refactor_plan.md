@@ -46,7 +46,7 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 交易 Agent：逐檔權衡多空 → buy／add／hold／trim／exit／no_trade 與信心等級
         ↓ TradeDecision（Python 依等級與 ATR 算權重、張數、委託單）
 風險 Agent：市場風險 → 現金姿態；提案／情境／Guard 審查 → approve／revise／reject
-        ↓ CompetitionGuard（競賽硬性規則）→ Finalize → 封存 → DailyReport
+        ↓ CompetitionGuard（競賽硬性規則）→ Finalize → 封存（DailyReport 已於 2026-09-29 移除；對外交付改由 D-Plan 匯出）
 ```
 
 ## 3. 各角色輸入、輸出與禁止事項

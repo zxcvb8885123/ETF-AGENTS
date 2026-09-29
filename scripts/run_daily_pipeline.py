@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""每日一鍵：資料 → 決策子 Agent（claude -p）→ 封存 Decision run → DailyReport → 通知。
+"""每日一鍵：資料 → 決策子 Agent（claude -p）→ 封存 Decision run → 通知。
 
-不自動下單或送件；產出的是供人工檢視的決策與報告。設計給 launchd 平日定時執行，
+不自動下單或送件；產出的是供人工檢視的封存決策。設計給 launchd 平日定時執行，
 也可手動執行。同一台北日期已完成時不重跑（--force 可強制）。
 """
 
@@ -56,11 +56,11 @@ def notify(title: str, message: str) -> None:
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
 
 
-def run_data_stage(account_id: str, account_run_id: str, report_run_id: str) -> None:
-    """沿用 ./start.sh daily：抓資料、建 Snapshot、推進帳本；其報告工作流停在等待 Agent 屬預期。"""
-    env = dict(os.environ, ACCOUNT_ID=account_id, ACCOUNT_RUN_ID=account_run_id, REPORT_RUN_ID=report_run_id)
+def run_data_stage(account_id: str, account_run_id: str) -> None:
+    """沿用 ./start.sh daily：抓資料、建 Snapshot、推進帳本。"""
+    env = dict(os.environ, ACCOUNT_ID=account_id, ACCOUNT_RUN_ID=account_run_id)
     completed = subprocess.run([str(ROOT / "start.sh"), "daily"], cwd=ROOT, env=env, check=False)
-    if completed.returncode not in (0, 3):
+    if completed.returncode != 0:
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
 
 
@@ -190,7 +190,7 @@ def main() -> int:
         account_path = ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json"
         if not args.skip_data:
             # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
-            log("[0/5] 封存交易狀態與開休市政府開放 CSV")
+            log("[0/4] 封存交易狀態與開休市政府開放 CSV")
             try:
                 report = json.loads((ROOT / "docs" / "source_audit" / "2026-09-25_ogd_crosscheck.json").read_text(encoding="utf-8"))
                 capture = capture_ogd_candidates(report, captures_root)
@@ -198,8 +198,8 @@ def main() -> int:
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 summary["trading_status_capture_error"] = str(error)
                 log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
-            log("[1/5] ./start.sh daily：資料、Snapshot、虛擬帳本")
-            run_data_stage(args.account_id, "prepare-%s" % stamp, "daily-%s" % stamp)
+            log("[1/4] ./start.sh daily：資料、Snapshot、虛擬帳本")
+            run_data_stage(args.account_id, "prepare-%s" % stamp)
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
                 raise RuntimeError("虛擬帳本未建立本次 prepare 狀態（可能在等待前次決策的收盤價），不能產生新決策")
         account_run_id = prepared_account_run(args.account_id)
@@ -207,7 +207,7 @@ def main() -> int:
         if not snapshot.get("usable"):
             raise RuntimeError("Snapshot 不可用：%s" % snapshot.get("quality_flags"))
 
-        log("[2/5] 交易狀態包（官方開休市日推算目標時段；未核准來源一律 fail-closed）")
+        log("[2/4] 交易狀態包（官方開休市日推算目標時段；未核准來源一律 fail-closed）")
         capture_dir = latest_capture_before(captures_root, snapshot["decision_cutoff"])
         approvals_path = ROOT / "config" / "trading_status_approvals.json"
         approvals = load_approvals(approvals_path)
@@ -222,7 +222,7 @@ def main() -> int:
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
 
-        log("[3/5] 決策鏈：分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 claude -p）")
+        log("[3/4] 決策鏈：分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 claude -p）")
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=args.max_budget_usd),
@@ -250,33 +250,8 @@ def main() -> int:
         )
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
-        if args.perception_bundle is not None:
-            args.perception_bundle = run_dir / "perception_bundle.json"
-            args.perception = run_dir / "perception_result.json"
         research_path = result.research_result_path
         summary["research_status"] = json.loads(research_path.read_text(encoding="utf-8")).get("status")
-
-        log("[4/5] 報告工作流：DailyReport")
-        workflow = subprocess.run(
-            [
-                str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "cli" / "report_workflow.py"), "run",
-                "--snapshot", str(snapshot_path),
-                "--research", str(research_path),
-                "--decision-repository", str(ROOT / "artifacts" / "portfolio_decisions"),
-                "--decision-run-id", str(result.decision_run_id),
-                "--virtual-account-repository", str(ROOT / "artifacts" / "virtual_accounts"),
-                "--virtual-account-account-id", args.account_id,
-                "--virtual-account-run-id", account_run_id,
-                "--execution-mode", "official",
-                "--run-id", "report-%s" % stamp,
-            ] + (["--perception-bundle", str(args.perception_bundle), "--perception", str(args.perception)]
-                 if args.perception_bundle is not None and args.perception is not None else []),
-            cwd=ROOT, capture_output=True, text=True, check=False,
-            env=dict(os.environ, PYTHONPATH=str(ROOT / "src")),
-        )
-        (run_dir / "report_workflow.log").write_text(workflow.stdout + workflow.stderr, encoding="utf-8")
-        summary["report_workflow_exit"] = workflow.returncode
-        summary["report"] = str(ROOT / "artifacts" / "reports" / "latest.md")
         summary["status"] = "completed"
     except Exception as error:  # noqa: BLE001 — 任何失敗都要寫入摘要並通知
         summary["status"] = "failed"
@@ -285,7 +260,7 @@ def main() -> int:
     summary["finished_at"] = datetime.now(TAIPEI_TIMEZONE).isoformat()
     write_json(summary_path, summary)
 
-    log("[5/5] 通知")
+    log("[4/4] 通知")
     if summary["status"] == "completed":
         message = "決策 %s，%d 筆委託，現金姿態 %s，Agent 估算用量 $%s（訂閱不計費）" % (
             summary.get("decision_status"), summary.get("order_count", 0),

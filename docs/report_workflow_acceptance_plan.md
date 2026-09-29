@@ -1,5 +1,7 @@
 # 真實研究續跑與決策報告驗收計畫
 
+> **狀態（2026-09-29）**：DailyReport／FailureReport 與報告工作流（`cli/daily_report.py`、`cli/report_workflow.py`、`automation/reporting.py`、`automation/workflow.py`）已移除，比賽交付只使用 D-Plan。本文件保留為歷史紀錄；原本在報告工作流中的帳本一致性檢查已移至 `competition.verify_account_binding`（D-Plan 匯出前）。
+
 日期：2026-09-23。狀態：W0～W5 已完成有限範圍驗收；W6 因正式決策輸入不足而等待。本次先完成按需研究交付，再依正式輸入可用性接決策報告；不把程式接線完成當成真實資料驗收通過。
 
 ## 目標與現況
