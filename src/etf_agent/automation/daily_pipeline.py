@@ -694,19 +694,27 @@ class DailyDecisionPipeline:
                 raise DailyPipelineError("Guard 失敗的拒絕審查驗證失敗：" + "；".join(errors))
             return review
         exposure = sector_exposure(proposal, policy)
+        # 審查 Agent 只讀提案／情境／Guard，沒有共同輸入；不提供可引用清單時它會編造 artifact ID
+        # 而被 Validator 拒絕，正式流程曾要靠第二次重試才通過。
+        held = {str(item["symbol"]).upper() for item in proposal["allocation_proposal"]["positions"]}
+        citable = sorted(
+            str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"]
+            if row.get("source_evidence_id") and str(row["symbol"]).upper() in held
+        )
+        citable_path = self.save_artifact("review_citable_evidence_r%d" % revision, {"citable_evidence_ids": citable})
         names = {
             name: self.save_artifact("%s_review_input_r%d" % (name, revision), payload)
             for name, payload in (("proposal", proposal), ("scenario", scenario), ("guard", guard), ("sector_exposure", exposure))
         }
         task = AgentTask(
             "review_r%d" % revision,
-            "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s，再讀提案 %s、情境 %s、Guard %s 與程式計算的產業實際權重 %s。"
+            "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s，再讀提案 %s、情境 %s、Guard %s 與程式計算的產業實際權重 %s；可引用的 evidence ID 清單在 %s。"
             "輸出 approve、revise 或 reject。revise 只能使用 remove_candidate（symbol 為本提案買進股票）、"
             "increase_cash_buffer（value 不得低於目前現金緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
-            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 必須是共同輸入中存在的 ID。%s"
+            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
             % (
                 self.root / "skills/portfolio-risk-review/SKILL.md",
-                names["proposal"], names["scenario"], names["guard"], names["sector_exposure"],
+                names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], citable_path,
                 revision, int(policy["max_revisions"]), _SHARED_RULES,
             ),
             REVIEW_SCHEMA,
