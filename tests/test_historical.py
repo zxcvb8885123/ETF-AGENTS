@@ -256,6 +256,41 @@ class HistoricalProviderTests(unittest.TestCase):
             self.assertEqual(second.batches[0].start_date, "2026-09-10")
             self.assertEqual(second.status, "completed")
 
+    def test_official_refresh_reaches_day_reported_by_faster_market(self):
+        """TWSE 全市場當日行情晚一天時，仍可補抓 TPEx 已公布那一天的上市個股官方日線。"""
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            seed_latest_price(database, universe[0], "TWSE_STOCK_DAY_ALL", "2026-09-17")
+            seed_latest_price(database, universe[1], "TPEX_MAINBOARD_QUOTES", "2026-09-18")
+            self.assertEqual(
+                database.latest_complete_trade_date(("TWSE_STOCK_DAY_ALL", "TPEX_MAINBOARD_QUOTES")), "2026-09-17"
+            )
+            self.assertEqual(
+                database.latest_reported_trade_date(("TWSE_STOCK_DAY_ALL", "TPEX_MAINBOARD_QUOTES")), "2026-09-18"
+            )
+            service = OfficialHistoricalRefreshService(
+                database, OfficialHistoryFixtureProvider(), max_workers=1, retries=0
+            )
+            report = service.refresh(universe, start=date(2026, 9, 1), end=date(2026, 9, 18))
+            self.assertEqual(report.safe_end_date, "2026-09-18")
+            # 抓不到指定終止日的個股不被當成完整：覆蓋報告逐檔標示 missing，且不會以更晚日期蒙混。
+            self.assertEqual([row.end_coverage for row in report.coverage], ["missing", "missing"])
+            self.assertNotEqual(report.exit_code, 0)
+            with self.assertRaisesRegex(ValueError, "晚於最近完整官方交易日"):
+                service.refresh(universe, end=date(2026, 9, 19))
+
+    def test_reported_trade_date_needs_at_least_one_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            database.initialize()
+            self.assertIsNone(database.latest_reported_trade_date(("TWSE_STOCK_DAY_ALL",)))
+            with self.assertRaises(ValueError):
+                database.latest_reported_trade_date(())
+
     def test_official_refresh_preserves_failed_run_and_returns_failed_report(self):
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),

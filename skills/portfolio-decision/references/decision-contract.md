@@ -159,7 +159,7 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 
 ## ScenarioResult、GuardResult 與 RiskReview
 
-`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力。每個情境從 cutoff 帳戶重建：成交率以張為單位向下取整，滑價獨立套用，逐筆重算成交價、費稅、可用現金、總現金、持股、收盤估值、NAV 與未成交張數；不能從「假設全部成交」的配置直接乘跌幅。`GuardResult` 對提案及每個情境檢查交易池、明確可交易狀態、持股數、現金／買力、個股與產業權重、換手、強制退出流動性；若規則另有明確基準要求，再檢查每一份必備基準的 Active Share。
+`ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力。每個情境從 cutoff 帳戶重建：成交率以張為單位向下取整，滑價獨立套用，逐筆重算成交價、費稅、可用現金、總現金、持股、收盤估值、NAV 與未成交張數；不能從「假設全部成交」的配置直接乘跌幅。`GuardResult` 對提案及每個情境檢查交易池、明確可交易狀態、持股數、現金／買力、個股與產業權重、換手、強制退出流動性；已持有、本次沒有 buy 訂單的股票若之後被限制交易（例如新公告處置），只能續抱、不能買賣，Guard 以 `HELD_NOT_TRADABLE`（`passed=true` 的警告）與情境的 `held_not_tradable` 記錄，不否決整份決策；買進或賣出受限股票仍由 `TRADABLE`／`SCENARIOS` 否決，且沒有續抱的受限持股時輸出與舊版完全相同；若規則另有明確基準要求，再檢查每一份必備基準的 Active Share。
 
 Portfolio Risk Agent 只輸出 `RiskReview`：
 

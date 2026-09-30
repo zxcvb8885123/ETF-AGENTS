@@ -297,7 +297,23 @@ class CompetitionGuardV2:
             str(item.get("symbol", "")).upper()
             for item in proposal.get("order_proposal", {}).get("orders", [])
         }
-        checked_symbols = order_symbols if status_by_symbol else set(weights) | order_symbols
+        # 已持有、本次不買進（沒有 buy 訂單）的股票，即使之後被限制交易也只能續抱：不能買賣，
+        # 但不因此否決整份決策，否則持股一旦被處置，當天不論給什麼決策都會被拒；只記警告。
+        held_symbols = {
+            str(item.get("symbol", "")).upper()
+            for item in self.context.bundle["account_snapshot"].get("positions", [])
+        }
+        bought_symbols = {
+            str(item.get("symbol", "")).upper()
+            for item in proposal.get("order_proposal", {}).get("orders", [])
+            if item.get("side") == "buy"
+        }
+        carried_symbols = held_symbols - bought_symbols
+
+        def not_tradable_among(symbols):
+            return {symbol for symbol in symbols if symbol in not_tradable or (tradable and symbol not in tradable)}
+        # 只有明確交易狀態包時檢查訂單標的；相容既有 fixture 時另檢查配置中的標的，但續抱的受限持股除外。
+        checked_symbols = order_symbols if status_by_symbol else (set(weights) - carried_symbols) | order_symbols
         invalid_tradability = sorted(
             symbol for symbol in checked_symbols
             if symbol in not_tradable or (tradable and symbol not in tradable)
@@ -385,6 +401,9 @@ class CompetitionGuardV2:
                     "minimum": _rate(minimum_active),
                     "passed": active >= minimum_active,
                 })
+            untradable = not_tradable_among(scenario_weights)
+            blocked_new = untradable - carried_symbols
+            blocked_carried = sorted(untradable & carried_symbols)
             cash_weight_ok = nav > 0 and cash / nav < cash_ceiling
             # 現金上限是目標配置的硬性規則（CASH_WEIGHT 與 base 情境）；價格下跌或部分成交的
             # 壓力情境下現金比例偏高是執行風險，只保留 cash_weight_ok=false 作為警告，不否決提案。
@@ -399,17 +418,15 @@ class CompetitionGuardV2:
                 "position_count_ok": minimum <= position_count <= maximum,
                 "stock_weight_ok": not stock_violations,
                 "sector_weight_ok": all(value <= sector_limit for value in scenario_sector.values()),
-                "tradability_ok": not any(
-                    symbol in not_tradable or (tradable and symbol not in tradable)
-                    for symbol in scenario_weights
-                ),
+                "tradability_ok": not blocked_new,
                 "active_share_results": active_results,
+                **({"held_not_tradable": blocked_carried} if blocked_carried else {}),
                 "passed": cash >= 0 and nav > 0 and (cash_weight_ok or not cash_weight_required)
                 and decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0
                 and minimum <= position_count <= maximum
                 and not stock_violations
                 and all(value <= sector_limit for value in scenario_sector.values())
-                and not any(symbol in not_tradable or (tradable and symbol not in tradable) for symbol in scenario_weights)
+                and not blocked_new
                 and all(item["passed"] for item in active_results),
             })
         self._check(
@@ -418,6 +435,10 @@ class CompetitionGuardV2:
             len(scenario_checks) == 3 and all(item["passed"] for item in scenario_checks),
             scenario_checks,
         )
+        held_blocked = sorted(not_tradable_among(weights) & carried_symbols)
+        if held_blocked:
+            # 警告性檢查（passed 恆為 True）：這些股票已持有、不可交易，本次只能續抱。
+            self._check(checks, "HELD_NOT_TRADABLE", True, held_blocked)
         unfilled_forced = [
             item
             for scenario in scenario_result.get("scenarios", [])

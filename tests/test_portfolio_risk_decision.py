@@ -421,6 +421,80 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertTrue(any("content_sha256" in error for error in result["errors"]))
 
+    def blocked_holding_inputs(self):
+        """2330.TW 已持有但被限制交易，2317.TW 仍可交易並買進。"""
+        from etf_agent.decision import canonical_sha256
+
+        bundle, momentum, debate, intent = valid_inputs()
+        bundle["snapshot"]["tradable_symbols"] = ["2317.TW"]
+        bundle["snapshot"]["not_tradable_symbols"] = ["2330.TW"]
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        momentum = MomentumEngine(bundle).run()
+        debate = debate_bundle(bundle, momentum)
+        intent = trade_intent_result(bundle, momentum, debate)
+        return bundle, intent
+
+    def run_guard(self, bundle, intent):
+        settings = policy()
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        self.assertEqual(GuardValidator(bundle, settings).validate(proposal, scenario, guard), [])
+        return proposal, guard, {item["rule_id"]: item for item in guard["checks"]}
+
+    def test_held_position_that_became_blocked_is_carried_with_warning(self):
+        bundle, intent = self.blocked_holding_inputs()
+        self.assertEqual(intent["items"][1]["intent"], "hold")
+        proposal, guard, checks = self.run_guard(bundle, intent)
+        self.assertTrue(guard["passed"])
+        self.assertEqual(checks["HELD_NOT_TRADABLE"]["details"], ["2330.TW"])
+        self.assertTrue(checks["HELD_NOT_TRADABLE"]["passed"])
+        self.assertTrue(all(row["tradability_ok"] for row in checks["SCENARIOS"]["details"]))
+        self.assertTrue(all(row["held_not_tradable"] == ["2330.TW"] for row in checks["SCENARIOS"]["details"]))
+        self.assertFalse(any(order["symbol"] == "2330.TW" for order in proposal["order_proposal"]["orders"]))
+
+    def test_blocked_holding_still_cannot_be_bought_or_sold(self):
+        bundle, intent = self.blocked_holding_inputs()
+        settings = policy()
+        base = AllocationOrderEngine(bundle, settings).run(intent)
+        template = next(order for order in base["order_proposal"]["orders"] if order["symbol"] == "2317.TW")
+        for side in ("buy", "sell"):
+            proposal = copy.deepcopy(base)
+            proposal["order_proposal"]["orders"].append(dict(template, symbol="2330.TW", side=side))
+            scenario = ScenarioEngine(bundle, settings).run(proposal)
+            guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+            checks = {item["rule_id"]: item for item in guard["checks"]}
+            self.assertFalse(guard["passed"], side)
+            self.assertFalse(checks["TRADABLE"]["passed"], side)
+            self.assertEqual(checks["TRADABLE"]["details"], ["2330.TW"], side)
+            if side == "buy":
+                # 買進受限持股時不適用續抱例外：情境也不通過，且不記 HELD_NOT_TRADABLE。
+                self.assertFalse(checks["SCENARIOS"]["passed"])
+                self.assertNotIn("HELD_NOT_TRADABLE", checks)
+
+    def test_unheld_blocked_symbol_and_unknown_coverage_still_fail(self):
+        from etf_agent.decision import canonical_sha256
+
+        bundle, intent = self.blocked_holding_inputs()
+        bundle["snapshot"]["tradable_symbols"] = ["2330.TW"]
+        bundle["snapshot"]["not_tradable_symbols"] = ["2317.TW"]
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        momentum = MomentumEngine(bundle).run()
+        intent = trade_intent_result(bundle, momentum, debate_bundle(bundle, momentum))
+        _, guard, checks = self.run_guard(bundle, intent)
+        self.assertFalse(guard["passed"])
+        self.assertFalse(checks["TRADABLE"]["passed"])
+        self.assertNotIn("HELD_NOT_TRADABLE", checks)
+
+    def test_guard_output_is_unchanged_when_nothing_held_is_blocked(self):
+        bundle, momentum, debate, intent = valid_inputs()
+        _, guard, checks = self.run_guard(bundle, intent)
+        self.assertTrue(guard["passed"])
+        self.assertNotIn("HELD_NOT_TRADABLE", checks)
+        self.assertTrue(all("held_not_tradable" not in row for row in checks["SCENARIOS"]["details"]))
+
     def test_unfilled_forced_exit_fails_guard(self):
         bundle, momentum, debate, intent = valid_inputs()
         intent["items"][1]["intent"] = "forced_exit"

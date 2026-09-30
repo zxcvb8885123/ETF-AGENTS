@@ -421,13 +421,18 @@ class OfficialHistoricalRefreshService:
         )
 
     def _safe_end_date(self, universe: Sequence[Instrument]) -> date:
+        """官方個股月行情可抓到的最後一天：任一市場最新行情端點已公布的最新交易日。"""
         latest_sources = tuple(
             dict.fromkeys(
                 self.latest_sources[self._market_key(instrument)]
                 for instrument in universe
             )
         )
-        latest = self.database.latest_complete_trade_date(latest_sources)
+        # 證交所全市場當日行情（STOCK_DAY_ALL）常晚一天更新，若取兩市場較早的日期，
+        # 上市個股的當日官方日線就永遠無法補抓。改取任一市場已公布的最新日；各檔是否
+        # 真的取到該日由覆蓋報告（end_coverage）與 Snapshot 的全池覆蓋檢查把關，缺任一檔
+        # 都不會被當成完整交易日。
+        latest = self.database.latest_reported_trade_date(latest_sources)
         if latest is None:
             raise ValueError(
                 "缺少 TWSE／TPEx 最新官方行情；請先執行 collect_latest_prices.py"

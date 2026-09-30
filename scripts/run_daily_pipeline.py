@@ -79,6 +79,20 @@ def latest_resumable_run(runs_root: Path, run_id: str):
     return max(candidates)[1] if candidates else None
 
 
+def named_resumable_run(runs_root: Path, name: str) -> Path:
+    """指定續跑的 run 目錄（跨午夜或用量上限重置後，日期已變，不能靠今天的日期找）；必須未完成且已有 Agent 原始輸出。"""
+    run_dir = runs_root / name
+    summary_path = run_dir / "pipeline.json"
+    if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name) or not run_dir.is_dir() or not summary_path.exists():
+        raise RuntimeError("找不到可續跑的 run 目錄：%s" % name)
+    previous = json.loads(summary_path.read_text(encoding="utf-8"))
+    if previous.get("status") == "completed" and previous.get("decision_status") != "rejected":
+        raise RuntimeError("%s 已完成，不需續跑" % name)
+    if not any(run_dir.glob("*_raw_*.json")):
+        raise RuntimeError("%s 沒有已保存的 Agent 輸出，無可沿用內容" % name)
+    return run_dir
+
+
 def resumed_decision_run_id(run_dir: Path):
     """續跑目錄先前預定的 decision run ID；舊版 summary 沒記錄時，由已保存的事件研究輸出檔名推回。"""
     planned = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8")).get("planned_decision_run_id")
@@ -118,6 +132,10 @@ def main() -> int:
     parser.add_argument(
         "--resume", action="store_true",
         help="沿用同一 run 目錄中先前已通過驗證的 Agent 輸出（例如中途撞到用量上限後續跑）；建議搭配 --skip-data",
+    )
+    parser.add_argument(
+        "--resume-run", metavar="RUN_ID",
+        help="指定要續跑的 run 目錄名稱（如 daily-20260929）並隱含 --resume；用量上限重置或跨午夜後，今天的日期已找不到前一天的 run",
     )
     parser.add_argument("--model", help="子 Agent 使用的 Claude 模型；預設沿用 claude CLI 設定")
     parser.add_argument("--preflight-only", action="store_true", help="只執行執行前檢查（Docker、claude 登入、帳戶、必要檔案、磁碟）後結束")
@@ -160,7 +178,15 @@ def main() -> int:
         if previous.get("status") == "completed":
             log("%s 已完成（%s），不重跑。" % (run_id, previous.get("decision_status")))
             return 0
-    resumable = latest_resumable_run(runs_root, run_id) if args.resume else None
+    if args.resume_run:
+        args.resume = True
+        try:
+            resumable = named_resumable_run(runs_root, args.resume_run)
+        except RuntimeError as error:
+            log("無法續跑：%s" % error)
+            return 1
+    else:
+        resumable = latest_resumable_run(runs_root, run_id) if args.resume else None
     if resumable is not None:
         # 續跑沿用最近一個未完成且已有 Agent 輸出的 run 目錄，否則新目錄中沒有可沿用的輸出。
         run_id = resumable.name

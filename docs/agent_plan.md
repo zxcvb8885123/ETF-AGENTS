@@ -97,7 +97,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 ## 開發順序與目前狀態
 
-[本地 Agent 真實資料研究演練](local_research_dry_run_plan.md)已完成：同一可用 Snapshot 的 525 件 45 日候選中，三件事件以獨立多空研究通過雙重驗證並建立 Research Report V0。報告因沒有合法、歷史化的市場認知資料而明確降級，三件均為 `pending`，不產生交易候選。這是有限範圍的整合驗收，不改變 M1～M4 與正式決策／回測的前置要求。
+本地 Agent 真實資料研究演練（文件已移除，見 git 歷史）已完成：同一可用 Snapshot 的 525 件 45 日候選中，三件事件以獨立多空研究通過雙重驗證並建立 Research Report V0。報告因沒有合法、歷史化的市場認知資料而明確降級，三件均為 `pending`，不產生交易候選。這是有限範圍的整合驗收，不改變 M1～M4 與正式決策／回測的前置要求。
 
 | 順序 | 階段 | 狀態 | 下一個明確成果 |
 | ---: | --- | --- | --- |
@@ -116,15 +116,15 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收。市場情緒與分析師研究 Agent 已提前完成不依賴真實來源的 MVP，Research Report V0 也可整合已保存結果；回測 Agent 已完成 B0～B2 fixture 帳務驗收，但正式歷史 Provider、策略有效性與前向驗證仍待完成。自動化排程與報告 Agent 的 A0／A1 已可用封存 fixture 建立、重建與驗證 DailyReport／FailureReport，但不代表正式日常排程已啟用。正式決策主線仍依 `研究層驗收 → 多子 Agent 買賣裁決與確定性風控 → 回測 → 自動化排程／報告` 通過驗收。
 
-詳細規則見 [Data Agent 計畫](data_agent_plan.md)、[資料來源可行性測試](source_feasibility_2026-09-17.md)、[事件研究 Agent 計畫](event_strategy_v1.md)、[Research Report V0 計畫](research_report_plan.md)、[投資組合買賣決策與風控多子 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及[自動化排程／報告 Agent 計畫](automation_reporting_agent_plan.md)。
+詳細規則見 [Data Agent 計畫](data_agent_plan.md)、資料來源可行性測試（文件已移除，見 git 歷史）、[事件研究 Agent 計畫](event_strategy_v1.md)、[Research Report V0 計畫](research_report_plan.md)、[投資組合買賣決策與風控多子 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及自動化排程／報告 Agent 計畫（文件已移除，見 git 歷史）。
 
 ## 下一批：按需報告交付（2026-09-22）
 
-依[自動化報告 Agent 一鍵交付計畫](report_delivery_agent_plan.md)已完成 RPT0～RPT4 第一版，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑、固定報告入口及既有 DailyReport／FailureReport 接線。這批可交付 Research Report V0，或在 Decision／Risk 通過後交付 DailyReport；D-Plan 與排程仍須通過各自資料及驗收前置條件。
+依自動化報告 Agent 一鍵交付計畫（文件已移除，見 git 歷史）已完成 RPT0～RPT4 第一版，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑、固定報告入口及既有 DailyReport／FailureReport 接線。這批可交付 Research Report V0，或在 Decision／Risk 通過後交付 DailyReport；D-Plan 與排程仍須通過各自資料及驗收前置條件。
 
 ## 報告驗收進度（2026-09-23）
 
-依[真實研究續跑與決策報告驗收計畫](report_workflow_acceptance_plan.md)已完成 W0～W5 的一件真實事件驗收：固定父 run 輸入、補強續跑驗證、隔離研究、報告重建與決策缺口盤點。W6 DailyReport 須待每日虛擬帳本、交易狀態、規則、基準及相關驗收證據齊備。187 筆候選僅研究一件；正式排程未啟用。
+依真實研究續跑與決策報告驗收計畫（文件已移除，見 git 歷史）已完成 W0～W5 的一件真實事件驗收：固定父 run 輸入、補強續跑驗證、隔離研究、報告重建與決策缺口盤點。W6 DailyReport 須待每日虛擬帳本、交易狀態、規則、基準及相關驗收證據齊備。187 筆候選僅研究一件；正式排程未啟用。
 
 ## 正式帳戶資料接入進度（2026-09-23）
 

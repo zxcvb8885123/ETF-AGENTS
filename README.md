@@ -215,25 +215,20 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **R1～R6 已完成**：分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent |
 | [M1 官方交易狀態接入](docs/trading_status_m1_plan.md) | 契約、Parser、Validator、SQLite、CLI 與 Guard |
 | [TS0 來源核准行動計畫](docs/source_audit/2026-09-25_ts0_approval_plan.md) | 政府開放 CSV 查證、確定性映射與 2026-09-28 核准紀錄 |
-| [正式決策必要資料來源核實](docs/decision_data_readiness_plan.md) | D0／TS0／ETF 執行順序與來源證據 |
 | [來源稽核 9/24](docs/source_audit/2026-09-24_findings.md)／[9/25](docs/source_audit/2026-09-25_findings.md) | 官方端點回應、樣本與就緒判定 |
 | [Agent 開發架構](docs/agent_plan.md) | 資料庫、策略、風控買賣及報告流程 |
 | [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及里程碑 |
 | [Data Agent 計畫](docs/data_agent_plan.md) | 資料收集、驗證、版本保存與研究快照 |
 | [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md) | FinMind 等 Provider（待實作） |
-| [官方財報彙總接入](docs/financial_statements_m1_plan.md) | 24 個官方端點、業別契約與 Snapshot |
-| [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 行情、財報、事件與新聞來源實測 |
 | [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 事件證據、補查、引用與研究結果 |
 | [市場情緒與分析師研究 Agent 計畫](docs/sentiment_analyst_agent_plan.md) | 情緒、共識修正、預期差與資料授權 |
 | [基本面研究 Agent 計畫](docs/fundamental_research_agent_plan.md) | FR0～FR3 fixture MVP |
 | [Research Report V0 計畫](docs/research_report_plan.md) | 研究層整合為可稽核 JSON／Markdown |
-| [本地 Agent 真實資料研究演練](docs/local_research_dry_run_plan.md) | 3 件事件獨立研究與降級報告 |
 | [投資組合買賣決策與風控計畫](docs/momentum_portfolio_risk_agent_plan.md) | 舊版 1.0 鏈、確定性配置／訂單及競賽風控 |
 | [P6 決策驗收與風控補強](docs/decision_acceptance_plan.md) | 決策驗收紀錄 |
 | [回測 Agent 計畫](docs/backtest_agent_plan.md)／[P7 第一批](docs/backtest_mvp_plan.md)／[方法規格](docs/backtest_plan_v1.md) | 歷史重播、模擬成交與驗證方法 |
 | [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA5 |
 | [外部帳戶結算檔匯入與對帳計畫](docs/account_data_integration_plan.md) | 選配支線 AC1～AC4 |
-| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md)、[一鍵研究與報告交付](docs/report_delivery_agent_plan.md)、[報告續跑驗收](docs/report_workflow_acceptance_plan.md) | 已移除的 DailyReport／報告工作流歷史紀錄 |
 | [正式競賽決策報告與 D-Plan 交付](docs/competition_report_delivery_plan.md) | 主辦方規格盤點、D-Plan 候選匯出與待辦 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 
