@@ -116,7 +116,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收。市場情緒與分析師研究 Agent 已提前完成不依賴真實來源的 MVP，Research Report V0 也可整合已保存結果；回測 Agent 已完成 B0～B2 fixture 帳務驗收，但正式歷史 Provider、策略有效性與前向驗證仍待完成。自動化排程與報告 Agent 的 A0／A1 已可用封存 fixture 建立、重建與驗證 DailyReport／FailureReport，但不代表正式日常排程已啟用。正式決策主線仍依 `研究層驗收 → 多子 Agent 買賣裁決與確定性風控 → 回測 → 自動化排程／報告` 通過驗收。
 
-詳細規則見 [Data Agent 計畫](data_agent_plan.md)、資料來源可行性測試（文件已移除，見 git 歷史）、[事件研究 Agent 計畫](event_strategy_v1.md)、[Research Report V0 計畫](research_report_plan.md)、[投資組合買賣決策與風控多子 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及自動化排程／報告 Agent 計畫（文件已移除，見 git 歷史）。
+詳細規則見 [Data Agent 計畫](data_agent_plan.md)、資料來源可行性測試（文件已移除，見 git 歷史）、[Research Report V0 計畫](research_report_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)及自動化排程／報告 Agent 計畫（文件已移除，見 git 歷史）。
 
 ## 下一批：按需報告交付（2026-09-22）
 

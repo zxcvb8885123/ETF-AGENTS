@@ -554,8 +554,8 @@ PYTHONPATH=src python3 scripts/collect_official_history.py
 4. 將工具 CLI 統一為結構化 JSON 輸入輸出與穩定 exit code，加入 `get_data_status` 及 allowlist `search_official_sources`。
 5. 新增 `agent_run_id` artifact 目錄，保存查詢計畫、工具呼叫、collection run、候選來源與最終結果。
 6. 完成 Codex／Claude Skill 安裝與一致性檢查，並以相同 fixture 驗證 Snapshot 與品質結果一致。
-7. 將可用 Snapshot 先交給[事件研究 Agent](event_strategy_v1.md)，再交給[投資組合買賣決策與風控多子 Agent](momentum_portfolio_risk_agent_plan.md)。
-8. [回測 Agent](backtest_agent_plan.md)依[回測與驗證方法規格](backtest_plan_v1.md)，使用相同資料契約完成歷史重播、模擬成交、策略比較與前向驗證。
+7. 將可用 Snapshot 先交給事件研究 Agent，再交給決策層 Agent 團隊（見[重構計畫](agent_team_refactor_plan.md)）。
+8. [回測 Agent](backtest_agent_plan.md)使用相同資料契約完成歷史重播、模擬成交、策略比較與前向驗證。
 9. 回測與前向驗證通過後，交給自動化排程／報告 Agent（文件已移除，見 git 歷史）；其中的確定性 D-Plan Builder／Validator 負責送件格式，Data Agent 不接手市場觀點、推論、決策或訂單。
 
 上述功能依 M0～M4 執行；第一版交付範圍以 M0～M3 為主，M4 除必要的來源可行性驗證外不阻擋第一版 Data Agent。

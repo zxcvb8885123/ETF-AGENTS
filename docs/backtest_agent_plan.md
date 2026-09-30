@@ -4,7 +4,7 @@
 
 ## 定位
 
-依 [P7 回測 Agent B0～B2 計畫](backtest_mvp_plan.md) 已完成 fixture MVP：可重播保存決策、隔離歷史時點、模擬整張成交與跨日帳務；下一步才是策略比較、完整 Agent 工具循環與前向驗證。
+已完成 fixture MVP：可重播保存決策、隔離歷史時點、模擬整張成交與跨日帳務；下一步才是策略比較、完整 Agent 工具循環與前向驗證。
 
 實作前置：[P6 決策驗收與風控補強](decision_acceptance_plan.md) 已完成 fixture 驗收，可依本計畫 B0～B2 接入歷史時鐘與模擬成交；真實資料仍須滿足 available_at、公司行動及正式規則版本條件。
 
@@ -12,7 +12,7 @@
 
 回測 Agent 不修改正式資料、不調整線上帳戶、不下單，也不能使用回測日期之後的資訊。第一版已提供 `strategy-backtest` Skill 供 Codex 或 Claude 工作階段檢查 fixture 與診斷；歷史時鐘、成交、帳務、費稅與重播驗證一律由確定性 Python 物件執行。B3 fixture 策略比較第一版已接入；完整策略有效性驗證仍未完成。
 
-詳細統計方法、資料切分、成交假設與比較策略以[回測與驗證方法規格](backtest_plan_v1.md)為準；本文件只定義 Agent 架構與交付流程。
+本文件只定義 Agent 架構與交付流程。
 
 ## 輸入與輸出
 
