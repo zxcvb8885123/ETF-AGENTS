@@ -138,3 +138,68 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 ## 2026-09-28 情緒／共識接入補充
 
 情緒分析師已由固定 unavailable 改為已驗證 PerceptionDataBundle／MarketPerceptionResult 的確定性 adapter；每日流程可先透過既有 runner 全量標註，再由 Python 聚合。下游重建核對 adapter 全文，共識只作次級證據。無來源仍 unavailable，真實 Provider 尚待授權確認；見[操作與限制](daily_perception_account_integration.md)。
+
+## 11. 架構調整提案（2026-09-30，尚未實作）
+
+狀態：**提案**。以下調整尚未改動程式、契約與 Skill；§2～§10 仍是目前已實作的現況。目的是讓圖上每個「Agent」都真的在做判斷，並只保留一層多空辯論。
+
+### 11.1 目標架構圖
+
+```mermaid
+flowchart LR
+    subgraph L1[資料收集層（確定性，非 Agent）]
+        SRC[官方 API／爬蟲／FinMind<br/>行情・營收・重訊・財報・新聞候選] --> SNAP[不可變 Snapshot]
+    end
+    SNAP --> BATCH[Python 分批<br/>150 檔每批 ≤50]
+    subgraph L2[分析團隊（LLM，逐批覆蓋全部 150 檔）]
+        TECH[技術分析師]
+        FUND[基本面分析師]
+        EVT[事件分析師<br/>含事件事實整理與重大性分級]
+        NEWS[新聞／情緒分析師<br/>無核准來源＝unavailable]
+    end
+    BATCH --> TECH & FUND & EVT & NEWS
+    subgraph L3[研究團隊（LLM，互相隔離）]
+        BULL[多頭研究員]
+        BEAR[空頭研究員]
+    end
+    TECH & FUND & EVT & NEWS --> BULL & BEAR
+    BULL & BEAR --> TRADER[交易 Agent（綜合者）<br/>逐檔 intent＋conviction<br/>每個多空 claim 採納或否決一次]
+    TRADER --> RISK[風險 Agent<br/>現金姿態＋提案審查]
+    RISK --> ALLOC[配置引擎（程式）<br/>權重・張數・費稅・現金]
+    ALLOC --> GUARD[CompetitionGuard＋交易狀態閘門（規則）]
+    GUARD --> REPORT[封存＋報告／D-Plan 匯出<br/>不自動下單]
+    SCHED[排程（launchd）<br/>每日自動執行並在失敗時停止] -.-> L1
+```
+
+### 11.2 與 §2 現況的差異
+
+| 項目 | 現況（§2～§10） | 提案 | 理由 |
+| --- | --- | --- | --- |
+| Data Agent | 命名為 Agent，實際是確定性收集、驗證、版本化 | 改稱「資料收集層」，不再稱 Agent | 它沒有 LLM 判斷；圖上只留真正做判斷的 Agent |
+| 重大事件研究 | 事件分析師標 high 後，另跑 Fact／Bull／Bear／Adjudicator，再繞到多空研究員 | 收進分析團隊：事件事實擷取由程式完成，事件分析師給 `materiality` 與有證據的發現；不再另跑一輪四子 Agent 辯論 | 多空辯論只保留一層（多頭／空頭研究員），避免同一事件吵兩次 |
+| 新聞分析師 | 事件分析師兼顧公告；情緒分析師在無核准來源時確定性 unavailable | 明確列出新聞／情緒分析師一席，仍受 `license_status=approved` 限制 | 你要求分析團隊涵蓋新聞；無合法來源前仍輸出 unavailable，不以搜尋摘要冒充 |
+| 綜合者 | 交易 Agent 已做權衡，但文件未稱其為綜合者 | 在文件與圖上明確定義交易 Agent 為綜合者 | 職責不變，只是說清楚 |
+| 風險 Agent 位置 | 交易 Agent 之後給現金姿態（`run_cash_stance`），配置後再審查 | 不變 | 順序已符合「綜合 → 風險 → 配置」 |
+| 報告 | DailyReport 已移除，對外交付為 D-Plan 匯出 | 不變 | — |
+| 自動化 | 已有 `start.sh daily` 與 launchd 範本，未涵蓋完整決策鏈 | 明列為待完成範圍 | 見 11.3 |
+
+不變的原則：數值與規則歸程式、Bull／Bear 互相隔離、Trader 不新增事實、Risk 不手寫權重或覆寫 Guard、不自動下單。
+
+### 11.3 範圍清單（待確認後實作）
+
+| 編號 | 工作 | 主要影響 | 風險 |
+| --- | --- | --- | --- |
+| S1 | 文件與圖更新：README 與 AGENTS.md 把 Data Agent 改稱資料收集層，同步 `data_agent_plan.md` 等引用 | 文件；不改程式與 Skill 名稱 | 低 |
+| S2 | 事件研究併入分析團隊：事件事實擷取改為程式（`analyze_event_context` 已是確定性），移除 `run_material_event_research` 的 Fact／Bull／Bear／Adjudicator 四步 | `automation/event_research_runner.py`、`daily_pipeline.py`、`ResearchResult` 2.1 契約、`event-*` Skill、Decision run 的 `team_inputs`、下游驗證 | **高**：影響封存 run 重建與 Validator；需相容策略或版本升級 |
+| S3 | 新聞／情緒分析師：新增或改寫 `AnalystReport(news)`，接既有已驗證 `PerceptionDataBundle` adapter；無核准來源時確定性 unavailable | `decision/analysts.py`、`sentiment-analyst` Skill、測試 | 中；真實新聞來源授權仍待確認 |
+| S4 | 交易 Agent 明確化為綜合者：更新 Skill 與契約文字，不改欄位 | `trader` Skill、文件 | 低 |
+| S5 | 每日完整自動化：排程跑完整決策鏈、失敗時停止並保留可 `resume` 的 run、通知與日誌 | `scripts/launchd/`、`start.sh`、`run_daily_pipeline.py` | 中；不得自動下單，不得放寬 Guard |
+| S6 | 失敗報告補列 Guard 拒絕原因（§10 已列為後續改進） | 報告與 D-Plan 匯出 | 低 |
+| S7 | 並行化：多空兩方與各批分析可平行，縮短單日執行時間 | `ClaudeAgentRunner`、pipeline | 中；須保持隔離與可重算 |
+
+建議順序：S1 → S4 → S6 → S5 → S3 → S2 → S7。S2 改動最大且牽動封存相容，應在 S1 確認方向後單獨決定。
+
+### 11.4 待使用者決定
+
+1. S2 是否採用「事件研究併入分析團隊」，以及舊 `ResearchResult` 2.1 封存 run 如何處理（保留重建路徑或升版）。
+2. 新聞來源是否有可核准的授權路徑；沒有的話 S3 只先建立角色與 unavailable 行為。
