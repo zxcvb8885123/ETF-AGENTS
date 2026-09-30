@@ -100,17 +100,21 @@ FROM (
         ROW_NUMBER() OVER (
             PARTITION BY symbol, trade_date
             ORDER BY CASE source
-                WHEN 'TPEX_TRADING_STOCK' THEN 1
-                WHEN 'TWSE_STOCK_DAY' THEN 1
-                WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
-                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
-                WHEN 'YAHOO_FINANCE' THEN 3
+                WHEN 'YAHOO_FINANCE' THEN 1
+                WHEN 'TPEX_TRADING_STOCK' THEN 2
+                WHEN 'TWSE_STOCK_DAY' THEN 2
+                WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
+                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                 ELSE 9
             END
         ) AS source_rank
     FROM daily_prices
     JOIN instruments USING(symbol)
     WHERE instruments.in_competition_universe = 1
+      AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
+          SELECT 1 FROM daily_prices AS yahoo
+          WHERE yahoo.symbol = daily_prices.symbol AND yahoo.source = 'YAHOO_FINANCE'
+      ))
 )
 WHERE source_rank = 1;
 """
@@ -508,6 +512,23 @@ class MarketDataDatabase:
         if len(rows) != len(required) or any(not row["last_date"] for row in rows):
             return None
         return min(str(row["last_date"]) for row in rows)
+
+    def latest_reported_trade_date(self, sources: Sequence[str]) -> Optional[str]:
+        """指定來源中任一來源已有的最新交易日；全部來源都沒有資料時回傳 None。
+
+        與 ``latest_complete_trade_date`` 不同，不要求所有來源都到齊：證交所全市場當日
+        行情端點常晚一天更新，但只要另一市場的當日行情已公布，該日必為已收盤交易日。
+        """
+        required = tuple(dict.fromkeys(sources))
+        if not required:
+            raise ValueError("至少需要一個行情來源")
+        placeholders = ", ".join("?" for _ in required)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(trade_date) AS last_date FROM daily_prices WHERE source IN (%s)" % placeholders,
+                required,
+            ).fetchone()
+        return str(row["last_date"]) if row and row["last_date"] else None
 
     def latest_trade_dates_by_symbol(self, sources: Sequence[str]) -> Dict[str, str]:
         """傳回指定來源各標的最後一筆已保存日線，供增量更新使用。"""

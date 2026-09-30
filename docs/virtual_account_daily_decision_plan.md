@@ -45,7 +45,7 @@
 | VA0 規則與起點固定 | 核對 10 億設定的來源、幣別、生效時間、帳戶起始日與成交／交割假設；封存版本 | 初始資金只在唯一 genesis 使用；缺規則依據時只允許標明為內部模擬 |
 | VA1 虛擬帳本契約與 Repository | 建立 genesis、狀態、異動與 manifest；CLI 提供 `init`、`status`、`verify` | 空倉＝現金／NAV 10 億；重複初始化、改寫父狀態、缺檔及時間倒退均拒絕 |
 | VA2 決策前狀態接入 | 重用或抽取回測的確定性交割、公司行動與估值邏輯；生成同 cutoff AccountSnapshot 並進入 DecisionInputBundle | 第 2 日起讀前次封存狀態；缺昨日帳本、待交割明細、行情或時間證據就阻擋；不混用其他 Snapshot |
-| VA3 買賣決策與成交分離 | 接既有 Momentum、隔離 Buy／Sell、Trade Adjudicator、Portfolio Risk 與 Guard；決策後另接模擬執行並保存逐筆異動 | 未驗證的 DecisionResult 不執行；部分／零成交、拒絕及 no_trade 均能重建，帳戶更新不超賣、不負現金 |
+| VA3 買賣決策與成交分離 | 接既有 Momentum、分析團隊、隔離多頭／空頭研究員、交易 Agent、風險 Agent 與 Guard；決策後另接模擬執行並保存逐筆異動 | 未驗證的 DecisionResult 不執行；部分／零成交、拒絕及 no_trade 均能重建，帳戶更新不超賣、不負現金 |
 | VA4 報告與續跑 | 報告呈現虛擬帳戶起點、決策前持倉、買賣提案、模擬成交狀態及下一步；與既有 workflow 的等待／失敗狀態接線 | 只在完整 Decision／Risk 通過時交付 DailyReport；等待成交時不得把提案寫成已成交；隔日續接前先驗證前 run |
 | VA5 多日驗收 | 用合成資料先走空倉→買入→部分成交→交割→賣出→日終估值，再對同一邏輯做固定資料的前向演練 | 獨立手算現金、股數、費稅、NAV；來源版本與 cutoff 可重建。正式每日啟用仍須交易狀態、基準、規則及前向驗證通過 |
 
@@ -60,7 +60,7 @@
 ## 執行紀錄（2026-09-25）
 
 - 新增 `virtual_account.py settle／daily` 與 `start.sh daily` 帳本步驟：收集行情後，先以 Decision cutoff 後第一個交易日的官方收盤價（13:30 +08:00）結算最新 prepare 狀態對應的 Decision run，再以新 Snapshot 建立 prepare 狀態。成交價只取 `TWSE_STOCK_DAY`／`TWSE_STOCK_DAY_ALL`／`TPEX_TRADING_STOCK`／`TPEX_MAINBOARD_QUOTES`，不用 Yahoo；費稅、整張與賣款再用沿用 Decision run 的 rules。
-- 假設（尚無官方依據）：可成交張數上限為當日成交量；交割日以週一至週五近似 T+2，不含國定假日。
+- 成交口徑（2026-09-29 依使用者確認的比賽帳務改版）：全部成交、不設成交量上限，成交價為官方當日成交均價（成交金額 ÷ 成交股數，ROUND_HALF_UP 到 0.01 元），日終以官方收盤價估值；當日無成交則不可成交；現金不足仍依買力減張。均價的四捨五入位數尚無主辦方原文依據。交割日依官方開休市日曆計算 T+2。既有 `ScenarioEngine` 的 `liquidity_stress`（成交率 50%）仍保留作壓力測試，但已不代表比賽帳務。
 - 收盤價未公布時回 `waiting_for_close_data` 並阻擋新 prepare；沒有對應 Decision run 時直接以新 Snapshot 續接估值。持股缺官方收盤價時 fail-closed。
 - 修正 `apply-decision` 未傳 `reuse_sell_proceeds` 給成交模擬器（賣單成交時會 KeyError），並將日終狀態交易日改用執行日收盤資料的 `trade_date`。
 - 新增唯讀 FastAPI 儀表板（`cli/dashboard.py`、`./start.sh dashboard`）顯示本金、NAV、今日／累積報酬、現金、持倉與每日紀錄。
@@ -81,3 +81,7 @@ Python、契約、CLI 或 Skill 實作後依 AGENTS.md 執行全專案 unittest�
 ## 使用者可見的結果
 
 完成 VA1～VA3 fixture 工具鏈後，可用 CLI 建立 10 億帳戶、把帳戶快照接入完整 Decision run、模擬成交並查看封存後的收盤狀態。這仍是 fixture 驗收；真實 150 檔行情、事件研究、交易狀態、規則與風控輸入通過前，不會自動形成正式每日買賣報告。
+
+## 2026-09-28 每日更新補強
+
+每日 runner 已串入 `start.sh daily`；本次補上未還原價格估值、目標成交日固定、全部訂單行情覆蓋、觀測 cutoff 過濾、當日交割款釋放與相同 Snapshot 重跑冪等。完整說明與剩餘限制見[每日接入](daily_perception_account_integration.md)。VA5 多日真實驗收未完成；自動交割日仍是平日近似，不含正式假日及特殊交割日曆。

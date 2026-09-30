@@ -42,8 +42,6 @@
   },
   "historical_daily": {
     "twse_url": "https://www.twse.com.tw/exchangeReport/STOCK_DAY",
-    "tpex_url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock",
-    "twca_intermediate_url": "https://sslserver.twca.com.tw/cacert/Cyber_SSL_2023.crt",
     "timeout_seconds": 30,
     "retries": 3,
     "max_workers": 4,

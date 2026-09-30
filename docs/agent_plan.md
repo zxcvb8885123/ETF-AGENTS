@@ -1,6 +1,6 @@
 # ETF Agent 四層開發架構
 
-2026-09-23 資料主線更新：新增 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)，以官方來源加 FinMind 優先補齊正式報告必要資料，再擴充歷史基本面與籌碼；FinLab 選配、Fugle 延後。D0～D6 補充 M1～M4 的開發順序，既有 Agent 邊界維持；本次僅規劃，尚未新增 Provider。
+2026-09-30 資料主線更新：依 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)以 yfinance 擷取 150 檔研究日線，官方來源供公司事實、帳本與風控，FinMind 三大報表及個股新聞只保存候選。新聞授權和時間尚未核准，不進正式研究。D0～D6 補充 M1～M4 的開發順序，既有 Agent 邊界維持。
 
 本文件為目標架構。以既有 SQLite 與行情管線為基礎，先完成 Data Agent M0～M3 與事件研究；依 2026-09-21 的開發決定，市場情緒與分析師研究 Agent 的契約、工具及 Skill 提前建立，再接投資組合買賣決策與風控多子 Agent、回測與自動化排程。Data Agent M4 補齊的歷史時間點資料仍是正式回測的前置條件。
 
@@ -20,8 +20,8 @@
   └→ Research Report V0（研究整合，不含交易決策）
                        ↓
 第三層｜策略、風控與回測
-  Portfolio Decision 主控＋五個子 Agent
-  候選＋目前持倉 → 獨立買／賣意圖 → 裁決 → 確定性配置與訂單 → 風控
+  決策層 Agent 團隊（見決策層 Agent 團隊重構計畫；舊版 1.0 Buy／Sell／裁決鏈已於 2026-09-30 移除）
+  分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態 → 確定性配置與訂單 → 風控
                                       └→ 回測 Agent：歷史時鐘 → 重播 → 模擬成交
                                                                  → 績效比較 → 前向驗證
                        ↓
@@ -41,7 +41,7 @@
 | --- | --- | --- | --- |
 | 數據與市場判讀 | 有哪些可用資料？市場目前如何？ | 更新行情與事件、檢查缺漏與時間、保存來源；計算市場寬度與趨勢 | `ResearchSnapshot`、市場狀態 |
 | 研究與分析 | 哪些股票值得關注？理由是什麼？ | LLM 抽取事件、影響對象與證據；市場認知作次級訊號；Research Report V0 整合研究結果 | `ResearchResult`、`MarketPerceptionResult`、`ResearchReport` |
-| 策略、風控與回測 | 要買進、續抱、減碼或退出？如何配置？策略是否有效？ | 多子 Agent 獨立提出買賣意圖並裁決；確定性工具產生配置、訂單及風控；回測 Agent 以相同契約執行歷史重播與前向驗證 | `TradeIntentResult`、`DecisionResult`、`BacktestReport` |
+| 策略、風控與回測 | 要買進、續抱、減碼或退出？如何配置？策略是否有效？ | 分析團隊、多空研究員、交易 Agent 與風險 Agent 分工；確定性工具產生配置、訂單及風控；回測 Agent 以相同契約執行歷史重播與前向驗證 | `TradeDecision`、`DecisionResult`、`BacktestReport` |
 | 排程與報告 | 何時執行？如何呈現並交付人工檢視？ | 自動化排程與報告 Agent 啟動流程、記錄成功或失敗；以確定性 Builder 組裝並驗證 D-Plan 候選檔 | `PipelineRun`、`D-Plan.json`、`DailyReport`、`FailureReport` |
 
 第一層先做市場狀態判讀，預測模型保留為後續擴充。圖片中的工具名稱是參考，不是本版指定依賴。
@@ -57,11 +57,11 @@
 | 市場情緒與分析師研究 | `skills/sentiment-analyst/SKILL.md` | 標記情緒、聚合分歧與熱度、計算分析師共識修正及事件預期差 |
 | 基本面研究 | `skills/fundamental-research/SKILL.md` | 唯讀財報 Snapshot、確定性比率、有引用的研究解讀；不產生交易候選 |
 | 研究報告整合（不是決策 Agent） | `skills/research-report/SKILL.md` | 驗證同一 Snapshot 的研究 artifact，建立同源 JSON／Markdown |
-| 投資組合買賣決策主控 | `skills/portfolio-decision/SKILL.md` | 固定子 Agent 順序、限制修正次數、重播完整修正鏈並保存 `DecisionResult` |
-| 動能與市場狀態 | `skills/momentum-regime/SKILL.md`（規劃） | 解讀確定性動能、波動、流動性與市場寬度結果 |
-| 獨立買進／退出研究 | `skills/buy-candidate/`、`skills/sell-exit/`（規劃） | 使用相同輸入且互相隔離，分別提出買進／加碼及續抱／減碼／退出意圖 |
-| 買賣裁決 | `skills/trade-adjudication/SKILL.md`（規劃） | 驗證獨立 packets、裁決衝突，不新增事實或計算權重 |
-| 配置後風險挑戰 | `skills/portfolio-risk-review/SKILL.md`（規劃） | 檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
+| 分析團隊 | `skills/technical-analyst/`、`skills/fundamental-analyst/`、`skills/event-analyst/`、`skills/sentiment-analyst/` | 逐批覆蓋全部交易池，只給 outlook 與有引用的發現；指標與比率由程式計算 |
+| 動能與市場狀態 | `skills/momentum-regime/SKILL.md` | 解讀確定性動能、波動、流動性與市場寬度結果 |
+| 多空研究 | `skills/bull-researcher/`、`skills/bear-researcher/` | 讀同一份共同輸入且互相隔離，逐檔給論點強度與有證據的 claims |
+| 交易 | `skills/trader/SKILL.md` | 逐檔權衡多空，決定意圖與 buy／add 信心等級，不新增事實或 claim |
+| 風險 | `skills/portfolio-risk-review/SKILL.md` | 配置前給現金姿態；配置後檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
 | 回測驗證 | `skills/strategy-backtest/SKILL.md` | 鎖定 fixture 版本、歷史重播、整張成交、交割與帳務驗收；策略比較、績效與前向驗證待後續完成 |
 | 自動化排程與報告 | `skills/daily-report/SKILL.md`（RPT0～RPT4 第一版） | 檢查各階段結果、交付 Research Report，並在 Decision／Risk 通過時接既有 DailyReport／FailureReport；缺輸入時等待或失敗 |
 | D-Plan Builder／Validator（確定性程式，不是新 Agent） | 不需要獨立 Skill | 合併 Snapshot、研究、決策與風控輸出；配置引用 ID，執行 JSON Schema 與語意驗證 |
@@ -72,7 +72,7 @@ Skill 文件定義任務流程、證據要求與輸出格式，由控制器載�
 
 基本面研究回答公司持續性的營運與財務結構問題；事件研究回答特定事件造成的改變。Data Agent 仍負責來源收集與版本保存。首版支援有核實欄位的一般業損益表／資產負債表與確定性比率；缺少比較期間不形成趨勢，金融業不套用一般業公式。結果須有相同 Snapshot／cutoff、完整引用及可重算指標，不輸出買賣評等、目標價、配置或訂單。
 
-FR0 契約、FR1 資料包、FR2 指標與 Validator、FR3 CLI／Skill 已完成 fixture MVP。下一步為 FR4 有限真實資料演練，再進行 FR5 下游升版。現有 Research Report 與 Portfolio Decision 尚不接受基本面結果；接入時需同步升版、重建驗證，並將相同資料提供給隔離的 Buy／Sell。詳見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
+FR0 契約、FR1 資料包、FR2 指標與 Validator、FR3 CLI／Skill 已完成 fixture MVP。下一步為 FR4 有限真實資料演練，再進行 FR5 下游升版。現有 Research Report 與 Portfolio Decision 尚不接受基本面結果；接入時需同步升版、重建驗證，並將相同資料提供給隔離的多頭／空頭研究員。詳見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
 
 ## 市場情緒與分析師研究 Agent
 
@@ -97,14 +97,14 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 ## 開發順序與目前狀態
 
-[本地 Agent 真實資料研究演練](local_research_dry_run_plan.md)已完成：同一可用 Snapshot 的 525 件 45 日候選中，三件事件以獨立多空研究通過雙重驗證並建立 Research Report V0。報告因沒有合法、歷史化的市場認知資料而明確降級，三件均為 `pending`，不產生交易候選。這是有限範圍的整合驗收，不改變 M1～M4 與正式決策／回測的前置要求。
+本地 Agent 真實資料研究演練（文件已移除，見 git 歷史）已完成：同一可用 Snapshot 的 525 件 45 日候選中，三件事件以獨立多空研究通過雙重驗證並建立 Research Report V0。報告因沒有合法、歷史化的市場認知資料而明確降級，三件均為 `pending`，不產生交易候選。這是有限範圍的整合驗收，不改變 M1～M4 與正式決策／回測的前置要求。
 
 | 順序 | 階段 | 狀態 | 下一個明確成果 |
 | ---: | --- | --- | --- |
 | 0 | Data Agent 基礎版 | 已完成 | SQLite、TWSE／TPEx 月營收與重大訊息、歷史行情、不可變 Snapshot、`event-data` Skill 與 CLI |
 | 1 | Data Agent M0 | 已完成 | 可重跑的來源探測、150 檔交易池狀態、`5371`／`3718` 回歸案例及 Snapshot fail-closed 閘門 |
 | 2 | Data Agent M1 | **進行中** | 官方歷史行情 CLI、財報彙總與交易狀態 TS1～TS4 已實作；財報覆蓋仍降級，交易狀態 TS0 來源核准與 TS5 150 檔實測待完成，再收尾細粒度工具 |
-| 3 | Data Agent M2 | 待 M1 通過 | TWSE RSS 與 Google News RSS 候選層、別名、去重及誤配檢查 |
+| 3 | Data Agent M2 | FinMind 個股新聞候選擷取已接入；正式研究接線待核准 | 核對原媒體授權、時間時區、跨股去重及誤配；未核准前維持 unavailable |
 | 4 | Data Agent M3 | 待 M2 通過 | `DataAgentRequest`／`DataAgentResult`、工具軌跡、Codex／Claude 共用 Skill 工具循環 |
 | 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
 | 6 | 市場情緒與分析師研究 Agent | **契約／工具／Skill MVP 已完成**；真實 Provider 待審查 | 接入通過授權與歷史時間驗證的來源，建立人工標註集與消融評估 |
@@ -116,15 +116,15 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 
 目前 Data Agent 進入 M1；事件研究 Agent 已先完成可使用現有 Snapshot 的基礎版，但 Data Agent M2／M3 通過前不視為完整驗收。市場情緒與分析師研究 Agent 已提前完成不依賴真實來源的 MVP，Research Report V0 也可整合已保存結果；回測 Agent 已完成 B0～B2 fixture 帳務驗收，但正式歷史 Provider、策略有效性與前向驗證仍待完成。自動化排程與報告 Agent 的 A0／A1 已可用封存 fixture 建立、重建與驗證 DailyReport／FailureReport，但不代表正式日常排程已啟用。正式決策主線仍依 `研究層驗收 → 多子 Agent 買賣裁決與確定性風控 → 回測 → 自動化排程／報告` 通過驗收。
 
-詳細規則見 [Data Agent 計畫](data_agent_plan.md)、[資料來源可行性測試](source_feasibility_2026-09-17.md)、[事件研究 Agent 計畫](event_strategy_v1.md)、[Research Report V0 計畫](research_report_plan.md)、[投資組合買賣決策與風控多子 Agent 計畫](momentum_portfolio_risk_agent_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)、[回測與驗證方法規格](backtest_plan_v1.md)及[自動化排程／報告 Agent 計畫](automation_reporting_agent_plan.md)。
+詳細規則見 [Data Agent 計畫](data_agent_plan.md)、資料來源可行性測試（文件已移除，見 git 歷史）、[Research Report V0 計畫](research_report_plan.md)、[回測 Agent 計畫](backtest_agent_plan.md)及自動化排程／報告 Agent 計畫（文件已移除，見 git 歷史）。
 
 ## 下一批：按需報告交付（2026-09-22）
 
-依[自動化報告 Agent 一鍵交付計畫](report_delivery_agent_plan.md)已完成 RPT0～RPT4 第一版，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑、固定報告入口及既有 DailyReport／FailureReport 接線。這批可交付 Research Report V0，或在 Decision／Risk 通過後交付 DailyReport；D-Plan 與排程仍須通過各自資料及驗收前置條件。
+依自動化報告 Agent 一鍵交付計畫（文件已移除，見 git 歷史）已完成 RPT0～RPT4 第一版，沿用 A0／A1，補上收集與 cutoff 排查、隔離事件研究交接、驗證續跑、固定報告入口及既有 DailyReport／FailureReport 接線。這批可交付 Research Report V0，或在 Decision／Risk 通過後交付 DailyReport；D-Plan 與排程仍須通過各自資料及驗收前置條件。
 
 ## 報告驗收進度（2026-09-23）
 
-依[真實研究續跑與決策報告驗收計畫](report_workflow_acceptance_plan.md)已完成 W0～W5 的一件真實事件驗收：固定父 run 輸入、補強續跑驗證、隔離研究、報告重建與決策缺口盤點。W6 DailyReport 須待每日虛擬帳本、交易狀態、規則、基準及相關驗收證據齊備。187 筆候選僅研究一件；正式排程未啟用。
+依真實研究續跑與決策報告驗收計畫（文件已移除，見 git 歷史）已完成 W0～W5 的一件真實事件驗收：固定父 run 輸入、補強續跑驗證、隔離研究、報告重建與決策缺口盤點。W6 DailyReport 須待每日虛擬帳本、交易狀態、規則、基準及相關驗收證據齊備。187 筆候選僅研究一件；正式排程未啟用。
 
 ## 正式帳戶資料接入進度（2026-09-23）
 

@@ -14,7 +14,7 @@ AI CUP 2026「Agent 基金經理人」的台股 ETF Agent 系統。每天完成�
 ./start.sh
 ```
 
-首次執行會建立 Docker 映像；之後只有映像不存在、依賴或 Dockerfile 變更才重建。腳本會初始化 SQLite、抓取 TWSE／TPEx 最新行情、增量更新兩年歷史行情，再顯示資料狀態。程式碼直接從工作區掛載進容器，修改 Python 不需重建映像。
+首次執行會建立 Docker 映像；之後只有映像不存在、依賴或 Dockerfile 變更才重建。腳本會初始化 SQLite、抓取帳本所需 TWSE／TPEx 當日價量、以 yfinance 增量更新 150 檔研究日線，再顯示資料狀態。資料專用排程不補抓官方個股月歷史行情；`daily` 決策流程在帳本結算時才補官方個股價量。程式碼直接從工作區掛載進容器，修改 Python 不需重建映像。
 
 本機開發或驗證 Skill 時使用與 Docker 相同的依賴：
 
@@ -42,13 +42,15 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 .venv/bin/python scripts/run_daily_pipeline.py
 ```
 
-依序執行：封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ DailyReport → macOS 通知。
+依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
 
 | 選項 | 用途 |
 | --- | --- |
-| `--force` | 週末、休市日或當日已完成仍執行 |
+| `--force` | 休市日（週末或官方開休市日期表列出者）或當日已完成仍執行；找不到封存日曆時也須以此執行一次以建立封存 |
 | `--skip-data` | 沿用既有 Snapshot 與帳戶快照，不重抓資料 |
 | `--resume` | 沿用今天最近一個未完成 run 目錄中已驗證的 Agent 輸出與同一個 decision run ID（例如撞到用量上限後），建議搭配 `--skip-data` |
+| `--preflight-only` | 只執行執行前檢查並列出每一項結果；安裝排程前先跑一次 |
+| `--min-free-gb` | 執行前檢查的最低可用磁碟空間，預設 2 GiB |
 | `--model` | 指定子 Agent 模型；預設沿用 `claude` CLI 設定 |
 | `--max-budget-usd` | 單次子 Agent 估算用量上限（防失控；claude.ai 訂閱登入不另計費） |
 
@@ -66,7 +68,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 ```
 
-於 cutoff 後第一個交易日以 TWSE／TPEx 官方未還原收盤價模擬成交（量能上限＝當日成交張數，T+2 工作日交割）；收盤價未公布回 `waiting_for_close_data`。`./start.sh daily` 會先 `settle` 再 `prepare-day`。
+依比賽帳務口徑，於 cutoff 後第一個交易日**全部成交**，成交價為 TWSE／TPEx 官方**當日成交均價**（成交金額 ÷ 成交股數，四捨五入到 0.01 元），不設成交量上限；日終以官方收盤價估值。當日無成交的股票沒有均價，視為不可成交；現金不足時仍依買力減少張數。依官方開休市日曆計算 T+2 交割，找不到封存日曆即停止；當日行情未公布回 `waiting_for_close_data`。`./start.sh daily` 會先 `settle` 再 `prepare-day`。
 
 ### 4. 開啟績效儀表板（網頁）
 
@@ -84,37 +86,39 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 | `./start.sh official` | 只抓官方交易池；名單空白時停止 |
 | `./start.sh all` | 開發模式：抓 TWSE 最新行情端點的全部可解析證券 |
 | `./start.sh check` | 只建置、檢查與執行測試 |
-| `./start.sh daily` | 驗證來源、更新行情／事件／最近到期季度財報（覆蓋不完整不阻擋）、推進虛擬帳本並建立 `artifacts/research_snapshot_latest.json` |
-| `./start.sh report` | 使用既有 Snapshot 執行或續跑報告工作流，結果在 `artifacts/reports/latest.md` |
+| `./start.sh data` | 每日以 yfinance 擷取 150 檔研究日線，並收集官方財報／公司資料及 FinMind 三大報表候選；不抓官方價量、不啟動決策 Agent 或帳本 |
+| `./start.sh daily` | 每日更新 yfinance 150 檔研究日線（當日缺檔即停止）、官方帳本價量、事件與財報；結算需要時補官方個股價量，另擷取公司資料與 FinMind 三大報表候選，推進帳本並建立 Snapshot |
 | `./start.sh dashboard` | 啟動唯讀績效儀表板 |
+
+資料擷取的 macOS `launchd` 工作 `com.etf-agents.data` 於台北時間平日 20:00 執行 `./start.sh data`；個股新聞另由 `com.etf-agents.finmind-news` 於平日 22:00 擷取 FinMind `TaiwanStockNews`，避開同小時配額。新聞只保存未核准候選，不進正式研究。兩個排程都不自動執行決策、下單或送件。FinMind Token 優先由執行環境的 `FINMIND_TOKEN` 讀取，其次讀取專案根目錄的 `.env` 中 `FINMIND_TOKEN=...`（本機檔案、權限 600、Git 忽略）；財報流程最後才嘗試 macOS 鑰匙圈服務 `etf-agent-finmind`。排程樣板在 `scripts/launchd/`。
 
 ## 目前進度
 
 ### 已完成
 
-- **資料層**：SQLite 保存行情、原始回應、抓取時間與執行紀錄；TWSE／TPEx 最新行情與官方歷史行情增量 CLI（Yahoo 日線為備援）；月營收、重大訊息與官方財報彙總（24 個端點，2026 Q2 實測 298/300）；150 檔交易池逐檔驗證與 Snapshot fail-closed 閘門；產業分類 150／150。
-- **交易狀態**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射與官方開休市交易日曆。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
+- **資料層**：SQLite 保存行情、原始回應、抓取時間與執行紀錄；每日以 yfinance 更新 150 檔研究日線並檢查當日覆蓋，TWSE／TPEx 當日官方價量仍供帳本結算，`daily` 決策只補抓延遲的上市個股官方價量；月營收、重大訊息與官方財報彙總（24 個端點，2026 Q2 實測 298/300）；FinMind 三大報表與個股新聞線索分時擷取，新聞授權與時間未核准，不進 Snapshot／每日決策；150 檔交易池逐檔驗證與 Snapshot fail-closed 閘門；正式產業分類 150／150。
+- **交易狀態與交易日曆**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射。官方開休市日曆（`TradingCalendar`）統一用於每日是否執行、目標交易時段與帳本 T+2 交割，區分休市日與「僅辦理結算交割」日；日曆缺漏或未涵蓋年度時停止。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
 - **研究層**：事件研究 Agent（Fact／Bull／Bear／Adjudicator、雙重 validator）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
-- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（P0～P6）只保留供封存 run 重建與 fixture 測試。
+- **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實情緒／共識資料商尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
+- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（Buy／Sell／Trade Adjudicator，P0～P6）已於 2026-09-30 移除，不再支援重建。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
-- **報告**：RPT0～RPT4 報告工作流、DailyReport／FailureReport、D-Plan v4.0 候選匯出與本地結構／引用鏈檢查、唯讀績效儀表板。
+- **交付**：D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（匯出前核對 Decision run 的帳戶快照與帳戶目前 latest 的 prepare-day 封存一致）、唯讀績效儀表板。DailyReport／FailureReport 與報告工作流已於 2026-09-29 移除（比賽只需 D-Plan），舊封存仍留在 `artifacts/report_runs/` 供稽核。
 
 ### 第一次真實資料決策（2026-09-28，目標交易日 9/29）
 
-整條新鏈以真實資料跑完，Decision run `decision-20260928T084128Z` **approved、30 筆買進委託**（現金 11.5%、周轉率 88%、現金姿態 neutral），DailyReport 為 `artifacts/report_runs/report-20260928T120706Z/daily_report_markdown.md`（內部人工檢視，官方格式未驗證）。
+整條新鏈以真實資料跑完，Decision run `decision-20260928T084128Z` **approved、30 筆買進委託**（現金 11.5%、周轉率 88%、現金姿態 neutral）。
 
 第一次執行曾被拒絕：提案通過全部規則，但 `liquidity_stress` 壓力情境（成交率 50%、滑價 2 倍）下現金比例 60% 超過 25% 上限；從全現金建倉時這個情境結構上無法通過。現已改為：現金上限只在頂層 `CASH_WEIGHT` 與 `base` 情境為硬性規則，壓力情境現金超標只記警告，其餘情境檢查仍為硬性。被拒絕的封存與舊報告移至各 repository 的 `.superseded/` 保留稽核，未刪除。風險 Agent 留下兩項未解風險：產業實際權重未提供給審查、部分成交後的補單規則尚未納入下一交易日流程。
 
 ### 尚未完成
 
-- 部分成交後的補單規則；風險審查輸入補上產業實際權重。
-- 虛擬帳本 VA4／VA5 自動化與跨日真實資料驗收；正式排程啟用。
-- D-Plan：DailyReport 到「來源→事實→市場姿態→全持股決策」的完整映射、真實資料端到端演練；主辦方伺服器語意驗證（`verify_dplan.py`）未取得，本地檢查不等同平台驗證。
+- 虛擬帳本 VA4／VA5 自動化與跨日真實資料驗收；正式排程啟用。步驟見[每日自動化與回測就緒計畫](docs/automation_backtest_readiness_plan.md)。
+- D-Plan：Decision run 到「來源→事實→市場姿態→全持股決策」的完整映射、真實資料端到端演練；主辦方伺服器語意驗證（`verify_dplan.py`）未取得，本地檢查不等同平台驗證。
 - 策略說明書（ETF 名稱、投資主題、投資理念）：繳交期間 2026-10-21 至 10-26。
-- 競賽規則待釐清：現金上限 `<25%` 與 Schema `≤25%` 的邊界、提交時間（設定 19:30 與 Schema 05:00–08:55）、min successful days。
-- 回測 B3 的六組正式策略、績效貢獻、不確定性與樣本外分析；B4 Agent 評估；真實歷史回測（缺版本化歷史交易日曆與歷史交易狀態）。
+- 競賽規則待釐清：現金上限（規則原文為每日「小於」NAV 25%，Schema 目標區間 `≤25%` 的差異待釐清）、提交時間（設定 19:30 與 Schema 05:00–08:55）、min successful days。
+- 回測重放（8/21 單日 → 8 月逐日 → 重跑穩定度，見[回測重放計畫](docs/backtest_replay_plan.md)）；回測 B3 的六組正式策略、績效貢獻、不確定性與樣本外分析；B4 Agent 評估；真實歷史回測（缺版本化歷史交易日曆與歷史交易狀態）。
 - 基本面 FR4 真實演練、FR5 下游契約升版，毛利率、現金流、估值與金融業公式。
-- 合法且歷史化的市場情緒／分析師資料來源；FinMind 等多來源 Provider（見[多來源更新計畫](docs/data_agent_multisource_update_plan.md)）。
+- 合法且歷史化的市場情緒／分析師資料來源；FinMind 財報候選與新聞候選的覆蓋、發布時間證據及 Snapshot 接線（見[多來源更新計畫](docs/data_agent_multisource_update_plan.md)）。
 - 選配：`data/active_etf_top10.csv` 主動式 ETF 持股權重（目前空白；D-Plan 指南未將 Active Share 列為每日硬性上限，不阻擋決策）。
 
 MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。fixture 驗收結果不能視為正式交易驗收或策略績效。
@@ -129,8 +133,10 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | --- | --- |
 | `PYTHONPATH=src python3 scripts/probe_data_sources.py` | 探測 TWSE／TPEx 最新行情並驗證 150 檔交易池 |
 | `PYTHONPATH=src python3 scripts/collect_latest_prices.py` | 抓取官方交易池的 TWSE／TPEx 最新行情 |
-| `PYTHONPATH=src python3 scripts/collect_official_history.py` | 以官方月行情增量更新日線；先驗證最近完整交易日，輸出逐檔覆蓋 JSON |
-| `.venv/bin/python scripts/collect_history.py` | 透過 yfinance 增量更新最近兩年日線（備援） |
+| `PYTHONPATH=src python3 scripts/collect_official_history.py` | 只補上市個股官方價量供帳本；上櫃個股月擷取器已移除，舊資料仍可讀取 |
+| `.venv/bin/python scripts/collect_history.py` | 透過 yfinance 增量更新最近兩年研究日線，預設到台北當日；截止日 150 檔不完整時 exit 2 |
+| `.venv/bin/python scripts/collect_supplemental_sources.py finmind --dataset TaiwanStockFinancialStatements --stock-id 2330 --start 2025-01-01 --end 2026-09-29` | 從 `FINMIND_TOKEN` 讀取憑證，保存逐股財報候選；也可改用 `--universe data/official_universe.csv` |
+| `./scripts/run_finmind_news.sh YYYY-MM-DD` | 逐股擷取 FinMind 新聞線索；來源時間無時區、原媒體授權未核准，不能進正式研究 |
 | `.venv/bin/python scripts/collect_sector_classification.py` | 抓取官方公司基本資料（t187ap03），輸出 150 檔 `industry:<代碼>` 至 `data/sector_classification.json`；缺漏時 exit 2 |
 | `.venv/bin/python cli/data_agent.py collect` | 抓取官方月營收與重大訊息 |
 | `.venv/bin/python cli/data_agent.py snapshot --decision-cutoff ISO --output PATH` | 建立指定 cutoff 的研究快照 |
@@ -162,10 +168,10 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | `cli/portfolio_decision.py --bundle T.json build-input --research R.json [--trading-status S.json]` | 由 Snapshot、SQLite 歷史行情（預設 120 根）與 `config/decision_rules.json` 建立 DecisionInputBundle 樣板 |
 | `cli/portfolio_decision.py --bundle I.json validate-input`／`compute-momentum` | 驗證共用輸入；計算動能、市場寬度與 regime |
 | `cli/portfolio_decision.py --bundle I.json build-policy --output P.json` | 由策略樣板、硬性規則與產業分類建立 DecisionPolicy |
-| `cli/portfolio_decision.py --bundle I.json validate-sizing ...`／`apply-sizing ...` | 驗證風險 Agent 的等級與現金姿態（暫定 aggressive／neutral／defensive 對應 3%／10%／20%）；權重依等級乘數 ÷ ATR14% 分配 |
+| `cli/portfolio_decision.py --bundle I.json validate-intent ...` | 驗證交易 Agent 的 TradeDecision（等級與 claim 採納）；現金姿態 aggressive／neutral／defensive 暫定對應 3%／10%／20%，權重依等級乘數 ÷ ATR14% 分配 |
 | `cli/portfolio_decision.py --bundle I.json compute-proposal ...` | 以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
 | `cli/portfolio_decision.py --bundle I.json compute-scenarios ...`／`compute-guard ...` | 價格與流動性壓力情境；交易池、可交易性、現金與曝險 Guard（基準 Active Share 選配） |
-| `cli/portfolio_decision.py build-role-brief --role-input R.json --output B.json` | 產生子 Agent 可讀的精簡角色摘要 |
+| `cli/portfolio_decision.py --bundle I.json finalize／validate-decision／save-run ... --team-inputs T.json` | 完整重建、驗證並封存 Decision run（必須附 `team_inputs`） |
 
 上表指令皆以 `.venv/bin/python` 執行。
 
@@ -186,9 +192,7 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 
 | 指令 | 用途 |
 | --- | --- |
-| `.venv/bin/python cli/report_workflow.py run` | 封存事件候選、等待／接收研究結果並交付報告；official 模式須核對 VirtualAccount prepare-day run |
-| `.venv/bin/python cli/daily_report.py run ...` | 驗證封存 Decision run，建立 DailyReport 或 FailureReport |
-| `.venv/bin/python cli/dplan.py build ...`／`validate --input D-Plan.json` | D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（不等同主辦方伺服器驗證） |
+| `.venv/bin/python cli/dplan.py build ... --virtual-account-account-id ID --virtual-account-run-id PREPARE_RUN`／`validate --input D-Plan.json` | D-Plan v4.0 候選匯出（須指定決策使用的 prepare-day 帳本 run）與本地結構／引用鏈檢查（不等同主辦方伺服器驗證） |
 | `.venv/bin/python cli/backtest.py --request REQ.json compare-strategies --strategies S.json --baseline ID --output C.json` | B3 fixture 策略比較；`validate-comparison` 加 `--input C.json` 重播檢查。介面見[回測 Agent 計畫](docs/backtest_agent_plan.md) |
 | `python3 scripts/run_strategy.py --input snapshot.json` | 原型事件策略 V1（僅供對照，不在正式決策路徑） |
 
@@ -213,30 +217,19 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 
 | 文件 | 內容 |
 | --- | --- |
-| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **R1～R6 已完成**：分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent |
+| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **R1～R6 已完成**：分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent；§11 為 2026-09-30 架構調整提案（尚未實作） |
 | [M1 官方交易狀態接入](docs/trading_status_m1_plan.md) | 契約、Parser、Validator、SQLite、CLI 與 Guard |
 | [TS0 來源核准行動計畫](docs/source_audit/2026-09-25_ts0_approval_plan.md) | 政府開放 CSV 查證、確定性映射與 2026-09-28 核准紀錄 |
-| [正式決策必要資料來源核實](docs/decision_data_readiness_plan.md) | D0／TS0／ETF 執行順序與來源證據 |
-| [來源稽核 9/24](docs/source_audit/2026-09-24_findings.md)／[9/25](docs/source_audit/2026-09-25_findings.md) | 官方端點回應、樣本與就緒判定 |
 | [Agent 開發架構](docs/agent_plan.md) | 資料庫、策略、風控買賣及報告流程 |
-| [第一版技術架構](docs/architecture_v1.md) | 模組職責、資料契約、流程及里程碑 |
 | [Data Agent 計畫](docs/data_agent_plan.md) | 資料收集、驗證、版本保存與研究快照 |
-| [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md) | FinMind 等 Provider（待實作） |
-| [官方財報彙總接入](docs/financial_statements_m1_plan.md) | 24 個官方端點、業別契約與 Snapshot |
-| [資料來源可行性測試](docs/source_feasibility_2026-09-17.md) | 行情、財報、事件與新聞來源實測 |
-| [事件研究 Agent 計畫](docs/event_strategy_v1.md) | 事件證據、補查、引用與研究結果 |
+| [Data Agent 多來源更新計畫](docs/data_agent_multisource_update_plan.md)／[來源盤點](docs/data_sources_inventory.md) | FinMind／開放新聞候選已實作，正式 Snapshot 接線待驗證 |
 | [市場情緒與分析師研究 Agent 計畫](docs/sentiment_analyst_agent_plan.md) | 情緒、共識修正、預期差與資料授權 |
 | [基本面研究 Agent 計畫](docs/fundamental_research_agent_plan.md) | FR0～FR3 fixture MVP |
 | [Research Report V0 計畫](docs/research_report_plan.md) | 研究層整合為可稽核 JSON／Markdown |
-| [本地 Agent 真實資料研究演練](docs/local_research_dry_run_plan.md) | 3 件事件獨立研究與降級報告 |
-| [投資組合買賣決策與風控計畫](docs/momentum_portfolio_risk_agent_plan.md) | 舊版 1.0 鏈、確定性配置／訂單及競賽風控 |
 | [P6 決策驗收與風控補強](docs/decision_acceptance_plan.md) | 決策驗收紀錄 |
-| [回測 Agent 計畫](docs/backtest_agent_plan.md)／[P7 第一批](docs/backtest_mvp_plan.md)／[方法規格](docs/backtest_plan_v1.md) | 歷史重播、模擬成交與驗證方法 |
+| [回測重放計畫](docs/backtest_replay_plan.md)（歷史時點重跑完整決策鏈）／[回測 Agent 計畫](docs/backtest_agent_plan.md) | 歷史重播、模擬成交與驗證方法 |
 | [十億虛擬帳戶與每日買賣決策計畫](docs/virtual_account_daily_decision_plan.md) | VA1～VA5 |
 | [外部帳戶結算檔匯入與對帳計畫](docs/account_data_integration_plan.md) | 選配支線 AC1～AC4 |
-| [自動化排程／報告 Agent 計畫](docs/automation_reporting_agent_plan.md) | 執行紀錄、每日／失敗報告、排程 |
-| [一鍵研究與報告交付計畫](docs/report_delivery_agent_plan.md) | RPT0～RPT4 |
-| [真實研究續跑與決策報告驗收](docs/report_workflow_acceptance_plan.md) | W0～W5 |
 | [正式競賽決策報告與 D-Plan 交付](docs/competition_report_delivery_plan.md) | 主辦方規格盤點、D-Plan 候選匯出與待辦 |
 | [Docker 使用說明](docs/docker.md) | 建置、容器指令、掛載與疑難排解 |
 

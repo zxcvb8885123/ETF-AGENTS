@@ -15,7 +15,13 @@ from typing import Optional, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from etf_agent.competition import DPlanError, DPlanExporter, DPlanValidator, load_decision_run  # noqa: E402
+from etf_agent.competition import (  # noqa: E402
+    DPlanError,
+    DPlanExporter,
+    DPlanValidator,
+    load_decision_run,
+    verify_account_binding,
+)
 
 
 def read_object(path: Path, label: str) -> dict:
@@ -57,6 +63,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     build.add_argument("--context", type=Path, required=True, help="本地 Agent 審閱的 sources/observations/market_view/inferences/metadata JSON")
     build.add_argument("--decision-repository", type=Path, required=True)
     build.add_argument("--decision-run-id", required=True)
+    build.add_argument("--virtual-account-repository", type=Path, default=ROOT / "artifacts" / "virtual_accounts")
+    build.add_argument("--virtual-account-account-id", required=True)
+    build.add_argument("--virtual-account-run-id", required=True, help="決策使用的 prepare-day 封存 run")
     build.add_argument("--output", type=Path)
     validate = commands.add_parser("validate", help="執行本地結構及引用鏈檢查")
     validate.add_argument("--input", type=Path, required=True)
@@ -68,10 +77,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0 if not errors else 2
         context = read_object(args.context, "D-Plan context")
         artifacts = load_decision_run(str(args.decision_repository), args.decision_run_id)
+        account = verify_account_binding(
+            artifacts, str(args.virtual_account_repository),
+            args.virtual_account_account_id, args.virtual_account_run_id,
+        )
         plan = DPlanExporter().build(args.team_id, args.trade_date, context, artifacts)
         output = args.output or ROOT / "artifacts" / "competition" / ("D-Plan_%s_%s.json" % (args.team_id, args.trade_date))
         write_new(output, plan)
-        print(json.dumps({"ok": True, "output": str(output), "local_validation": "passed", "organizer_server_validation": "not_run", "requires_human_review": True}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, "output": str(output), "account_binding": account, "local_validation": "passed", "organizer_server_validation": "not_run", "requires_human_review": True}, ensure_ascii=False, indent=2))
         return 0
     except (DPlanError, OSError, ValueError, TypeError, KeyError) as error:
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False, indent=2))

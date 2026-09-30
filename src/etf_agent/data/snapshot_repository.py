@@ -7,13 +7,13 @@ from typing import Sequence
 from .database import MarketDataDatabase
 
 
-# 同一股票同一交易日有多個來源時，官方逐檔月行情優先，Yahoo 只作備援。
+# 研究日線同日優先 Yahoo；官方原價仍獨立保留給帳本結算與交叉核對。
 _SOURCE_PRIORITY_SQL = """CASE daily_prices.source
-                               WHEN 'TPEX_TRADING_STOCK' THEN 1
-                               WHEN 'TWSE_STOCK_DAY' THEN 1
-                               WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
-                               WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
-                               WHEN 'YAHOO_FINANCE' THEN 3
+                               WHEN 'YAHOO_FINANCE' THEN 1
+                               WHEN 'TPEX_TRADING_STOCK' THEN 2
+                               WHEN 'TWSE_STOCK_DAY' THEN 2
+                               WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
+                               WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                                ELSE 9
                            END"""
 
@@ -114,6 +114,12 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date = ?
                   AND daily_prices.fetched_at <= ?
+                  AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
+                      SELECT 1 FROM daily_prices AS yahoo
+                      WHERE yahoo.symbol = daily_prices.symbol
+                        AND yahoo.source = 'YAHOO_FINANCE'
+                        AND yahoo.fetched_at <= ?
+                  ))
             )
             SELECT ranked.*, raw_payloads.endpoint,
                    raw_payloads.sha256 AS raw_sha256,
@@ -123,7 +129,7 @@ class SnapshotRepository:
             WHERE source_rank = 1
             ORDER BY ranked.symbol
             """ % _SOURCE_PRIORITY_SQL,
-            (trade_date, cutoff),
+            (trade_date, cutoff, cutoff),
         ).fetchall()
 
     @staticmethod
@@ -147,6 +153,12 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date < ?
                   AND daily_prices.fetched_at <= ?
+                  AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
+                      SELECT 1 FROM daily_prices AS yahoo
+                      WHERE yahoo.symbol = daily_prices.symbol
+                        AND yahoo.source = 'YAHOO_FINANCE'
+                        AND yahoo.fetched_at <= ?
+                  ))
             ), recent AS (
                 SELECT ranked.*,
                        ROW_NUMBER() OVER (
@@ -162,7 +174,7 @@ class SnapshotRepository:
             WHERE recency <= ?
             ORDER BY symbol, trade_date
             """ % _SOURCE_PRIORITY_SQL,
-            (before_date, cutoff, bars_per_symbol),
+            (before_date, cutoff, cutoff, bars_per_symbol),
         ).fetchall()
 
     @staticmethod

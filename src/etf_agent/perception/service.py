@@ -31,6 +31,39 @@ class MarketPerceptionApplicationService:
             raise PerceptionToolError("%s必須是 JSON 物件" % label)
         return payload
 
+    def build_result(self, symbols, labels, run_id: str) -> Dict[str, object]:
+        """全池聚合已標註資料；不使用模型補值或建立交易方向。"""
+        if not isinstance(labels, list):
+            raise PerceptionToolError("labels 必須是陣列")
+        universe = sorted(set(str(symbol).upper() for symbol in symbols))
+        if not universe or any(str(row.get("symbol", "")).upper() not in universe for row in labels):
+            raise PerceptionToolError("標籤股票必須屬於指定交易池")
+        items = []
+        for symbol in universe:
+            selected = [row for row in labels if str(row.get("symbol", "")).upper() == symbol]
+            sentiment = self.tools.aggregate_sentiment(symbol, selected)
+            keys = sorted({(row["metric"], row["forecast_period"])
+                           for row in self.tools.analyst_estimates if row["symbol"].upper() == symbol})
+            metrics = [self.tools.compute_consensus_revision(symbol, metric, period) for metric, period in keys]
+            available = sentiment["status"] == "available" or any(row["status"] == "available" for row in metrics)
+            evidence = set(sentiment["evidence_ids"])
+            for metric in metrics:
+                evidence.update(metric["evidence_ids"])
+            items.append({"symbol": symbol, "event_result_ids": [], "sentiment_labels": selected,
+                          "sentiment": sentiment, "consensus_metrics": metrics, "expectation_gaps": [],
+                          "priced_in_assessment": "unknown", "rationale": "由已授權資料確定性聚合；未判斷市場定價。",
+                          "evidence_ids": sorted(evidence), "risk_flags": sentiment["manipulation_flags"],
+                          "research_status": "usable_secondary" if available else "unavailable",
+                          "status_reason": "僅作次級研究輸入。" if available else "來源不存在或覆蓋不足。"})
+        result = {"schema_version": "1.0", "run_id": run_id, "snapshot_id": self.tools.snapshot_id,
+                  "decision_cutoff": self.tools.decision_cutoff, "skill_version": "1.0.0",
+                  "status": "completed" if all(row["research_status"] == "usable_secondary" for row in items) else "degraded",
+                  "items": items, "errors": []}
+        errors = MarketPerceptionResultValidator(self.tools).validate(result)
+        if errors:
+            raise PerceptionToolError("；".join(errors))
+        return result
+
     def validate_file(
         self,
         input_path: Path,

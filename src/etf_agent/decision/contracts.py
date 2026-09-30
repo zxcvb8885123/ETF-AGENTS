@@ -73,9 +73,49 @@ def artifact_content_sha256(artifact: Mapping[str, object]) -> str:
     return content_sha256(artifact)
 
 
+# Agent 輸出不得含任何數字化配置欄位；權重、股數、費稅與訂單只由程式計算。
+FORBIDDEN_DECISION_KEYS = {
+    "allocation",
+    "allocation_pct",
+    "cash_amount",
+    "commission",
+    "estimated_fee",
+    "target_weight",
+    "target_percentage",
+    "weight",
+    "shares",
+    "quantity",
+    "units",
+    "lots",
+    "lot_count",
+    "notional",
+    "position_size",
+    "position_value",
+    "fee",
+    "fees",
+    "tax",
+    "transaction_tax",
+    "order",
+    "orders",
+    "order_side",
+    "order_type",
+}
+
+
+def validate_forbidden_keys(value: object, path: str, errors: List[str]) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if str(key).lower() in FORBIDDEN_DECISION_KEYS:
+                errors.append("%s 不得包含配置、股數、費稅或訂單欄位：%s" % (path, key))
+            validate_forbidden_keys(child, "%s.%s" % (path, key), errors)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_forbidden_keys(child, "%s[%d]" % (path, index), errors)
+
+
 def intent_artifact_id(intent: Mapping[str, object]) -> object:
-    """舊鏈 TradeIntentResult 用 result_id，新鏈 TradeDecision 用 decision_id。"""
-    return intent.get("result_id") if "result_id" in intent else intent.get("decision_id")
+    """TradeDecision 的 decision_id。"""
+    return intent.get("decision_id")
 
 
 def reject_unknown_fields(

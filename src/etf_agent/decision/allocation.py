@@ -478,10 +478,10 @@ class AllocationOrderEngine:
         sizing = self.policy["position_sizing"]
         tiers = sizing.get("conviction_by_symbol")
         if tiers is None:
-            raise DecisionToolError("DecisionPolicy 已啟用 position_sizing，但尚未套用 SizingPlan")
+            raise DecisionToolError("DecisionPolicy 已啟用 position_sizing，但尚未綁定交易決策的信心等級")
         missing = [symbol for symbol in candidates if symbol not in tiers]
         if missing:
-            raise DecisionToolError("SizingPlan 缺少候選等級：" + ", ".join(missing))
+            raise DecisionToolError("交易決策缺少候選等級：" + ", ".join(missing))
         ordered = sorted(candidates, key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), symbol))
         volatility = self._atr_pct()
         slots = max_positions - len(active_symbols - set(ordered))

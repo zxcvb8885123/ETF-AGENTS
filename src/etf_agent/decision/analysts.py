@@ -14,6 +14,7 @@ from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnap
 from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIRED_STATEMENT_TYPES
 
 from .contracts import (
+    validate_forbidden_keys,
     DecisionContext,
     DecisionToolError,
     artifact_content_sha256,
@@ -21,7 +22,6 @@ from .contracts import (
     required_string,
     string_list,
 )
-from .trade_intent import _validate_forbidden_keys
 
 
 ANALYST_SCHEMA_VERSION = "2.0"
@@ -173,6 +173,46 @@ def sentiment_unavailable_report(bundle: Mapping[str, object]) -> Dict[str, obje
     return seal_report(envelope, items, status="unavailable")
 
 
+def sentiment_report(bundle: Mapping[str, object]) -> Dict[str, object]:
+    """將已驗證情緒與共識轉成次級證據；共識水準本身不產生方向。"""
+    from .contracts import DecisionInputValidator
+
+    pairs = bundle.get("perception_inputs", [])
+    if not pairs:
+        return sentiment_unavailable_report(bundle)
+    errors = DecisionInputValidator(bundle).validate()
+    if errors:
+        raise DecisionToolError("情緒共同輸入驗證失敗：" + "；".join(errors))
+    items = []
+    for symbol in _symbols(bundle):
+        findings, directions = [], set()
+        for pair in pairs:
+            for row in pair["result"]["items"]:
+                if row["symbol"].upper() != symbol or row["research_status"] != "usable_secondary":
+                    continue
+                sentiment = row["sentiment"]
+                if sentiment["status"] == "available":
+                    direction = sentiment["direction"]
+                    directions.add(direction if direction in OUTLOOKS else "unknown")
+                    findings.append({"finding_id": "sentiment:%s:%d" % (symbol, len(findings)),
+                                     "text": "情緒方向：%s；去重樣本 %s 筆、來源 %s 個；僅作次級研究輸入。" %
+                                             (direction, sentiment["item_count"], sentiment["source_count"]),
+                                     "evidence_ids": sentiment["evidence_ids"]})
+                for metric in row["consensus_metrics"]:
+                    if metric["status"] != "available":
+                        continue
+                    findings.append({"finding_id": "consensus:%s:%d" % (symbol, len(findings)),
+                                     "text": "分析師共識 %s／%s：中位數 %s %s（%s），貢獻者 %s，分散度 %s%%，修正 %s%%；非交易指令。" %
+                                             (metric["metric"], metric["forecast_period"], metric["median"], metric["unit"],
+                                              metric["currency"], metric["contributor_count"], metric["dispersion_pct"], metric["revision_pct"]),
+                                     "evidence_ids": metric["evidence_ids"]})
+        outlook = next(iter(directions)) if len(directions) == 1 else "unknown"
+        items.append({"symbol": symbol, "outlook": outlook, "findings": findings,
+                      "data_gaps": [] if outlook != "unknown" else ["NO_UNAMBIGUOUS_SENTIMENT_DIRECTION"]})
+    envelope = report_envelope(bundle, "sentiment", "analyst-sentiment:%s" % str(bundle["bundle_sha256"])[:16])
+    return seal_report(envelope, items, status="completed" if any(x["findings"] for x in items) else "unavailable")
+
+
 class AnalystReportValidator:
     """檢查分析報告覆蓋全部交易池、引用歸屬正確且不含數字欄位。"""
 
@@ -201,7 +241,10 @@ class AnalystReportValidator:
 
     def validate(self, report: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
-        _validate_forbidden_keys(report, "AnalystReport", errors)
+        if self.analyst == "sentiment":
+            if dict(report) != sentiment_report(self.bundle):
+                errors.append("情緒分析報告與已驗證來源重建結果不一致")
+        validate_forbidden_keys(report, "AnalystReport", errors)
         reject_unknown_fields(report, self.ENVELOPE, "AnalystReport", errors)
         expected = report_envelope(self.bundle, self.analyst, str(report.get("report_id")))
         for field, value in expected.items():

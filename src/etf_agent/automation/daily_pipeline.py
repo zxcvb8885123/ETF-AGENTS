@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
-from etf_agent.data.evidence import TAIPEI_TIMEZONE
 from etf_agent.decision import (
     AllocationOrderEngine,
     AnalystReportValidator,
@@ -41,9 +39,10 @@ from etf_agent.decision import (
     high_materiality_events,
     revision_effects,
     seal_report,
+    sector_exposure,
     seal_stance_packet,
     seal_trade_decision,
-    sentiment_unavailable_report,
+    sentiment_report,
     trade_decision_envelope,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
@@ -157,17 +156,6 @@ _SHARED_RULES = (
 )
 
 
-def next_weekday_session(decision_cutoff: str) -> Dict[str, str]:
-    """cutoff 後第一個平日 09:00–13:30（台北）；尚無版本化交易日曆，不排除國定假日。"""
-    cutoff = datetime.fromisoformat(decision_cutoff).astimezone(TAIPEI_TIMEZONE)
-    day = cutoff.date() + timedelta(days=1)
-    while day.weekday() >= 5:
-        day += timedelta(days=1)
-    start = datetime.combine(day, time(9, 0), TAIPEI_TIMEZONE)
-    end = datetime.combine(day, time(13, 30), TAIPEI_TIMEZONE)
-    return {"start": start.isoformat(), "end": end.isoformat()}
-
-
 def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dict[str, object]:
     """事件研究 Agent 尚未自動化時的誠實降級結果：不宣稱沒有事件。"""
     return {
@@ -275,12 +263,15 @@ class DailyDecisionPipeline:
         policy_template_path: Path,
         sector_path: Path,
         decision_run_id: str,
+        perception_bundle_path: Optional[Path] = None,
+        perception_result_path: Optional[Path] = None,
     ) -> PipelineResult:
         result = PipelineResult(status="failed")
         try:
             self._run(
                 result, snapshot_path, account_snapshot_path, trading_status_path,
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
+                perception_bundle_path, perception_result_path,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -292,17 +283,26 @@ class DailyDecisionPipeline:
         self, result: PipelineResult, snapshot_path: Path, account_snapshot_path: Path,
         trading_status_path: Path, rules_path: Path, database_path: Path,
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
+        perception_bundle_path: Optional[Path], perception_result_path: Optional[Path],
     ) -> None:
         service = PortfolioDecisionApplicationService
+        if perception_bundle_path is not None and perception_result_path is None:
+            from .perception_stage import build_daily_perception
+            perception_result_path = build_daily_perception(self, snapshot_path, perception_bundle_path)
         self.log("[decision 1] 建立並驗證 DecisionInputBundle")
         # 重大事件研究在分析團隊之後才產生，放在 team_inputs，不回寫已封存的輸入包。
         built = service.build_input_file(
             snapshot_path, database_path, rules_path, self._path("decision_input"),
             trading_status_path=trading_status_path, account_path=account_snapshot_path,
+            perception_bundle_path=perception_bundle_path, perception_result_path=perception_result_path,
         )
         if not built["valid"]:
             raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(built["errors"]))
         bundle = dict(service.read_json(self._path("decision_input"), " DecisionInputBundle"))
+        if bundle.get("perception_inputs"):
+            pair = bundle["perception_inputs"][0]
+            self.save_artifact("perception_bundle", pair["bundle"])
+            self.save_artifact("perception_result", pair["result"])
         decision = service(bundle)
 
         self.log("[decision 2] 計算動能")
@@ -441,10 +441,10 @@ class DailyDecisionPipeline:
                 raise DailyPipelineError("%s 分析報告合併後驗證失敗：%s" % (analyst, "；".join(errors[:10])))
             reports[analyst] = report
             self.save_artifact("analyst_%s" % analyst, report)
-        sentiment = sentiment_unavailable_report(bundle)
+        sentiment = sentiment_report(bundle)
         errors = AnalystReportValidator(bundle, "sentiment").validate(sentiment)
         if errors:
-            raise DailyPipelineError("情緒 unavailable 報告驗證失敗：" + "；".join(errors))
+            raise DailyPipelineError("情緒與共識報告驗證失敗：" + "；".join(errors))
         reports["sentiment"] = sentiment
         self.save_artifact("analyst_sentiment", sentiment)
         return reports
@@ -629,7 +629,7 @@ class DailyDecisionPipeline:
 
         task = AgentTask(
             "cash_stance",
-            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前分級」一節的現金姿態說明），再讀市場層級摘要 %s。"
+            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節），再讀市場層級摘要 %s。"
             "依 regime、分析師看法分布、交易決策、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive。"
             "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
             "evidence_ids 從 citable_evidence_ids 或事件研究的 evidence_ids 中選取。%s"
@@ -693,16 +693,28 @@ class DailyDecisionPipeline:
             if errors:
                 raise DailyPipelineError("Guard 失敗的拒絕審查驗證失敗：" + "；".join(errors))
             return review
-        names = {name: self.save_artifact("%s_review_input_r%d" % (name, revision), payload) for name, payload in (("proposal", proposal), ("scenario", scenario), ("guard", guard))}
+        exposure = sector_exposure(proposal, policy)
+        # 審查 Agent 只讀提案／情境／Guard，沒有共同輸入；不提供可引用清單時它會編造 artifact ID
+        # 而被 Validator 拒絕，正式流程曾要靠第二次重試才通過。
+        held = {str(item["symbol"]).upper() for item in proposal["allocation_proposal"]["positions"]}
+        citable = sorted(
+            str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"]
+            if row.get("source_evidence_id") and str(row["symbol"]).upper() in held
+        )
+        citable_path = self.save_artifact("review_citable_evidence_r%d" % revision, {"citable_evidence_ids": citable})
+        names = {
+            name: self.save_artifact("%s_review_input_r%d" % (name, revision), payload)
+            for name, payload in (("proposal", proposal), ("scenario", scenario), ("guard", guard), ("sector_exposure", exposure))
+        }
         task = AgentTask(
             "review_r%d" % revision,
-            "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s，再讀提案 %s、情境 %s 與 Guard %s。"
+            "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s，再讀提案 %s、情境 %s、Guard %s 與程式計算的產業實際權重 %s；可引用的 evidence ID 清單在 %s。"
             "輸出 approve、revise 或 reject。revise 只能使用 remove_candidate（symbol 為本提案買進股票）、"
             "increase_cash_buffer（value 不得低於目前現金緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
-            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 必須是共同輸入中存在的 ID。%s"
+            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
             % (
                 self.root / "skills/portfolio-risk-review/SKILL.md",
-                names["proposal"], names["scenario"], names["guard"],
+                names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], citable_path,
                 revision, int(policy["max_revisions"]), _SHARED_RULES,
             ),
             REVIEW_SCHEMA,

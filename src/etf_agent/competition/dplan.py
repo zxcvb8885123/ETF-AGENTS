@@ -305,7 +305,7 @@ class DPlanExporter:
         context: Mapping[str, object],
         artifacts: Mapping[str, Mapping[str, object]],
     ) -> Dict[str, object]:
-        required = {"decision_input", "momentum", "debate", "intent", "policy", "proposal", "scenario", "guard", "risk_review", "revision_history", "decision"}
+        required = {"decision_input", "momentum", "debate", "intent", "policy", "proposal", "scenario", "guard", "risk_review", "revision_history", "decision", "team_inputs"}
         missing = sorted(required - set(artifacts))
         if missing:
             raise DPlanError("Decision run 缺少 artifacts：" + ", ".join(missing))
@@ -314,7 +314,7 @@ class DPlanExporter:
         if input_errors:
             raise DPlanError("DecisionInputBundle 驗證失敗：" + "; ".join(input_errors))
         result = artifacts["decision"]
-        result_errors = DecisionResultValidator(bundle, artifacts["policy"], artifacts["momentum"], artifacts["debate"], artifacts["intent"]).validate(
+        result_errors = DecisionResultValidator(bundle, artifacts["policy"], artifacts["momentum"], artifacts["debate"], artifacts["intent"], artifacts["team_inputs"]).validate(
             artifacts["proposal"], artifacts["scenario"], artifacts["guard"], artifacts["risk_review"], artifacts["revision_history"], result
         )
         if result_errors:
@@ -492,6 +492,56 @@ class DPlanExporter:
         cash_ratio = estimated_cash / nav
         if cash_ratio < low or cash_ratio > high:
             raise DPlanError("C12 本地檢查失敗：以前一日收盤價及費稅估算的現金比不在宣告區間")
+
+
+def verify_account_binding(
+    artifacts: Mapping[str, Mapping[str, object]],
+    account_repository: str,
+    account_id: str,
+    account_run_id: str,
+) -> Dict[str, object]:
+    """確認 Decision run 使用的 AccountSnapshot 來自帳戶目前 latest 的 prepare-day 封存。"""
+    from pathlib import Path
+    from etf_agent.core import canonical_sha256
+    from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository
+
+    bundle = artifacts.get("decision_input")
+    if not isinstance(bundle, Mapping) or not isinstance(bundle.get("snapshot"), Mapping):
+        raise DPlanError("Decision run 缺少 decision_input.snapshot，無法核對帳本")
+    repository = VirtualAccountRepository(Path(account_repository), account_id)
+    try:
+        run_dir = repository.verify(account_run_id)
+        latest = repository.latest()
+    except VirtualAccountError as error:
+        raise DPlanError("VirtualAccount run 驗證失敗：%s" % error) from error
+    if latest is None or latest.get("run_id") != account_run_id:
+        raise DPlanError("VirtualAccount run 不是帳戶目前 latest 狀態，拒絕匯出 D-Plan")
+    try:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        account_snapshot = json.loads((run_dir / "account_snapshot.json").read_text(encoding="utf-8"))
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise DPlanError("VirtualAccount run 檔案無法讀取") from error
+    provenance = state.get("provenance")
+    if not isinstance(provenance, Mapping) or provenance.get("type") != "prepared":
+        raise DPlanError("VirtualAccount run 必須是 prepare-day 封存狀態")
+    snapshot = bundle["snapshot"]
+    if (
+        provenance.get("snapshot_id") != snapshot.get("snapshot_id")
+        or provenance.get("snapshot_sha256") != canonical_sha256(snapshot)
+        or provenance.get("account_snapshot") != account_snapshot
+        or state.get("as_of") != bundle.get("decision_cutoff")
+    ):
+        raise DPlanError("VirtualAccount prepare-day run 與 Decision run 的 Snapshot／cutoff 不一致")
+    if bundle.get("account_snapshot") != account_snapshot:
+        raise DPlanError("Decision run 使用的 AccountSnapshot 與 VirtualAccount prepare-day run 不一致")
+    return {
+        "account_id": account_id,
+        "run_id": account_run_id,
+        "state_id": state.get("state_id"),
+        "account_snapshot_sha256": canonical_sha256(account_snapshot),
+        "manifest_sha256": manifest.get("manifest_sha256"),
+    }
 
 
 def load_decision_run(repository: str, run_id: str) -> Dict[str, Dict[str, object]]:

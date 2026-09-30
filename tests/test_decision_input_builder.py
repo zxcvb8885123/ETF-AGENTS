@@ -197,7 +197,7 @@ class DecisionInputBuilderTests(unittest.TestCase):
 
 
 class PriceHistoryRepositoryTests(unittest.TestCase):
-    def test_history_prefers_official_source_and_respects_cutoff_and_limit(self):
+    def test_history_prefers_yahoo_research_source_and_respects_cutoff_and_limit(self):
         base = {
             "symbol": "2330.TW", "open_price": "10", "high_price": "11",
             "low_price": "9", "close_price": "10", "volume_shares": 1,
@@ -225,12 +225,12 @@ class PriceHistoryRepositoryTests(unittest.TestCase):
                 loaded = [
                     dict(row)
                     for row in repository.load_price_history(
-                        connection, "2026-09-18", "2026-09-19T00:00:00+00:00", 2
+                        connection, "2026-09-19", "2026-09-19T00:00:00+00:00", 2
                     )
                 ]
         self.assertEqual(
             [(row["trade_date"], row["source"], row["close_price"]) for row in loaded],
-            [("2026-09-16", "TWSE_STOCK_DAY", "10.5"), ("2026-09-17", "YAHOO_FINANCE", "10")],
+            [("2026-09-16", "YAHOO_FINANCE", "10"), ("2026-09-17", "YAHOO_FINANCE", "10")],
         )
 
     def test_service_writes_bundle_from_snapshot_database_and_rules(self):

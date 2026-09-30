@@ -156,7 +156,7 @@ class HistoricalPriceCollector:
         months = month_starts(start, end)
         run_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc).isoformat()
-        source = "TWSE_TPEX_HISTORICAL"
+        source = "TWSE_HISTORICAL"
         self.database.initialize()
         with self.database.connect() as connection:
             self.database.upsert_instruments(connection, universe, True)
@@ -285,7 +285,7 @@ class HistoricalPriceCollector:
 
 
 class OfficialHistoricalRefreshService:
-    """以官方 TWSE／TPEx 月行情更新並稽核指定交易池的歷史日線。"""
+    """以官方 TWSE 月行情更新並稽核上市股票的歷史日線。"""
 
     latest_sources = {
         "TWSE": "TWSE_STOCK_DAY_ALL",
@@ -316,6 +316,8 @@ class OfficialHistoricalRefreshService:
     ) -> OfficialHistoryRefreshResult:
         if not universe:
             raise ValueError("官方交易池是空的")
+        if any(instrument.market.upper() != "TWSE" for instrument in universe):
+            raise ValueError("官方個股月補抓只支援上市股票")
         self.database.initialize()
         safe_end = self._safe_end_date(universe)
         target_end = safe_end if end is None else end
@@ -421,13 +423,15 @@ class OfficialHistoricalRefreshService:
         )
 
     def _safe_end_date(self, universe: Sequence[Instrument]) -> date:
-        latest_sources = tuple(
-            dict.fromkeys(
-                self.latest_sources[self._market_key(instrument)]
-                for instrument in universe
-            )
-        )
-        latest = self.database.latest_complete_trade_date(latest_sources)
+        """官方個股月行情可抓到的最後一天：任一市場最新行情端點已公布的最新交易日。"""
+        # 即使只補上市個股，也可依較快公布的上櫃全市場端點確認當日已收盤；
+        # 個股是否真正取得該日仍由 coverage 逐檔驗證。
+        latest_sources = tuple(self.latest_sources.values())
+        # 證交所全市場當日行情（STOCK_DAY_ALL）常晚一天更新，若取兩市場較早的日期，
+        # 上市個股的當日官方日線就永遠無法補抓。改取任一市場已公布的最新日；各檔是否
+        # 真的取到該日由覆蓋報告（end_coverage）與 Snapshot 的全池覆蓋檢查把關，缺任一檔
+        # 都不會被當成完整交易日。
+        latest = self.database.latest_reported_trade_date(latest_sources)
         if latest is None:
             raise ValueError(
                 "缺少 TWSE／TPEx 最新官方行情；請先執行 collect_latest_prices.py"
@@ -480,12 +484,6 @@ class OfficialHistoricalRefreshService:
         return tuple(dict.fromkeys(self._historical_source(item) for item in universe))
 
     def _historical_source(self, instrument: Instrument) -> str:
-        return (
-            self.provider.tpex_source
-            if self._market_key(instrument) == "TPEX"
-            else self.provider.twse_source
-        )
-
-    @staticmethod
-    def _market_key(instrument: Instrument) -> str:
-        return "TPEX" if instrument.market.upper() in {"TPEX", "OTC", "上櫃"} else "TWSE"
+        if instrument.market.upper() != "TWSE":
+            raise ValueError("官方個股月補抓只支援上市股票")
+        return self.provider.twse_source

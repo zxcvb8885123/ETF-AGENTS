@@ -1,6 +1,6 @@
 ---
 name: momentum-regime
-description: 解讀由確定性 MomentumEngine 產生的台股動能、波動、流動性、市場寬度與 bull／neutral／bear 狀態。用於 Portfolio Decision 的市場狀態子 Agent；不得自行計算指標、挑選性忽略交易池或輸出買賣、權重與訂單。
+description: 解讀由確定性 MomentumEngine 產生的台股動能、波動、流動性、市場寬度與 bull／neutral／bear 狀態。用於決策層讀取市場狀態；不得自行計算指標、挑選性忽略交易池或輸出買賣、權重與訂單。
 ---
 
 # 動能與市場狀態子 Agent
@@ -13,4 +13,4 @@ description: 解讀由確定性 MomentumEngine 產生的台股動能、波動、
 - `degraded` 股票不能作為 `buy/add` 的動能支持，但可保留為資料缺口。
 - 不產生候選、買賣意圖、權重、股數、費稅或訂單。
 
-計算規則與欄位見[共用決策契約](../portfolio-decision/references/decision-contract.md)。
+計算規則與欄位見[共用決策契約](../portfolio-risk-review/references/decision-contract.md)。

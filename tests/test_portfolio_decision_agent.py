@@ -6,19 +6,13 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from etf_agent.decision import (
-    BuyIntentPacketValidator,
-    DecisionContext,
     DecisionInputValidator,
     MomentumEngine,
     MomentumResultValidator,
     PortfolioDecisionApplicationService,
-    SellIntentPacketValidator,
-    TradeDebateValidator,
-    TradeIntentResultValidator,
     canonical_sha256,
     decision_bundle_sha256,
     decision_rules_sha256,
-    build_role_input_artifact,
     artifact_content_sha256,
 )
 
@@ -75,13 +69,13 @@ def decision_bundle():
             {
                 "symbol": "2330.TW",
                 "trade_date": "2026-09-19",
-                "analysis_close_price": series_2330[-1]["close"],
+                "analysis_close_price": series_2330[-1]["close"], "close_price": series_2330[-1]["close"],
                 "source_evidence_id": "price-2330",
             },
             {
                 "symbol": "2317.TW",
                 "trade_date": "2026-09-19",
-                "analysis_close_price": series_2317[-1]["close"],
+                "analysis_close_price": series_2317[-1]["close"], "close_price": series_2317[-1]["close"],
                 "source_evidence_id": "price-2317",
             },
         ],
@@ -202,154 +196,6 @@ def minimal_perception_input(snapshot_id, cutoff, evidence_id="perception-eviden
     }
 
 
-def intent_packet(bundle, momentum, role):
-    context = DecisionContext(bundle)
-    common = {
-        "schema_version": "1.0",
-        "packet_id": "%s-packet-1" % role,
-        "role": role,
-        "bundle_id": context.bundle_id,
-        "snapshot_id": context.snapshot_id,
-        "decision_cutoff": context.decision_cutoff,
-        "bundle_hash": context.bundle_hash,
-        "momentum_result_id": momentum["result_id"],
-        "status": "completed",
-        "dependencies": {
-            "decision_bundle_id": context.bundle_id,
-            "momentum_result_id": momentum["result_id"],
-            "role_input_sha256": build_role_input_artifact(
-                bundle, momentum, role
-            )["role_input_sha256"],
-            "peer_packet_ids": [],
-        },
-        "errors": [],
-    }
-    if role == "buy":
-        common["items"] = [
-            {
-                "symbol": "2317.TW",
-                "intent": "buy",
-                "rationale": "動能資料完整，交由裁決比較風險。",
-                "status_reason": "保留為新買候選。",
-                "catalyst_summary": "價格趨勢持續改善。",
-                "horizon": "short",
-                "evidence_ids": ["price-2317"],
-                "risk_flags": [],
-                "invalidation_conditions": ["收盤跌破中期趨勢"],
-                "claims": [
-                    {
-                        "claim_id": "buy-2317-momentum",
-                        "text": "截至 cutoff 的價格趨勢向上。",
-                        "evidence_ids": ["price-2317"],
-                    }
-                ],
-            },
-            {
-                "symbol": "2330.TW",
-                "intent": "add",
-                "rationale": "既有持股具正向動能，但仍需賣方檢查。",
-                "status_reason": "保留為加碼候選。",
-                "catalyst_summary": "中期價格趨勢向上。",
-                "horizon": "short",
-                "evidence_ids": ["price-2330"],
-                "risk_flags": ["EXISTING_POSITION"],
-                "invalidation_conditions": ["中期趨勢反轉"],
-                "claims": [
-                    {
-                        "claim_id": "buy-2330-momentum",
-                        "text": "截至 cutoff 的價格趨勢向上。",
-                        "evidence_ids": ["price-2330"],
-                    }
-                ],
-            },
-        ]
-    else:
-        common["items"] = [
-            {
-                "symbol": "2330.TW",
-                "intent": "hold",
-                "rationale": "目前沒有由共同輸入證明必須退出。",
-                "status_reason": "續抱並交由裁決處理加碼衝突。",
-                "thesis_status": "intact",
-                "horizon": "short",
-                "evidence_ids": ["price-2330", "account-evidence-1"],
-                "risk_flags": [],
-                "invalidation_conditions": [],
-                "claims": [
-                    {
-                        "claim_id": "sell-2330-hold",
-                        "text": "目前持股且共同輸入沒有強制退出證據。",
-                        "evidence_ids": ["price-2330", "account-evidence-1"],
-                    }
-                ],
-            }
-        ]
-    common["content_sha256"] = artifact_content_sha256(common)
-    return common
-
-
-def debate_bundle(bundle, momentum):
-    context = DecisionContext(bundle)
-    debate = {
-        "schema_version": "1.0",
-        "debate_id": "trade-debate-1",
-        "bundle_id": context.bundle_id,
-        "snapshot_id": context.snapshot_id,
-        "decision_cutoff": context.decision_cutoff,
-        "bundle_hash": context.bundle_hash,
-        "momentum_result_id": momentum["result_id"],
-        "packets": [
-            intent_packet(bundle, momentum, "buy"),
-            intent_packet(bundle, momentum, "sell"),
-        ],
-    }
-    debate["content_sha256"] = artifact_content_sha256(debate)
-    return debate
-
-
-def trade_intent_result(bundle, momentum, debate):
-    context = DecisionContext(bundle)
-    result = {
-        "schema_version": "1.0",
-        "result_id": "trade-intent-1",
-        "bundle_id": context.bundle_id,
-        "snapshot_id": context.snapshot_id,
-        "decision_cutoff": context.decision_cutoff,
-        "bundle_hash": context.bundle_hash,
-        "momentum_result_id": momentum["result_id"],
-        "debate_id": debate["debate_id"],
-        "source_packet_ids": ["buy-packet-1", "sell-packet-1"],
-        "status": "completed",
-        "items": [
-            {
-                "symbol": "2317.TW",
-                "intent": "buy",
-                "rationale": "採納買方動能 claim，尚無相反持股論點。",
-                "status_reason": "交由後續配置與風控層。",
-                "evidence_ids": ["price-2317"],
-                "adopted_claim_ids": ["buy-2317-momentum"],
-                "rejected_claim_ids": [],
-                "unresolved_questions": [],
-                "invalidation_conditions": ["收盤跌破中期趨勢"],
-            },
-            {
-                "symbol": "2330.TW",
-                "intent": "hold",
-                "rationale": "採納續抱 claim，否決目前證據下的加碼。",
-                "status_reason": "保持目前持股，不形成新增交易。",
-                "evidence_ids": ["price-2330", "account-evidence-1"],
-                "adopted_claim_ids": ["sell-2330-hold"],
-                "rejected_claim_ids": ["buy-2330-momentum"],
-                "unresolved_questions": [],
-                "invalidation_conditions": [],
-            },
-        ],
-        "errors": [],
-    }
-    result["content_sha256"] = artifact_content_sha256(result)
-    return result
-
-
 def refresh_artifact_hash(artifact):
     artifact["content_sha256"] = artifact_content_sha256(artifact)
     return artifact
@@ -460,139 +306,6 @@ class PortfolioDecisionAgentTests(unittest.TestCase):
         result["items"][0]["return_20d"] = 99
         errors = MomentumResultValidator(bundle).validate(result)
         self.assertIn("MomentumResult 與確定性重算結果不一致", errors)
-
-    def test_independent_buy_and_sell_packets_are_valid(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy = intent_packet(bundle, momentum, "buy")
-        sell = intent_packet(bundle, momentum, "sell")
-        self.assertEqual(BuyIntentPacketValidator(bundle, momentum).validate(buy), [])
-        self.assertEqual(SellIntentPacketValidator(bundle, momentum).validate(sell), [])
-
-    def test_role_input_artifact_excludes_peer_packet(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy_input = build_role_input_artifact(bundle, momentum, "buy")
-        sell_input = build_role_input_artifact(bundle, momentum, "sell")
-        self.assertEqual(buy_input["forbidden_peer_role"], "sell")
-        self.assertEqual(sell_input["forbidden_peer_role"], "buy")
-        self.assertNotIn("packets", buy_input)
-        self.assertNotEqual(
-            buy_input["role_input_sha256"], sell_input["role_input_sha256"]
-        )
-
-    def test_sell_packet_must_cover_all_holdings(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        sell = intent_packet(bundle, momentum, "sell")
-        sell["items"] = []
-        errors = SellIntentPacketValidator(bundle, momentum).validate(sell)
-        self.assertTrue(any("未覆蓋全部持股" in error for error in errors))
-
-    def test_peer_packet_dependency_is_rejected(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        debate["packets"][0]["dependencies"]["peer_packet_ids"] = [
-            "sell-packet-1"
-        ]
-        errors = TradeDebateValidator(bundle, momentum).validate(debate)
-        self.assertTrue(any("不得讀取對方" in error for error in errors))
-
-    def test_non_completed_buy_packet_cannot_enter_debate(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy = intent_packet(bundle, momentum, "buy")
-        buy["status"] = "degraded"
-        errors = BuyIntentPacketValidator(bundle, momentum).validate(buy)
-        self.assertTrue(any("只有 status=completed" in error for error in errors))
-
-    def test_buy_packet_cannot_smuggle_position_size(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy = intent_packet(bundle, momentum, "buy")
-        buy["items"][0]["position_size"] = 0.1
-        errors = BuyIntentPacketValidator(bundle, momentum).validate(buy)
-        self.assertTrue(any("不得包含配置" in error for error in errors))
-
-    def test_buy_packet_rejects_unknown_execution_instruction(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy = intent_packet(bundle, momentum, "buy")
-        buy["items"][0]["execute_now"] = True
-        refresh_artifact_hash(buy)
-        errors = BuyIntentPacketValidator(bundle, momentum).validate(buy)
-        self.assertTrue(any("含未允許欄位" in error for error in errors))
-
-    def test_account_evidence_cannot_support_non_held_buy(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy = intent_packet(bundle, momentum, "buy")
-        buy["items"][0]["evidence_ids"] = ["account-evidence-1"]
-        buy["items"][0]["claims"][0]["evidence_ids"] = ["account-evidence-1"]
-        refresh_artifact_hash(buy)
-        errors = BuyIntentPacketValidator(bundle, momentum).validate(buy)
-        self.assertTrue(any("帳戶證據只能引用於目前持股" in error for error in errors))
-
-    def test_packet_text_tampering_breaks_content_hash(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        buy = intent_packet(bundle, momentum, "buy")
-        buy["items"][0]["claims"][0]["text"] = "遭修改的論點"
-        errors = BuyIntentPacketValidator(bundle, momentum).validate(buy)
-        self.assertTrue(any("content_sha256" in error for error in errors))
-
-    def test_trade_debate_and_intent_are_valid(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        result = trade_intent_result(bundle, momentum, debate)
-        self.assertEqual(TradeDebateValidator(bundle, momentum).validate(debate), [])
-        self.assertEqual(
-            TradeIntentResultValidator(bundle, momentum, debate).validate(result), []
-        )
-
-    def test_adjudicator_cannot_add_claim_or_weight(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        result = trade_intent_result(bundle, momentum, debate)
-        result["items"][0]["adopted_claim_ids"] = ["invented-claim"]
-        result["items"][0]["target_weight"] = 0.1
-        errors = TradeIntentResultValidator(bundle, momentum, debate).validate(result)
-        self.assertTrue(any("全部 claim_id" in error for error in errors))
-        self.assertTrue(any("不得包含配置" in error for error in errors))
-
-    def test_adjudicator_must_carry_adopted_claim_evidence(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        result = trade_intent_result(bundle, momentum, debate)
-        result["items"][0]["evidence_ids"] = []
-        errors = TradeIntentResultValidator(bundle, momentum, debate).validate(result)
-        self.assertTrue(any("採納 claims 的證據" in error for error in errors))
-
-    def test_actionable_intent_must_adopt_supporting_claim(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        result = trade_intent_result(bundle, momentum, debate)
-        result["items"][0]["adopted_claim_ids"] = []
-        result["items"][0]["rejected_claim_ids"] = ["buy-2317-momentum"]
-        result["items"][0]["evidence_ids"] = []
-        errors = TradeIntentResultValidator(bundle, momentum, debate).validate(result)
-        self.assertTrue(any("必須採納同方向來源 claim" in error for error in errors))
-
-    def test_adjudicator_cannot_upgrade_watch_to_buy(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        debate["packets"][0]["items"][0]["intent"] = "watch"
-        refresh_artifact_hash(debate["packets"][0])
-        refresh_artifact_hash(debate)
-        result = trade_intent_result(bundle, momentum, debate)
-        errors = TradeIntentResultValidator(bundle, momentum, debate).validate(result)
-        self.assertTrue(any("升級為 buy" in error for error in errors))
 
     def test_application_service_writes_momentum_artifact(self):
         with tempfile.TemporaryDirectory() as temp_dir:

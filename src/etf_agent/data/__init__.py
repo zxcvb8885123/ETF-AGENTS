@@ -27,7 +27,6 @@ from .historical import (
     month_starts,
     plan_history_refresh,
     rolling_start,
-    tpex_ssl_context,
 )
 from .historical_collector import (
     HistoricalCollectionError,
@@ -68,12 +67,15 @@ from .ogd_trading_status import (
     OGD_MAPPING_VERSION,
     OgdTradingStatusMapper,
     build_trading_status_from_capture,
+    calendar_from_capture,
     closed_dates_from_calendar,
+    latest_calendar_capture_before,
     latest_capture_before,
     load_approvals,
     load_not_applicable,
     next_trading_session,
 )
+from .trading_calendar import CALENDAR_BASIS, TradingCalendar, TradingCalendarError
 from .sector_classification import (
     SECTOR_SOURCES,
     SectorClassificationBuilder,
@@ -163,8 +165,13 @@ __all__ = [
     "OGD_MAPPING_VERSION",
     "OgdTradingStatusMapper",
     "build_trading_status_from_capture",
+    "calendar_from_capture",
     "closed_dates_from_calendar",
+    "latest_calendar_capture_before",
     "latest_capture_before",
+    "CALENDAR_BASIS",
+    "TradingCalendar",
+    "TradingCalendarError",
     "load_approvals",
     "load_not_applicable",
     "next_trading_session",
@@ -192,7 +199,6 @@ __all__ = [
     "month_starts",
     "plan_history_refresh",
     "rolling_start",
-    "tpex_ssl_context",
     "write_json_artifact",
     "DEFAULT_REQUIRED_CATEGORIES",
     "SavedJsonTradingStatusProvider",

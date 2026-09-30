@@ -51,4 +51,4 @@ exit code `0` 是完整可用結果；`2` 是已產出但降級、不可用或�
 - `FundamentalResearchResult` 不包含買進／賣出、候選、評等、目標價、權重、股數、訂單或績效承諾。
 - 不把財報同比、趨勢或單一比率宣稱為市場預期、分析師共識或必然股價方向。
 - 不可混用不同 Snapshot、cutoff、幣別、報表口徑或期間；財報更正後須以新 Snapshot 重跑。
-- 現有 Research Report、Portfolio Decision 與 DailyReport 尚未接收本結果；不要將封存結果自行放進既有嚴格契約。
+- 現有 Research Report 與 Portfolio Decision 尚未接收本結果；不要將封存結果自行放進既有嚴格契約。

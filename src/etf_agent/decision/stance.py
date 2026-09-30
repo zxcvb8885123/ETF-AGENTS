@@ -11,6 +11,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from .analysts import ANALYSTS, AnalystReportValidator
 from .contracts import (
+    validate_forbidden_keys,
     DecisionContext,
     DecisionToolError,
     artifact_content_sha256,
@@ -19,7 +20,6 @@ from .contracts import (
     required_string,
     string_list,
 )
-from .trade_intent import _validate_forbidden_keys
 
 
 STANCE_SCHEMA_VERSION = "2.0"
@@ -181,7 +181,7 @@ class StancePacketValidator:
 
     def validate(self, packet: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
-        _validate_forbidden_keys(packet, "StancePacket", errors)
+        validate_forbidden_keys(packet, "StancePacket", errors)
         reject_unknown_fields(packet, self.ENVELOPE, "StancePacket", errors)
         for field, value in self.expected.items():
             if packet.get(field) != value:

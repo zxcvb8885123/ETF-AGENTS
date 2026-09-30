@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""投資組合買賣決策、配置、風控與保存的結構化工具入口。"""
+"""投資組合決策的確定性工具入口：輸入、動能、配置、情境、Guard、修正歷程、finalize 與保存。"""
 
 import argparse
 import json
@@ -46,23 +46,11 @@ class PortfolioDecisionApplication:
                     trading_status_path=args.trading_status,
                     account_path=args.account_snapshot,
                     lookback_bars=args.lookback_bars,
+                    perception_bundle_path=args.perception_bundle,
+                    perception_result_path=args.perception,
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
-            if args.command == "build-role-brief":
-                result = PortfolioDecisionApplicationService.build_role_brief_file(
-                    args.role_input, args.output
-                )
-                self.emit(
-                    {
-                        "ok": True,
-                        "role": result["role"],
-                        "symbol_count": len(result["symbols"]),
-                        "brief_sha256": result["brief_sha256"],
-                        "output": str(args.output) if args.output else None,
-                    }
-                )
-                return 0
             service = PortfolioDecisionApplicationService.from_path(args.bundle)
             if args.command == "validate-input":
                 result = service.validate_input()
@@ -71,18 +59,6 @@ class PortfolioDecisionApplication:
             if args.command == "compute-momentum":
                 result = service.compute_momentum(args.output)
                 self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
-                return 0
-            if args.command == "build-role-input":
-                result = service.build_role_input(
-                    args.role, args.momentum, args.output
-                )
-                self.emit(
-                    {
-                        "ok": True,
-                        "data": result,
-                        "output": str(args.output) if args.output else None,
-                    }
-                )
                 return 0
             if args.command == "seal-artifact":
                 result = service.seal_artifact_file(args.input, args.output)
@@ -96,14 +72,6 @@ class PortfolioDecisionApplication:
                 return 0
             if args.command == "build-policy":
                 result = service.build_policy_file(args.template, args.sector, args.output)
-                self.emit(result)
-                return 0
-            if args.command == "validate-sizing":
-                result = service.validate_sizing_file(args.intent, args.input)
-                self.emit(result)
-                return 0 if result["valid"] else 2
-            if args.command == "apply-sizing":
-                result = service.apply_sizing_file(args.policy, args.intent, args.sizing, args.output)
                 self.emit(result)
                 return 0
             if args.command == "compute-proposal":
@@ -148,14 +116,14 @@ class PortfolioDecisionApplication:
             if args.command == "finalize":
                 result = service.finalize_file(
                     args.momentum, args.debate, args.intent, args.policy, args.proposal, args.scenario,
-                    args.guard, args.review, args.history, args.output
+                    args.guard, args.review, args.history, args.team_inputs, args.output
                 )
                 self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
                 return 0
             if args.command == "validate-decision":
                 result = service.validate_decision_file(
                     args.momentum, args.debate, args.intent, args.policy, args.proposal, args.scenario,
-                    args.guard, args.review, args.history, args.input
+                    args.guard, args.review, args.history, args.team_inputs, args.input
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
@@ -171,9 +139,8 @@ class PortfolioDecisionApplication:
                     "risk_review": args.review,
                     "revision_history": args.history,
                     "decision": args.decision,
+                    "team_inputs": args.team_inputs,
                 }
-                if args.team_inputs is not None:
-                    paths["team_inputs"] = args.team_inputs
                 result = service.save_run_files(args.run_id, args.repository, paths)
                 self.emit(result)
                 return 0
@@ -194,20 +161,8 @@ class PortfolioDecisionApplication:
                 return 0 if result["valid"] else 2
             if args.command == "validate-momentum":
                 result = service.validate_momentum_file(args.input)
-            elif args.command == "validate-buy":
-                result = service.validate_packet_file(
-                    "buy", args.momentum, args.input, args.output
-                )
-            elif args.command == "validate-sell":
-                result = service.validate_packet_file(
-                    "sell", args.momentum, args.input, args.output
-                )
-            elif args.command == "validate-debate":
-                result = service.validate_debate_file(
-                    args.momentum, args.input, args.output
-                )
             else:
-                result = service.validate_intent_file(
+                result = service.validate_trade_decision_file(
                     args.momentum, args.debate, args.input, args.output
                 )
             self.emit(result)
@@ -241,6 +196,8 @@ class PortfolioDecisionApplication:
         )
         build_input.add_argument("--trading-status", type=Path, help="trading_status.py build-bundle 的輸出")
         build_input.add_argument("--account-snapshot", type=Path)
+        build_input.add_argument("--perception-bundle", type=Path)
+        build_input.add_argument("--perception", type=Path)
         build_input.add_argument("--lookback-bars", type=int, default=DEFAULT_LOOKBACK_BARS)
 
         commands.add_parser("validate-input", help="驗證共用 DecisionInputBundle")
@@ -255,38 +212,14 @@ class PortfolioDecisionApplication:
         )
         validate_momentum.add_argument("--input", type=Path, required=True)
 
-        role_input = commands.add_parser(
-            "build-role-input", help="建立不含對方 packet 的 Buy／Sell 隔離輸入"
-        )
-        role_input.add_argument("--role", choices=("buy", "sell"), required=True)
-        role_input.add_argument("--momentum", type=Path, required=True)
-        role_input.add_argument("--output", type=Path)
-
-        role_brief = commands.add_parser(
-            "build-role-brief",
-            help="由單一 Buy／Sell 角色輸入產生給子 Agent 閱讀的精簡摘要（不讀 --bundle）",
-        )
-        role_brief.add_argument("--role-input", type=Path, required=True)
-        role_brief.add_argument("--output", type=Path, required=True)
-
         seal = commands.add_parser(
             "seal-artifact", help="為 Policy、Agent packet 或決策 artifact 計算內容雜湊"
         )
         seal.add_argument("--input", type=Path, required=True)
         seal.add_argument("--output", type=Path)
 
-        for name, help_text in (
-            ("validate-buy", "驗證獨立 BuyIntentPacket"),
-            ("validate-sell", "驗證獨立 SellIntentPacket"),
-            ("validate-debate", "驗證 Buy／Sell 共同輸入與互相隔離"),
-        ):
-            command = commands.add_parser(name, help=help_text)
-            command.add_argument("--momentum", type=Path, required=True)
-            command.add_argument("--input", type=Path, required=True)
-            command.add_argument("--output", type=Path)
-
         intent = commands.add_parser(
-            "validate-intent", help="驗證 TradeIntentResult 未新增事實或交易數字"
+            "validate-intent", help="驗證 TradeDecision 未新增事實或交易數字"
         )
         intent.add_argument("--momentum", type=Path, required=True)
         intent.add_argument("--debate", type=Path, required=True)
@@ -303,20 +236,6 @@ class PortfolioDecisionApplication:
             "--sector", type=Path, default=self.root / "data" / "sector_classification.json"
         )
         build_policy.add_argument("--output", type=Path, required=True)
-
-        validate_sizing = commands.add_parser(
-            "validate-sizing", help="驗證風控子 Agent 的 SizingPlan 等級、候選覆蓋與證據"
-        )
-        validate_sizing.add_argument("--intent", type=Path, required=True)
-        validate_sizing.add_argument("--input", type=Path, required=True)
-
-        apply_sizing = commands.add_parser(
-            "apply-sizing", help="將已驗證 SizingPlan 綁入新版 DecisionPolicy（不輸出權重）"
-        )
-        apply_sizing.add_argument("--policy", type=Path, required=True)
-        apply_sizing.add_argument("--intent", type=Path, required=True)
-        apply_sizing.add_argument("--sizing", type=Path, required=True)
-        apply_sizing.add_argument("--output", type=Path, required=True)
 
         proposal = commands.add_parser(
             "compute-proposal", help="由交易意圖以一張 1,000 股計算配置、訂單、費稅與現金"
@@ -354,7 +273,7 @@ class PortfolioDecisionApplication:
         guard.add_argument("--output", type=Path)
 
         validate_risk = commands.add_parser(
-            "validate-risk", help="驗證 Portfolio Risk 審查與修正要求"
+            "validate-risk", help="驗證風險 Agent 審查與修正要求"
         )
         self._add_risk_inputs(validate_risk, include_intent=True, include_review=False)
         validate_risk.add_argument("--input", type=Path, required=True)
@@ -391,12 +310,14 @@ class PortfolioDecisionApplication:
             "finalize", help="重建全部輸入並產生 approved、rejected 或 no_trade"
         )
         self._add_risk_inputs(finalize, include_intent=True, include_history=True)
+        finalize.add_argument("--team-inputs", type=Path, required=True, help="四份分析報告、事件研究與現金姿態")
         finalize.add_argument("--output", type=Path)
 
         validate_decision = commands.add_parser(
             "validate-decision", help="完整重算並驗證最終 DecisionResult"
         )
         self._add_risk_inputs(validate_decision, include_intent=True, include_history=True)
+        validate_decision.add_argument("--team-inputs", type=Path, required=True)
         validate_decision.add_argument("--input", type=Path, required=True)
 
         save = commands.add_parser("save-run", help="以不可變 manifest 原子保存完整執行")
@@ -404,8 +325,8 @@ class PortfolioDecisionApplication:
         save.add_argument("--decision", type=Path, required=True)
         save.add_argument("--run-id", required=True)
         save.add_argument(
-            "--team-inputs", type=Path,
-            help="分析團隊新鏈必填：四份分析報告、事件研究與現金姿態，供完整重建驗證",
+            "--team-inputs", type=Path, required=True,
+            help="四份分析報告、事件研究與現金姿態，供完整重建驗證",
         )
         save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "portfolio_decisions")
         return parser

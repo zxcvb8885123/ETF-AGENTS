@@ -1,4 +1,4 @@
-"""Portfolio decision contracts, momentum tools, and intent validation."""
+"""Portfolio decision contracts, momentum tools, analyst team, trader and risk validation."""
 
 from .contracts import (
     DECISION_SCHEMA_VERSION,
@@ -12,7 +12,6 @@ from .contracts import (
 )
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
-from .role_brief import build_role_brief
 from .analysts import (
     ANALYSTS,
     AnalystReportValidator,
@@ -21,6 +20,7 @@ from .analysts import (
     high_materiality_events,
     seal_report,
     sentiment_unavailable_report,
+    sentiment_report,
 )
 from .stance import (
     STANCE_ROLES,
@@ -37,15 +37,8 @@ from .trader import (
     seal_trade_decision,
     trade_decision_envelope,
 )
-from .sizing import SIZING_METHOD, SizingPlanValidator, apply_sizing_plan
+from .sizing import SIZING_METHOD
 from .policy_builder import build_decision_policy
-from .trade_intent import (
-    BuyIntentPacketValidator,
-    SellIntentPacketValidator,
-    TradeDebateValidator,
-    TradeIntentResultValidator,
-    build_role_input_artifact,
-)
 from .allocation import (
     AllocationOrderEngine,
     DecisionPolicyValidator,
@@ -59,6 +52,7 @@ from .risk import (
     ScenarioEngine,
     ScenarioValidator,
     revision_effects,
+    sector_exposure,
 )
 from .finalization import (
     DecisionFinalizer,
@@ -82,12 +76,6 @@ __all__ = [
     "DecisionInputBuilder",
     "MomentumEngine",
     "MomentumResultValidator",
-    "BuyIntentPacketValidator",
-    "SellIntentPacketValidator",
-    "TradeDebateValidator",
-    "TradeIntentResultValidator",
-    "build_role_input_artifact",
-    "build_role_brief",
     "ANALYSTS",
     "AnalystReportValidator",
     "build_analyst_brief",
@@ -95,6 +83,7 @@ __all__ = [
     "high_materiality_events",
     "seal_report",
     "sentiment_unavailable_report",
+    "sentiment_report",
     "STANCE_ROLES",
     "ResearchDebateBundleValidator",
     "StancePacketValidator",
@@ -107,8 +96,6 @@ __all__ = [
     "seal_trade_decision",
     "trade_decision_envelope",
     "SIZING_METHOD",
-    "SizingPlanValidator",
-    "apply_sizing_plan",
     "build_decision_policy",
     "AllocationOrderEngine",
     "DecisionPolicyValidator",
@@ -120,6 +107,7 @@ __all__ = [
     "GuardValidator",
     "RiskReviewValidator",
     "revision_effects",
+    "sector_exposure",
     "DecisionFinalizer",
     "build_team_inputs",
     "DecisionResultValidator",

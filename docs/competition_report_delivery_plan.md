@@ -85,8 +85,8 @@ ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投�
 ### F3：完成本地研究到決策的交接
 
 - 沿用 daily-report 與既有研究／決策 Skills，封存各角色 input、output、工作階段識別與工具紀錄。
-- Fact → 隔離 Bull／Bear → Adjudicator → 雙重研究驗證；再執行 Momentum → 隔離 Buy／Sell → Trade Adjudicator → 確定性配置／訂單 → Portfolio Risk／Guard。
-- Buy／Sell 使用相同資料、獨立 role input；風險修正最多三次，硬性拒絕不可轉為警告。
+- Fact → 隔離 Bull／Bear → Adjudicator → 雙重研究驗證；再執行 Momentum → 分析團隊 → 隔離多頭／空頭研究員 → 交易 Agent → 確定性配置／訂單 → 風險 Agent／Guard。
+- 多頭／空頭使用相同資料、共同輸入雜湊；風險修正最多三次，硬性拒絕不可轉為警告。
 - CLI 顯示需接手的工作與續跑指令；不存在 Agent 工作階段時保持等待。完成後自動接回既有報告 Builder。
 - 研究 pending、候選不足、決策拒絕與合法 no_trade 分開處理；不能將資料失敗包裝成不交易決策。空倉 no_trade 仍須核對持股數等規則是否允許。
 
@@ -125,7 +125,7 @@ ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投�
 
 ### F5：固定入口與操作體驗
 
-- 延伸既有 start.sh daily／report 與 report_workflow run／status／resume／verify，提供資料準備、研究等待、決策等待、格式阻擋及完成的清楚狀態。
+- （2026-09-29：`start.sh report` 與 report_workflow 已移除，以下改由每日決策鏈與 D-Plan 匯出承接。）延伸既有 start.sh daily，提供資料準備、研究等待、決策等待、格式阻擋及完成的清楚狀態。
 - artifacts/reports/latest.md 顯示本次日期、cutoff、產物連結、驗證狀態與下一步；舊成功報告保留日期，不能替代今日失敗。
 - 發布前驗證所有產物，原子更新索引；同鍵同輸入重用，同鍵不同輸入拒絕覆寫。
 - 操作文件提供從乾淨工作區準備資料、Agent 接手、續跑、產檔及人工檢視的完整範例。明確區分現有命令與新增參數。

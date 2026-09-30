@@ -116,6 +116,26 @@ class TeamChainFinalizationTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertTrue(any("team_inputs" in error for error in result["errors"]), result["errors"])
 
+    def test_legacy_1_0_debate_is_rejected(self):
+        bundle, momentum, debate, trade, policy, team, _, _ = team_world()
+        legacy = dict(debate, schema_version="1.0")
+        _, result = finalize(bundle, momentum, legacy, trade, policy, team)
+        self.assertEqual(result["status"], "rejected")
+        self.assertTrue(any("舊版 1.0 決策鏈已移除" in error for error in result["errors"]), result["errors"])
+
+    def test_save_run_requires_team_inputs(self):
+        bundle, momentum, debate, trade, policy, team, _, _ = team_world()
+        artifacts, result = finalize(bundle, momentum, debate, trade, policy, team)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {}
+            for name, payload in {**artifacts, "momentum": momentum, "debate": debate, "intent": trade,
+                                  "policy": policy, "decision": result}.items():
+                paths[name] = root / ("%s.json" % name)
+                paths[name].write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(Exception, "缺少 artifacts：team_inputs"):
+                PortfolioDecisionApplicationService(bundle).save_run_files("no-team", root / "repo", paths)
+
     def test_policy_binding_must_match_trade_decision_and_cash_stance(self):
         bundle, momentum, debate, trade, policy, team, reports, research = team_world()
         tampered = copy.deepcopy(policy)
@@ -169,7 +189,7 @@ class TeamChainDownstreamTests(unittest.TestCase):
             }), encoding="utf-8")
             close = root / "close.json"
             close.write_text(json.dumps({
-                "price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00",
+                "trade_date": "2026-09-20", "price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00",
                 "quotes": {symbol: {"close_price": price} for symbol, price in quotes.items()},
             }), encoding="utf-8")
             applied = service.apply_decision(root / "decisions", "team-decision", execution, close, "2026-09-22", "close-team")

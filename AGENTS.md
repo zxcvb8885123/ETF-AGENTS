@@ -35,15 +35,15 @@
 
 ### 後續 Agent
 
-- 每日決策鏈依[決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md)採分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈只保留供既有封存 run 重建與 fixture 測試；Buy 與 Sell 仍須使用相同輸入且互相隔離。
+- 每日決策鏈依[決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md)採分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
 - 分析團隊（technical／fundamental／event 分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件必須另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
-- 新鏈 Decision run 必須另存 `team_inputs`（四份分析報告、事件研究、現金姿態）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
-- 子 Agent 只輸出市場狀態解讀、買賣意圖、裁決、配置前信心分級或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
-- Buy／Sell 必須使用主控建立的獨立 role input artifact，packet 不得含 peer 依賴；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
-- Trade Adjudicator 不得新增事實，Portfolio Risk 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
-- Portfolio Risk 可在配置前以 `SizingPlan` 對全部 buy／add 候選給 `high`／`medium`／`low` 等級、對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
+- Decision run 必須另存 `team_inputs`（四份分析報告、事件研究、現金姿態）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
+- 子 Agent 只輸出市場狀態解讀、多空論點、買賣意圖與信心分級、現金姿態或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
+- 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
+- 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
+- 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
 - 回測 Agent 必須使用歷史時鐘和當時可得版本，不得使用回測日之後的資料。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 
@@ -52,7 +52,7 @@
 - 只整合相同 Snapshot／cutoff 的已驗證研究 artifact，產生同源 JSON 與 Markdown。
 - MarketPerceptionResult 與 PerceptionDataBundle 必須成對提供；缺少時產生明確降級報告。
 - Builder 不增加市場結論；Validator 以原始輸入重建整份報告並拒絕任何改寫。
-- 報告不得包含配置、權重、股數、訂單或聲稱自己是正式 DailyReport／D-Plan。
+- 報告不得包含配置、權重、股數、訂單或聲稱自己是正式 D-Plan。
 
 ## 時間點與證據規則
 

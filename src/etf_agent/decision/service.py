@@ -14,10 +14,7 @@ from .contracts import (
     artifact_content_sha256,
 )
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
-from .role_brief import build_role_brief
 from .policy_builder import build_decision_policy
-from .allocation import DecisionPolicyValidator, decision_policy_sha256
-from .sizing import SizingPlanValidator, apply_sizing_plan
 from .momentum import MomentumEngine, MomentumResultValidator
 from .allocation import AllocationOrderEngine, ProposalValidator
 from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
@@ -30,13 +27,7 @@ from .risk import (
     revision_effects,
 )
 from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
-from .trade_intent import (
-    BuyIntentPacketValidator,
-    SellIntentPacketValidator,
-    TradeDebateValidator,
-    TradeIntentResultValidator,
-    build_role_input_artifact,
-)
+from .trader import TradeDecisionValidator
 
 
 class PortfolioDecisionApplicationService:
@@ -80,6 +71,8 @@ class PortfolioDecisionApplicationService:
         trading_status_path: Optional[Path] = None,
         account_path: Optional[Path] = None,
         lookback_bars: int = DEFAULT_LOOKBACK_BARS,
+        perception_bundle_path: Optional[Path] = None,
+        perception_result_path: Optional[Path] = None,
     ) -> Dict[str, object]:
         """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。"""
         if lookback_bars < 1:
@@ -100,11 +93,16 @@ class PortfolioDecisionApplicationService:
                     connection, latest_date, cutoff, lookback_bars - 1
                 )
             ]
+        if (perception_bundle_path is None) != (perception_result_path is None):
+            raise DecisionToolError("情緒資料包與研究結果必須成對提供")
         builder = DecisionInputBuilder(
             snapshot,
             cls.read_json(rules_path, " DecisionRules"),
             history,
             research_results=[cls.read_json(path, " ResearchResult") for path in research_paths],
+            perception_inputs=([{"bundle": cls.read_json(perception_bundle_path, " PerceptionDataBundle"),
+                                 "result": cls.read_json(perception_result_path, " MarketPerceptionResult")}]
+                               if perception_bundle_path is not None else []),
             trading_status=(
                 cls.read_json(trading_status_path, " 交易狀態包")
                 if trading_status_path is not None
@@ -127,15 +125,6 @@ class PortfolioDecisionApplicationService:
             "template": "account_snapshot" not in bundle,
         }
 
-    @classmethod
-    def build_role_brief_file(
-        cls, role_input_path: Path, output: Optional[Path] = None
-    ) -> Dict[str, object]:
-        """只讀單一角色輸入產生精簡摘要，不需要也不讀取另一方資料。"""
-        brief = build_role_brief(cls.read_json(role_input_path, " 角色輸入"))
-        cls._write(brief, output)
-        return brief
-
     def build_policy_file(
         self, template_path: Path, sector_path: Path, output: Path
     ) -> Dict[str, object]:
@@ -144,30 +133,6 @@ class PortfolioDecisionApplicationService:
             self.bundle,
             self.read_json(sector_path, " 產業分類"),
         )
-        self._write(policy, output)
-        return {"ok": True, "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"], "output": str(output)}
-
-    def validate_sizing_file(self, intent_path: Path, sizing_path: Path) -> Dict[str, object]:
-        errors = SizingPlanValidator(
-            self.bundle, self.read_json(intent_path, " TradeIntentResult")
-        ).validate(self.read_json(sizing_path, " SizingPlan"))
-        return {"valid": not errors, "errors": errors}
-
-    def apply_sizing_file(
-        self, policy_path: Path, intent_path: Path, sizing_path: Path, output: Path
-    ) -> Dict[str, object]:
-        """驗證 SizingPlan 後綁入新版 policy；權重仍於 compute-proposal 時由 Python 計算。"""
-        plan = self.read_json(sizing_path, " SizingPlan")
-        errors = SizingPlanValidator(
-            self.bundle, self.read_json(intent_path, " TradeIntentResult")
-        ).validate(plan)
-        if errors:
-            raise DecisionToolError("SizingPlan 驗證失敗：" + "；".join(errors))
-        policy = apply_sizing_plan(self.read_json(policy_path, " DecisionPolicy"), plan)
-        policy["content_sha256"] = decision_policy_sha256(policy)
-        policy_errors = DecisionPolicyValidator(self.bundle).validate(policy)
-        if policy_errors:
-            raise DecisionToolError("套用後 DecisionPolicy 驗證失敗：" + "；".join(policy_errors))
         self._write(policy, output)
         return {"ok": True, "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"], "output": str(output)}
 
@@ -186,17 +151,6 @@ class PortfolioDecisionApplicationService:
         self._write(result, output)
         return result
 
-    def build_role_input(
-        self,
-        role: str,
-        momentum_path: Path,
-        output: Optional[Path] = None,
-    ) -> Dict[str, object]:
-        momentum = self.read_json(momentum_path, " MomentumResult")
-        result = build_role_input_artifact(self.bundle, momentum, role)
-        self._write(result, output)
-        return result
-
     def seal_artifact_file(
         self, input_path: Path, output: Optional[Path] = None
     ) -> Dict[str, object]:
@@ -210,45 +164,7 @@ class PortfolioDecisionApplicationService:
         errors = MomentumResultValidator(self.bundle).validate(result)
         return {"valid": not errors, "errors": errors}
 
-    def validate_packet_file(
-        self,
-        role: str,
-        momentum_path: Path,
-        packet_path: Path,
-        output: Optional[Path] = None,
-    ) -> Dict[str, object]:
-        momentum = self.read_json(momentum_path, " MomentumResult")
-        packet = self.read_json(packet_path, " IntentPacket")
-        validator = (
-            BuyIntentPacketValidator(self.bundle, momentum)
-            if role == "buy"
-            else SellIntentPacketValidator(self.bundle, momentum)
-        )
-        errors = validator.validate(packet)
-        response: Dict[str, object] = {"valid": not errors, "errors": errors}
-        if not errors:
-            self._write(packet, output)
-            if output is not None:
-                response["output"] = str(output)
-        return response
-
-    def validate_debate_file(
-        self,
-        momentum_path: Path,
-        debate_path: Path,
-        output: Optional[Path] = None,
-    ) -> Dict[str, object]:
-        momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        errors = TradeDebateValidator(self.bundle, momentum).validate(debate)
-        response: Dict[str, object] = {"valid": not errors, "errors": errors}
-        if not errors:
-            self._write(debate, output)
-            if output is not None:
-                response["output"] = str(output)
-        return response
-
-    def validate_intent_file(
+    def validate_trade_decision_file(
         self,
         momentum_path: Path,
         debate_path: Path,
@@ -256,9 +172,9 @@ class PortfolioDecisionApplicationService:
         output: Optional[Path] = None,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        result = self.read_json(result_path, " TradeIntentResult")
-        errors = TradeIntentResultValidator(
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        result = self.read_json(result_path, " TradeDecision")
+        errors = TradeDecisionValidator(
             self.bundle, momentum, debate
         ).validate(result)
         response: Dict[str, object] = {"valid": not errors, "errors": errors}
@@ -278,12 +194,12 @@ class PortfolioDecisionApplicationService:
     ) -> Dict[str, object]:
         self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         if errors:
-            raise DecisionToolError("TradeIntentResult 驗證失敗：" + "；".join(errors))
+            raise DecisionToolError("TradeDecision 驗證失敗：" + "；".join(errors))
         result = AllocationOrderEngine(self.bundle, policy).run(intent)
         self._write(result, output)
         return result
@@ -297,11 +213,11 @@ class PortfolioDecisionApplicationService:
         proposal_path: Path,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         return {"valid": not errors, "errors": errors}
 
@@ -316,11 +232,11 @@ class PortfolioDecisionApplicationService:
     ) -> Dict[str, object]:
         self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         if errors:
             raise DecisionToolError("ProposalBundle 驗證失敗：" + "；".join(errors))
@@ -340,12 +256,12 @@ class PortfolioDecisionApplicationService:
     ) -> Dict[str, object]:
         self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         if errors:
@@ -367,14 +283,14 @@ class PortfolioDecisionApplicationService:
     ) -> Dict[str, object]:
         self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
@@ -398,14 +314,14 @@ class PortfolioDecisionApplicationService:
         output: Optional[Path] = None,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
@@ -447,16 +363,16 @@ class PortfolioDecisionApplicationService:
     ) -> Dict[str, object]:
         self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        intent_errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        intent_errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         if intent_errors:
-            raise DecisionToolError("TradeIntentResult 驗證失敗：" + "；".join(intent_errors))
+            raise DecisionToolError("TradeDecision 驗證失敗：" + "；".join(intent_errors))
         builder = RevisionHistoryBuilder(self.bundle, policy, intent)
         result = (
             builder.append(
@@ -475,11 +391,11 @@ class PortfolioDecisionApplicationService:
     ) -> Dict[str, object]:
         self._require_input()
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         history = self.read_json(history_path, " RevisionHistory")
-        errors = TradeIntentResultValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
         errors.extend(RevisionHistoryValidator(self.bundle, policy, intent).validate(history))
         return {"valid": not errors, "errors": errors}
 
@@ -494,18 +410,20 @@ class PortfolioDecisionApplicationService:
         guard_path: Path,
         review_path: Path,
         history_path: Path,
+        team_inputs_path: Path,
         output: Optional[Path] = None,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
         history = self.read_json(history_path, " RevisionHistory")
-        result = DecisionFinalizer(self.bundle, policy, momentum, debate, intent).run(
+        team_inputs = self.read_json(team_inputs_path, " team_inputs")
+        result = DecisionFinalizer(self.bundle, policy, momentum, debate, intent, team_inputs).run(
             proposal, scenario, guard, review, history
         )
         self._write(result, output)
@@ -522,20 +440,22 @@ class PortfolioDecisionApplicationService:
         guard_path: Path,
         review_path: Path,
         history_path: Path,
+        team_inputs_path: Path,
         result_path: Path,
     ) -> Dict[str, object]:
         momentum = self.read_json(momentum_path, " MomentumResult")
-        debate = self.read_json(debate_path, " TradeDebateBundle")
-        intent = self.read_json(intent_path, " TradeIntentResult")
+        debate = self.read_json(debate_path, " ResearchDebateBundle")
+        intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
         history = self.read_json(history_path, " RevisionHistory")
+        team_inputs = self.read_json(team_inputs_path, " team_inputs")
         result = self.read_json(result_path, " DecisionResult")
         errors = DecisionResultValidator(
-            self.bundle, policy, momentum, debate, intent
+            self.bundle, policy, momentum, debate, intent, team_inputs
         ).validate(
             proposal, scenario, guard, review, history, result
         )
@@ -561,11 +481,12 @@ class PortfolioDecisionApplicationService:
             "risk_review",
             "revision_history",
             "decision",
+            "team_inputs",
         }
         missing = sorted(required - set(artifacts))
         if missing:
             raise DecisionToolError("保存前缺少 artifacts：" + ", ".join(missing))
-        unknown = sorted(set(artifacts) - required - {"team_inputs"})
+        unknown = sorted(set(artifacts) - required)
         if unknown:
             raise DecisionToolError("保存時含未允許 artifacts：" + ", ".join(unknown))
         errors = MomentumResultValidator(self.bundle).validate(artifacts["momentum"])
@@ -576,7 +497,7 @@ class PortfolioDecisionApplicationService:
                 artifacts["momentum"],
                 artifacts["debate"],
                 artifacts["intent"],
-                artifacts.get("team_inputs"),
+                artifacts["team_inputs"],
             ).validate(
                 artifacts["proposal"],
                 artifacts["scenario"],

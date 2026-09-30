@@ -2,61 +2,44 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from decimal import Decimal
 
-from etf_agent.decision.contracts import artifact_content_sha256, canonical_sha256
+from etf_agent.decision.contracts import canonical_sha256
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
-from etf_agent.decision import (
-    AllocationOrderEngine, CompetitionGuardV2, DecisionFinalizer, DecisionRepository,
-    MomentumEngine, RevisionHistoryBuilder, ScenarioEngine, artifact_content_sha256,
-    decision_policy_sha256,
-)
-from test_portfolio_decision_agent import debate_bundle, decision_bundle, trade_intent_result
-from test_portfolio_risk_decision import policy, risk_review
+from etf_agent.decision import DecisionRepository, artifact_content_sha256, decision_bundle_sha256
+from test_portfolio_risk_decision import policy
 
 
 def prepare_and_decide(service, root):
-    """封存 prepare-day 並建立一個以該 AccountSnapshot 核准買入 2317 的 Decision run。"""
-    bundle = decision_bundle()
+    """封存 prepare-day 並建立一個以該 AccountSnapshot 核准買入 2317 的 Decision run（分析團隊鏈）。"""
+    # 延後匯入：test_team_chain 反向匯入 test_portfolio_risk_decision 等測試模組。
+    from test_team_chain import finalize, team_world, tradable_bundle
+    from test_trader import items as trade_items
+
+    bundle = tradable_bundle()
     snapshot = bundle["snapshot"]
-    snapshot["tradable_symbols"] = ["2330.TW", "2317.TW"]
-    snapshot["not_tradable_symbols"] = []
     snapshot["decision_cutoff"] = "2026-09-20T00:55:00+00:00"
     bundle["decision_cutoff"] = snapshot["decision_cutoff"]
-    bundle["snapshot_sha256"] = canonical_sha256(snapshot)
     bundle["snapshot_sha256"] = canonical_sha256(snapshot)
     snapshot_path = root / "decision-snapshot.json"
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
     prepared = service.prepare_day(snapshot_path, "prepare-with-orders")
     bundle["account_snapshot"] = prepared["account_snapshot"]
-    from etf_agent.decision import decision_bundle_sha256
     bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
 
-    momentum = MomentumEngine(bundle).run()
-    debate = debate_bundle(bundle, momentum)
-    debate["packets"][0]["items"] = [item for item in debate["packets"][0]["items"] if item["symbol"] == "2317.TW"]
-    debate["packets"][1]["items"] = []
-    for packet in debate["packets"]:
-        packet["content_sha256"] = artifact_content_sha256(packet)
-    debate["content_sha256"] = artifact_content_sha256(debate)
-    intent = trade_intent_result(bundle, momentum, debate)
-    intent["items"] = [item for item in intent["items"] if item["symbol"] == "2317.TW"]
-    intent["content_sha256"] = artifact_content_sha256(intent)
+    # 空倉：2317 買進，2330 未持有只能 no_trade。
+    decisions = trade_items()
+    decisions[1] = dict(decisions[1], intent="no_trade")
     settings = policy()
     settings["liquidity_fill_rate"] = "1"
-    settings["content_sha256"] = decision_policy_sha256(settings)
-    proposal = AllocationOrderEngine(bundle, settings).run(intent)
-    scenario = ScenarioEngine(bundle, settings).run(proposal)
-    guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
-    review = risk_review(bundle, proposal, scenario, guard)
-    history = RevisionHistoryBuilder(bundle, settings, intent).create(proposal, scenario, guard, review)
-    decision = DecisionFinalizer(bundle, settings, momentum, debate, intent).run(proposal, scenario, guard, review, history)
-    assert decision["status"] == "approved"
+    bundle, momentum, debate, intent, bound, team, _, _ = team_world(bundle, decisions, settings)
+    artifacts, decision = finalize(bundle, momentum, debate, intent, bound, team)
+    assert decision["status"] == "approved", decision["errors"]
     decision_root = root / "decisions"
     DecisionRepository(decision_root).save("decision-1", {
-        "decision_input": bundle, "policy": settings, "momentum": momentum,
-        "debate": debate, "intent": intent, "proposal": proposal,
-        "scenario": scenario, "guard": guard, "risk_review": review,
-        "revision_history": history, "decision": decision,
+        "decision_input": bundle, "policy": bound, "momentum": momentum,
+        "debate": debate, "intent": intent, "decision": decision, "team_inputs": team,
+        **artifacts,
     })
 
     return snapshot, decision_root
@@ -74,6 +57,30 @@ class VirtualAccountTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_raw_price_is_required_and_adjusted_price_is_not_used(self):
+        snapshot = {"latest_prices": [{"symbol": "2330.TW", "close_price": "100", "analysis_close_price": "70"}]}
+        self.assertEqual(self.service._snapshot_prices(snapshot), {"2330.TW": "100"})
+        del snapshot["latest_prices"][0]["close_price"]
+        with self.assertRaises(ValueError):
+            self.service._snapshot_prices(snapshot)
+
+    def test_morning_prepare_releases_cash_due_today(self):
+        self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        previous = self.repository.latest()["state"]
+        state = self.service._state(
+            account_id="cup-test", sequence=1, parent_state_id=previous["state_id"],
+            as_of="2026-09-21T17:00:00+08:00", settled_cash=Decimal("999999900"),
+            unsettled_cash=Decimal("100"), pending_settlements=[{"settlement_date": "2026-09-22", "amount": "100"}],
+            positions=[], nav=Decimal("1000000000"), provenance={"type": "close"})
+        self.repository.save("pending", {"state": state}, state)
+        path = self.root / "morning.json"
+        path.write_text(json.dumps({"snapshot_id": "morning", "usable": True,
+            "decision_cutoff": "2026-09-22T08:55:00+08:00", "latest_trade_date": "2026-09-21",
+            "latest_prices": [{"symbol": "2330.TW", "close_price": "100"}]}), encoding="utf-8")
+        result = self.service.prepare_day(path, "morning")
+        self.assertEqual(Decimal(result["state"]["settled_cash"]), Decimal("1000000000"))
+        self.assertEqual(result["state"]["pending_settlements"], [])
+
     def test_genesis_uses_ten_billion_once_and_is_idempotent(self):
         first = self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
         self.assertFalse(first["reused"])
@@ -89,7 +96,7 @@ class VirtualAccountTests(unittest.TestCase):
         snapshot = {
             "snapshot_id": "snapshot-20260921", "decision_cutoff": "2026-09-21T00:55:00+00:00",
             "usable": True, "latest_trade_date": "2026-09-18",
-            "latest_prices": [{"symbol": "2330.TW", "analysis_close_price": "100"}],
+            "latest_prices": [{"symbol": "2330.TW", "analysis_close_price": "100", "close_price": "100"}],
         }
         path = self.root / "snapshot.json"
         path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -141,7 +148,7 @@ class VirtualAccountTests(unittest.TestCase):
         execution_path = self.root / "execution.json"
         execution_path.write_text(json.dumps({"price_basis": "unadjusted", "available_at": "2026-09-20T01:30:00+00:00", "execution_at": "2026-09-20T01:31:00+00:00", "quotes": execution_quotes}), encoding="utf-8")
         close_path = self.root / "close.json"
-        close_path.write_text(json.dumps({"price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00", "quotes": close_quotes}), encoding="utf-8")
+        close_path.write_text(json.dumps({"trade_date": "2026-09-20", "price_basis": "unadjusted", "available_at": "2026-09-20T08:00:00+00:00", "quotes": close_quotes}), encoding="utf-8")
         result = self.service.apply_decision(decision_root, "decision-1", execution_path, close_path, "2026-09-22", "close-day-1")
         self.assertTrue(result["transition"]["execution"]["fills"])
         self.assertEqual(result["state"]["sequence"], 2)

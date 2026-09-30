@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from .contracts import (
+    validate_forbidden_keys,
     DecisionContext,
     DecisionToolError,
     artifact_content_sha256,
@@ -18,7 +19,6 @@ from .contracts import (
 )
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
-from .trade_intent import _validate_forbidden_keys
 
 
 TRADE_INTENTS = ("buy", "add", "hold", "trim", "exit", "forced_exit", "no_trade")
@@ -89,7 +89,7 @@ class TradeDecisionValidator:
 
     def validate(self, decision: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
-        _validate_forbidden_keys(decision, "TradeDecision", errors)
+        validate_forbidden_keys(decision, "TradeDecision", errors)
         reject_unknown_fields(decision, self.ENVELOPE, "TradeDecision", errors)
         expected = trade_decision_envelope(self.bundle, self.debate, str(decision.get("decision_id")))
         for field, value in expected.items():

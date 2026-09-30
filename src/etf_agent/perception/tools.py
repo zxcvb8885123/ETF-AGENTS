@@ -166,6 +166,8 @@ class PerceptionDataTools:
             linked = evidence_by_id.get(str(item.get("evidence_id")))
             if linked is None:
                 raise PerceptionToolError("情緒項目引用不存在的 evidence_id")
+            if available < _parse_time(linked.get("available_at"), "evidence.available_at"):
+                raise PerceptionToolError("情緒項目可得時間不得早於來源證據")
             if linked.get("channel") != "sentiment":
                 raise PerceptionToolError("情緒項目必須引用 sentiment 證據")
             if linked.get("license_status") != "approved":
@@ -210,6 +212,8 @@ class PerceptionDataTools:
             linked = evidence_by_id.get(str(estimate.get("evidence_id")))
             if linked is None:
                 raise PerceptionToolError("分析師預估引用不存在的 evidence_id")
+            if available < _parse_time(linked.get("available_at"), "evidence.available_at"):
+                raise PerceptionToolError("分析師預估可得時間不得早於來源證據")
             if linked.get("channel") != "analyst_consensus":
                 raise PerceptionToolError("分析師預估必須引用 analyst_consensus 證據")
             if linked.get("license_status") != "approved":
@@ -521,7 +525,7 @@ class PerceptionDataTools:
             "prior_median": decimal_string(prior_median) if prior_median is not None else None,
             "prior_contributor_count": len(prior),
             "revision_pct": _round_optional(revision_pct),
-            "evidence_ids": sorted({str(item["evidence_id"]) for item in current}),
+            "evidence_ids": sorted({str(item["evidence_id"]) for item in current + prior}),
         }
 
     @staticmethod

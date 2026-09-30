@@ -1,8 +1,8 @@
-"""Risk-agent conviction tiers and their deterministic conversion into weights.
+"""Conviction tiers, cash stance and their deterministic conversion into weights.
 
-Portfolio Risk 子 Agent 只對 buy／add 候選給出 ``high``／``medium``／``low`` 等級、
-理由與證據；權重由本模組依等級乘數與 ATR 波動度確定性計算，Agent 不輸出任何
-權重、股數或金額。
+交易 Agent 只對 buy／add 候選給出 ``high``／``medium``／``low`` 等級，風險 Agent 只給
+現金姿態；權重由本模組依等級乘數與 ATR 波動度確定性計算，Agent 不輸出任何權重、
+股數或金額。
 """
 
 from __future__ import annotations
@@ -11,113 +11,23 @@ from decimal import Decimal
 from typing import Dict, List, Mapping, Sequence
 
 from .contracts import (
-    DECISION_SCHEMA_VERSION,
     DecisionContext,
     DecisionToolError,
-    artifact_content_sha256,
     decimal_value,
     reject_unknown_fields,
     required_string,
     string_list,
 )
-from .trade_intent import _validate_forbidden_keys
 
 
 SIZING_METHOD = "conviction_volatility_v1"
 CONVICTION_LEVELS = ("high", "medium", "low")
 # 現金姿態由積極到防守；對應的現金緩衝由 Policy 設定，必須低於競賽現金上限。
 CASH_STANCES = ("aggressive", "neutral", "defensive")
-SIZED_INTENTS = {"buy", "add"}
 # 封頂時保留 0.5% 相對緩衝：買進手續費使成交後 NAV 變小，剛好配到上限的部位會以
 # 50.0009% 之類的權重觸發 Guard。全額換手時手續費影響約 0.14%，0.5% 足以涵蓋。
 LIMIT_HEADROOM = Decimal("0.995")
 
-
-def sizing_candidates(intent_result: Mapping[str, object]) -> List[str]:
-    return sorted(
-        str(item.get("symbol", "")).upper()
-        for item in intent_result.get("items", [])
-        if isinstance(item, Mapping) and item.get("intent") in SIZED_INTENTS
-    )
-
-
-class SizingPlanValidator:
-    """Check a SizingPlan covers exactly the adjudicated buy／add candidates."""
-
-    ENVELOPE = {
-        "schema_version", "plan_id", "bundle_id", "snapshot_id", "decision_cutoff",
-        "bundle_hash", "trade_intent_result_id", "trade_intent_sha256", "cash_stance",
-        "items", "errors", "content_sha256",
-    }
-    ITEM = {"symbol", "conviction", "rationale", "evidence_ids"}
-
-    def __init__(self, bundle: Mapping[str, object], intent_result: Mapping[str, object]):
-        self.context = DecisionContext(bundle)
-        self.intent_result = dict(intent_result)
-
-    def validate(self, plan: Mapping[str, object]) -> List[str]:
-        errors: List[str] = []
-        _validate_forbidden_keys(plan, "SizingPlan", errors)
-        reject_unknown_fields(plan, self.ENVELOPE, "SizingPlan", errors)
-        for field in ("plan_id", "bundle_id", "snapshot_id", "decision_cutoff", "bundle_hash"):
-            try:
-                required_string(plan, field)
-            except DecisionToolError as error:
-                errors.append("SizingPlan.%s" % error)
-        if plan.get("schema_version") != DECISION_SCHEMA_VERSION:
-            errors.append("SizingPlan.schema_version 必須為 %s" % DECISION_SCHEMA_VERSION)
-        expected = {
-            "bundle_id": self.context.bundle_id,
-            "snapshot_id": self.context.snapshot_id,
-            "decision_cutoff": self.context.decision_cutoff,
-            "bundle_hash": self.context.bundle_hash,
-            "trade_intent_result_id": self.intent_result.get("result_id"),
-            "trade_intent_sha256": self.intent_result.get("content_sha256"),
-        }
-        for field, value in expected.items():
-            if plan.get(field) != value:
-                errors.append("SizingPlan.%s 與共同輸入不一致" % field)
-        if plan.get("content_sha256") != artifact_content_sha256(plan):
-            errors.append("SizingPlan.content_sha256 與內容不一致")
-        if plan.get("errors") != []:
-            errors.append("SizingPlan.errors 必須為空陣列；無法分級時不得產生 SizingPlan")
-        self._validate_cash_stance(plan.get("cash_stance"), errors)
-        items = plan.get("items")
-        if not isinstance(items, list):
-            errors.append("SizingPlan.items 必須是陣列")
-            return errors
-        seen: List[str] = []
-        for index, item in enumerate(items):
-            prefix = "SizingPlan.items[%d]" % index
-            if not isinstance(item, Mapping):
-                errors.append("%s 必須是物件" % prefix)
-                continue
-            reject_unknown_fields(item, self.ITEM, prefix, errors)
-            symbol = str(item.get("symbol", "")).upper()
-            seen.append(symbol)
-            if item.get("conviction") not in CONVICTION_LEVELS:
-                errors.append("%s.conviction 必須是 %s" % (prefix, "／".join(CONVICTION_LEVELS)))
-            try:
-                required_string(item, "rationale")
-                evidence = string_list(item, "evidence_ids")
-                if not evidence:
-                    errors.append("%s.evidence_ids 不得為空" % prefix)
-                self.context.validate_evidence(evidence, symbol, prefix, errors)
-            except DecisionToolError as error:
-                errors.append("%s.%s" % (prefix, error))
-        if len(seen) != len(set(seen)):
-            errors.append("SizingPlan.items 股票不得重複")
-        candidates = sizing_candidates(self.intent_result)
-        missing = sorted(set(candidates) - set(seen))
-        extra = sorted(set(seen) - set(candidates))
-        if missing:
-            errors.append("SizingPlan 未分級全部 buy／add 候選：%s" % ", ".join(missing))
-        if extra:
-            errors.append("SizingPlan 含非 buy／add 候選：%s" % ", ".join(extra))
-        return errors
-
-    def _validate_cash_stance(self, stance: object, errors: List[str]) -> None:
-        validate_cash_stance(self.context, stance, "SizingPlan.cash_stance", errors)
 
 def validate_cash_stance(context: DecisionContext, stance: object, prefix: str, errors: List[str]) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據（市場層級可引用任一股票）。"""
@@ -138,37 +48,6 @@ def validate_cash_stance(context: DecisionContext, stance: object, prefix: str, 
     unknown = [item for item in evidence if item not in context.evidence_symbols]
     if unknown:
         errors.append("%s 引用不存在：%s" % (prefix, ", ".join(unknown)))
-
-
-def apply_sizing_plan(
-    policy: Mapping[str, object], plan: Mapping[str, object]
-) -> Dict[str, object]:
-    """Bind validated tiers into a new policy version; caller re-seals and validates it."""
-    sizing = policy.get("position_sizing")
-    if not isinstance(sizing, Mapping):
-        raise DecisionToolError("DecisionPolicy 未啟用 position_sizing，不能套用 SizingPlan")
-    if "conviction_by_symbol" in sizing:
-        raise DecisionToolError("DecisionPolicy 已套用 SizingPlan，須從基礎 policy 重新套用")
-    stance = plan.get("cash_stance")
-    buffers = sizing.get("cash_buffer_by_stance")
-    if not isinstance(stance, Mapping) or not isinstance(buffers, Mapping) or stance.get("level") not in buffers:
-        raise DecisionToolError("SizingPlan.cash_stance 無法對應 position_sizing.cash_buffer_by_stance")
-    result = dict(policy)
-    # 現金緩衝由 Agent 選擇的姿態確定性對應；硬性現金上限仍由 Guard 檢查。
-    result["cash_buffer_rate"] = buffers[stance["level"]]
-    result["position_sizing"] = {
-        **dict(sizing),
-        "cash_stance": stance["level"],
-        "sizing_plan_id": plan.get("plan_id"),
-        "sizing_plan_sha256": plan.get("content_sha256"),
-        "conviction_by_symbol": {
-            str(item["symbol"]).upper(): str(item["conviction"])
-            for item in plan.get("items", [])
-        },
-    }
-    result["policy_id"] = "%s+%s" % (policy.get("policy_id"), plan.get("plan_id"))
-    result.pop("content_sha256", None)
-    return result
 
 
 def validate_position_sizing(
@@ -230,7 +109,7 @@ def validate_position_sizing(
     ]
     if tiers is None:
         if bound:
-            errors.append("position_sizing 有 SizingPlan 綁定卻缺少 conviction_by_symbol")
+            errors.append("position_sizing 有交易決策綁定卻缺少 conviction_by_symbol")
         return
     if len(bound) != 3:
         errors.append("position_sizing.conviction_by_symbol 必須綁定 sizing_plan_id、sizing_plan_sha256 與 cash_stance")

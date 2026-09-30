@@ -1,6 +1,6 @@
 ---
 name: research-report
-description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情緒／分析師結果整合成可稽核的 ResearchReport JSON 與 Markdown。用於產生不含權重、訂單或送件內容的研究報告；不得取代 DailyReport、D-Plan 或投資決策。
+description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情緒／分析師結果整合成可稽核的 ResearchReport JSON 與 Markdown。用於產生不含權重、訂單或送件內容的研究報告；不得取代 D-Plan 或投資決策。
 ---
 
 # Research Report V0

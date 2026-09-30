@@ -21,7 +21,7 @@
 ## 2. 現有基礎與必須修正的契約
 
 - 已有官方交易池、來源健康探測、原始回應保存、不可變 Snapshot 與 Portfolio Guard。
-- `docs/source_feasibility_2026-09-17.md` 記錄 TPEx 部分狀態端點曾可取得資料；這只是舊探測證據，本批仍需重測來源、欄位、授權與完整性。
+- `docs/source_feasibility_2026-09-17.md`（文件已移除，見 git 歷史） 記錄 TPEx 部分狀態端點曾可取得資料；這只是舊探測證據，本批仍需重測來源、欄位、授權與完整性。
 - `ResearchSnapshot.tradable_symbols`／`not_tradable_symbols` 目前是數量；`decision/risk.py` 卻使用同名欄位作股票集合。不得把計數默默轉成名單，也不得靠「有行情」推定交易許可。
 - 既有交易池驗證主要證明名單與行情代號對應，不足以證明指定時段不存在交易限制。
 

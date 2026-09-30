@@ -1,5 +1,6 @@
 import json
 import tempfile
+from decimal import Decimal
 import unittest
 from pathlib import Path
 
@@ -7,10 +8,9 @@ from etf_agent.automation.daily_pipeline import (
     AgentCall,
     DailyDecisionPipeline,
     degraded_research_result,
-    next_weekday_session,
     validate_research_result,
 )
-from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest
+from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest, next_trading_session
 from etf_agent.data.trading_status import DEFAULT_REQUIRED_CATEGORIES
 from etf_agent.decision import DecisionRepository
 
@@ -102,7 +102,7 @@ class PipelineWorld:
             "available_at": "2026-09-19T00:00:00+00:00",
             "sector_by_symbol": {"2330.TW": "industry:24", "2317.TW": "industry:31"},
         }
-        session = next_weekday_session(snapshot["decision_cutoff"])
+        session = next_trading_session(snapshot["decision_cutoff"], set())
         request = TradingStatusRequest.from_snapshot(snapshot, session["start"], session["end"])
         coverage = [] if not approved_status else [
             {
@@ -203,6 +203,28 @@ class DailyPipelineTests(unittest.TestCase):
         self.assertTrue(any(flag.startswith("GUARD_FAILED") for flag in review["risk_flags"]))
 
 
+class SectorExposureTests(unittest.TestCase):
+    def test_review_sees_sector_weights_computed_from_proposal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertIn("sector_exposure_review_input_r0", dict(runner.prompts)["review_r0"])
+            exposure = json.loads((world.run_dir / "sector_exposure_review_input_r0.json").read_text(encoding="utf-8"))
+            proposal = json.loads((world.run_dir / "proposal_r0.json").read_text(encoding="utf-8"))
+            self.assertEqual(exposure["proposal_id"], proposal["proposal_id"])
+            sectors = {"2330.TW": "industry:24", "2317.TW": "industry:31"}
+            expected = {}
+            for position in proposal["allocation_proposal"]["positions"]:
+                expected[sectors[position["symbol"]]] = position["weight"]
+            self.assertEqual({item["sector"]: item["weight"] for item in exposure["items"]}, expected)
+            weights = [Decimal(item["weight"]) for item in exposure["items"]]
+            self.assertEqual(weights, sorted(weights, reverse=True))
+            for item in exposure["items"]:
+                self.assertEqual(Decimal(item["headroom"]), Decimal(item["limit"]) - Decimal(item["weight"]))
+
+
 class ResumeTests(unittest.TestCase):
     def test_resume_reuses_validated_outputs_after_interruption(self):
         from etf_agent.automation.agent_runner import DailyPipelineError
@@ -256,11 +278,6 @@ class ResumeTests(unittest.TestCase):
 
 
 class DailyPipelineHelperTests(unittest.TestCase):
-    def test_next_weekday_session_skips_weekend(self):
-        session = next_weekday_session("2026-09-25T10:00:00+00:00")  # 週五台北 18:00
-        self.assertEqual(session["start"], "2026-09-28T09:00:00+08:00")
-        self.assertEqual(session["end"], "2026-09-28T13:30:00+08:00")
-
     def test_degraded_research_is_valid_and_states_research_not_run(self):
         snapshot = builder_inputs()[0]
         result = degraded_research_result(snapshot, "research-1")
