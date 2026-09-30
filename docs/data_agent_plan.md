@@ -1,6 +1,6 @@
 # Data Agent 計畫 V1
 
-2026-09-23 更新：依 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)，優先補官方日曆／交易狀態，ETF 基準另列選配並新增 FinMind 歷史基本面、現金流及籌碼；FinLab 選配，Fugle 延後。D0～D6 補充下述 M1～M4，正式報告必要資料提前驗收。此為待實作計畫，第三方 Provider 尚未接入。
+2026-09-30 更新：依 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)，研究日線用 yfinance，官方來源保留公司事實、帳本與風控；FinMind 三大報表及個股新聞候選已接入，尚未進正式 Snapshot。D0～D6 補充下述 M1～M4，正式報告必要資料提前驗收。
 
 ## 1. 架構決策
 
@@ -185,7 +185,7 @@ Agent 每一輪只能選擇一個明確工具呼叫，讀取結果後才能規�
 | 資料 | 第一版來源 |
 | --- | --- |
 | 官方交易池、最新價量 | 官方名單、TWSE／TPEx 最新行情管線 |
-| 歷史行情 | 目前由 Yahoo 每日增量更新兩年資料；TWSE／TPEx 官方歷史 provider 已有，正式 CLI 與覆蓋補強仍在 M1 |
+| 歷史行情 | 由 Yahoo 每日增量更新兩年研究日線；TWSE 個股月官方價量只供正式帳本補缺，上櫃個股月擷取已移除 |
 | 月營收 | TWSE／TPEx 公開資訊來源 |
 | 重大訊息 | TWSE／TPEx 公開資訊來源 |
 
@@ -202,7 +202,7 @@ Agent 每一輪只能選擇一個明確工具呼叫，讀取結果後才能規�
 | P1 | 公司行動與交易狀態 | 多項已確認 TWSE／TPEx 公開介面 | 處理除權息、減資、分割、停復牌、注意／處置與可成交性 |
 | P1 | 法說會日曆、簡報與公司展望 | MOPS 可查；附件格式、公司覆蓋與自動下載穩定性待 PoC | MOPS、交易所活動頁及公司 IR 網站；辨識短期催化與展望變化 |
 | P2 | 指數調整與總體日曆 | 政府統計多為公開；指數資料可能受授權或付費限制 | 指數編製機構、央行及政府統計；補充跨公司事件 |
-| P1 | 新聞與事件線索 | TWSE RSS 已確認；Google News RSS 可作候選發現；yfinance 覆蓋不一致 | 保存標題、發布者、時間與原文連結為 `NewsCandidate`，不直接成為正式數值或回測事實 |
+| P1 | 新聞與事件線索 | FinMind `TaiwanStockNews` 逐股候選已接入；原媒體授權和來源時間時區未核准 | 保存標題、來源時間字串、發布者與原文連結；正式研究維持 unavailable |
 
 每一個新來源接入前，必須先確認歷史涵蓋、發布時間、當時可得時間、授權／使用條件、穩定識別鍵及原始回應保存方式。
 
@@ -515,12 +515,11 @@ M1 接下來依序執行：
 PYTHONPATH=src python3 scripts/collect_official_history.py
 ```
 
-此命令會先要求資料庫已有同一交易池所需市場的最新官方行情，將 `--end` 限制在兩市場都完成的交易日。預設把 JSON 報告寫到 `artifacts/official-history/latest.json`，且標準輸出相同 JSON；退出碼 `0` 代表每檔終止日都有官方日線、`2` 代表覆蓋不足、`1` 代表設定、來源或批次失敗。`range_coverage=unverified_without_official_calendar` 是預期限制，不能被解讀成已驗證全期間完整或可供正式回測。
+此命令只補上市個股供正式帳本使用；最近可查日由 TWSE／TPEx 最新官方行情日期判定，逐檔是否真的取得終止日仍由覆蓋報告驗證。預設把 JSON 報告寫到 `artifacts/official-history/latest.json`，且標準輸出相同 JSON；退出碼 `0` 代表每檔終止日都有官方日線、`2` 代表覆蓋不足、`1` 代表設定、來源或批次失敗。`range_coverage=unverified_without_official_calendar` 是預期限制，不能被解讀成已驗證全期間完整或可供正式回測。
 
 #### M2：新聞候選層
 
-- 接入 TWSE 官方新聞 RSS。
-- 建立 Google News RSS `NewsCandidate` PoC；yfinance 只作非必要備援。
+- 已接入 FinMind 個股新聞線索；逐篇授權與發布時間未核准前不得供正式研究。
 - 新增公司正式名稱、簡稱、舊名、代號及產業詞別名表。
 - 實作 URL／標題／發布者／時間去重、日期範圍、股票誤配及來源品質旗標。
 - 預設只保存允許的 metadata、摘要與原文連結，不大量重製全文。
@@ -567,7 +566,7 @@ PYTHONPATH=src python3 scripts/collect_official_history.py
 3. 對 MOPS 歷史月營收與歷史重大訊息做小範圍 PoC，確認可用期間、分頁、限流與發布時間後，再建立回補器。
 4. 向競賽規則／主辦資料確認指定 ETF、前十大口徑與更新方式；若官方未提供且來源需付費，標記為外部依賴並阻止正式 Active Share 驗證。
 5. 先接入已確認的財務彙總 API，再驗證完整 XBRL／財報文件；只對已證實可取得的欄位建立期間比較。
-6. 接入 TWSE 官方新聞 RSS，並以 Google News RSS 做 `NewsCandidate` PoC；只保存允許的 metadata／摘要與原文連結，加入公司別名、去重、時間與誤配檢查。
+6. 核對 FinMind 個股新聞的原媒體授權、發布時間時區及跨股去重；未核准前維持候選，不能提升為正式事件或情緒證據。
 7. 對法說附件與公司 IR 網站做覆蓋率測試，缺附件時保留日曆事件與缺漏旗標，不以 LLM 補寫展望。
 8. 接入已確認的公司行動與交易狀態端點，並每日檢查交易池代號、承接關係與可交易狀態。
 9. GDELT 與 yfinance 新聞不得作必要來源；社群情緒與分析師目標價已移出 Data Agent，改列未來獨立研究 Agent。

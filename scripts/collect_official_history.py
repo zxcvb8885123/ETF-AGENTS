@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""以官方 TWSE／TPEx 月行情增量更新交易池日線並輸出覆蓋報告。"""
+"""以官方 TWSE 個股月行情補上市帳本價量並輸出覆蓋報告。"""
 
 import argparse
 import json
@@ -16,7 +16,6 @@ from etf_agent.data import (  # noqa: E402
     MarketDataDatabase,
     OfficialHistoricalRefreshService,
     UniverseLoader,
-    tpex_ssl_context,
 )
 
 
@@ -48,22 +47,16 @@ def main() -> int:
     try:
         config = json.loads(args.config.read_text(encoding="utf-8"))
         settings = config["historical_daily"]
-        universe = UniverseLoader().load(args.universe)
-        has_tpex = any(
-            item.market.upper() in {"TPEX", "OTC", "上櫃"} for item in universe
-        )
+        universe = [
+            item for item in UniverseLoader().load(args.universe)
+            if item.market.upper() == "TWSE"
+        ]
+        if not universe:
+            raise ValueError("交易池沒有上市股票")
         provider = HistoricalPriceProvider(
             settings["twse_url"],
-            settings["tpex_url"],
             timeout_seconds=int(settings["timeout_seconds"]),
             user_agent=str(settings["user_agent"]),
-            tpex_context=(
-                tpex_ssl_context(
-                    certificate_url=str(settings["twca_intermediate_url"])
-                )
-                if has_tpex
-                else None
-            ),
         )
         result = OfficialHistoricalRefreshService(
             MarketDataDatabase(args.database),

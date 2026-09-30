@@ -27,7 +27,6 @@ from .historical import (
     month_starts,
     plan_history_refresh,
     rolling_start,
-    tpex_ssl_context,
 )
 from .historical_collector import (
     HistoricalCollectionError,
@@ -200,7 +199,6 @@ __all__ = [
     "month_starts",
     "plan_history_refresh",
     "rolling_start",
-    "tpex_ssl_context",
     "write_json_artifact",
     "DEFAULT_REQUIRED_CATEGORIES",
     "SavedJsonTradingStatusProvider",

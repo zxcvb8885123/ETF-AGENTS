@@ -1,6 +1,6 @@
 # ETF Agent 四層開發架構
 
-2026-09-23 資料主線更新：新增 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)，以官方來源加 FinMind 優先補齊正式報告必要資料，再擴充歷史基本面與籌碼；FinLab 選配、Fugle 延後。D0～D6 補充 M1～M4 的開發順序，既有 Agent 邊界維持；本次僅規劃，尚未新增 Provider。
+2026-09-30 資料主線更新：依 [Data Agent 多來源更新計畫](data_agent_multisource_update_plan.md)以 yfinance 擷取 150 檔研究日線，官方來源供公司事實、帳本與風控，FinMind 三大報表及個股新聞只保存候選。新聞授權和時間尚未核准，不進正式研究。D0～D6 補充 M1～M4 的開發順序，既有 Agent 邊界維持。
 
 本文件為目標架構。以既有 SQLite 與行情管線為基礎，先完成 Data Agent M0～M3 與事件研究；依 2026-09-21 的開發決定，市場情緒與分析師研究 Agent 的契約、工具及 Skill 提前建立，再接投資組合買賣決策與風控多子 Agent、回測與自動化排程。Data Agent M4 補齊的歷史時間點資料仍是正式回測的前置條件。
 
@@ -104,7 +104,7 @@ Research Report V0 已完成研究層的 JSON／Markdown 整合，但不包含�
 | 0 | Data Agent 基礎版 | 已完成 | SQLite、TWSE／TPEx 月營收與重大訊息、歷史行情、不可變 Snapshot、`event-data` Skill 與 CLI |
 | 1 | Data Agent M0 | 已完成 | 可重跑的來源探測、150 檔交易池狀態、`5371`／`3718` 回歸案例及 Snapshot fail-closed 閘門 |
 | 2 | Data Agent M1 | **進行中** | 官方歷史行情 CLI、財報彙總與交易狀態 TS1～TS4 已實作；財報覆蓋仍降級，交易狀態 TS0 來源核准與 TS5 150 檔實測待完成，再收尾細粒度工具 |
-| 3 | Data Agent M2 | 待 M1 通過 | TWSE RSS 與 Google News RSS 候選層、別名、去重及誤配檢查 |
+| 3 | Data Agent M2 | FinMind 個股新聞候選擷取已接入；正式研究接線待核准 | 核對原媒體授權、時間時區、跨股去重及誤配；未核准前維持 unavailable |
 | 4 | Data Agent M3 | 待 M2 通過 | `DataAgentRequest`／`DataAgentResult`、工具軌跡、Codex／Claude 共用 Skill 工具循環 |
 | 5 | 事件研究 Agent | **多子 Agent／ResearchResult 2.1 已完成**；待 M2／M3 完整驗收 | 主控加 Fact／Bull／Bear／Adjudicator Skills、獨立多空 DebateBundle、財務傳導鏈與雙重 validator 已完成；下一步接新聞候選、工具軌跡及人工事件測試集 |
 | 6 | 市場情緒與分析師研究 Agent | **契約／工具／Skill MVP 已完成**；真實 Provider 待審查 | 接入通過授權與歷史時間驗證的來源，建立人工標註集與消融評估 |

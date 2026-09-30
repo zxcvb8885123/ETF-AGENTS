@@ -100,17 +100,21 @@ FROM (
         ROW_NUMBER() OVER (
             PARTITION BY symbol, trade_date
             ORDER BY CASE source
-                WHEN 'TPEX_TRADING_STOCK' THEN 1
-                WHEN 'TWSE_STOCK_DAY' THEN 1
-                WHEN 'TWSE_STOCK_DAY_ALL' THEN 2
-                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
-                WHEN 'YAHOO_FINANCE' THEN 3
+                WHEN 'YAHOO_FINANCE' THEN 1
+                WHEN 'TPEX_TRADING_STOCK' THEN 2
+                WHEN 'TWSE_STOCK_DAY' THEN 2
+                WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
+                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                 ELSE 9
             END
         ) AS source_rank
     FROM daily_prices
     JOIN instruments USING(symbol)
     WHERE instruments.in_competition_universe = 1
+      AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
+          SELECT 1 FROM daily_prices AS yahoo
+          WHERE yahoo.symbol = daily_prices.symbol AND yahoo.source = 'YAHOO_FINANCE'
+      ))
 )
 WHERE source_rank = 1;
 """

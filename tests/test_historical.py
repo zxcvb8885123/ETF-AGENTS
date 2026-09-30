@@ -22,7 +22,6 @@ from etf_agent.data import (
 
 class OfficialHistoryFixtureProvider:
     twse_source = "TWSE_STOCK_DAY"
-    tpex_source = "TPEX_TRADING_STOCK"
 
     def __init__(self, failed_symbols=()):
         self.failed_symbols = set(failed_symbols)
@@ -30,11 +29,7 @@ class OfficialHistoryFixtureProvider:
     def fetch(self, instrument, month):
         if instrument.symbol in self.failed_symbols:
             raise TimeoutError("fixture timeout")
-        source = (
-            self.tpex_source
-            if instrument.market.upper() in {"TPEX", "OTC", "上櫃"}
-            else self.twse_source
-        )
+        source = self.twse_source
         price = DailyPrice(
             symbol=instrument.symbol,
             code=instrument.code,
@@ -102,7 +97,7 @@ def seed_latest_price(database, instrument, source, trade_date="2026-09-17"):
 
 
 class HistoricalProviderTests(unittest.TestCase):
-    def test_snapshot_uses_latest_fully_covered_day_and_official_price(self):
+    def test_snapshot_uses_latest_fully_covered_day_and_yahoo_research_price(self):
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
             Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
@@ -130,8 +125,27 @@ class HistoricalProviderTests(unittest.TestCase):
         self.assertEqual(snapshot.latest_price_symbols, 2)
         self.assertEqual(
             [(item.symbol, item.source) for item in snapshot.latest_prices],
-            [("2330.TW", "TWSE_STOCK_DAY_ALL"), ("3718.TWO", "YAHOO_FINANCE")],
+            [("2330.TW", "YAHOO_FINANCE"), ("3718.TWO", "YAHOO_FINANCE")],
         )
+
+    def test_research_snapshot_does_not_fill_yahoo_gap_with_official_price(self):
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            for instrument in universe:
+                seed_latest_price(database, instrument, "YAHOO_FINANCE", "2026-09-21")
+                source = "TWSE_STOCK_DAY_ALL" if instrument.market == "TWSE" else "TPEX_MAINBOARD_QUOTES"
+                seed_latest_price(database, instrument, source, "2026-09-22")
+            snapshot = DataAgentService(database).build_snapshot(
+                "2026-09-22T18:00:00+08:00", require_universe_validation=False
+            )
+        self.assertFalse(snapshot.usable)
+        self.assertEqual(snapshot.latest_trade_date, "2026-09-22")
+        self.assertEqual(snapshot.latest_price_symbols, 0)
+        self.assertIn("INCOMPLETE_PRICE_COVERAGE_0_OF_2", snapshot.quality_flags)
 
     def test_yfinance_collection_requests_day_after_safe_end(self):
         class EmptyColumns:
@@ -186,18 +200,11 @@ class HistoricalProviderTests(unittest.TestCase):
         self.assertEqual(prices[0].volume_shares, 31855287)
         self.assertEqual(prices[0].trade_value, 77463413685)
 
-    def test_parses_tpex_units(self):
+    def test_official_month_provider_rejects_tpex(self):
         instrument = Instrument("5274.TWO", "5274", "信驊", "TPEX", "2026-07-31")
-        payload = json.dumps(
-            {
-                "stat": "ok",
-                "tables": [{"data": [["115/09/01", "504", "8,595,448", "16210", "17670", "16000", "17120", "1055", "11,458"]]}],
-            }
-        )
-        prices, warnings = HistoricalPriceProvider.parse_tpex(payload, instrument)
-        self.assertEqual(warnings, [])
-        self.assertEqual(prices[0].volume_shares, 504000)
-        self.assertEqual(prices[0].trade_value, 8595448000)
+        provider = HistoricalPriceProvider("https://example.com/STOCK_DAY")
+        with self.assertRaisesRegex(ValueError, "只支援上市"):
+            provider.fetch(instrument, date(2026, 9, 1))
 
     def test_incremental_refresh_backfills_missing_symbols_and_overlaps_existing(self):
         universe = [
@@ -222,12 +229,10 @@ class HistoricalProviderTests(unittest.TestCase):
     def test_official_refresh_requires_safe_end_and_reports_coverage(self):
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
-            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             database = MarketDataDatabase(Path(directory) / "test.db")
             seed_latest_price(database, universe[0], "TWSE_STOCK_DAY_ALL")
-            seed_latest_price(database, universe[1], "TPEX_MAINBOARD_QUOTES")
             service = OfficialHistoricalRefreshService(
                 database, OfficialHistoryFixtureProvider(), max_workers=1, retries=0
             )
@@ -238,10 +243,10 @@ class HistoricalProviderTests(unittest.TestCase):
             self.assertEqual(first.status, "completed")
             self.assertEqual(first.exit_code, 0)
             self.assertEqual(first.safe_end_date, "2026-09-17")
-            self.assertEqual([row.end_coverage for row in first.coverage], ["present", "present"])
+            self.assertEqual([row.end_coverage for row in first.coverage], ["present"])
             self.assertEqual(
                 [row.range_coverage for row in first.coverage],
-                ["unverified_without_official_calendar"] * 2,
+                ["unverified_without_official_calendar"],
             )
             with database.connect() as connection:
                 sources = connection.execute(
@@ -249,7 +254,7 @@ class HistoricalProviderTests(unittest.TestCase):
                 ).fetchall()
             self.assertEqual(
                 [(row["symbol"], row["source"]) for row in sources],
-                [("2330.TW", "TWSE_STOCK_DAY"), ("3718.TWO", "TPEX_TRADING_STOCK")],
+                [("2330.TW", "TWSE_STOCK_DAY")],
             )
 
             second = service.refresh(universe)
@@ -257,7 +262,7 @@ class HistoricalProviderTests(unittest.TestCase):
             self.assertEqual(second.status, "completed")
 
     def test_official_refresh_reaches_day_reported_by_faster_market(self):
-        """TWSE 全市場當日行情晚一天時，仍可補抓 TPEx 已公布那一天的上市個股官方日線。"""
+        """TWSE 全市場當日行情晚一天時，仍可依 TPEx 當日公告日補抓上市個股。"""
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
             Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
@@ -275,13 +280,16 @@ class HistoricalProviderTests(unittest.TestCase):
             service = OfficialHistoricalRefreshService(
                 database, OfficialHistoryFixtureProvider(), max_workers=1, retries=0
             )
-            report = service.refresh(universe, start=date(2026, 9, 1), end=date(2026, 9, 18))
-            self.assertEqual(report.safe_end_date, "2026-09-18")
+            with self.assertRaisesRegex(ValueError, "只支援上市"):
+                service.refresh(universe, start=date(2026, 9, 1), end=date(2026, 9, 18))
+            twse_only = service.refresh([universe[0]], start=date(2026, 9, 1), end=date(2026, 9, 18))
+            self.assertEqual(twse_only.safe_end_date, "2026-09-18")
+            self.assertEqual(twse_only.requested_symbols, 1)
             # 抓不到指定終止日的個股不被當成完整：覆蓋報告逐檔標示 missing，且不會以更晚日期蒙混。
-            self.assertEqual([row.end_coverage for row in report.coverage], ["missing", "missing"])
-            self.assertNotEqual(report.exit_code, 0)
+            self.assertEqual([row.end_coverage for row in twse_only.coverage], ["missing"])
+            self.assertNotEqual(twse_only.exit_code, 0)
             with self.assertRaisesRegex(ValueError, "晚於最近完整官方交易日"):
-                service.refresh(universe, end=date(2026, 9, 19))
+                service.refresh([universe[0]], end=date(2026, 9, 19))
 
     def test_reported_trade_date_needs_at_least_one_source(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -294,15 +302,15 @@ class HistoricalProviderTests(unittest.TestCase):
     def test_official_refresh_preserves_failed_run_and_returns_failed_report(self):
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
-            Instrument("3718.TWO", "3718", "中光電投控", "TPEX", "2026-09-14"),
+            Instrument("2317.TW", "2317", "鴻海", "TWSE", "2026-09-14"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             database = MarketDataDatabase(Path(directory) / "test.db")
             seed_latest_price(database, universe[0], "TWSE_STOCK_DAY_ALL")
-            seed_latest_price(database, universe[1], "TPEX_MAINBOARD_QUOTES")
+            seed_latest_price(database, universe[1], "TWSE_STOCK_DAY_ALL")
             result = OfficialHistoricalRefreshService(
                 database,
-                OfficialHistoryFixtureProvider(failed_symbols=("3718.TWO",)),
+                OfficialHistoryFixtureProvider(failed_symbols=("2317.TW",)),
                 max_workers=1,
                 retries=0,
             ).refresh(universe, start=date(2026, 9, 1))
@@ -310,7 +318,7 @@ class HistoricalProviderTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 1)
             self.assertEqual(result.batches[0].status, "failed")
             self.assertEqual(
-                next(item for item in result.coverage if item.symbol == "3718.TWO").end_coverage,
+                next(item for item in result.coverage if item.symbol == "2317.TW").end_coverage,
                 "missing",
             )
             with database.connect() as connection:

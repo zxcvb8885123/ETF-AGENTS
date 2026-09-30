@@ -4,7 +4,7 @@
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +25,7 @@ def main() -> int:
     parser.add_argument(
         "--end",
         type=date.fromisoformat,
-        help="預設使用 TWSE／TPEx 都已收盤的最近官方交易日",
+        help="預設使用 Asia/Taipei 當日；是否已有完整日線仍由覆蓋驗證判定",
     )
     parser.add_argument("--batch-size", type=int, default=30)
     args = parser.parse_args()
@@ -34,14 +34,7 @@ def main() -> int:
     try:
         database = MarketDataDatabase(args.database)
         database.initialize()
-        end = args.end
-        if end is None:
-            official_end = database.latest_complete_trade_date(
-                ("TWSE_STOCK_DAY_ALL", "TPEX_MAINBOARD_QUOTES")
-            )
-            if official_end is None:
-                raise ValueError("缺少完整官方最新行情；請先執行 collect_latest_prices.py")
-            end = date.fromisoformat(official_end)
+        end = args.end or datetime.now(timezone(timedelta(hours=8))).date()
         collector = YFinanceHistoryCollector(
             database,
             batch_size=args.batch_size,
@@ -60,6 +53,15 @@ def main() -> int:
                 overlap_days=int(source.get("overlap_days", 7)),
             )
             run_ids = result.run_ids
+        with database.connect() as connection:
+            end_symbols = {
+                str(row["symbol"])
+                for row in connection.execute(
+                    "SELECT symbol FROM daily_prices WHERE source = ? AND trade_date = ?",
+                    ("YAHOO_FINANCE", end.isoformat()),
+                )
+            }
+        missing_end = sorted({item.symbol for item in universe} - end_symbols)
     except Exception as error:
         print("歷史行情抓取失敗：%s" % error, file=sys.stderr)
         return 1
@@ -67,16 +69,19 @@ def main() -> int:
     print("期間：%s 至 %s" % (result.start_date, result.end_date))
     print("要求股票：%d" % result.requested_symbols)
     print("缺少股票：%d" % len(result.missing_symbols))
+    print("截止日 %s 覆蓋：%d/%d" % (end, len(universe) - len(missing_end), len(universe)))
     print("寫入日線：%d" % result.stored_rows)
     print("警告：%d" % len(result.warnings))
     print("run_id：%s" % ", ".join(run_ids))
     if result.missing_symbols:
         print("MISSING  " + ", ".join(result.missing_symbols))
+    if missing_end:
+        print("MISSING_END  " + ", ".join(missing_end))
     for warning in result.warnings[:20]:
         print("WARN  " + warning)
     if len(result.warnings) > 20:
         print("WARN  另有 %d 筆警告未顯示" % (len(result.warnings) - 20))
-    return 0 if not result.missing_symbols else 2
+    return 0 if not result.missing_symbols and not missing_end else 2
 
 
 if __name__ == "__main__":
