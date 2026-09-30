@@ -20,8 +20,8 @@
   └→ Research Report V0（研究整合，不含交易決策）
                        ↓
 第三層｜策略、風控與回測
-  Portfolio Decision 主控＋五個子 Agent
-  候選＋目前持倉 → 獨立買／賣意圖 → 裁決 → 確定性配置與訂單 → 風控
+  決策層 Agent 團隊（見決策層 Agent 團隊重構計畫；舊版 1.0 Buy／Sell／裁決鏈已於 2026-09-30 移除）
+  分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態 → 確定性配置與訂單 → 風控
                                       └→ 回測 Agent：歷史時鐘 → 重播 → 模擬成交
                                                                  → 績效比較 → 前向驗證
                        ↓
@@ -41,7 +41,7 @@
 | --- | --- | --- | --- |
 | 數據與市場判讀 | 有哪些可用資料？市場目前如何？ | 更新行情與事件、檢查缺漏與時間、保存來源；計算市場寬度與趨勢 | `ResearchSnapshot`、市場狀態 |
 | 研究與分析 | 哪些股票值得關注？理由是什麼？ | LLM 抽取事件、影響對象與證據；市場認知作次級訊號；Research Report V0 整合研究結果 | `ResearchResult`、`MarketPerceptionResult`、`ResearchReport` |
-| 策略、風控與回測 | 要買進、續抱、減碼或退出？如何配置？策略是否有效？ | 多子 Agent 獨立提出買賣意圖並裁決；確定性工具產生配置、訂單及風控；回測 Agent 以相同契約執行歷史重播與前向驗證 | `TradeIntentResult`、`DecisionResult`、`BacktestReport` |
+| 策略、風控與回測 | 要買進、續抱、減碼或退出？如何配置？策略是否有效？ | 分析團隊、多空研究員、交易 Agent 與風險 Agent 分工；確定性工具產生配置、訂單及風控；回測 Agent 以相同契約執行歷史重播與前向驗證 | `TradeDecision`、`DecisionResult`、`BacktestReport` |
 | 排程與報告 | 何時執行？如何呈現並交付人工檢視？ | 自動化排程與報告 Agent 啟動流程、記錄成功或失敗；以確定性 Builder 組裝並驗證 D-Plan 候選檔 | `PipelineRun`、`D-Plan.json`、`DailyReport`、`FailureReport` |
 
 第一層先做市場狀態判讀，預測模型保留為後續擴充。圖片中的工具名稱是參考，不是本版指定依賴。
@@ -57,11 +57,11 @@
 | 市場情緒與分析師研究 | `skills/sentiment-analyst/SKILL.md` | 標記情緒、聚合分歧與熱度、計算分析師共識修正及事件預期差 |
 | 基本面研究 | `skills/fundamental-research/SKILL.md` | 唯讀財報 Snapshot、確定性比率、有引用的研究解讀；不產生交易候選 |
 | 研究報告整合（不是決策 Agent） | `skills/research-report/SKILL.md` | 驗證同一 Snapshot 的研究 artifact，建立同源 JSON／Markdown |
-| 投資組合買賣決策主控 | `skills/portfolio-decision/SKILL.md` | 固定子 Agent 順序、限制修正次數、重播完整修正鏈並保存 `DecisionResult` |
-| 動能與市場狀態 | `skills/momentum-regime/SKILL.md`（規劃） | 解讀確定性動能、波動、流動性與市場寬度結果 |
-| 獨立買進／退出研究 | `skills/buy-candidate/`、`skills/sell-exit/`（規劃） | 使用相同輸入且互相隔離，分別提出買進／加碼及續抱／減碼／退出意圖 |
-| 買賣裁決 | `skills/trade-adjudication/SKILL.md`（規劃） | 驗證獨立 packets、裁決衝突，不新增事實或計算權重 |
-| 配置後風險挑戰 | `skills/portfolio-risk-review/SKILL.md`（規劃） | 檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
+| 分析團隊 | `skills/technical-analyst/`、`skills/fundamental-analyst/`、`skills/event-analyst/`、`skills/sentiment-analyst/` | 逐批覆蓋全部交易池，只給 outlook 與有引用的發現；指標與比率由程式計算 |
+| 動能與市場狀態 | `skills/momentum-regime/SKILL.md` | 解讀確定性動能、波動、流動性與市場寬度結果 |
+| 多空研究 | `skills/bull-researcher/`、`skills/bear-researcher/` | 讀同一份共同輸入且互相隔離，逐檔給論點強度與有證據的 claims |
+| 交易 | `skills/trader/SKILL.md` | 逐檔權衡多空，決定意圖與 buy／add 信心等級，不新增事實或 claim |
+| 風險 | `skills/portfolio-risk-review/SKILL.md` | 配置前給現金姿態；配置後檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
 | 回測驗證 | `skills/strategy-backtest/SKILL.md` | 鎖定 fixture 版本、歷史重播、整張成交、交割與帳務驗收；策略比較、績效與前向驗證待後續完成 |
 | 自動化排程與報告 | `skills/daily-report/SKILL.md`（RPT0～RPT4 第一版） | 檢查各階段結果、交付 Research Report，並在 Decision／Risk 通過時接既有 DailyReport／FailureReport；缺輸入時等待或失敗 |
 | D-Plan Builder／Validator（確定性程式，不是新 Agent） | 不需要獨立 Skill | 合併 Snapshot、研究、決策與風控輸出；配置引用 ID，執行 JSON Schema 與語意驗證 |
@@ -72,7 +72,7 @@ Skill 文件定義任務流程、證據要求與輸出格式，由控制器載�
 
 基本面研究回答公司持續性的營運與財務結構問題；事件研究回答特定事件造成的改變。Data Agent 仍負責來源收集與版本保存。首版支援有核實欄位的一般業損益表／資產負債表與確定性比率；缺少比較期間不形成趨勢，金融業不套用一般業公式。結果須有相同 Snapshot／cutoff、完整引用及可重算指標，不輸出買賣評等、目標價、配置或訂單。
 
-FR0 契約、FR1 資料包、FR2 指標與 Validator、FR3 CLI／Skill 已完成 fixture MVP。下一步為 FR4 有限真實資料演練，再進行 FR5 下游升版。現有 Research Report 與 Portfolio Decision 尚不接受基本面結果；接入時需同步升版、重建驗證，並將相同資料提供給隔離的 Buy／Sell。詳見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
+FR0 契約、FR1 資料包、FR2 指標與 Validator、FR3 CLI／Skill 已完成 fixture MVP。下一步為 FR4 有限真實資料演練，再進行 FR5 下游升版。現有 Research Report 與 Portfolio Decision 尚不接受基本面結果；接入時需同步升版、重建驗證，並將相同資料提供給隔離的多頭／空頭研究員。詳見[基本面研究 Agent 計畫](fundamental_research_agent_plan.md)。
 
 ## 市場情緒與分析師研究 Agent
 

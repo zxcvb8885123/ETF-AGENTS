@@ -14,6 +14,7 @@ from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnap
 from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIRED_STATEMENT_TYPES
 
 from .contracts import (
+    validate_forbidden_keys,
     DecisionContext,
     DecisionToolError,
     artifact_content_sha256,
@@ -21,7 +22,6 @@ from .contracts import (
     required_string,
     string_list,
 )
-from .trade_intent import _validate_forbidden_keys
 
 
 ANALYST_SCHEMA_VERSION = "2.0"
@@ -244,7 +244,7 @@ class AnalystReportValidator:
         if self.analyst == "sentiment":
             if dict(report) != sentiment_report(self.bundle):
                 errors.append("情緒分析報告與已驗證來源重建結果不一致")
-        _validate_forbidden_keys(report, "AnalystReport", errors)
+        validate_forbidden_keys(report, "AnalystReport", errors)
         reject_unknown_fields(report, self.ENVELOPE, "AnalystReport", errors)
         expected = report_envelope(self.bundle, self.analyst, str(report.get("report_id")))
         for field, value in expected.items():

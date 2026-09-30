@@ -305,7 +305,7 @@ class DPlanExporter:
         context: Mapping[str, object],
         artifacts: Mapping[str, Mapping[str, object]],
     ) -> Dict[str, object]:
-        required = {"decision_input", "momentum", "debate", "intent", "policy", "proposal", "scenario", "guard", "risk_review", "revision_history", "decision"}
+        required = {"decision_input", "momentum", "debate", "intent", "policy", "proposal", "scenario", "guard", "risk_review", "revision_history", "decision", "team_inputs"}
         missing = sorted(required - set(artifacts))
         if missing:
             raise DPlanError("Decision run 缺少 artifacts：" + ", ".join(missing))
@@ -314,7 +314,7 @@ class DPlanExporter:
         if input_errors:
             raise DPlanError("DecisionInputBundle 驗證失敗：" + "; ".join(input_errors))
         result = artifacts["decision"]
-        result_errors = DecisionResultValidator(bundle, artifacts["policy"], artifacts["momentum"], artifacts["debate"], artifacts["intent"]).validate(
+        result_errors = DecisionResultValidator(bundle, artifacts["policy"], artifacts["momentum"], artifacts["debate"], artifacts["intent"], artifacts["team_inputs"]).validate(
             artifacts["proposal"], artifacts["scenario"], artifacts["guard"], artifacts["risk_review"], artifacts["revision_history"], result
         )
         if result_errors:

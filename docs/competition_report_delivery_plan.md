@@ -85,8 +85,8 @@ ETF 基準來源檢查：證交所說明主動式 ETF 須每日揭露實際投�
 ### F3：完成本地研究到決策的交接
 
 - 沿用 daily-report 與既有研究／決策 Skills，封存各角色 input、output、工作階段識別與工具紀錄。
-- Fact → 隔離 Bull／Bear → Adjudicator → 雙重研究驗證；再執行 Momentum → 隔離 Buy／Sell → Trade Adjudicator → 確定性配置／訂單 → Portfolio Risk／Guard。
-- Buy／Sell 使用相同資料、獨立 role input；風險修正最多三次，硬性拒絕不可轉為警告。
+- Fact → 隔離 Bull／Bear → Adjudicator → 雙重研究驗證；再執行 Momentum → 分析團隊 → 隔離多頭／空頭研究員 → 交易 Agent → 確定性配置／訂單 → 風險 Agent／Guard。
+- 多頭／空頭使用相同資料、共同輸入雜湊；風險修正最多三次，硬性拒絕不可轉為警告。
 - CLI 顯示需接手的工作與續跑指令；不存在 Agent 工作階段時保持等待。完成後自動接回既有報告 Builder。
 - 研究 pending、候選不足、決策拒絕與合法 no_trade 分開處理；不能將資料失敗包裝成不交易決策。空倉 no_trade 仍須核對持股數等規則是否允許。
 

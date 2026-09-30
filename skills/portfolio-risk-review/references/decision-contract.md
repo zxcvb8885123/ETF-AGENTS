@@ -1,4 +1,4 @@
-# Portfolio Decision P0-P6 契約
+# 決策層契約（DecisionInputBundle 至 DecisionResult）
 
 ## DecisionInputBundle
 
@@ -23,7 +23,7 @@
 ```
 
 - `snapshot_sha256` 使用排序 key、無多餘空白的 canonical JSON 計算。
-- `bundle_sha256` 鎖定整份輸入內容；頂層與帳戶、規則、基準、行情物件使用嚴格欄位白名單，不能夾帶 peer packet 或執行指令。
+- `bundle_sha256` 鎖定整份輸入內容；頂層與帳戶、規則、基準、行情物件使用嚴格欄位白名單，不能夾帶未列入契約的欄位或執行指令。
 - `account_snapshot` 必須有 `account_id`、`available_at`、`valuation_at`、`source_evidence_id`、`cash`、`settled_cash`、`unsettled_cash`、`nav` 與不重複的正股數持股。`cash=settled_cash+unsettled_cash`，NAV 必須在規則容許誤差內等於 cutoff 行情重算值；配置只能使用 settled cash。
 - `rules` 必須保存來源 URL、發布／可得時間、不可放寬限制及排除自身欄位後的 `config_sha256`。`required_benchmark_ids` 可為空；只有明確啟用有來源的基準約束時才列 ID，所列基準缺漏即拒絕。
 - `benchmarks` 可為空；若提供，每筆保存 `benchmark_id`、版本、可得時間及成分權重。空必備基準時 `minimum_active_share` 必須為 0。
@@ -38,81 +38,15 @@
 
 市場 regime 使用可用股票的 MA20 與 MA60 breadth：兩者皆不低於 60% 為 `bull`，皆不高於 40% 為 `bear`，其餘為 `neutral`。可用覆蓋低於 80% 時狀態是 `unavailable`、`regime=null`，不得補猜。
 
-## BuyIntentPacket 與 SellIntentPacket
+## ResearchDebateBundle、TradeDecision 與 position_sizing（schema 2.0）
 
-共用 envelope：
+每日決策鏈為分析團隊 → 多空研究員 → 交易 Agent → 風險 Agent，由 `DailyDecisionPipeline` 逐批執行並以下列 Validator 重建驗證：`AnalystReportValidator`、`StancePacketValidator`／`ResearchDebateBundleValidator`、`TradeDecisionValidator`。各角色欄位見對應 Skill（`technical-analyst`、`fundamental-analyst`、`event-analyst`、`bull-researcher`、`bear-researcher`、`trader`）。
 
-```json
-{
-  "schema_version": "1.0",
-  "packet_id": "unique-id",
-  "role": "buy | sell",
-  "bundle_id": "decision-input-001",
-  "snapshot_id": "snapshot-id",
-  "decision_cutoff": "2026-09-21T08:55:00+08:00",
-  "bundle_hash": "DecisionInputBundle canonical SHA-256",
-  "momentum_result_id": "momentum:id",
-  "status": "completed | degraded | failed",
-  "content_sha256": "排除自身欄位後的 artifact SHA-256",
-  "dependencies": {
-    "decision_bundle_id": "decision-input-001",
-    "momentum_result_id": "momentum:id",
-    "role_input_sha256": "deterministic role input SHA-256",
-    "peer_packet_ids": []
-  },
-  "items": [],
-  "errors": []
-}
-```
+Decision run 的 artifact 為 `momentum`、`debate`（`ResearchDebateBundle` 2.0，多頭與空頭 `StancePacket`）、`intent`（`TradeDecision` 2.0）、`policy`、`proposal`、`scenario`、`guard`、`risk_review`、`revision_history`、`decision` 與 `team_inputs`（`schema_version`、四份 `analyst_reports`、`research_result`、`cash_stance`）。`DecisionFinalizer` 與 `DecisionResultValidator` 必須取得 `team_inputs`，重建多空辯論、交易決策與現金姿態，並檢查 policy `position_sizing` 的 `conviction_by_symbol`、`cash_stance`、`sizing_plan_id`／`sizing_plan_sha256` 與交易決策、現金姿態一致；`debate.schema_version` 不是 2.0 或缺少 `team_inputs` 一律拒絕。DecisionResult 含 `team_inputs_sha256`。舊版 1.0 的 Buy／Sell／Trade Adjudicator 鏈已移除，不再支援重建。
 
-每個 item 都要有 `symbol`、`intent`、`rationale`、`status_reason`、`horizon`、`evidence_ids`、`risk_flags`、`invalidation_conditions` 與非空 `claims`。每個 claim 有全 packet 唯一的 `claim_id`、`text` 與 `evidence_ids`。
+`DecisionPolicy.position_sizing`：`method=conviction_volatility_v1`、`conviction_multipliers`（剛好 `high`／`medium`／`low`，皆大於 0 且 high ≥ medium ≥ low）、`volatility_floor`（0～1）與 `cash_buffer_by_stance`（剛好 `aggressive`／`neutral`／`defensive`，皆 ≥0 且低於 `cash_weight_ceiling`，依序不遞減）。`apply_trade_decision` 把 `conviction_by_symbol`、`cash_stance`、`sizing_plan_id`（沿用欄位名，值為 `TradeDecision.decision_id`）與 `sizing_plan_sha256`（`TradeDecision.content_sha256`）綁入新版 policy，並將 `cash_buffer_rate` 設為該姿態對應值（Validator 檢查兩者一致；`policy_id` 加上 decision ID，重算 `content_sha256`）；未綁定就執行配置時停止。
 
-Buy intent：`buy`、`add`、`watch`、`exclude`。已持股只能用 `add`，未持股只能用 `buy`；`buy/add` 必須有可用 MomentumResult。
-
-Sell intent：`hold`、`trim`、`exit`、`forced_exit`。另需 `thesis_status=intact|weakened|invalidated|unavailable`，而且必須剛好覆蓋全部目前持股。
-
-主控以 `build-role-input` 建立兩份不含 peer packet 的輸入，並在分開的子 Agent 環境執行。兩個 packet 的 `role_input_sha256` 必須等於自己的確定性輸入，`peer_packet_ids` 必須是空陣列。這是可驗證的依賴約束；執行環境隔離仍由主控負責。
-
-只有 `status=completed` 的 Buy／Sell packet 能進入裁決。所有 envelope、item、claim 與 dependencies 都採嚴格欄位白名單，未知欄位或配置／下單別名一律拒絕。
-
-## TradeDebateBundle 與 TradeIntentResult
-
-`TradeDebateBundle.packets` 必須剛好包含一個已驗證 Buy packet 與一個已驗證 Sell packet，兩者使用相同 bundle、hash、Snapshot、cutoff 與 MomentumResult。
-
-Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
-
-```json
-{
-  "symbol": "2330.TW",
-  "intent": "add",
-  "rationale": "裁決理由",
-  "status_reason": "交給後續配置層的狀態",
-  "evidence_ids": ["existing-evidence-id"],
-  "adopted_claim_ids": ["existing-claim-id"],
-  "rejected_claim_ids": ["existing-claim-id"],
-  "unresolved_questions": [],
-  "invalidation_conditions": []
-}
-```
-
-- 每個來源 claim 必須剛好被採納或否決，不得同時出現在兩邊。
-- `buy/add/trim/exit/forced_exit` 必須採納至少一個相同方向的來源 claim，不能把全部支持 claim 否決後仍輸出可執行意圖。
-- 結果不能增加股票、claim ID 或 evidence ID。
-- 已持股不得裁決為 `buy`；未持股不得裁決為 `add/hold/trim/exit/forced_exit`。
-- P0～P2 禁止任何權重、股數、費稅或訂單欄位。
-- Buy／Sell packet、TradeDebateBundle 與 TradeIntentResult 都保存 `content_sha256`；內容被改寫但 hash 未更新時拒絕。
-
-## SizingPlan 與 position_sizing
-
-`DecisionPolicy.position_sizing` 為選配：`method=conviction_volatility_v1`、`conviction_multipliers`（剛好 `high`／`medium`／`low`，皆大於 0 且 high ≥ medium ≥ low）、`volatility_floor`（0～1）與 `cash_buffer_by_stance`（剛好 `aggressive`／`neutral`／`defensive`，皆 ≥0 且低於 `cash_weight_ceiling`，依序不遞減）。啟用時必須先以 Portfolio Risk 的 `SizingPlan` 對 `TradeIntentResult` 全部 buy／add 候選分級，`apply-sizing` 再把 `conviction_by_symbol`、`cash_stance`、`sizing_plan_id` 與 `sizing_plan_sha256` 綁入新版 policy，並將 `cash_buffer_rate` 設為該姿態對應值（Validator 檢查兩者一致）（`policy_id` 加上 plan ID，重算 `content_sha256`）；未綁定就執行配置時停止。
-
-`SizingPlan` 的 item 只有 `symbol`、`conviction`、`rationale`、`evidence_ids`，禁止權重／股數等欄位；證據必須屬於該股票。`cash_stance` 只有 `level`、`rationale`、`evidence_ids`，證據須存在於共同輸入。配置時候選依等級再依代號排序，受 `max_positions` 限制；原始分數為等級乘數 ÷ max(ATR14%, floor)，按比例分配 `1 − cash_buffer_rate − 非候選持股權重`，超過個股上限者固定在上限並把餘額重新分配。Proposal 另存 `position_sizing.target_weights` 供重算；未啟用 `position_sizing` 時沿用 `default_target_weight` 等權重。
-
-## 分析團隊新鏈（schema 2.0）
-
-新鏈的 Decision run 沿用 `debate` 與 `intent` 檔名：`debate` 是 `ResearchDebateBundle` 2.0（多頭、空頭 StancePacket），`intent` 是 `TradeDecision` 2.0，另存 `team_inputs`（`schema_version`、四份 `analyst_reports`、`research_result`、`cash_stance`）。Finalizer 與 `DecisionResultValidator` 依 `debate.schema_version` 分流：2.0 必須提供 `team_inputs`，重建多空辯論與交易決策，並檢查 policy `position_sizing` 的 `conviction_by_symbol`、`cash_stance`、`sizing_plan_id`／`sizing_plan_sha256` 與交易決策、現金姿態一致；DecisionResult 另含 `team_inputs_sha256`。1.0 舊鏈行為不變。配置引擎直接讀取 TradeDecision 的 symbol／intent。
-
-分級配置封頂時以個股上限 × 0.995 計算，保留手續費造成成交後 NAV 變小的緩衝，避免剛好配到上限的部位被 Guard 拒絕。
+`cash_stance` 只有 `level`、`rationale`、`evidence_ids`，證據須存在於共同輸入；Agent 不輸出任何百分比。配置時候選依等級再依代號排序，受 `max_positions` 限制；原始分數為等級乘數 ÷ max(ATR14%, floor)，按比例分配 `1 − cash_buffer_rate − 非候選持股權重`，超過個股上限者固定在上限並把餘額重新分配。分級配置封頂時以個股上限 × 0.995 計算，保留手續費造成成交後 NAV 變小的緩衝。Proposal 另存 `position_sizing.target_weights` 供重算。配置引擎只讀取 TradeDecision 的 symbol／intent。
 
 ## DecisionPolicy 與 ProposalBundle
 
@@ -155,13 +89,13 @@ Trade Adjudicator 對兩個 packet 的股票聯集逐檔產生結果：
 }
 ```
 
-`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。內容必須可由原始帳戶、cutoff 行情、TradeIntentResult 與 DecisionPolicy 完整重算。
+`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。內容必須可由原始帳戶、cutoff 行情、TradeDecision 與 DecisionPolicy 完整重算。
 
 ## ScenarioResult、GuardResult 與 RiskReview
 
 `ScenarioResult` 明確標記情境假設，包含基準、價格下跌及流動性壓力。每個情境從 cutoff 帳戶重建：成交率以張為單位向下取整，滑價獨立套用，逐筆重算成交價、費稅、可用現金、總現金、持股、收盤估值、NAV 與未成交張數；不能從「假設全部成交」的配置直接乘跌幅。`GuardResult` 對提案及每個情境檢查交易池、明確可交易狀態、持股數、現金／買力、個股與產業權重、換手、強制退出流動性；已持有、本次沒有 buy 訂單的股票若之後被限制交易（例如新公告處置），只能續抱、不能買賣，Guard 以 `HELD_NOT_TRADABLE`（`passed=true` 的警告）與情境的 `held_not_tradable` 記錄，不否決整份決策；買進或賣出受限股票仍由 `TRADABLE`／`SCENARIOS` 否決，且沒有續抱的受限持股時輸出與舊版完全相同；若規則另有明確基準要求，再檢查每一份必備基準的 Active Share。
 
-Portfolio Risk Agent 只輸出 `RiskReview`：
+風險 Agent 只輸出 `RiskReview`：
 
 - `decision` 限定 `approve`、`revise`、`reject`。
 - Guard 失敗是硬性失敗，RiskReview 只能 `reject`，不得 `approve` 或用修正繞過。
@@ -176,3 +110,7 @@ Portfolio Risk Agent 只輸出 `RiskReview`：
 完整 Validator 重建 Proposal、Scenario、Guard 與 RiskReview 後才產生 `DecisionResult`。Risk approve、Guard passed 且存在訂單時為 `approved`；通過相同檢查但沒有訂單時為 `no_trade`；其他情況為 `rejected`。拒絕結果的最終 `orders` 必須為空。
 
 `DecisionRepository` 以安全白名單 run ID／artifact 名稱原子保存所有版本與 SHA-256 manifest。相同 run ID 重試前會重新讀取每個實際檔案並核對 manifest；缺檔、額外檔案、路徑穿越、內容竄改或相同 ID 不同內容均拒絕。這些結果只供回測與人工檢查，不代表已下單或正式送件。
+
+## CLI（`cli/portfolio_decision.py`）
+
+每日流程由 `DailyDecisionPipeline` 直接呼叫 Python；CLI 提供同一批確定性工具供人工重建與除錯：`build-input`、`validate-input`、`compute-momentum`、`validate-momentum`、`seal-artifact`、`build-policy`、`validate-intent`（驗證 `TradeDecision`）、`compute-proposal`、`validate-proposal`、`compute-scenarios`、`compute-guard`、`validate-risk`、`revise-proposal`、`build-history`／`append-history`、`validate-history`、`finalize`、`validate-decision` 與 `save-run`。`finalize`、`validate-decision` 與 `save-run` 必須附 `--team-inputs`。Exit code `0` 表示成功或驗證通過，`2` 表示 artifact 已讀取但驗證失敗，`1` 表示檔案或工具錯誤。

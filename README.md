@@ -97,7 +97,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 - **交易狀態與交易日曆**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射。官方開休市日曆（`TradingCalendar`）統一用於每日是否執行、目標交易時段與帳本 T+2 交割，區分休市日與「僅辦理結算交割」日；日曆缺漏或未涵蓋年度時停止。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
 - **研究層**：事件研究 Agent（Fact／Bull／Bear／Adjudicator、雙重 validator）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
 - **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實情緒／共識資料商尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
-- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（P0～P6）只保留供封存 run 重建與 fixture 測試。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
+- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（Buy／Sell／Trade Adjudicator，P0～P6）已於 2026-09-30 移除，不再支援重建。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
 - **交付**：D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（匯出前核對 Decision run 的帳戶快照與帳戶目前 latest 的 prepare-day 封存一致）、唯讀績效儀表板。DailyReport／FailureReport 與報告工作流已於 2026-09-29 移除（比賽只需 D-Plan），舊封存仍留在 `artifacts/report_runs/` 供稽核。
 
@@ -163,10 +163,10 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | `cli/portfolio_decision.py --bundle T.json build-input --research R.json [--trading-status S.json]` | 由 Snapshot、SQLite 歷史行情（預設 120 根）與 `config/decision_rules.json` 建立 DecisionInputBundle 樣板 |
 | `cli/portfolio_decision.py --bundle I.json validate-input`／`compute-momentum` | 驗證共用輸入；計算動能、市場寬度與 regime |
 | `cli/portfolio_decision.py --bundle I.json build-policy --output P.json` | 由策略樣板、硬性規則與產業分類建立 DecisionPolicy |
-| `cli/portfolio_decision.py --bundle I.json validate-sizing ...`／`apply-sizing ...` | 驗證風險 Agent 的等級與現金姿態（暫定 aggressive／neutral／defensive 對應 3%／10%／20%）；權重依等級乘數 ÷ ATR14% 分配 |
+| `cli/portfolio_decision.py --bundle I.json validate-intent ...` | 驗證交易 Agent 的 TradeDecision（等級與 claim 採納）；現金姿態 aggressive／neutral／defensive 暫定對應 3%／10%／20%，權重依等級乘數 ÷ ATR14% 分配 |
 | `cli/portfolio_decision.py --bundle I.json compute-proposal ...` | 以一張（1,000 股）為單位計算配置、訂單、費稅與現金 |
 | `cli/portfolio_decision.py --bundle I.json compute-scenarios ...`／`compute-guard ...` | 價格與流動性壓力情境；交易池、可交易性、現金與曝險 Guard（基準 Active Share 選配） |
-| `cli/portfolio_decision.py build-role-brief --role-input R.json --output B.json` | 產生子 Agent 可讀的精簡角色摘要 |
+| `cli/portfolio_decision.py --bundle I.json finalize／validate-decision／save-run ... --team-inputs T.json` | 完整重建、驗證並封存 Decision run（必須附 `team_inputs`） |
 
 上表指令皆以 `.venv/bin/python` 執行。
 

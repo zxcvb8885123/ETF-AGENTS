@@ -92,7 +92,7 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 ## 5. 契約升版與相容
 
 - 新增 `AnalystReport`、`UniverseShortlist`、`BullPacket`／`BearPacket`（`ResearchDebateBundle`）、`TradeDecision`，決策鏈 schema 升為 2.0。
-- `DecisionFinalizer`、`DecisionResultValidator`、`DecisionRepository` 的 artifact 集合改為新鏈；舊 1.0（Buy／Sell）鏈保留至既有 fixture 測試與已封存 run 可驗證為止，不刪除舊封存。
+- `DecisionFinalizer`、`DecisionResultValidator`、`DecisionRepository` 的 artifact 集合改為新鏈；舊 1.0（Buy／Sell）鏈已於 2026-09-30 移除：`decision/trade_intent.py`、`role_brief`、SizingPlan、`portfolio-decision`／`buy-candidate`／`sell-exit`／`trade-adjudication` Skill 與相關 CLI 子命令都已刪除，Finalizer 與 Validator 對 1.0 debate 一律拒絕；既有封存 run 皆為 2.0，不受影響。
 - 下游（虛擬帳本 `apply-decision`、DailyReport、D-Plan）讀取 Decision run 的欄位需逐一核對並補測試；若只讀 `DecisionResult.orders` 與 bundle，則不需改動。
 
 ## 6. 每日 Agent 呼叫次數

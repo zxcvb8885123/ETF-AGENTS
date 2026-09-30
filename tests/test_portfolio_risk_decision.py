@@ -15,7 +15,6 @@ from etf_agent.decision import (
     DecisionRepository,
     DecisionResultValidator,
     GuardValidator,
-    MomentumEngine,
     ProposalValidator,
     RiskReviewValidator,
     RevisionHistoryBuilder,
@@ -29,12 +28,8 @@ from etf_agent.decision import (
     revision_effects,
 )
 
-from test_portfolio_decision_agent import (
-    debate_bundle,
-    decision_bundle,
-    refresh_artifact_hash,
-    trade_intent_result,
-)
+from test_analysts import bundle_with_event
+from test_portfolio_decision_agent import refresh_artifact_hash
 
 
 def policy():
@@ -71,17 +66,19 @@ def policy():
     return result
 
 
-def valid_inputs():
-    bundle = decision_bundle()
-    bundle["snapshot"]["tradable_symbols"] = ["2330.TW", "2317.TW"]
-    bundle["snapshot"]["not_tradable_symbols"] = []
-    from etf_agent.decision import canonical_sha256
+def chain_inputs(bundle=None, decisions=None, settings=None):
+    """完整分析團隊鏈 fixture（bundle、動能、多空辯論、交易決策、綁定 policy、team_inputs…）。
 
-    bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
-    bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-    momentum = MomentumEngine(bundle).run()
-    debate = debate_bundle(bundle, momentum)
-    intent = trade_intent_result(bundle, momentum, debate)
+    延後匯入 test_team_chain，避免它反向匯入本模組的 policy／risk_review 時循環。
+    """
+    from test_team_chain import team_world
+
+    return team_world(bundle, decisions, settings)
+
+
+def valid_inputs():
+    """2317.TW 買進、2330.TW 續抱的 (bundle, momentum, debate, intent)。"""
+    bundle, momentum, debate, intent, _, _, _, _ = chain_inputs()
     return bundle, momentum, debate, intent
 
 
@@ -121,9 +118,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         settings = policy()
         settings["minimum_active_share"] = "0"
         settings["content_sha256"] = decision_policy_sha256(settings)
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        intent = trade_intent_result(bundle, momentum, debate)
+        _, momentum, debate, intent, *_ = chain_inputs(bundle)
         self.assertEqual(DecisionPolicyValidator(bundle).validate(settings), [])
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         scenario = ScenarioEngine(bundle, settings).run(proposal)
@@ -152,8 +147,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         settings = policy()
         settings["minimum_active_share"] = "0"
         settings["content_sha256"] = decision_policy_sha256(settings)
-        momentum = MomentumEngine(bundle).run()
-        intent = trade_intent_result(bundle, momentum, debate_bundle(bundle, momentum))
+        _, momentum, _, intent, *_ = chain_inputs(bundle)
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         scenario = ScenarioEngine(bundle, settings).run(proposal)
 
@@ -180,8 +174,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         self.assertFalse(guard["passed"])
 
     def test_policy_proposal_scenario_guard_and_final_decision(self):
-        bundle, momentum, debate, intent = valid_inputs()
-        settings = policy()
+        bundle, momentum, debate, intent, settings, team, _, _ = chain_inputs()
         self.assertEqual(DecisionPolicyValidator(bundle).validate(settings), [])
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         self.assertTrue(proposal["order_proposal"]["orders"])
@@ -210,13 +203,13 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 history, require_terminal=True
             ), []
         )
-        result = DecisionFinalizer(bundle, settings, momentum, debate, intent).run(
+        result = DecisionFinalizer(bundle, settings, momentum, debate, intent, team).run(
             proposal, scenario, guard, review, history
         )
-        self.assertEqual(result["status"], "approved")
+        self.assertEqual(result["status"], "approved", result["errors"])
         self.assertTrue(result["orders"])
         self.assertEqual(
-            DecisionResultValidator(bundle, settings, momentum, debate, intent).validate(
+            DecisionResultValidator(bundle, settings, momentum, debate, intent, team).validate(
                 proposal, scenario, guard, review, history, result
             ),
             [],
@@ -278,9 +271,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         bundle["account_snapshot"]["settled_cash"] = "80000"
         bundle["account_snapshot"]["unsettled_cash"] = "420000"
         bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        intent = trade_intent_result(bundle, momentum, debate)
+        _, momentum, debate, intent, *_ = chain_inputs(bundle)
         intent["items"][1]["intent"] = "exit"
         refresh_artifact_hash(intent)
         settings = policy()
@@ -308,10 +299,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         )
 
     def test_guard_fails_closed_without_explicit_tradability(self):
-        bundle = decision_bundle()
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        intent = trade_intent_result(bundle, momentum, debate)
+        bundle, momentum, debate, intent, *_ = chain_inputs(bundle_with_event())
         settings = policy()
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         scenario = ScenarioEngine(bundle, settings).run(proposal)
@@ -321,16 +309,14 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         self.assertIn("TRADABILITY_AVAILABLE", failed)
 
     def test_risk_cannot_approve_failed_guard(self):
-        bundle, momentum, debate, intent = valid_inputs()
+        bundle, _, _, _ = valid_inputs()
         settings = policy()
         settings["min_positions"] = 3
         bundle["rules"]["min_positions"] = 3
         bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
         bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        intent = trade_intent_result(bundle, momentum, debate)
         settings["content_sha256"] = decision_policy_sha256(settings)
+        _, momentum, debate, intent, settings, team, _, _ = chain_inputs(bundle, None, settings)
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         scenario = ScenarioEngine(bundle, settings).run(proposal)
         guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
@@ -344,51 +330,31 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         history = RevisionHistoryBuilder(bundle, settings, intent).create(
             proposal, scenario, guard, rejecting_review
         )
-        result = DecisionFinalizer(bundle, settings, momentum, debate, intent).run(
+        result = DecisionFinalizer(bundle, settings, momentum, debate, intent, team).run(
             proposal, scenario, guard, review, history
         )
         self.assertEqual(result["status"], "rejected")
         self.assertEqual(result["orders"], [])
 
     def test_no_trade_still_requires_guard_and_risk_review(self):
-        bundle, momentum, debate, intent = valid_inputs()
-        debate["packets"][0]["items"][0]["intent"] = "watch"
-        refresh_artifact_hash(debate["packets"][0])
-        refresh_artifact_hash(debate)
-        intent["items"][0].update(
-            {
-                "intent": "exclude",
-                "rationale": "目前只列入觀察，不建立新部位。",
-                "evidence_ids": [],
-                "adopted_claim_ids": [],
-                "rejected_claim_ids": ["buy-2317-momentum"],
-            }
-        )
-        refresh_artifact_hash(intent)
+        bundle, _, _, _ = valid_inputs()
         settings = policy()
         settings["cash_weight_ceiling"] = "0.99"
         settings["minimum_active_share"] = "0.01"
+        settings["content_sha256"] = decision_policy_sha256(settings)
         bundle["rules"]["cash_weight_must_be_below"] = "0.99"
         bundle["rules"]["minimum_active_share"] = "0.01"
         bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
         bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        intent = trade_intent_result(bundle, momentum, debate)
-        debate["packets"][0]["items"][0]["intent"] = "watch"
-        refresh_artifact_hash(debate["packets"][0])
-        refresh_artifact_hash(debate)
-        intent["items"][0].update(
-            {
-                "intent": "exclude",
-                "rationale": "目前只列入觀察，不建立新部位。",
-                "evidence_ids": [],
-                "adopted_claim_ids": [],
-                "rejected_claim_ids": ["buy-2317-momentum"],
-            }
+        # 2317.TW 不買（採否決多頭 claim），2330.TW 續抱：沒有任何訂單。
+        from test_trader import items as trade_items  # 延後匯入避免循環
+
+        decisions = trade_items()
+        decisions[0] = dict(
+            decisions[0], intent="no_trade", conviction=None,
+            adopted_claim_ids=[], rejected_claim_ids=["bull-2317-1"],
         )
-        refresh_artifact_hash(intent)
-        settings["content_sha256"] = decision_policy_sha256(settings)
+        _, momentum, debate, intent, settings, team, _, _ = chain_inputs(bundle, decisions, settings)
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         self.assertEqual(proposal["order_proposal"]["orders"], [])
         scenario = ScenarioEngine(bundle, settings).run(proposal)
@@ -399,14 +365,13 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             proposal, scenario, guard, review
         )
         result = DecisionFinalizer(
-            bundle, settings, momentum, debate, intent
+            bundle, settings, momentum, debate, intent, team
         ).run(proposal, scenario, guard, review, history)
-        self.assertEqual(result["status"], "no_trade")
+        self.assertEqual(result["status"], "no_trade", result["errors"])
         self.assertIsNotNone(result["portfolio"])
 
     def test_finalizer_rejects_tampered_upstream_intent(self):
-        bundle, momentum, debate, intent = valid_inputs()
-        settings = policy()
+        bundle, momentum, debate, intent, settings, team, _, _ = chain_inputs()
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         scenario = ScenarioEngine(bundle, settings).run(proposal)
         guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
@@ -416,7 +381,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         )
         intent["items"][0]["rationale"] = "遭竄改"
         result = DecisionFinalizer(
-            bundle, settings, momentum, debate, intent
+            bundle, settings, momentum, debate, intent, team
         ).run(proposal, scenario, guard, review, history)
         self.assertEqual(result["status"], "rejected")
         self.assertTrue(any("content_sha256" in error for error in result["errors"]))
@@ -430,9 +395,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         bundle["snapshot"]["not_tradable_symbols"] = ["2330.TW"]
         bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
         bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-        momentum = MomentumEngine(bundle).run()
-        debate = debate_bundle(bundle, momentum)
-        intent = trade_intent_result(bundle, momentum, debate)
+        _, _, _, intent, *_ = chain_inputs(bundle)
         return bundle, intent
 
     def run_guard(self, bundle, intent):
@@ -481,8 +444,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         bundle["snapshot"]["not_tradable_symbols"] = ["2317.TW"]
         bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
         bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
-        momentum = MomentumEngine(bundle).run()
-        intent = trade_intent_result(bundle, momentum, debate_bundle(bundle, momentum))
+        _, _, _, intent, *_ = chain_inputs(bundle)
         _, guard, checks = self.run_guard(bundle, intent)
         self.assertFalse(guard["passed"])
         self.assertFalse(checks["TRADABLE"]["passed"])
@@ -671,8 +633,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             self.assertEqual(list(Path(temp_dir).iterdir()), [])
 
     def test_cli_runs_validated_decision_pipeline_end_to_end(self):
-        bundle, momentum, debate, intent = valid_inputs()
-        settings = policy()
+        bundle, momentum, debate, intent, settings, team, _, _ = chain_inputs()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = {
@@ -687,10 +648,11 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 "review": root / "review.json",
                 "history": root / "history.json",
                 "decision": root / "decision.json",
+                "team_inputs": root / "team_inputs.json",
             }
             for name, payload in (
                 ("bundle", bundle), ("momentum", momentum), ("debate", debate),
-                ("intent", intent), ("policy", settings),
+                ("intent", intent), ("policy", settings), ("team_inputs", team),
             ):
                 paths[name].write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             script = Path(__file__).parents[1] / "cli" / "portfolio_decision.py"
@@ -720,6 +682,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 *upstream, "--proposal", str(paths["proposal"]),
                 "--scenario", str(paths["scenario"]), "--guard", str(paths["guard"]),
                 "--review", str(paths["review"]), "--history", str(paths["history"]),
+                "--team-inputs", str(paths["team_inputs"]),
             ]
             run("finalize", *risk_inputs, "--output", str(paths["decision"]))
             run("validate-decision", *risk_inputs, "--input", str(paths["decision"]))

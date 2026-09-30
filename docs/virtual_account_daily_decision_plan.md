@@ -45,7 +45,7 @@
 | VA0 規則與起點固定 | 核對 10 億設定的來源、幣別、生效時間、帳戶起始日與成交／交割假設；封存版本 | 初始資金只在唯一 genesis 使用；缺規則依據時只允許標明為內部模擬 |
 | VA1 虛擬帳本契約與 Repository | 建立 genesis、狀態、異動與 manifest；CLI 提供 `init`、`status`、`verify` | 空倉＝現金／NAV 10 億；重複初始化、改寫父狀態、缺檔及時間倒退均拒絕 |
 | VA2 決策前狀態接入 | 重用或抽取回測的確定性交割、公司行動與估值邏輯；生成同 cutoff AccountSnapshot 並進入 DecisionInputBundle | 第 2 日起讀前次封存狀態；缺昨日帳本、待交割明細、行情或時間證據就阻擋；不混用其他 Snapshot |
-| VA3 買賣決策與成交分離 | 接既有 Momentum、隔離 Buy／Sell、Trade Adjudicator、Portfolio Risk 與 Guard；決策後另接模擬執行並保存逐筆異動 | 未驗證的 DecisionResult 不執行；部分／零成交、拒絕及 no_trade 均能重建，帳戶更新不超賣、不負現金 |
+| VA3 買賣決策與成交分離 | 接既有 Momentum、分析團隊、隔離多頭／空頭研究員、交易 Agent、風險 Agent 與 Guard；決策後另接模擬執行並保存逐筆異動 | 未驗證的 DecisionResult 不執行；部分／零成交、拒絕及 no_trade 均能重建，帳戶更新不超賣、不負現金 |
 | VA4 報告與續跑 | 報告呈現虛擬帳戶起點、決策前持倉、買賣提案、模擬成交狀態及下一步；與既有 workflow 的等待／失敗狀態接線 | 只在完整 Decision／Risk 通過時交付 DailyReport；等待成交時不得把提案寫成已成交；隔日續接前先驗證前 run |
 | VA5 多日驗收 | 用合成資料先走空倉→買入→部分成交→交割→賣出→日終估值，再對同一邏輯做固定資料的前向演練 | 獨立手算現金、股數、費稅、NAV；來源版本與 cutoff 可重建。正式每日啟用仍須交易狀態、基準、規則及前向驗證通過 |
 

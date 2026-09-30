@@ -12,7 +12,7 @@ from etf_agent.decision import (
     RevisionHistoryBuilder, ScenarioEngine,
 )
 from etf_agent.virtual_account import VirtualAccountRepository, VirtualAccountService
-from test_portfolio_risk_decision import policy, risk_review, valid_inputs
+from test_portfolio_risk_decision import chain_inputs, policy, risk_review, valid_inputs
 from test_virtual_account import prepare_and_decide
 
 
@@ -47,18 +47,17 @@ def valid_context():
 
 
 def approved_artifacts():
-    bundle, momentum, debate, intent = valid_inputs()
-    settings = policy()
+    bundle, momentum, debate, intent, settings, team, _, _ = chain_inputs()
     proposal = AllocationOrderEngine(bundle, settings).run(intent)
     scenario = ScenarioEngine(bundle, settings).run(proposal)
     guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
     review = risk_review(bundle, proposal, scenario, guard)
     history = RevisionHistoryBuilder(bundle, settings, intent).create(proposal, scenario, guard, review)
-    result = DecisionFinalizer(bundle, settings, momentum, debate, intent).run(proposal, scenario, guard, review, history)
+    result = DecisionFinalizer(bundle, settings, momentum, debate, intent, team).run(proposal, scenario, guard, review, history)
     return {
         "decision_input": bundle, "momentum": momentum, "debate": debate, "intent": intent,
         "policy": settings, "proposal": proposal, "scenario": scenario, "guard": guard,
-        "risk_review": review, "revision_history": history, "decision": result,
+        "risk_review": review, "revision_history": history, "decision": result, "team_inputs": team,
     }
 
 

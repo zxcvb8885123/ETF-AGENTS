@@ -22,7 +22,6 @@ from .revision import RevisionHistoryValidator
 from .analysts import ANALYSTS
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
-from .trade_intent import TradeDebateValidator, TradeIntentResultValidator
 from .trader import SIZED, TradeDecisionValidator
 
 
@@ -35,18 +34,13 @@ def build_team_inputs(
     research_result: Mapping[str, object],
     cash_stance: Mapping[str, object],
 ) -> Dict[str, object]:
-    """新鏈 Decision run 的 team_inputs artifact：重建多空辯論與現金姿態所需的全部輸入。"""
+    """Decision run 的 team_inputs artifact：重建多空辯論與現金姿態所需的全部輸入。"""
     return {
         "schema_version": STANCE_SCHEMA_VERSION,
         "analyst_reports": {name: dict(analyst_reports[name]) for name in ANALYSTS},
         "research_result": dict(research_result),
         "cash_stance": dict(cash_stance),
     }
-
-
-def is_team_chain(debate: Mapping[str, object]) -> bool:
-    """ResearchDebateBundle 2.0 代表分析團隊 → 多空研究 → 交易 Agent 的新鏈。"""
-    return debate.get("schema_version") == STANCE_SCHEMA_VERSION
 
 
 class DecisionFinalizer:
@@ -108,9 +102,7 @@ class DecisionFinalizer:
             "unresolved_risks": risk_review.get("unresolved_questions", []),
             "errors": errors,
         }
-        if is_team_chain(self.debate):
-            # 只在新鏈加入，舊鏈 DecisionResult 內容與 ID 維持不變。
-            body["team_inputs_sha256"] = canonical_sha256(self.team_inputs) if self.team_inputs is not None else None
+        body["team_inputs_sha256"] = canonical_sha256(self.team_inputs) if self.team_inputs is not None else None
         body["decision_id"] = "decision:" + canonical_sha256(body)[:20]
         body["content_sha256"] = artifact_content_sha256(body)
         return body
@@ -124,17 +116,7 @@ class DecisionFinalizer:
         history: Mapping[str, object],
     ) -> List[str]:
         errors: List[str] = []
-        if is_team_chain(self.debate):
-            errors.extend(self._validate_team_chain())
-        else:
-            errors.extend(
-                TradeDebateValidator(self.bundle, self.momentum).validate(self.debate)
-            )
-            errors.extend(
-                TradeIntentResultValidator(
-                    self.bundle, self.momentum, self.debate
-                ).validate(self.intent)
-            )
+        errors.extend(self._validate_team_chain())
         errors.extend(ProposalValidator(self.bundle, self.policy, self.intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, self.policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, self.policy).validate(proposal, scenario, guard))
@@ -167,10 +149,12 @@ class DecisionFinalizer:
 
 
     def _validate_team_chain(self) -> List[str]:
-        """新鏈：重建驗證多空辯論、交易決策、現金姿態，以及 policy 綁定的等級與姿態。"""
+        """重建驗證多空辯論、交易決策、現金姿態，以及 policy 綁定的等級與姿態；舊版 1.0 鏈已不再支援。"""
+        if self.debate.get("schema_version") != STANCE_SCHEMA_VERSION:
+            return ["ResearchDebateBundle.schema_version 必須為 %s；舊版 1.0 決策鏈已移除" % STANCE_SCHEMA_VERSION]
         team = self.team_inputs
         if team is None:
-            return ["分析團隊決策鏈需要 team_inputs（四份分析報告、事件研究與現金姿態）才能重建驗證"]
+            return ["決策鏈需要 team_inputs（四份分析報告、事件研究與現金姿態）才能重建驗證"]
         errors: List[str] = []
         unknown = sorted(set(team) - TEAM_INPUT_FIELDS)
         if unknown or set(team) != TEAM_INPUT_FIELDS:
@@ -196,7 +180,7 @@ class DecisionFinalizer:
         validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors)
         sizing = self.policy.get("position_sizing")
         if not isinstance(sizing, Mapping):
-            return errors + ["新鏈 DecisionPolicy 必須啟用 position_sizing"]
+            return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {
             "cash_stance": stance.get("level") if isinstance(stance, Mapping) else None,
             "sizing_plan_id": self.intent.get("decision_id"),

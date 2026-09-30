@@ -629,7 +629,7 @@ class DailyDecisionPipeline:
 
         task = AgentTask(
             "cash_stance",
-            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前分級」一節的現金姿態說明），再讀市場層級摘要 %s。"
+            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節），再讀市場層級摘要 %s。"
             "依 regime、分析師看法分布、交易決策、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive。"
             "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
             "evidence_ids 從 citable_evidence_ids 或事件研究的 evidence_ids 中選取。%s"
