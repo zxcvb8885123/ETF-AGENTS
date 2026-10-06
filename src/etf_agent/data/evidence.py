@@ -19,7 +19,7 @@ def source_authority(source: str) -> str:
         return "tpex"
     if normalized.startswith("TAIFEX"):
         return "taifex"
-    if normalized.startswith("YAHOO"):
+    if normalized.startswith(("YAHOO", "FINMIND")):
         return "vendor"
     return "other"
 

@@ -9,12 +9,13 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from etf_agent.core import parse_aware_time
+from etf_agent.core import parse_aware_time, parse_decimal
 from .database import MarketDataDatabase
 from .universe import Instrument, normalize_symbol
 
 
 TAIPEI_TIMEZONE = timezone(timedelta(hours=8))
+FINANCIAL_MAPPING_VERSION = "twse-tpex-openapi-2026-10-v2"
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ class MonthlyRevenue:
 class FinancialStatementFact:
     """業別映射後的單一財報事實。
 
-    ``source_field`` 永遠指向官方回應欄位；沒有官方欄位時保留
+    ``source_field`` 永遠指向來源回應欄位或可重算的來源欄位合計；沒有來源欄位時保留
     ``not_reported``，而不是將其他業別的相近欄位硬轉換過來。
     """
 
@@ -126,7 +127,7 @@ class OfficialCorporateProvider:
         statement_type: Optional[str] = None,
         industry: Optional[str] = None,
         unit_multiplier: int = 1000,
-        mapping_version: str = "twse-tpex-openapi-2026-09-v1",
+        mapping_version: str = FINANCIAL_MAPPING_VERSION,
         timeout_seconds: int = 30,
         retries: int = 3,
         user_agent: str = "ETF-Agent-AICUP-2026/0.1",
@@ -404,7 +405,7 @@ class OfficialCorporateProviderFactory:
                 ),
                 unit_multiplier=int(item.get("unit_multiplier", 1000)),
                 mapping_version=str(
-                    item.get("mapping_version", "twse-tpex-openapi-2026-09-v1")
+                    item.get("mapping_version", FINANCIAL_MAPPING_VERSION)
                 ),
                 timeout_seconds=timeout_seconds,
                 retries=int(config.get("retries", 3)),
@@ -850,6 +851,27 @@ _INDUSTRY_FINANCIAL_METRICS = {
     ),
 }
 
+# 金融業原始欄位另存，不將「淨收益」改稱一般業「營業收入」。
+_FINANCIAL_INDUSTRIES = {"fh", "basi", "bd", "ins"}
+for _financial_industry in _FINANCIAL_INDUSTRIES:
+    _INDUSTRY_FINANCIAL_METRICS[("income_statement", _financial_industry)] = (
+        ("net_revenue", ("淨收益",)),
+    )
+
+
+def _financial_field(row, fields):
+    """同義欄位同時存在時必須等值；不以欄位順序掩蓋來源衝突。"""
+    present = [(field, row[field]) for field in fields
+               if _text(row.get(field)) not in {"", "-", "--", "N/A", "null", "None"}]
+    if not present:
+        return None, None
+    values = [parse_decimal(_text(value).replace(",", ""), field,
+                            parse_message="%(field)s 無法解析財報數值：%(value)s")
+              for field, value in present]
+    if any(value != values[0] for value in values[1:]):
+        raise ValueError("財報同義欄位金額衝突：%s" % "、".join(field for field, _ in present))
+    return present[0][0], values[0]
+
 
 def _financial_facts(
     row: Mapping[str, object],
@@ -871,7 +893,9 @@ def _financial_facts(
 
     facts: List[FinancialStatementFact] = []
     for metric_key, source_fields in definitions:
-        source_field, raw_value = _first_nonempty_field(row, source_fields)
+        if statement_type == "income_statement" and industry in _FINANCIAL_INDUSTRIES and metric_key == "net_income":
+            source_fields = ("本期稅後淨利（淨損）", "本期淨利（淨損）")
+        source_field, raw_value = _financial_field(row, source_fields)
         if source_field is None:
             facts.append(
                 FinancialStatementFact(
@@ -888,7 +912,7 @@ def _financial_facts(
             FinancialStatementFact(
                 metric_key=metric_key,
                 source_field=source_field,
-                value=_optional_decimal(raw_value),
+                value=raw_value,
                 value_status="provided",
                 currency="TWD",
                 unit_multiplier=(1 if metric_key == "basic_eps" else unit_multiplier),
