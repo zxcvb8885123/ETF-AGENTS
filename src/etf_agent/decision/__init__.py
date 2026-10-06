@@ -12,6 +12,7 @@ from .contracts import (
 )
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .momentum import MomentumEngine, MomentumResultValidator
+from .trend_history import TechnicalTrendHistoryTools, TechnicalTrendHistoryValidator
 from .analysts import (
     ANALYSTS,
     AnalystReportValidator,
@@ -19,6 +20,7 @@ from .analysts import (
     compute_fundamental_metrics,
     high_materiality_events,
     seal_report,
+    seal_event_market_report,
     sentiment_unavailable_report,
     sentiment_report,
 )
@@ -75,6 +77,8 @@ __all__ = [
     "DEFAULT_LOOKBACK_BARS",
     "DecisionInputBuilder",
     "MomentumEngine",
+    "TechnicalTrendHistoryTools",
+    "TechnicalTrendHistoryValidator",
     "MomentumResultValidator",
     "ANALYSTS",
     "AnalystReportValidator",
@@ -82,6 +86,7 @@ __all__ = [
     "compute_fundamental_metrics",
     "high_materiality_events",
     "seal_report",
+    "seal_event_market_report",
     "sentiment_unavailable_report",
     "sentiment_report",
     "STANCE_ROLES",

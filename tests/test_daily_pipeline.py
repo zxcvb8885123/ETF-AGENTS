@@ -52,7 +52,7 @@ FUNDAMENTAL = {"items": [
     for symbol in ("2317.TW", "2330.TW")
 ]}
 EVENT = {"items": [
-    {"symbol": symbol, "outlook": "unknown", "findings": [], "data_gaps": ["NO_MATERIAL_EVENT_IN_WINDOW"], "events": []}
+    {"symbol": symbol, "outlook": "unknown", "event_outlook": "unknown", "findings": [], "data_gaps": ["NO_MATERIAL_EVENT_IN_WINDOW"], "events": []}
     for symbol in ("2317.TW", "2330.TW")
 ]}
 BULL = {"items": [
@@ -155,6 +155,10 @@ class DailyPipelineTests(unittest.TestCase):
             run_dir = DecisionRepository(world.repository).verify("decision-fixture")
             team = json.loads((run_dir / "team_inputs.json").read_text(encoding="utf-8"))
             self.assertEqual(team["cash_stance"]["level"], "neutral")
+            event_report = json.loads((world.run_dir / "analyst_event.json").read_text(encoding="utf-8"))
+            self.assertEqual(event_report["schema_version"], "2.2")
+            self.assertEqual(event_report["market_sentiment"]["outlook"], "unknown")
+            self.assertTrue(all("sentiment" not in row for row in event_report["items"]))
             self.assertEqual(json.loads((run_dir / "debate.json").read_text(encoding="utf-8"))["schema_version"], "2.0")
             research = json.loads(result.research_result_path.read_text(encoding="utf-8"))
             self.assertEqual((research["status"], research["items"]), ("completed", []))

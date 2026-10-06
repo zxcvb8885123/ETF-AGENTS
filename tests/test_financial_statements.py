@@ -128,6 +128,47 @@ class FinancialStatementTests(unittest.TestCase):
         self.assertNotIn("revenue", facts)
         self.assertEqual(str(facts["net_income"].value), "150")
 
+    def test_financial_after_tax_alias_and_net_revenue_preserve_source_and_units(self):
+        row = {**income_row(code="2881"), "本期淨利（淨損）": "",
+               "本期稅後淨利（淨損）": "97,780,594.00", "淨收益": "5446990.00"}
+        for industry in ("fh", "basi", "bd", "ins"):
+            with self.subTest(industry=industry):
+                provider = OfficialCorporateProvider("TWSE_TEST", "fixture://income", "TWSE",
+                                                     "financial_statement", "income_statement", industry)
+                records, warnings, _ = provider.parse(json.dumps([row]), "2026-10-03T06:00:00+00:00")
+                self.assertEqual(warnings, [])
+                facts = {fact.metric_key: fact for fact in records[0].financial_statement.facts}
+                self.assertEqual(facts["net_income"].source_field, "本期稅後淨利（淨損）")
+                self.assertEqual(str(facts["net_income"].value), "97780594.00")
+                self.assertEqual(facts["net_income"].unit_multiplier, 1000)
+                self.assertEqual(facts["net_revenue"].source_field, "淨收益")
+                self.assertNotIn("revenue", facts)
+                self.assertNotIn("operating_profit", facts)
+                self.assertEqual(records[0].financial_statement.mapping_version, "twse-tpex-openapi-2026-10-v2")
+
+    def test_alias_conflict_and_nonfinite_are_rejected_but_equal_aliases_are_accepted(self):
+        provider = OfficialCorporateProvider("TWSE_TEST", "fixture://income", "TWSE",
+                                             "financial_statement", "income_statement", "fh")
+        for value in ("151", "NaN", "Infinity"):
+            records, warnings, _ = provider.parse(json.dumps([{**income_row(), "本期稅後淨利（淨損）": value}]),
+                                                 "2026-10-03T06:00:00+00:00")
+            self.assertEqual(records, [])
+            self.assertTrue(warnings)
+        records, warnings, _ = provider.parse(json.dumps([{**income_row(), "本期稅後淨利（淨損）": "150.00"}]),
+                                             "2026-10-03T06:00:00+00:00")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(warnings, [])
+
+    def test_continuing_operations_or_parent_profit_is_not_total_net_income(self):
+        provider = OfficialCorporateProvider("TWSE_TEST", "fixture://income", "TWSE",
+                                             "financial_statement", "income_statement", "fh")
+        row = {**income_row(), "本期淨利（淨損）": "",
+               "繼續營業單位本期淨利（淨損）": "150", "淨利（淨損）歸屬於母公司業主": "140"}
+        records, warnings, _ = provider.parse(json.dumps([row]), "2026-10-03T06:00:00+00:00")
+        self.assertEqual(warnings, [])
+        fact = next(f for f in records[0].financial_statement.facts if f.metric_key == "net_income")
+        self.assertEqual(fact.value_status, "not_reported")
+
     def test_tpex_alternate_keys_and_balance_sheet_are_preserved(self):
         provider = FixtureFinancialProvider(
             source="TPEX_MOPS_BALANCE_CI",
@@ -161,7 +202,7 @@ class FinancialStatementTests(unittest.TestCase):
         )
         self.assertEqual(records, [])
         self.assertEqual(len(warnings), 1)
-        self.assertIn("有限值", warnings[0])
+        self.assertIn("有限", warnings[0])
 
     def test_empty_industry_placeholder_is_not_treated_as_a_company_row(self):
         provider = FixtureFinancialProvider(

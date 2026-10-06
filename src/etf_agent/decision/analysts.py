@@ -8,10 +8,15 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+import json
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnapshotTools
+from etf_agent.core import parse_decimal, decimal_string, parse_aware_time
 from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIRED_STATEMENT_TYPES
+from .trend_history import TechnicalTrendHistoryTools
+from .fundamental_language import chinese_gap_explanations
+from .event_financial_context import event_financial_context
 
 from .contracts import (
     validate_forbidden_keys,
@@ -25,7 +30,10 @@ from .contracts import (
 
 
 ANALYST_SCHEMA_VERSION = "2.0"
-ANALYSTS = ("technical", "fundamental", "event", "sentiment")
+ANALYSTS = ("technical", "fundamental", "event")
+LEGACY_ANALYSTS = (*ANALYSTS, "sentiment")
+EVENT_SENTIMENT_VERSION = "2.1"
+EVENT_MARKET_VERSION = "2.2"
 LLM_ANALYSTS = ("technical", "fundamental", "event")
 OUTLOOKS = ("positive", "negative", "neutral", "unknown")
 MATERIALITY = ("high", "medium", "low", "unknown")
@@ -59,6 +67,12 @@ def _documents(bundle: Mapping[str, object], document_type: str) -> Dict[str, Li
     result: Dict[str, List[Mapping[str, object]]] = {}
     for document in bundle["snapshot"].get("documents", []):
         if isinstance(document, Mapping) and document.get("document_type") == document_type and document.get("symbol"):
+            if document_type == "material_event":
+                cutoff = parse_aware_time(bundle["decision_cutoff"], "decision_cutoff", error=DecisionToolError)
+                available = parse_aware_time(document.get("available_at"), "事件資料可得時間", error=DecisionToolError)
+                published = parse_aware_time(document.get("published_at"), "事件發布時間", error=DecisionToolError)
+                if available > cutoff or published > available:
+                    raise DecisionToolError("事件時間超過截止時間或發布時間晚於可得時間")
             result.setdefault(str(document["symbol"]).upper(), []).append(document)
     return result
 
@@ -75,11 +89,27 @@ def report_envelope(bundle: Mapping[str, object], analyst: str, report_id: str) 
     }
 
 
+def analyst_report_names(reports: Mapping[str, object]) -> Sequence[str]:
+    """新鏈三份合併報告；保留舊四份封存輸入的原始重建路徑。"""
+    if any(not isinstance(report, Mapping) for report in reports.values()):
+        raise DecisionToolError("分析報告必須是物件")
+    if set(reports) == set(LEGACY_ANALYSTS):
+        if reports["event"].get("schema_version") != ANALYST_SCHEMA_VERSION:
+            raise DecisionToolError("舊四份報告不能混用新版合併事件報告")
+        return LEGACY_ANALYSTS
+    if set(reports) == set(ANALYSTS):
+        if reports["event"].get("schema_version") not in {EVENT_SENTIMENT_VERSION, EVENT_MARKET_VERSION}:
+            raise DecisionToolError("三份報告必須包含新版事件與市場情緒報告")
+        return ANALYSTS
+    raise DecisionToolError("分析團隊需要技術、基本面、事件與市場情緒三份報告")
+
+
 def build_analyst_brief(
     bundle: Mapping[str, object],
     momentum: Mapping[str, object],
     analyst: str,
     fundamental_metrics: Optional[Mapping[str, object]] = None,
+    *, event_market_scope: bool = False,
 ) -> Dict[str, object]:
     """只重排共同輸入中已存在的事實與程式計算結果，供分析師閱讀。"""
     if analyst not in LLM_ANALYSTS:
@@ -96,6 +126,9 @@ def build_analyst_brief(
     }
     revenues = _documents(bundle, "monthly_revenue")
     events = _documents(bundle, "material_event")
+    sentiment_by_symbol = {item["symbol"]: item for item in sentiment_report(bundle)["items"]} if analyst == "event" else {}
+    financial_by_symbol = event_financial_context(bundle) if analyst == "event" else {}
+    trend_tools = TechnicalTrendHistoryTools(bundle) if analyst == "technical" else None
     symbols: List[Dict[str, object]] = []
     for symbol in _symbols(bundle):
         entry: Dict[str, object] = {"symbol": symbol}
@@ -107,6 +140,7 @@ def build_analyst_brief(
                 **{field: _short_number(item[field]) if not isinstance(item.get(field), bool) else item[field]
                    for field in _MOMENTUM_FIELDS if field in item},
             }
+            entry["trend_history"] = trend_tools.for_symbol(symbol)
         elif analyst == "fundamental":
             metrics = metrics_by_symbol.get(symbol, {})
             entry["metrics"] = [
@@ -128,7 +162,52 @@ def build_analyst_brief(
                 for metric in metrics.get("metrics", [])
                 if metric.get("status") != "available"
             ]
+            entry["data_gap_explanations"] = chinese_gap_explanations(
+                metrics.get("metrics", []), bundle["snapshot"].get("documents", []), symbol
+            )
             entry["financial_status"] = metrics.get("status", "unavailable")
+            entry["financial_facts"] = []
+            for document in _documents(bundle, "financial_statement").get(symbol, []):
+                statement = document.get("financial_statement", {})
+                if (statement.get("industry") not in {"fh", "basi", "bd", "ins"}
+                        or statement.get("statement_type") != "income_statement"
+                        or "%sQ%s" % (statement.get("fiscal_year"), statement.get("fiscal_quarter")) != metrics.get("period")):
+                    continue
+                for key, label in (("net_income", "稅後淨利"), ("net_revenue", "淨收益")):
+                    fact = statement.get("facts", {}).get(key, {})
+                    if fact.get("value_status") != "provided":
+                        continue
+                    value = parse_decimal(fact.get("value"), key, error=DecisionToolError)
+                    entry["financial_facts"].append({
+                        "fact_key": key, "name": label, "value": decimal_string(value),
+                        "currency": fact.get("currency"), "unit_multiplier": fact.get("unit_multiplier"),
+                        "source_field": fact.get("source_field"), "fiscal_year": statement.get("fiscal_year"),
+                        "fiscal_quarter": statement.get("fiscal_quarter"), "period_kind": statement.get("period_kind"),
+                        "period_start": statement.get("period_start"), "period_end": statement.get("period_end"),
+                        "evidence_ids": [document.get("source_evidence_id")],
+                    })
+            entry["source_limitations"] = sorted({
+                "去年同期財報由資料商補抓。當期金額已核對官方。去年報表範圍及重編資訊尚未確認。"
+                for document in bundle["snapshot"].get("documents", [])
+                if document.get("symbol") == symbol
+                and document.get("source") == "FINMIND_VERIFIED_PRIOR"
+            })
+            entry["company_profiles"] = []
+            for document in _documents(bundle, "company_profile").get(symbol, []):
+                if document.get("source") != "TWSE_COMPANY_PROFILE":
+                    continue
+                try:
+                    profile = json.loads(str(document.get("body", "")))
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(profile, Mapping) or profile.get("company_code") != symbol.split(".")[0]:
+                    continue
+                if not isinstance(profile.get("industry_code"), str) or not profile["industry_code"].strip():
+                    continue
+                entry["company_profiles"].append({"industry_code": profile["industry_code"],
+                                                 "evidence_id": document.get("source_evidence_id"),
+                                                 "available_at": document.get("available_at"),
+                                                 "comparison_standard": None})
             entry["monthly_revenue"] = [
                 {
                     "evidence_id": document.get("source_evidence_id"),
@@ -139,22 +218,36 @@ def build_analyst_brief(
                 if isinstance(document.get("monthly_revenue"), Mapping)
             ]
         else:
+            entry["financial_context"] = financial_by_symbol.get(symbol, [])
+            if not event_market_scope:
+                entry["sentiment"] = {key: value for key, value in sentiment_by_symbol[symbol].items() if key != "symbol"}
             entry["events"] = [
                 {
                     "evidence_id": document.get("source_evidence_id"),
                     "title": document.get("title"),
                     "published_at": document.get("published_at"),
+                    "available_at": document.get("available_at"),
                     "body": str(document.get("body") or "")[:_EVENT_BODY_LIMIT],
+                    "body_truncated": len(str(document.get("body") or "")) > _EVENT_BODY_LIMIT,
                 }
                 for document in sorted(events.get(symbol, []), key=lambda doc: str(doc.get("published_at")))
             ]
         symbols.append(entry)
-    return {
+    brief = {
         "analyst": analyst,
-        "report_envelope": report_envelope(bundle, analyst, "analyst-%s:%s" % (analyst, str(bundle["bundle_sha256"])[:16])),
+        "report_envelope": {**report_envelope(bundle, analyst, "analyst-%s:%s" % (analyst, str(bundle["bundle_sha256"])[:16])),
+                            "schema_version": (EVENT_MARKET_VERSION if event_market_scope else EVENT_SENTIMENT_VERSION) if analyst == "event" else ANALYST_SCHEMA_VERSION},
         "regime_assessment": momentum.get("regime_assessment") if analyst == "technical" else None,
         "symbols": symbols,
     }
+    if analyst == "event" and event_market_scope:
+        from .market_scope import market_sentiment_channel
+        brief["market_sentiment"] = market_sentiment_channel(bundle)
+        if "market_news_input" in bundle:
+            from etf_agent.perception.market_news import prepare
+            pack = bundle["market_news_input"]["bundle"]
+            brief["market_news"] = prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"])
+    return brief
 
 
 def seal_report(envelope: Mapping[str, object], items: Sequence[Mapping[str, object]], status: str = "completed") -> Dict[str, object]:
@@ -213,6 +306,32 @@ def sentiment_report(bundle: Mapping[str, object]) -> Dict[str, object]:
     return seal_report(envelope, items, status="completed" if any(x["findings"] for x in items) else "unavailable")
 
 
+def seal_event_sentiment_report(bundle: Mapping[str, object], envelope: Mapping[str, object], items: Sequence[Mapping[str, object]]) -> Dict[str, object]:
+    """情緒通道由來源重建加入，LLM 不得覆寫情緒方向或數值。"""
+    sentiment = {row["symbol"]: row for row in sentiment_report(bundle)["items"]}
+    merged = []
+    for item in items:
+        row = dict(item)
+        if "sentiment" in row:
+            raise DecisionToolError("模型不得輸出或覆寫 sentiment 通道")
+        source = sentiment.get(str(row.get("symbol", "")).upper(), {})
+        row["sentiment"] = {key: value for key, value in source.items() if key != "symbol"}
+        merged.append(row)
+    return seal_report({**envelope, "schema_version": EVENT_SENTIMENT_VERSION}, merged)
+
+
+def seal_event_market_report(bundle, envelope, items):
+    """公司事件逐檔交付，全市場情緒只附入一次；不沿用個股情緒。"""
+    from .market_scope import market_sentiment_channel
+    rows = [dict(item) for item in items]
+    if any("sentiment" in row or "market_sentiment" in row for row in rows):
+        raise DecisionToolError("公司項目不得輸出個股或全市場情緒通道")
+    output = seal_report({**envelope, "schema_version": EVENT_MARKET_VERSION}, rows)
+    output["market_sentiment"] = market_sentiment_channel(bundle)
+    output["content_sha256"] = artifact_content_sha256(output)
+    return output
+
+
 class AnalystReportValidator:
     """檢查分析報告覆蓋全部交易池、引用歸屬正確且不含數字欄位。"""
 
@@ -228,7 +347,7 @@ class AnalystReportValidator:
         self, bundle: Mapping[str, object], analyst: str, symbols: Optional[Sequence[str]] = None
     ):
         """``symbols`` 指定時只驗證該批股票的覆蓋（逐批執行時用）；預設為全交易池。"""
-        if analyst not in ANALYSTS:
+        if analyst not in LEGACY_ANALYSTS:
             raise DecisionToolError("未知分析師：%s" % analyst)
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
@@ -238,6 +357,10 @@ class AnalystReportValidator:
             symbol: {str(document.get("source_evidence_id")) for document in documents}
             for symbol, documents in _documents(bundle, "material_event").items()
         }
+        self.sentiment_by_symbol = {
+            row["symbol"]: row for row in sentiment_report(bundle)["items"]
+        } if analyst == "event" else {}
+        self.event_financial_by_symbol = event_financial_context(bundle) if analyst == "event" else {}
 
     def validate(self, report: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
@@ -245,8 +368,17 @@ class AnalystReportValidator:
             if dict(report) != sentiment_report(self.bundle):
                 errors.append("情緒分析報告與已驗證來源重建結果不一致")
         validate_forbidden_keys(report, "AnalystReport", errors)
-        reject_unknown_fields(report, self.ENVELOPE, "AnalystReport", errors)
+        market_scoped = self.analyst == "event" and report.get("schema_version") == EVENT_MARKET_VERSION
+        reject_unknown_fields(report, self.ENVELOPE | ({"market_sentiment"} if market_scoped else set()), "AnalystReport", errors)
         expected = report_envelope(self.bundle, self.analyst, str(report.get("report_id")))
+        merged = self.analyst == "event" and report.get("schema_version") == EVENT_SENTIMENT_VERSION
+        if merged:
+            expected["schema_version"] = EVENT_SENTIMENT_VERSION
+        if market_scoped:
+            from .market_scope import market_sentiment_channel
+            expected["schema_version"] = EVENT_MARKET_VERSION
+            if report.get("market_sentiment") != market_sentiment_channel(self.bundle):
+                errors.append("全市場情緒與同截止時間的來源重建不一致")
         for field, value in expected.items():
             if report.get(field) != value:
                 errors.append("AnalystReport.%s 與共同輸入不一致" % field)
@@ -272,10 +404,18 @@ class AnalystReportValidator:
                 errors.append("%s 必須是物件" % prefix)
                 continue
             allowed = self.ITEM | ({"events"} if self.analyst == "event" else set())
+            if merged:
+                allowed |= {"event_outlook", "sentiment"}
+            if market_scoped:
+                allowed |= {"event_outlook"}
             reject_unknown_fields(item, allowed, prefix, errors)
             symbol = str(item.get("symbol", "")).upper()
             seen.append(symbol)
             self._validate_item(item, symbol, prefix, finding_ids, errors)
+            if merged:
+                self._validate_merged(item, symbol, prefix, errors)
+            if market_scoped:
+                self._validate_company_event(item, symbol, prefix, errors)
         if len(seen) != len(set(seen)):
             errors.append("AnalystReport.items 股票不得重複")
         missing = sorted(self.universe - set(seen))
@@ -285,6 +425,54 @@ class AnalystReportValidator:
         if extra:
             errors.append("AnalystReport 含本次範圍外股票：%s" % ", ".join(extra))
         return errors
+
+    def _validate_company_event(self, item, symbol, prefix, errors):
+        event_ids = self.events_by_symbol.get(symbol, set())
+        financial_ids = {row["evidence_id"] for row in self.event_financial_by_symbol.get(symbol, [])}
+        if item.get("event_outlook") != item.get("outlook"):
+            errors.append("%s 公司結果必須與事件看法一致，不能混入市場情緒" % prefix)
+        if not event_ids and item.get("outlook") != "unknown":
+            errors.append("%s 無公司事件時不得形成事件方向" % prefix)
+        cited = set()
+        for finding in item.get("findings", []):
+            if isinstance(finding, Mapping) and isinstance(finding.get("evidence_ids"), list):
+                ids = {eid for eid in finding["evidence_ids"] if isinstance(eid, str)}
+                cited |= ids
+                if ids - event_ids - financial_ids:
+                    errors.append("%s 公司事件只能引用本公司事件及同快照財報" % prefix)
+        if item.get("outlook") in {"positive", "negative", "neutral"} and not cited.intersection(event_ids):
+            errors.append("%s 公司事件結果缺少事件引用" % prefix)
+
+    def _validate_merged(self, item: Mapping[str, object], symbol: str, prefix: str, errors: List[str]) -> None:
+        source = self.sentiment_by_symbol.get(symbol, {})
+        expected = {key: value for key, value in source.items() if key != "symbol"}
+        if item.get("sentiment") != expected:
+            errors.append("%s 情緒通道與已驗證來源重建不一致" % prefix)
+        event_outlook = item.get("event_outlook")
+        if event_outlook not in OUTLOOKS:
+            errors.append("%s.event_outlook 必須是有效看法" % prefix)
+        event_ids = self.events_by_symbol.get(symbol, set())
+        if not event_ids and event_outlook != "unknown":
+            errors.append("%s 無事件資料時事件看法必須為 unknown" % prefix)
+        sentiment_ids = {eid for finding in source.get("findings", []) for eid in finding["evidence_ids"]}
+        financial_ids = {row["evidence_id"] for row in self.event_financial_by_symbol.get(symbol, [])}
+        sentiment_finding_ids = {finding["finding_id"] for finding in source.get("findings", [])}
+        findings = item.get("findings", [])
+        if not isinstance(findings, list):
+            return
+        cited = set()
+        for finding in findings:
+            if isinstance(finding, Mapping) and finding.get("finding_id") in sentiment_finding_ids:
+                errors.append("%s 發現識別字不得與情緒通道重複" % prefix)
+            if isinstance(finding, Mapping) and isinstance(finding.get("evidence_ids"), list):
+                ids = {eid for eid in finding["evidence_ids"] if isinstance(eid, str)}
+                cited |= ids
+                if ids - event_ids - sentiment_ids - financial_ids:
+                    errors.append("%s 發現只能引用本股票事件、同快照財報或已驗證情緒證據" % prefix)
+        if event_outlook in {"positive", "negative", "neutral"} and not cited.intersection(event_ids):
+            errors.append("%s 事件看法缺少事件引用" % prefix)
+        if event_outlook == "unknown" and source.get("outlook", "unknown") == "unknown" and item.get("outlook") != "unknown":
+            errors.append("%s 事件與情緒皆無方向時，綜合看法必須為 unknown" % prefix)
 
     def _validate_item(
         self, item: Mapping[str, object], symbol: str, prefix: str, finding_ids: Set[str], errors: List[str]

@@ -37,8 +37,10 @@ class DecisionInputBuilder:
         trading_status: Optional[Mapping[str, object]] = None,
         account_snapshot: Optional[Mapping[str, object]] = None,
         perception_inputs: Sequence[Mapping[str, object]] = (),
+        market_news_input: Optional[Mapping[str, object]] = None,
     ):
         self.perception_inputs = [dict(item) for item in perception_inputs]
+        self.market_news_input = dict(market_news_input) if market_news_input is not None else None
         self.snapshot = dict(snapshot)
         self.rules = dict(rules)
         self.history_rows = list(history_rows)
@@ -69,6 +71,8 @@ class DecisionInputBuilder:
         }
         if self.account_snapshot is not None:
             bundle["account_snapshot"] = self.account_snapshot
+        if self.market_news_input is not None:
+            bundle["market_news_input"] = self.market_news_input
         if self.trading_status is not None:
             bundle["trading_status_bundle"] = self.trading_status.get("bundle")
             bundle["tradability_assessment"] = self.trading_status.get("assessment")

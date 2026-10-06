@@ -151,7 +151,7 @@ class AnalystTeamTests(unittest.TestCase):
             {
                 "technical_b0": [{"items": broken}, {"items": technical_items()}],
                 "fundamental_b0": [{"items": fundamental}],
-                "event_b0": [{"items": event_items()}],
+                "event_b0": [{"items": [dict(row, event_outlook=row["outlook"]) for row in event_items()]}],
             }
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -159,7 +159,7 @@ class AnalystTeamTests(unittest.TestCase):
             reports = pipeline.run_analyst_team(bundle, momentum)
             saved = json.loads((Path(directory) / "analyst_event.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(set(reports), {"technical", "fundamental", "event", "sentiment"})
+        self.assertEqual(set(reports), {"technical", "fundamental", "event"})
         self.assertEqual([name for name, _ in runner.prompts], ["technical_b0", "technical_b0", "fundamental_b0", "event_b0"])
         self.assertIn("未覆蓋", runner.prompts[1][1])
         self.assertEqual(saved["items"][1]["events"][0]["materiality"], "high")
