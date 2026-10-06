@@ -100,7 +100,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 - **交易狀態與交易日曆**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射。官方開休市日曆（`TradingCalendar`）統一用於每日是否執行、目標交易時段與帳本 T+2 交割，區分休市日與「僅辦理結算交割」日；日曆缺漏或未涵蓋年度時停止。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
 - **研究層**：事件研究 Agent（Fact／Bull／Bear／Adjudicator、雙重 validator）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
 - **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實情緒／共識資料商尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
-- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件／情緒）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（Buy／Sell／Trade Adjudicator，P0～P6）已於 2026-09-30 移除，不再支援重建。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
+- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件與市場情緒，共三位）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（Buy／Sell／Trade Adjudicator，P0～P6）已於 2026-09-30 移除，不再支援重建。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
 - **交付**：D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（匯出前核對 Decision run 的帳戶快照與帳戶目前 latest 的 prepare-day 封存一致）、唯讀績效儀表板。DailyReport／FailureReport 與報告工作流已於 2026-09-29 移除（比賽只需 D-Plan），舊封存仍留在 `artifacts/report_runs/` 供稽核。
 
@@ -217,6 +217,8 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 
 | 文件 | 內容 |
 | --- | --- |
+| [分析團隊 prompt 五輪比較](docs/analyst_prompt_evaluation.md) | 五輪比較及後續技術試跑分版保存；技術已接入整段歷史路徑，區分回檔與趨勢轉變；未證實交易績效優勢 |
+| [技術分析整段歷史輸入](docs/technical_trend_history.md) | 完整封存價格視窗、逐日MA20／MA60、來源與cutoff驗證；已接入正式技術brief builder |
 | [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **R1～R6 已完成**：分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent；§11 為 2026-09-30 架構調整提案（尚未實作） |
 | [M1 官方交易狀態接入](docs/trading_status_m1_plan.md) | 契約、Parser、Validator、SQLite、CLI 與 Guard |
 | [TS0 來源核准行動計畫](docs/source_audit/2026-09-25_ts0_approval_plan.md) | 政府開放 CSV 查證、確定性映射與 2026-09-28 核准紀錄 |
@@ -250,3 +252,34 @@ tests/                  單元測試與測試資料
 var/                    SQLite 資料庫（不納入 Git）
 artifacts/              每日輸出檔案（不納入 Git）
 ```
+## 基本面資料補抓更新（2026-10-03）
+
+基本面報告改用正面／中性／負面及短句。缺口以中文列出期間、報表與欄位；英文代碼保留在內部紀錄。無資料仍保留內部 unknown，對外必須另註「資料不足，暫不判斷」。
+
+缺指標時先查資料狀態。資料已取得但未接入、口徑未確認與來源抓取失敗分開說明；不得把分析摘要缺欄位寫成來源沒有資料。金融業稅後淨利欄位與淨收益原值已接入，別名衝突會拒絕；跨年比較及金融業專用比率仍未完整接入。
+
+互動研究的基本面缺口可交回 Data Agent，使用 `cli/fundamental_repair.py` 補抓 TWSE／FinMind 並另建快照。單季合計須通過官方當期金額核對；今天補抓資料不回填舊回測。公司產業代碼已接入摘要；Yahoo 已實抓，但尚未接入正式指標；每日管線尚未自動呼叫補抓。詳見 [基本面缺口補抓](docs/fundamental_data_repair.md)。
+
+### 事件與市場情緒合併（2026-10-03）
+
+最新第三位分析師使用 **2.2**：一個整體台股情緒結果，加上逐家公司事件結果，兩者不合成分數。每日批次與驗證已更新；目前全市場情緒 Provider 尚未接入，因此市場通道為無法判斷。可用 `cli/market_context_probe.py` 補抓公開大盤成交、指數與法人交易背景，但不將交易事實冒充情緒。舊 2.1 保留原始驗證。見[分工、試跑與資料缺口](docs/event_market_scope.md)。
+
+三位分析師的 prompt 已整理為自然中文：技術判斷「上升／盤整／下跌」，基本面與事件情緒判斷「正面／中性／負面」。主報告逐檔呈現一個結果與簡短理由；缺少資料另列「資料不足，無法判斷」，不當成中性。程式欄位與補抓、引用規則移至各 Skill 的 `references/data-rules.md`，執行前仍須讀取。本次為指令文字整理，未更改報告資料格式、驗證器或資料接入狀態。
+
+兩檔新聞候選已完成原頁核對與全量標題判讀測試，補抓版本存回資料庫；新增 `cli/news_sentiment.py` 可重跑驗證與封存。測試結果與正式情緒分開，來源未核准前仍不交給交易。見 [新聞準備與限制](docs/news_sentiment_preparation.md)。
+
+事件摘要已接入同一快照的財報背景（原值、單位、期間、引用），每日 pipeline 另唯讀盤點資料庫的現金流／新聞候選，避免把「已取得但尚未核對接入」誤寫成來源沒有資料。候選只提供取得狀態，不產生方向；超過歷史 cutoff 的候選不得回填。見 [事件資料接線](docs/event_data_availability.md)。
+
+每日團隊交付三份報告。`event-analyst` 已改為「事件與市場情緒分析師」，同一位 Agent 讀事件與已驗證情緒通道，輸出 AnalystReport(event) 2.1。情緒聚合由程式重建；無核准來源時明確標示無法判斷。`sentiment-analyst` 保留為資料標註與聚合流程，不再是另一個交付席位。high 事件仍交深入研究。舊四份報告只沿用原始封存重建路徑，不轉寫成新格式。見[合併契約與限制](docs/event_sentiment_merge.md)。
+
+### 全市場新聞接入（2026-10-05）
+
+已新增中央社與自由時報財經 RSS 收集、資料庫版本保存、完整標籤核對與第三位分析師的市場資料包接線。本次實際取得 60 則標題與前言，11 則屬整體市場，新聞診斷綜合看法為正面；來源比賽使用權未確認，正式情緒仍降級，不交給交易。RSS 不保證歷史期間所有新聞已補齊，也尚未新增每日自動抓取／標籤排程。詳見 [全市場新聞接入](docs/market_news_integration.md)。
+
+### 市場新聞歷史補抓（2026-10-05）
+
+已補入10/1～10/3的79篇原頁及10/4的13篇原頁，連同RSS共152個輸入項目、151則去重新聞，全量判讀並接入第三位分析師。新增可重複執行的日期補抓入口與1.1成對資料包；來源規範已查明允許非商業RSS使用，與原頁或比賽用途的實際使用權分開說明。補抓時間不回填到過去時鐘。詳見 [補抓結果與規範核對](docs/market_news_history.md)。
+
+### 市場新聞來源使用紀錄接入（2026-10-05）
+
+已補上來源使用核對及原始規範的追加式資料庫保存。市場新聞接入可透過 `integrate --database` 讀取截止時間前的核對版本；不把新聞存在視為核准。若僅剩來源使用範圍未確認，中文報告會直接說明這個原因。現有資料庫未查到三個新聞供應來源的比賽研究核准紀錄，正式結果仍拒絕使用未確認來源。詳見 [接入與目前限制](docs/market_news_integration.md)。

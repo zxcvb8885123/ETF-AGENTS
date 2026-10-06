@@ -1,4 +1,4 @@
 interface:
-  display_name: "市場情緒與分析師研究 Agent"
-  short_description: "研究台股情緒、分析師共識修正與事件預期差"
-  default_prompt: "使用 $sentiment-analyst 研究台股市場情緒與分析師共識，產生並驗證 MarketPerceptionResult。"
+  display_name: "市場情緒資料處理"
+  short_description: "標註並驗證核准情緒資料及分析師共識，供合併分析師使用"
+  default_prompt: "使用 $sentiment-analyst 標註與驗證市場情緒及分析師共識資料，提供事件與市場情緒分析師使用。"
