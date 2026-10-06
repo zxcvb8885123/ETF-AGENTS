@@ -42,11 +42,10 @@ from etf_agent.decision import (
     sector_exposure,
     seal_stance_packet,
     seal_trade_decision,
-    sentiment_report,
     trade_decision_envelope,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
-from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS
+from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS, seal_event_market_report
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
 from etf_agent.decision.stance import STANCE_ROLES, STRENGTHS
@@ -83,6 +82,7 @@ ANALYST_SCHEMA = _object(
 )
 _EVENT_ITEM = {
     **_ANALYST_ITEM,
+    "event_outlook": {"enum": list(OUTLOOKS)},
     "events": {
         "type": "array",
         "items": _object(
@@ -310,7 +310,7 @@ class DailyDecisionPipeline:
         self.save_artifact("momentum", momentum)
 
         self.log("[decision 3] 分析團隊：技術／基本面／事件（逐批），情緒無核准來源時 unavailable")
-        analysts = self.run_analyst_team(bundle, momentum)
+        analysts = self.run_analyst_team(bundle, momentum, database_path)
 
         events = high_materiality_events(analysts["event"])
         self.log("[decision 4] 重大事件研究：%d 則 high 事件" % len(events))
@@ -399,16 +399,26 @@ class DailyDecisionPipeline:
 
     # ------------------------------------------------------------------ analysts
     def run_analyst_team(
-        self, bundle: Mapping[str, object], momentum: Mapping[str, object]
+        self, bundle: Mapping[str, object], momentum: Mapping[str, object], database_path: Optional[Path] = None
     ) -> Dict[str, Dict[str, object]]:
-        """技術／基本面／事件分析師逐批執行並合併；情緒無核准來源時確定性 unavailable。"""
+        """三位分析師逐批執行；事件與市場情緒共用一位 Agent、一份報告。"""
         metrics = compute_fundamental_metrics(bundle)
         if metrics is not None:
             self.save_artifact("fundamental_metrics", metrics)
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         reports: Dict[str, Dict[str, object]] = {}
+        availability = {}
+        if database_path is not None:
+            from etf_agent.data.analyst_availability import analyst_availability
+            inventory = analyst_availability(database_path, [row["symbol"] for row in bundle["snapshot"]["latest_prices"]], str(bundle["decision_cutoff"]))
+            self.save_artifact("analyst_data_availability", inventory)
+            availability = {row["symbol"]: [{key: value for key, value in channel.items() if key != "candidate_references"}
+                                          for channel in row["channels"]] for row in inventory["symbols"]}
         for analyst in LLM_ANALYSTS:
-            brief = build_analyst_brief(bundle, momentum, analyst, metrics)
+            brief = build_analyst_brief(bundle, momentum, analyst, metrics, event_market_scope=analyst == "event")
+            if analyst == "event":
+                for row in brief["symbols"]:
+                    row["data_availability"] = availability.get(row["symbol"], [{"status": "本次未查資料庫候選狀態，不能宣稱來源沒有資料"}])
             outputs: List[List[Dict[str, object]]] = []
             for batch in batches:
                 members = set(batch["symbols"])
@@ -431,22 +441,19 @@ class DailyDecisionPipeline:
                 )
                 partial = self.agent_step(
                     task,
-                    lambda output: seal_report(brief["report_envelope"], output["items"]),
+                    lambda output: seal_event_market_report(bundle, brief["report_envelope"], output["items"])
+                    if analyst == "event" else seal_report(brief["report_envelope"], output["items"]),
                     validator.validate,
                 )
                 outputs.append(partial["items"])
-            report = seal_report(brief["report_envelope"], merge_batch_items(batches, outputs, analyst))
+            combined = merge_batch_items(batches, outputs, analyst)
+            report = (seal_event_market_report(bundle, brief["report_envelope"], combined)
+                      if analyst == "event" else seal_report(brief["report_envelope"], combined))
             errors = AnalystReportValidator(bundle, analyst).validate(report)
             if errors:
                 raise DailyPipelineError("%s 分析報告合併後驗證失敗：%s" % (analyst, "；".join(errors[:10])))
             reports[analyst] = report
             self.save_artifact("analyst_%s" % analyst, report)
-        sentiment = sentiment_report(bundle)
-        errors = AnalystReportValidator(bundle, "sentiment").validate(sentiment)
-        if errors:
-            raise DailyPipelineError("情緒與共識報告驗證失敗：" + "；".join(errors))
-        reports["sentiment"] = sentiment
-        self.save_artifact("analyst_sentiment", sentiment)
         return reports
 
     # ------------------------------------------------------------------ research team

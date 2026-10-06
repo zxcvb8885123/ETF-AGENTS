@@ -1,6 +1,6 @@
 """研究團隊：多頭／空頭研究員的隔離輸入、StancePacket 與 ResearchDebateBundle。
 
-兩位研究員讀取同一份共同輸入（DecisionInputBundle、MomentumResult、四份
+兩位研究員讀取同一份共同輸入（DecisionInputBundle、MomentumResult、三份（舊封存四份）
 AnalystReport 與重大事件 ResearchResult），彼此看不到對方；每位都必須對交易池
 每一檔表態。強度、論點與引用由 LLM 判斷，覆蓋、引用歸屬、ID 唯一與隔離由程式驗證。
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
-from .analysts import ANALYSTS, AnalystReportValidator
+from .analysts import analyst_report_names, AnalystReportValidator
 from .contracts import (
     validate_forbidden_keys,
     DecisionContext,
@@ -42,7 +42,7 @@ def shared_input_sha256(
         {
             "bundle_hash": bundle["bundle_sha256"],
             "momentum_result_id": momentum.get("result_id"),
-            "analyst_reports": {name: analyst_reports[name].get("content_sha256") for name in ANALYSTS},
+            "analyst_reports": {name: analyst_reports[name].get("content_sha256") for name in analyst_report_names(analyst_reports)},
             "research_result": canonical_sha256(research_result),
         }
     )
@@ -95,7 +95,7 @@ def build_stance_brief(
     }
     by_analyst = {
         name: {str(item["symbol"]).upper(): item for item in analyst_reports[name].get("items", [])}
-        for name in ANALYSTS
+        for name in analyst_report_names(analyst_reports)
     }
     research: Dict[str, List[Dict[str, object]]] = {}
     for item in research_result.get("items", []):
@@ -124,7 +124,7 @@ def build_stance_brief(
                         for key, value in by_analyst[name].get(symbol, {}).items()
                         if key != "symbol"
                     }
-                    for name in ANALYSTS
+                    for name in analyst_report_names(analyst_reports)
                 },
                 "event_research": research.get(symbol, []),
             }
@@ -160,8 +160,7 @@ class StancePacketValidator:
     ):
         if role not in STANCE_ROLES:
             raise DecisionToolError("role 必須是 bull 或 bear")
-        if set(analyst_reports) != set(ANALYSTS):
-            raise DecisionToolError("研究員需要四份分析報告：%s" % "、".join(ANALYSTS))
+        analyst_report_names(analyst_reports)
         for name, report in analyst_reports.items():
             errors = AnalystReportValidator(bundle, name).validate(report)
             if errors:
@@ -176,7 +175,7 @@ class StancePacketValidator:
             str(finding["finding_id"]): str(item["symbol"]).upper()
             for report in analyst_reports.values()
             for item in report.get("items", [])
-            for finding in item.get("findings", [])
+            for finding in [*item.get("findings", []), *item.get("sentiment", {}).get("findings", [])]
         }
 
     def validate(self, packet: Mapping[str, object]) -> List[str]:

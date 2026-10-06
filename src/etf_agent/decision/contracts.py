@@ -159,6 +159,7 @@ class DecisionInputValidator:
                 "price_series",
                 "research_results",
                 "perception_inputs",
+                "market_news_input",
                 "trading_status_bundle",
                 "tradability_assessment",
             },
@@ -194,6 +195,12 @@ class DecisionInputValidator:
         self._validate_price_series(universe, price_evidence, errors)
         self._validate_research_results(errors)
         self._validate_perception_inputs(errors)
+        if "market_news_input" in self.bundle:
+            from etf_agent.perception.market_news import validate_pair, MarketNewsError
+            try:
+                validate_pair(self.bundle["market_news_input"], self.bundle.get("snapshot_id"), self.bundle.get("decision_cutoff"))
+            except (MarketNewsError, TypeError, KeyError) as error:
+                errors.append("全市場新聞輸入：%s" % error)
         self._validate_global_evidence_ids(errors)
         return errors
 

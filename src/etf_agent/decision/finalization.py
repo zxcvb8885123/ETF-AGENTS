@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
-from .analysts import ANALYSTS
+from .analysts import analyst_report_names
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator
@@ -37,7 +37,7 @@ def build_team_inputs(
     """Decision run 的 team_inputs artifact：重建多空辯論與現金姿態所需的全部輸入。"""
     return {
         "schema_version": STANCE_SCHEMA_VERSION,
-        "analyst_reports": {name: dict(analyst_reports[name]) for name in ANALYSTS},
+        "analyst_reports": {name: dict(analyst_reports[name]) for name in analyst_report_names(analyst_reports)},
         "research_result": dict(research_result),
         "cash_stance": dict(cash_stance),
     }
@@ -154,7 +154,7 @@ class DecisionFinalizer:
             return ["ResearchDebateBundle.schema_version 必須為 %s；舊版 1.0 決策鏈已移除" % STANCE_SCHEMA_VERSION]
         team = self.team_inputs
         if team is None:
-            return ["決策鏈需要 team_inputs（四份分析報告、事件研究與現金姿態）才能重建驗證"]
+            return ["決策鏈需要 team_inputs（三份分析報告（舊封存四份）、事件研究與現金姿態）才能重建驗證"]
         errors: List[str] = []
         unknown = sorted(set(team) - TEAM_INPUT_FIELDS)
         if unknown or set(team) != TEAM_INPUT_FIELDS:
@@ -163,8 +163,12 @@ class DecisionFinalizer:
             errors.append("team_inputs.schema_version 必須為 %s" % STANCE_SCHEMA_VERSION)
         reports = team.get("analyst_reports")
         research = team.get("research_result")
-        if not isinstance(reports, Mapping) or set(reports) != set(ANALYSTS) or not isinstance(research, Mapping):
-            return errors + ["team_inputs 必須包含四份分析報告與 ResearchResult"]
+        if not isinstance(reports, Mapping) or not isinstance(research, Mapping):
+            return errors + ["team_inputs 必須包含三份分析報告（舊封存四份）與 ResearchResult"]
+        try:
+            analyst_report_names(reports)
+        except DecisionToolError as error:
+            return errors + [str(error)]
         errors.extend(
             "ResearchResult：%s" % error
             for error in ResearchResultValidator(self.bundle["snapshot"]).validate(research)

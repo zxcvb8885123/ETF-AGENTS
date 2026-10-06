@@ -310,7 +310,7 @@ class PortfolioDecisionApplication:
             "finalize", help="重建全部輸入並產生 approved、rejected 或 no_trade"
         )
         self._add_risk_inputs(finalize, include_intent=True, include_history=True)
-        finalize.add_argument("--team-inputs", type=Path, required=True, help="四份分析報告、事件研究與現金姿態")
+        finalize.add_argument("--team-inputs", type=Path, required=True, help="三份分析報告（舊封存四份）、事件研究與現金姿態")
         finalize.add_argument("--output", type=Path)
 
         validate_decision = commands.add_parser(
@@ -326,7 +326,7 @@ class PortfolioDecisionApplication:
         save.add_argument("--run-id", required=True)
         save.add_argument(
             "--team-inputs", type=Path, required=True,
-            help="四份分析報告、事件研究與現金姿態，供完整重建驗證",
+            help="三份分析報告（舊封存四份）、事件研究與現金姿態，供完整重建驗證",
         )
         save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "portfolio_decisions")
         return parser

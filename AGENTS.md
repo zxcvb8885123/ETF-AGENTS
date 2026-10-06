@@ -26,7 +26,9 @@
 
 ### Market Sentiment and Analyst Agent
 
-- 只讀版本化 `PerceptionDataBundle` 與選配的已驗證 `ResearchResult`。
+- 第三位分析師的當前對外報告（2.2）為「一次整體台股情緒＋逐家公司事件」，不是逐股情緒與事件的混合分數。公司維度 Provider、公司新聞或交易池行情不可冒充全市場情緒。沒有全市場正式 Provider 時市場通道維持 unavailable；大盤成交、指數與法人買賣補抓只作交易背景。舊 2.1 及四份 2.0 封存沿用原輸入驗證。
+
+- 只讀版本化 `PerceptionDataBundle` 與選配的已驗證 `ResearchResult`；第三位分析師的全市場新聞另讀同 Snapshot／cutoff 的 `market_news_input` 成對資料包，1.1 可包含核對過的歷史原頁。今日補抓的可得時間不得回填到過去。
 - 情緒標籤必須覆蓋查詢視窗內全部項目，不能選擇性取樣；聚合前依 canonical content ID 去重。
 - 只有 `license_status=approved` 的來源可以進入正式計算。
 - 分析師共識必須保留期間、單位、幣別、貢獻者數、分散度及發布／可得時間。
@@ -36,10 +38,10 @@
 ### 後續 Agent
 
 - 每日決策鏈依[決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md)採分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
-- 分析團隊（technical／fundamental／event 分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件必須另跑 Fact／Bull／Bear／Adjudicator。
+- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件必須另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
-- Decision run 必須另存 `team_inputs`（四份分析報告、事件研究、現金姿態）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
+- Decision run 必須另存 `team_inputs`（三份分析報告、事件研究、現金姿態；舊四份封存保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
 - 子 Agent 只輸出市場狀態解讀、多空論點、買賣意圖與信心分級、現金姿態或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
 - 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
