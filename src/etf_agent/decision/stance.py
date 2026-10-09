@@ -141,6 +141,8 @@ def build_stance_brief(
         brief.pop("research_status")
         for item in symbols:
             item.pop("event_research")
+    if "market_sentiment" in analyst_reports["event"]:
+        brief["market_sentiment"] = dict(analyst_reports["event"]["market_sentiment"])
     return brief
 
 
