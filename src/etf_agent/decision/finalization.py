@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
-from .analysts import analyst_report_names
+from .analysts import analyst_report_names, EVENT_MARKET_VERSION
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator
@@ -27,20 +27,24 @@ from .trader import SIZED, TradeDecisionValidator
 
 DECISION_ENGINE_VERSION = "1.0.0"
 TEAM_INPUT_FIELDS = {"schema_version", "analyst_reports", "research_result", "cash_stance"}
+INTEGRATED_TEAM_VERSION = "2.1"
+INTEGRATED_TEAM_FIELDS = {"schema_version", "analyst_reports", "cash_stance"}
 
 
 def build_team_inputs(
     analyst_reports: Mapping[str, Mapping[str, object]],
-    research_result: Mapping[str, object],
+    research_result: Optional[Mapping[str, object]],
     cash_stance: Mapping[str, object],
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論與現金姿態所需的全部輸入。"""
-    return {
-        "schema_version": STANCE_SCHEMA_VERSION,
+    team = {
+        "schema_version": INTEGRATED_TEAM_VERSION if research_result is None else STANCE_SCHEMA_VERSION,
         "analyst_reports": {name: dict(analyst_reports[name]) for name in analyst_report_names(analyst_reports)},
-        "research_result": dict(research_result),
         "cash_stance": dict(cash_stance),
     }
+    if research_result is not None:
+        team["research_result"] = dict(research_result)
+    return team
 
 
 class DecisionFinalizer:
@@ -154,25 +158,30 @@ class DecisionFinalizer:
             return ["ResearchDebateBundle.schema_version 必須為 %s；舊版 1.0 決策鏈已移除" % STANCE_SCHEMA_VERSION]
         team = self.team_inputs
         if team is None:
-            return ["決策鏈需要 team_inputs（三份分析報告（舊封存四份）、事件研究與現金姿態）才能重建驗證"]
+            return ["決策鏈需要 team_inputs（分析報告與現金姿態；舊封存另含事件研究）才能重建驗證"]
         errors: List[str] = []
-        unknown = sorted(set(team) - TEAM_INPUT_FIELDS)
-        if unknown or set(team) != TEAM_INPUT_FIELDS:
-            return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(TEAM_INPUT_FIELDS))]
-        if team.get("schema_version") != STANCE_SCHEMA_VERSION:
-            errors.append("team_inputs.schema_version 必須為 %s" % STANCE_SCHEMA_VERSION)
+        integrated = team.get("schema_version") == INTEGRATED_TEAM_VERSION
+        fields = INTEGRATED_TEAM_FIELDS if integrated else TEAM_INPUT_FIELDS
+        if set(team) != fields:
+            return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
+        if team.get("schema_version") not in (STANCE_SCHEMA_VERSION, INTEGRATED_TEAM_VERSION):
+            return ["team_inputs.schema_version 必須為 2.0（舊封存）或 2.1（事件併入分析團隊）"]
         reports = team.get("analyst_reports")
-        research = team.get("research_result")
+        research = {} if integrated else team.get("research_result")
         if not isinstance(reports, Mapping) or not isinstance(research, Mapping):
-            return errors + ["team_inputs 必須包含三份分析報告（舊封存四份）與 ResearchResult"]
+            return errors + ["team_inputs 的分析報告或舊版 ResearchResult 格式無效"]
         try:
             analyst_report_names(reports)
         except DecisionToolError as error:
             return errors + [str(error)]
-        errors.extend(
-            "ResearchResult：%s" % error
-            for error in ResearchResultValidator(self.bundle["snapshot"]).validate(research)
-        )
+        if integrated:
+            if set(reports) != {"technical", "fundamental", "event"} or reports["event"].get("schema_version") != EVENT_MARKET_VERSION:
+                errors.append("team_inputs 2.1 必須使用三份分析報告及 event 2.2")
+        else:
+            errors.extend(
+                "ResearchResult：%s" % error
+                for error in ResearchResultValidator(self.bundle["snapshot"]).validate(research)
+            )
         try:
             errors.extend(
                 ResearchDebateBundleValidator(self.bundle, self.momentum, reports, research).validate(self.debate)

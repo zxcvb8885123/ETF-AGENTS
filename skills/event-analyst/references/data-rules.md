@@ -5,7 +5,7 @@
 - 同一份報告只使用相同 snapshot_id 與 decision_cutoff 的已驗證資料；判斷可用時間採 available_at，不能只看發布日期。
 - 頂層 market_sentiment 是全市場情緒，公司項目的 outlook／event_outlook 是公司事件。不要將個股 sentiment、公司新聞篇數或全交易池價格當成全市場情緒。
 - 模型輸出本批全部公司，每檔剛好一次。每則重大訊息在 events 剛好出現一次，summary 只轉述公告內容。
-- high：可能實質改變營收、獲利、財務結構或營運持續性。medium：值得注意但影響有限或需要核對。low：例行或程序性公告。unknown：內容不足。高重大程度不代表正面；high 仍交後續深入研究。
+- high：可能實質改變營收、獲利、財務結構或營運持續性。medium：值得注意但影響有限或需要核對。low：例行或程序性公告。unknown：內容不足。高重大程度不代表正面；high 事件的事實與脈絡由程式提供，事件分析師保留重大性與引用發現，直接交股票層級多空研究，不另跑事件四子 Agent。
 - 每項 finding 有唯一 finding_id、中文 text 與該股票的 evidence_ids。公司事件結論必須引用公司事件；可引用同股票 financial_context 作背景，不可用行情或他股證據形成公司事件方向。
 - financial_context 保留原始幣別、倍率與期間，不自行換算、相除或計算比率。body_truncated=true 表示公告只是節錄，不把節錄未提到的內容說成公司沒有揭露。
 - 沒有公司事件時，outlook／event_outlook 為 unknown、events 為空，data_gaps 說明。已有事件但無方向性新資訊可以 neutral。

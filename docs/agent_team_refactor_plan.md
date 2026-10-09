@@ -1,6 +1,8 @@
 # 決策層 Agent 團隊重構計畫
 
-日期：2026-09-26。狀態：**R1～R6 已完成**；正式交易仍受交易狀態核准（TS0／TS5）阻擋。本計畫把決策層改為「分析團隊 → 多空研究 → 交易 → 風險」的分工，參考 [TradingAgents 的團隊分工](https://github.com/TauricResearch/TradingAgents#tradingagents-framework)；安全層（數值由 Python 計算、每一步 Validator、時間點檢查、不可變封存、不自動下單）完全保留。
+2026-10-09 更新：S2 已完成，事件四子 Agent 移出每日決策鏈；新 team_inputs 2.1 與舊 2.0 分版重建。詳見 [整合契約](integrated_event_analysis.md)。
+
+日期：2026-09-26。原驗收狀態：**R1～R6 已完成**；正式交易仍受交易狀態核准（TS0／TS5）阻擋。本計畫把決策層改為「分析團隊 → 多空研究 → 交易 → 風險」的分工，參考 [TradingAgents 的團隊分工](https://github.com/TauricResearch/TradingAgents#tradingagents-framework)；安全層（數值由 Python 計算、每一步 Validator、時間點檢查、不可變封存、不自動下單）完全保留。
 
 2026-10-02 技術輸入補強：正式 technical brief 新增整段封存行情與逐日均線 `trend_history`，由 Python 建立及重建驗證，模型沿歷史路徑解讀上升／盤整／下降。未改 MomentumResult、AnalystReport 輸出契約或其他 Agent 邊界，詳見[技術分析整段歷史輸入](technical_trend_history.md)。
 
@@ -23,7 +25,7 @@
 
 判斷時的檢查方式：**同樣的輸入，兩個人做會不會得到同一個答案？** 會的，交給程式；不會、需要取捨的，交給 LLM，並要求它引用證據、只能在程式定義的選項中選擇。
 
-## 1. 為什麼要改
+## 1. 為什麼要改（2026-09-26 背景）
 
 目前每日決策鏈（`automation/daily_pipeline.py`）是「買方 Agent（只提新標的）＋賣方 Agent（只看持股）→ 裁決 → 風控分級 → 風控審查」，有三個結構問題：
 
@@ -31,7 +33,7 @@
 2. **分析層沒有接進決策。** 基本面研究、事件研究都已實作，但每日流程只給降級的 ResearchResult；買方只看得到動能與月營收。
 3. **多空辯論在錯的層級。** 多空只存在於單一事件研究（這則公告利多或利空），沒有針對「這檔股票整體該不該持有」辯論。
 
-## 2. 目標架構
+## 2. 當前架構（2026-10-09）
 
 ```text
 Data Agent（既有）：行情、月營收、重大訊息、財報 → 不可變 Snapshot
@@ -39,9 +41,9 @@ Data Agent（既有）：行情、月營收、重大訊息、財報 → 不可�
 Python 分批（確定性）：官方 150 檔全部納入，依代號固定切成每批最多 50 檔
         ↓
 分析團隊（每位分析師逐批執行，Python 合併並驗證覆蓋全部 150 檔）
-  技術分析師｜基本面分析師｜事件／新聞分析師｜情緒分析師（無合法資料時 unavailable）
-  事件分析師標為重大（materiality=high）的事件 → 另跑完整 Fact／Bull／Bear／Adjudicator 事件研究
-        ↓ AnalystReport × 4 ＋ 重大事件 ResearchResult
+  技術分析師｜基本面分析師｜事件與市場情緒分析師（無核准來源時 unavailable）
+  high 事件保留重大性、發現與引用，直接交股票層級多空研究
+        ↓ AnalystReport × 3
 研究團隊：多頭研究員 vs 空頭研究員
   讀同一份分析報告與摘要、彼此隔離；兩方都必須覆蓋 150 檔每一檔（逐批）
         ↓ BullPacket ＋ BearPacket
@@ -58,10 +60,8 @@ Python 分批（確定性）：官方 150 檔全部納入，依代號固定切�
 | 分批 | Python | Snapshot 交易池 | `UniverseBatches`：150 檔依代號固定切批（每批 ≤50），批次雜湊可重算；持股與非持股不分開 | 以 LLM 挑股或排除股票 |
 | 技術分析師 | Agent | shortlist 的動能特徵（Python 已計算）、市場 regime | `AnalystReport(technical)` | 自行計算或改寫指標 |
 | 基本面分析師 | Agent | 基本面確定性指標（`fundamentals` 工具）、月營收 | `AnalystReport(fundamental)` | 把成長率當市場共識；補寫缺漏財報 |
-| 事件／新聞分析師 | Agent | Snapshot 中 cutoff 前的重大訊息、月營收公告 | `AnalystReport(event)`，逐則事件標 `materiality`（high／medium／low／unknown） | 使用網路或模型記憶補事實 |
-| 重大事件研究 | 既有 Fact／Bull／Bear／Adjudicator | 被標為 high 的事件 | 已驗證 `ResearchResult`，併入多空與交易輸入 | 略過任何被標 high 的事件 |
-| 情緒分析師 | Agent 或確定性 | 已核准授權的 `PerceptionDataBundle` | `AnalystReport(sentiment)`；無來源時確定性輸出全部 `unavailable` | 以搜尋摘要或記憶冒充情緒資料 |
-| 多頭研究員 | Agent | 四份 AnalystReport、角色摘要 | `BullPacket`：每檔最強的做多論點 | 讀取空頭 packet；輸出數字 |
+| 事件與市場情緒分析師 | Agent | 同 Snapshot 的公司事件、財報背景與已驗證市場資料包 | `AnalystReport(event)` 2.2，全市場情緒一次、公司事件逐檔；逐則標重大性 | 新增事實；公司新聞冒充全市場情緒；無核准來源補值 |
+| 多頭研究員 | Agent | 三份 AnalystReport、角色摘要 | `BullPacket`：每檔最強的做多論點 | 讀取空頭 packet；輸出數字 |
 | 空頭研究員 | Agent | 同上（相同 role input） | `BearPacket`：每檔最強的反對論點 | 讀取多頭 packet；輸出數字 |
 | 交易 Agent | Agent | Bull／Bear packet、分析報告、持股 | `TradeDecision`：逐檔意圖、對 buy／add 的信心等級、採納／否決的 claim | 新增事實或 claim；輸出權重、張數 |
 | 風險 Agent | Agent | 分析報告、TradeDecision；之後讀提案／情境／Guard | `cash_stance`；`RiskReview`（approve／revise／reject 與 allowlist 修正） | 手寫權重；覆寫 Guard；放寬規則 |
@@ -187,12 +187,12 @@ flowchart LR
 
 不變的原則：數值與規則歸程式、Bull／Bear 互相隔離、Trader 不新增事實、Risk 不手寫權重或覆寫 Guard、不自動下單。
 
-### 11.3 範圍清單（待確認後實作）
+### 11.3 範圍清單（S2 已完成，其他項目依個別進度）
 
 | 編號 | 工作 | 主要影響 | 風險 |
 | --- | --- | --- | --- |
 | S1 | 文件與圖更新：README 與 AGENTS.md 把 Data Agent 改稱資料收集層，同步 `data_agent_plan.md` 等引用 | 文件；不改程式與 Skill 名稱 | 低 |
-| S2 | 事件研究併入分析團隊：事件事實擷取改為程式（`analyze_event_context` 已是確定性），移除 `run_material_event_research` 的 Fact／Bull／Bear／Adjudicator 四步 | `automation/event_research_runner.py`、`daily_pipeline.py`、`ResearchResult` 2.1 契約、`event-*` Skill、Decision run 的 `team_inputs`、下游驗證 | **高**：影響封存 run 重建與 Validator；需相容策略或版本升級 |
+| S2（2026-10-09 已完成） | 事件研究併入分析團隊：事件事實擷取改為程式（`analyze_event_context` 已是確定性），移除 `run_material_event_research` 的 Fact／Bull／Bear／Adjudicator 四步 | `automation/event_research_runner.py`、`daily_pipeline.py`、`ResearchResult` 2.1 契約、`event-*` Skill、Decision run 的 `team_inputs`、下游驗證 | **高**：影響封存 run 重建與 Validator；需相容策略或版本升級 |
 | S3 | 新聞／情緒分析師：新增或改寫 `AnalystReport(news)`，接既有已驗證 `PerceptionDataBundle` adapter；無核准來源時確定性 unavailable | `decision/analysts.py`、`sentiment-analyst` Skill、測試 | 中；真實新聞來源授權仍待確認 |
 | S4 | 交易 Agent 明確化為綜合者：更新 Skill 與契約文字，不改欄位 | `trader` Skill、文件 | 低 |
 | S5 | 每日完整自動化：排程跑完整決策鏈、失敗時停止並保留可 `resume` 的 run、通知與日誌 | `scripts/launchd/`、`start.sh`、`run_daily_pipeline.py` | 中；不得自動下單，不得放寬 Guard |
@@ -201,7 +201,7 @@ flowchart LR
 
 建議順序：S1 → S4 → S6 → S5 → S3 → S2 → S7。S2 改動最大且牽動封存相容，應在 S1 確認方向後單獨決定。
 
-### 11.4 待使用者決定
+### 11.4 原待決定事項（S2 已於 2026-10-09 確認並完成）
 
 1. S2 是否採用「事件研究併入分析團隊」，以及舊 `ResearchResult` 2.1 封存 run 如何處理（保留重建路徑或升版）。
 2. 新聞來源是否有可核准的授權路徑；沒有的話 S3 只先建立角色與 unavailable 行為。
@@ -221,8 +221,14 @@ flowchart LR
 
 使用者決定合併事件／新聞分析師與情緒分析師。當前團隊為技術、基本面、事件與市場情緒共三位，各交付一份報告。每日 pipeline 不再產生獨立 analyst_sentiment 報告。事件 skill 保留既有名稱 event-analyst，報告鍵保留 event，格式升為 2.1，增加 event_outlook 與程式重建的 sentiment 通道。
 
-此決定取代 §2 的四席呈現及 §11 的獨立新聞／情緒席位提案。S2（移除重大事件四子研究）仍未實作；high 事件的深入研究流程不變。情緒資料標註、授權檢查及聚合仍保留在資料端；真實 Provider 尚未接入。三份新報告及舊四份封存輸入不得混搭，詳細見 [合併契約](event_sentiment_merge.md)。
+此決定取代 §2 的四席呈現及 §11 的獨立新聞／情緒席位提案。S2 已於 2026-10-09 完成：high 事件直接交股票層級多空研究；舊封存仍保留原始驗證。情緒資料標註、授權檢查及聚合仍保留在資料端；真實 Provider 尚未接入。三份新報告及舊四份封存輸入不得混搭，詳細見 [合併契約](event_sentiment_merge.md)。
 
 2026-10-05：第三位分析師新增版本化 market_news_input 全市場 RSS 通道，來源、完整標籤及綜合判讀由程式重建；未核准來源仍 unavailable，診斷不進交易。詳見 [接入說明](market_news_integration.md)。
 
 2026-10-05：全市場新聞增加1.1歷史原頁接入與分頁補抓，仍全項目標籤、同源重建、核准來源才進正式計算。補抓 available_at 保留實際時間，不回填歷史時鐘。詳見 [補抓說明](market_news_history.md)。
+
+## S2 已完成（2026-10-09）
+
+使用者確認移除每日鏈的重大事件四子 Agent 研究。當前每日流程為資料收集 → 三位分析師 → 股票層級多空研究員 → 交易 → 風險姿態 → 確定性配置／Guard／風險審查 → 重建驗證與封存。§4～§10 保留原實作驗收紀錄，其中獨立事件辯論不再是新鏈要求。
+
+新 team_inputs 2.1 不含 research_result；舊 2.0 必須保留原始事件研究並按原版本驗證，不改寫封存。high 仍逐則覆蓋、引用和分級，沒有假造空 ResearchResult。詳見 [事件研究併入分析團隊](integrated_event_analysis.md)。

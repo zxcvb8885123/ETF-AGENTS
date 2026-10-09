@@ -204,7 +204,7 @@ class CashStanceAgentTests(unittest.TestCase):
         runner = FakeRunner({"cash_stance": [dict(STANCE, evidence_ids=["no-such"]), STANCE]})
         with tempfile.TemporaryDirectory() as directory:
             pipeline = DailyDecisionPipeline(ROOT, Path(directory), runner, Path(directory) / "repo", log=lambda _: None)
-            stance = pipeline.run_cash_stance(bundle, momentum, reports, research, trade)
+            stance = pipeline.run_cash_stance(bundle, momentum, reports, trade)
             brief = json.loads((Path(directory) / "brief_cash_stance.json").read_text(encoding="utf-8"))
 
         self.assertEqual(stance["level"], "neutral")
