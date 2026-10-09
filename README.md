@@ -3,7 +3,7 @@
 AI CUP 2026「Agent 基金經理人」的台股 ETF Agent 系統。每天完成資料蒐集、研究、買賣決策、組合與資金風控，最後產生供人工檢視的決策報告與 D-Plan 候選檔。
 
 ```text
-資料蒐集 → 分析團隊 → 多空研究 → 交易 → 風險 → 確定性配置／Guard → 報告與 D-Plan 候選檔 → 人工檢視
+資料蒐集 → 分析團隊 → 多空研究 → 交易整合 → 風險 → 確定性配置／Guard → 報告與 D-Plan 候選檔 → 人工檢視
 ```
 
 設計原則是「確定性歸程式，不確定性歸 LLM」：指標、權重、張數、費稅、現金與競賽規則全部由 Python 計算並由 Validator 重算；子 Agent 只輸出有限選項的判斷與引用證據。系統**不自動下單、不送件**，平台送件與交易由人工在系統外處理。
@@ -42,7 +42,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 .venv/bin/python scripts/run_daily_pipeline.py
 ```
 
-依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20 次，不再額外跑事件四子 Agent）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
+依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 多空研究 → 交易整合 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20 次，不再額外跑事件四子 Agent）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
 
 | 選項 | 用途 |
 | --- | --- |
@@ -285,3 +285,13 @@ artifacts/              每日輸出檔案（不納入 Git）
 ### 市場新聞來源使用紀錄接入（2026-10-05）
 
 已補上來源使用核對及原始規範的追加式資料庫保存。市場新聞接入可透過 `integrate --database` 讀取截止時間前的核對版本；不把新聞存在視為核准。若僅剩來源使用範圍未確認，中文報告會直接說明這個原因。現有資料庫未查到三個新聞供應來源的比賽研究核准紀錄，正式結果仍拒絕使用未確認來源。詳見 [接入與目前限制](docs/market_news_integration.md)。
+
+### 多空研究指令整理（2026-10-09）
+
+多頭／空頭 Skill 改用中文說明研究目的、證據與推論、強度和何時需重估；欄位及引用規則移至各自的 references/data-rules.md。逐家公司事件與一次全市場情緒分開閱讀，正式市場通道不可用時保留 unknown／unavailable；市場背景不能替代個股依據。多空 brief 已補入 event 2.2 頂層的 market_sentiment，兩方讀同一份通道，不改輸出契約與舊封存雜湊。
+
+### 交易 Agent 的多空整合定位（2026-10-09）
+
+交易 Agent 是多頭與空頭研究的整合者，讀取兩方既有論點後，說明採納與否決的理由，再形成每檔單一交易意圖與 buy／add 信心。它不按論點數量投票、不新增事實或 claim；現金姿態由風險 Agent 判斷，配置及交易數量由 Python 計算。Skill 主文件說明整合主線，正式欄位與限制移到 [交付規則](skills/trader/references/data-rules.md)。程式識別字 trader 與 TradeDecision 2.0 不變。
+
+交易 Agent 的閱讀版 `trader_report.md` 只顯示整合後的逐檔交易意圖、信心、理由、未解問題與重估條件，不附多空報告或論點全文。原始研究與採納／否決 ID 仍保存在 JSON 供驗證與稽核。

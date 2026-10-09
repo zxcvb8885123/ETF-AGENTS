@@ -37,6 +37,7 @@ from etf_agent.decision import (
     compute_fundamental_metrics,
     decision_policy_sha256,
     revision_effects,
+    render_trader_report,
     seal_report,
     sector_exposure,
     seal_stance_packet,
@@ -324,7 +325,7 @@ class DailyDecisionPipeline:
         self.log("[decision 4] 多頭／空頭研究員（互相隔離、逐批）")
         debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
 
-        self.log("[decision 5] 交易 Agent")
+        self.log("[decision 5] 交易 Agent：整合多頭與空頭研究")
         trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id)
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
@@ -486,14 +487,16 @@ class DailyDecisionPipeline:
                 )
                 task = AgentTask(
                     name,
-                    "你是 $%s-researcher。先讀 %s，再讀本批輸入摘要 %s（不得讀取或推測另一方研究員的輸出）。"
-                    "對本批 %d 檔股票（%s）逐檔提出%s，每一檔都必須出現一次；claim_id 以 %s- 開頭且在整份輸出唯一，"
-                    "建議 %s-<代號>-<序號>（第 %d 批）。%s"
+                    "你是 $%s-researcher。先讀 %s 及其中連結的 references/data-rules.md，再讀本批輸入摘要 %s。"
+                    "公司事件在逐檔資料中，全市場情緒在摘要頂層只提供一次；不能用市場氣氛替代個股依據。"
+                    "對本批 %d 檔股票（%s）逐檔提出%s，說明支持依據、論點強度與需要重新評估的情況。"
+                    "每一檔剛好交付一次，找不到充分理由時明示沒有充分論點；交付欄位與引用依參考文件。"
+                    "不得讀取或推測另一方研究員的輸出。%s"
                     % (
                         role, self.root / ("skills/%s-researcher/SKILL.md" % role), brief_path,
                         len(batch["symbols"]), "、".join(batch["symbols"]),
                         "最強的做多（值得持有或買進）論點" if role == "bull" else "最強的反對（不宜持有或應避開）論點",
-                        role, role, batch["batch_index"], _SHARED_RULES,
+                        _SHARED_RULES,
                     ),
                     STANCE_SCHEMA,
                 )
@@ -520,7 +523,7 @@ class DailyDecisionPipeline:
         debate: Mapping[str, object],
         run_id: str,
     ) -> Dict[str, object]:
-        """交易 Agent 逐批權衡多空論點，決定意圖與 buy／add 信心等級。"""
+        """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
         momentum_status = {str(item.get("symbol", "")).upper(): item.get("status") for item in momentum.get("items", [])}
@@ -564,10 +567,13 @@ class DailyDecisionPipeline:
             validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"])
             task = AgentTask(
                 name,
-                "你是 $trader 交易 Agent。先讀 %s，再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔權衡多空論點，"
-                "決定 intent；buy／add 必須給 conviction，其他意圖 conviction 為 null。每檔的每個 claim_id 都必須剛好出現在"
-                " adopted_claim_ids 或 rejected_claim_ids 其中之一。已持股不得 buy，未持股只能 buy 或 no_trade；"
-                "buy／add 須採納至少一個多頭 claim 且 momentum_status=available；trim／exit／forced_exit 須採納至少一個空頭 claim。%s"
+                "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
+                "再讀本批輸入 %s。對本批 %d 檔股票（%s），先比較兩方的依據與分歧，說明每個論點採納或否決的理由，"
+                "再依持股與交易條件形成單一交易意圖；不要按強度標籤或論點數量投票。"
+                "rationale 只寫整合後的判斷，不逐條重貼多空報告或論點全文；論點識別碼保留在採納／否決陣列供程式核對。"
+                "理由用簡短繁體中文分段：先寫主導決定的理由，再寫主要風險為何改變或沒有改變行動；"
+                "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
+                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s"
                 % (
                     self.root / "skills/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), _SHARED_RULES,
@@ -583,6 +589,9 @@ class DailyDecisionPipeline:
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("trade_decision", decision)
+        (self.run_dir / "trader_report.md").write_text(
+            render_trader_report(bundle, momentum, debate, decision), encoding="utf-8"
+        )
         return decision
 
     # ------------------------------------------------------------------ risk

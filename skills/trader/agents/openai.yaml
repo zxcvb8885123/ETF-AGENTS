@@ -1,4 +1,4 @@
 interface:
-  display_name: "交易 Agent"
-  short_description: "權衡多空論點，逐檔決定買賣意圖與信心等級"
-  default_prompt: "使用 $trader 讀取本批多空論點，逐檔決定 intent 與 buy／add 的信心等級，並逐一採納或否決每個 claim。"
+  display_name: "交易 Agent（多空整合）"
+  short_description: "整合多頭與空頭研究，說明論點取捨並逐檔形成交易意圖與信心"
+  default_prompt: "使用 $trader 整合本批多頭與空頭研究，說明哪些理由成立、哪些不足，再交付逐檔交易意圖與買進或加碼信心。"

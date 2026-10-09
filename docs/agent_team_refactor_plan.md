@@ -194,7 +194,7 @@ flowchart LR
 | S1 | 文件與圖更新：README 與 AGENTS.md 把 Data Agent 改稱資料收集層，同步 `data_agent_plan.md` 等引用 | 文件；不改程式與 Skill 名稱 | 低 |
 | S2（2026-10-09 已完成） | 事件研究併入分析團隊：事件事實擷取改為程式（`analyze_event_context` 已是確定性），移除 `run_material_event_research` 的 Fact／Bull／Bear／Adjudicator 四步 | `automation/event_research_runner.py`、`daily_pipeline.py`、`ResearchResult` 2.1 契約、`event-*` Skill、Decision run 的 `team_inputs`、下游驗證 | **高**：影響封存 run 重建與 Validator；需相容策略或版本升級 |
 | S3 | 新聞／情緒分析師：新增或改寫 `AnalystReport(news)`，接既有已驗證 `PerceptionDataBundle` adapter；無核准來源時確定性 unavailable | `decision/analysts.py`、`sentiment-analyst` Skill、測試 | 中；真實新聞來源授權仍待確認 |
-| S4 | 交易 Agent 明確化為綜合者：更新 Skill 與契約文字，不改欄位 | `trader` Skill、文件 | 低 |
+| S4（2026-10-09 已完成） | 交易 Agent 明確化為綜合者：更新 Skill 與契約文字，不改欄位 | `trader` Skill、文件 | 低 |
 | S5 | 每日完整自動化：排程跑完整決策鏈、失敗時停止並保留可 `resume` 的 run、通知與日誌 | `scripts/launchd/`、`start.sh`、`run_daily_pipeline.py` | 中；不得自動下單，不得放寬 Guard |
 | S6 | 失敗報告補列 Guard 拒絕原因（§10 已列為後續改進） | 報告與 D-Plan 匯出 | 低 |
 | S7 | 並行化：多空兩方與各批分析可平行，縮短單日執行時間 | `ClaudeAgentRunner`、pipeline | 中；須保持隔離與可重算 |
@@ -232,3 +232,7 @@ flowchart LR
 使用者確認移除每日鏈的重大事件四子 Agent 研究。當前每日流程為資料收集 → 三位分析師 → 股票層級多空研究員 → 交易 → 風險姿態 → 確定性配置／Guard／風險審查 → 重建驗證與封存。§4～§10 保留原實作驗收紀錄，其中獨立事件辯論不再是新鏈要求。
 
 新 team_inputs 2.1 不含 research_result；舊 2.0 必須保留原始事件研究並按原版本驗證，不改寫封存。high 仍逐則覆蓋、引用和分級，沒有假造空 ResearchResult。詳見 [事件研究併入分析團隊](integrated_event_analysis.md)。
+
+## S4 已完成（2026-10-09）
+
+交易 Agent 明確定位為多頭／空頭研究的整合者。主 prompt 要求先比較證據、處理兩方分歧，再說明每個論點的取捨與逐檔交易決定；正式欄位和驗證規則移至 trader 的 references/data-rules.md。修正舊 Skill 的四位分析師描述為目前三位；UI 與架構圖顯示「交易 Agent（多空整合）」。TradeDecision 2.0、全 claim 覆蓋、持股／動能閘門及風控契約不變。
