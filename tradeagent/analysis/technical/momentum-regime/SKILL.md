@@ -13,4 +13,4 @@ description: 解讀由確定性 MomentumEngine 產生的台股動能、波動、
 - `degraded` 股票不能作為 `buy/add` 的動能支持，但可保留為資料缺口。
 - 不產生候選、買賣意圖、權重、股數、費稅或訂單。
 
-計算規則與欄位見[共用決策契約](../portfolio-risk-review/references/decision-contract.md)。
+計算規則與欄位見[共用決策契約](../../../risk/portfolio-risk-review/references/decision-contract.md)。

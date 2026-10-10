@@ -12,4 +12,4 @@ description: 根據已驗證 FactPacket，獨立建立單一台股事件的最�
 - 明列 thesis 成立所需假設、下一個催化事件、失效條件與未解問題。
 - 不讀 bear packet，不輸出 candidate、買賣、權重或主觀勝率。
 
-依[子 Agent 契約](../event-analysis/references/subagent-contract.md)產生 `role=bull` packet；`input_packet_ids` 只能包含 FactPacket ID。
+依[子 Agent 契約](../../event-analysis/references/subagent-contract.md)產生 `role=bull` packet；`input_packet_ids` 只能包含 FactPacket ID。

@@ -245,7 +245,19 @@ data/                   官方交易池、產業分類與選配 ETF 比較資料
 docs/                   規劃、架構、來源稽核與操作文件
 cli/                    Agent、人工與排程共用的穩定 CLI 入口
 scripts/                初始化、收集、每日流程與狀態查詢維運指令
-skills/                 Codex／Claude 工作流程、契約參考與 UI metadata
+tradeagent/             依角色分組的 Codex／Claude Skill、契約參考與 UI metadata
+  analysis/             三位主要分析師各自一組，相關 Skill 放在同組
+    technical/          technical-analyst、momentum-regime
+    fundamental/        fundamental-analyst、fundamental-research
+    event/              event-analyst、sentiment-analyst
+  research/             每日股票研究與獨立事件研究分組
+    stock-research/     bull-researcher、bear-researcher
+    event-research/     event-analysis；subagents/ 保存四個事件子 Agent
+  trading/              交易整合
+  risk/                 現金姿態與配置後風險審查
+  data/                 資料蒐集與驗證
+  reporting/            Research Report 整合
+  backtest/             歷史回測驗證
 src/etf_agent/          Agent 核心程式、runtime 與報告 Builder
 src/etf_agent/core/     共用 canonical hash、含時區時間、有限 Decimal 解析與不可變 run store
 src/etf_agent/ledger/   回測與虛擬帳戶共用的成交、費稅與帳本
@@ -292,6 +304,6 @@ artifacts/              每日輸出檔案（不納入 Git）
 
 ### 交易 Agent 的多空整合定位（2026-10-09）
 
-交易 Agent 是多頭與空頭研究的整合者，讀取兩方既有論點後，說明採納與否決的理由，再形成每檔單一交易意圖與 buy／add 信心。它不按論點數量投票、不新增事實或 claim；現金姿態由風險 Agent 判斷，配置及交易數量由 Python 計算。Skill 主文件說明整合主線，正式欄位與限制移到 [交付規則](skills/trader/references/data-rules.md)。程式識別字 trader 與 TradeDecision 2.0 不變。
+交易 Agent 是多頭與空頭研究的整合者，讀取兩方既有論點後，說明採納與否決的理由，再形成每檔單一交易意圖與 buy／add 信心。它不按論點數量投票、不新增事實或 claim；現金姿態由風險 Agent 判斷，配置及交易數量由 Python 計算。Skill 主文件說明整合主線，正式欄位與限制移到 [交付規則](tradeagent/trading/trader/references/data-rules.md)。程式識別字 trader 與 TradeDecision 2.0 不變。
 
 交易 Agent 的閱讀版 `trader_report.md` 只顯示整合後的逐檔交易意圖、信心、理由、未解問題與重估條件，不附多空報告或論點全文。原始研究與採納／否決 ID 仍保存在 JSON 供驗證與稽核。

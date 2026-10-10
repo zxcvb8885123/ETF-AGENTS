@@ -27,4 +27,4 @@ PYTHONPATH=src python3 cli/trading_status.py validate --input artifacts/trading-
   --virtual-account-account-id ai-cup-2026 --virtual-account-run-id PREPARE_RUN_ID
 ```
 
-`skills/` 只定義 Codex／Claude 的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。
+`tradeagent/` 只定義 Codex／Claude 的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。

@@ -56,10 +56,10 @@
 
 | 角色 | 選版 | 主線與理由 |
 | --- | --- | --- |
-| [技術](../skills/technical-analyst/SKILL.md) | 第五輪 | 理解價格行為與市場結構，串起主導訊號、反證與脆弱處；不固定指標權重、策略或finding條數。明確區分風險與趨勢、neutral與unknown。 |
-| [基本面](../skills/fundamental-analyst/SKILL.md) | 第五輪＋已驗證的引用修正 | 理解經營品質及變化是否有資料支持，連結營收、獲利與財務韌性，保留季度與月營收期間差異；摘要沒有業別證據時，不憑股票代號補業別。 |
-| [事件](../skills/event-analyst/SKILL.md) | 第五輪 | 辨識實質新資訊與影響途徑，分開重大性和方向、決議和完成、投資目的和實現效益；沒有固定公告類別到方向的映射。 |
-| [情緒](../skills/sentiment-analyst/SKILL.md) | 原版 | 五輪都未呈現額外標註優勢，依凍結選版原則保留原版。逐筆標註、授權／cutoff檢查與確定性聚合照舊；真實核准Provider仍未接入。 |
+| [技術](../tradeagent/analysis/technical/technical-analyst/SKILL.md) | 第五輪 | 理解價格行為與市場結構，串起主導訊號、反證與脆弱處；不固定指標權重、策略或finding條數。明確區分風險與趨勢、neutral與unknown。 |
+| [基本面](../tradeagent/analysis/fundamental/fundamental-analyst/SKILL.md) | 第五輪＋已驗證的引用修正 | 理解經營品質及變化是否有資料支持，連結營收、獲利與財務韌性，保留季度與月營收期間差異；摘要沒有業別證據時，不憑股票代號補業別。 |
+| [事件](../tradeagent/analysis/event/event-analyst/SKILL.md) | 第五輪 | 辨識實質新資訊與影響途徑，分開重大性和方向、決議和完成、投資目的和實現效益；沒有固定公告類別到方向的映射。 |
+| [情緒](../tradeagent/analysis/event/sentiment-analyst/SKILL.md) | 原版 | 五輪都未呈現額外標註優勢，依凍結選版原則保留原版。逐筆標註、授權／cutoff檢查與確定性聚合照舊；真實核准Provider仍未接入。 |
 
 三份更新保留原有輸出契約、所有股票／事件覆蓋、引用歸屬、資料不足處理及禁止手寫交易數字的邊界。指標、比率、情緒聚合、配置與風控仍由程式處理，沒有變更每日Agent架構、Provider或模型API接線。
 

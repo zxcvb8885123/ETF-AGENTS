@@ -13,4 +13,4 @@ description: 比較同一事件的 FactPacket、獨立 BullPacket 與 BearPacket
 - 重複舊聞、低重大性、比賽期間外或 thesis 已被新事實推翻時使用 `excluded`。
 - 不新增事實、不補寫 evidence ID、不產生買賣或權重。
 
-依[子 Agent 契約](../event-analysis/references/subagent-contract.md)產生 `role=adjudicator` packet，輸入必須同時列出 Fact、Bull、Bear packet ID。主控合併 ResearchResult 後仍須通過確定性 validator。
+依[子 Agent 契約](../../event-analysis/references/subagent-contract.md)產生 `role=adjudicator` packet，輸入必須同時列出 Fact、Bull、Bear packet ID。主控合併 ResearchResult 後仍須通過確定性 validator。

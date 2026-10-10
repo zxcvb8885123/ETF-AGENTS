@@ -52,21 +52,23 @@
 
 | 工作角色 | 技能文件（規劃） | 可使用的工具 |
 | --- | --- | --- |
-| 資料研究 | `skills/event-data/SKILL.md` | 查詢公告、讀取資料庫、驗證及保存事件 |
-| 事件分析 | `skills/event-analysis/SKILL.md` | 查詢事件原文、公司基本面與行情特徵 |
-| 市場情緒與分析師研究 | `skills/sentiment-analyst/SKILL.md` | 標記情緒、聚合分歧與熱度、計算分析師共識修正及事件預期差 |
-| 基本面研究 | `skills/fundamental-research/SKILL.md` | 唯讀財報 Snapshot、確定性比率、有引用的研究解讀；不產生交易候選 |
-| 研究報告整合（不是決策 Agent） | `skills/research-report/SKILL.md` | 驗證同一 Snapshot 的研究 artifact，建立同源 JSON／Markdown |
-| 分析團隊 | `skills/technical-analyst/`、`skills/fundamental-analyst/`、`skills/event-analyst/`、`skills/sentiment-analyst/` | 逐批覆蓋全部交易池，只給 outlook 與有引用的發現；指標與比率由程式計算 |
-| 動能與市場狀態 | `skills/momentum-regime/SKILL.md` | 解讀確定性動能、波動、流動性與市場寬度結果 |
-| 多空研究 | `skills/bull-researcher/`、`skills/bear-researcher/` | 讀同一份共同輸入且互相隔離，逐檔給論點強度與有證據的 claims |
-| 交易 | `skills/trader/SKILL.md` | 逐檔權衡多空，決定意圖與 buy／add 信心等級，不新增事實或 claim |
-| 風險 | `skills/portfolio-risk-review/SKILL.md` | 配置前給現金姿態；配置後檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
-| 回測驗證 | `skills/strategy-backtest/SKILL.md` | 鎖定 fixture 版本、歷史重播、整張成交、交割與帳務驗收；策略比較、績效與前向驗證待後續完成 |
-| 自動化排程與報告 | `skills/daily-report/SKILL.md`（RPT0～RPT4 第一版） | 檢查各階段結果、交付 Research Report，並在 Decision／Risk 通過時接既有 DailyReport／FailureReport；缺輸入時等待或失敗 |
+| 資料研究 | `tradeagent/data/event-data/SKILL.md` | 查詢公告、讀取資料庫、驗證及保存事件 |
+| 事件分析 | `tradeagent/research/event-research/event-analysis/SKILL.md` | 查詢事件原文、公司基本面與行情特徵 |
+| 市場情緒與分析師研究 | `tradeagent/analysis/event/sentiment-analyst/SKILL.md` | 標記情緒、聚合分歧與熱度、計算分析師共識修正及事件預期差 |
+| 基本面研究 | `tradeagent/analysis/fundamental/fundamental-research/SKILL.md` | 唯讀財報 Snapshot、確定性比率、有引用的研究解讀；不產生交易候選 |
+| 研究報告整合（不是決策 Agent） | `tradeagent/reporting/research-report/SKILL.md` | 驗證同一 Snapshot 的研究 artifact，建立同源 JSON／Markdown |
+| 分析團隊 | `tradeagent/analysis/technical/technical-analyst/`、`tradeagent/analysis/fundamental/fundamental-analyst/`、`tradeagent/analysis/event/event-analyst/` | 三位主要分析師逐批覆蓋全部交易池，只給 outlook 與有引用的發現；指標與比率由程式計算 |
+| 動能與市場狀態 | `tradeagent/analysis/technical/momentum-regime/SKILL.md` | 解讀確定性動能、波動、流動性與市場寬度結果 |
+| 多空研究 | `tradeagent/research/stock-research/bull-researcher/`、`tradeagent/research/stock-research/bear-researcher/` | 讀同一份共同輸入且互相隔離，逐檔給論點強度與有證據的 claims |
+| 交易 | `tradeagent/trading/trader/SKILL.md` | 逐檔權衡多空，決定意圖與 buy／add 信心等級，不新增事實或 claim |
+| 風險 | `tradeagent/risk/portfolio-risk-review/SKILL.md` | 配置前給現金姿態；配置後檢查情境與集中風險，只提出 allowlist 內的結構化修正 |
+| 回測驗證 | `tradeagent/backtest/strategy-backtest/SKILL.md` | 鎖定 fixture 版本、歷史重播、整張成交、交割與帳務驗收；策略比較、績效與前向驗證待後續完成 |
+| 自動化排程與報告（舊版） | daily-report Skill 已於 2026-09-29 移除 | 舊封存保留供稽核；當前每日鏈封存 Decision run，對外交付由確定性 D-Plan 匯出承接 |
 | D-Plan Builder／Validator（確定性程式，不是新 Agent） | 不需要獨立 Skill | 合併 Snapshot、研究、決策與風控輸出；配置引用 ID，執行 JSON Schema 與語意驗證 |
 
 Skill 文件定義任務流程、證據要求與輸出格式，由控制器載入給 LLM；`cli/` 是 Skill、人工與排程共用的穩定命令入口；`src/etf_agent/` 則保存實際 runtime、資料契約與確定性計算。各角色先共用一個應用程式，無須各自部署成服務。動能計算、交易數量、費稅與風控限制由程式執行；LLM 負責事件理解及有來源的文字說明。
+
+2026-10-10 目錄整理：共同 Skill 來源由專案根目錄的 `skills/` 移至 `tradeagent/`，依 analysis、research、trading、risk、data、reporting、backtest 分組。分析團隊集中於 analysis 的 technical、fundamental、event 三組，每組放主要分析師及相關 Skill；momentum-regime 是選配市場狀態解讀，fundamental-research 是獨立研究流程，sentiment-analyst 是情緒資料流程，三者不是新增的每日分析席位。每日動能仍由 Python MomentumEngine 計算，不因分組而多呼叫 Agent；風險的配置前現金姿態及配置後審查共用 risk 下的 portfolio-risk-review；交易整合集中於 trading。每日多空研究員集中於 research/stock-research；獨立事件研究主控放在 research/event-research/event-analysis，四個子 Agent 放在同組的 subagents，仍不屬於目前每日鏈。這次只調整來源目錄、載入路徑與文件連結；Skill 名稱、資料契約與決策順序不變。Codex／Claude 的安裝位置維持各自慣例，安裝時須指定新的來源子目錄；`tradeagent/` 本身是分組容器，不是單一 Skill。
 
 ## 基本面研究 Agent
 

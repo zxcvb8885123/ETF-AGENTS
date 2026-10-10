@@ -68,7 +68,7 @@
 
 ## 程式與 Skill 慣例
 
-- 核心邏輯放在 `src/etf_agent/`；`cli/` 只提供穩定 CLI 包裝，不複製資料邏輯。Skill 只保存工作流程、契約參考與產品 metadata。
+- 核心邏輯放在 `src/etf_agent/`；`cli/` 只提供穩定 CLI 包裝，不複製資料邏輯。Skill 來源放在 `tradeagent/` 並依職責分組，只保存工作流程、契約參考與產品 metadata。
 - 可重複的數值計算、時間檢查、引用驗證及停止條件必須由 Python 實作，不只寫在 prompt。
 - Canonical JSON／content hash、含時區時間解析與有限 Decimal 解析一律使用 `etf_agent.core`，不得在模組內另寫一份；需要模組專屬錯誤時以 `error=` 傳入。新的不可變 run 保存優先繼承 `etf_agent.core.artifact_store.ImmutableRunStore`。
 - 新 Agent 優先提供：計畫文件、資料契約、Provider 邊界、確定性工具、Validator、Skill、CLI 與測試。
@@ -93,7 +93,7 @@ PYTHONPATH=src PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
   .venv/bin/python -m unittest discover -s tests -v
 
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
-  .venv/bin/python -m compileall -q src skills tests
+  .venv/bin/python -m compileall -q src tradeagent tests
 
 git diff --check
 ```
@@ -103,7 +103,7 @@ git diff --check
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
   .venv/bin/python /Users/apollo/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
-  skills/SKILL_NAME
+  tradeagent/GROUP/SKILL_NAME
 ```
 
 測試應涵蓋正常流程及 fail-closed 分支，尤其是：

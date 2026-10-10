@@ -19,7 +19,7 @@ docker compose version
 ./start.sh
 ```
 
-首次執行會建置映像；之後僅在映像不存在、`requirements.txt` 或 Dockerfile 變更時重建。`src/`、`cli/`、`scripts/`、`skills/`、`tests/` 從工作區唯讀掛載，程式碼修改後可直接執行。正式模式會抓 TWSE／TPEx 帳本所需的最新官方價量，再以 yfinance 將 150 檔研究日線增量更新至台北當日；資料專用排程不補官方個股月行情，`daily` 決策只補上市個股價量，上櫃個股月擷取器已移除。官方交易池還空著時，則使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。
+首次執行會建置映像；之後僅在映像不存在、`requirements.txt` 或 Dockerfile 變更時重建。`src/`、`cli/`、`scripts/`、`tradeagent/`、`tests/` 從工作區唯讀掛載，程式碼修改後可直接執行。正式模式會抓 TWSE／TPEx 帳本所需的最新官方價量，再以 yfinance 將 150 檔研究日線增量更新至台北當日；資料專用排程不補官方個股月行情，`daily` 決策只補上市個股價量，上櫃個股月擷取器已移除。官方交易池還空著時，則使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。
 
 Dockerfile 與本機 `.venv` 共用 `requirements.txt`，其中包含 Skill 驗證使用的 PyYAML。修改依賴後重新執行 `./start.sh check` 就會自動重建；可用 `docker compose run --rm agent python3 -c 'import yaml; print(yaml.__version__)'` 確認新映像已安裝。
 手動要求重建可執行 `FORCE_DOCKER_BUILD=1 ./start.sh check`。Dockerfile 以 pip 下載快取加快後續依賴更新；首次下載仍取決於網路速度。

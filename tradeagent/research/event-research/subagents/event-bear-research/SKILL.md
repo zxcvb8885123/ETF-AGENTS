@@ -12,4 +12,4 @@ description: 根據已驗證 FactPacket，獨立建立單一台股事件的最�
 - 明列空方自身假設、風險、會推翻空方的條件與未解問題。
 - 不讀 bull packet，不輸出 candidate、買賣、權重或主觀勝率。
 
-依[子 Agent 契約](../event-analysis/references/subagent-contract.md)產生 `role=bear` packet；`input_packet_ids` 只能包含 FactPacket ID。
+依[子 Agent 契約](../../event-analysis/references/subagent-contract.md)產生 `role=bear` packet；`input_packet_ids` 只能包含 FactPacket ID。

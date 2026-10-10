@@ -123,10 +123,10 @@ Data Agent 核心採物件組合，不以大型函式同時處理查詢、轉換
 
 ## 5. Skill 的可攜設計
 
-`skills/event-data/` 是版本控制中的共同來源：
+`tradeagent/data/event-data/` 是版本控制中的共同來源：
 
 ```text
-skills/event-data/
+tradeagent/data/event-data/
 ├── SKILL.md
 ├── references/data-contract.md
 └── agents/openai.yaml
@@ -302,7 +302,7 @@ Codex／Claude 可以利用自身允許的搜尋或瀏覽工具：
 
 ## 10. 資料與時間規則
 
-詳細契約以 `skills/event-data/references/data-contract.md` 為準。
+詳細契約以 `tradeagent/data/event-data/references/data-contract.md` 為準。
 
 - 每筆保存來源 ID、URL、內容雜湊、`published_at`、`available_at`、`fetched_at` 與版本。
 - 區分公告日期、營收／財報期間與事件日期，不互相替代。
@@ -401,7 +401,7 @@ ReasoningBackend（未來可替換）
 ## 14. 檔案配置
 
 ```text
-skills/event-data/                 # 共同 Skill 來源
+tradeagent/data/event-data/                 # 共同 Skill 來源
 ├── SKILL.md
 ├── agents/openai.yaml             # Codex／OpenAI 專屬 metadata
 └── references/data-contract.md

@@ -12,4 +12,4 @@ description: 為單一台股事件建立不含方向判斷的可驗證 FactPacke
 - 記錄版本、修正、重複事件、事件前／事件日／事件後行情。
 - 不使用 positive／negative，不推論獲利，不看多方或空方 packet。
 
-依[子 Agent 契約](../event-analysis/references/subagent-contract.md)產生 `role=fact` packet。正式文件 evidence ID 不得為空。
+依[子 Agent 契約](../../event-analysis/references/subagent-contract.md)產生 `role=fact` packet。正式文件 evidence ID 不得為空。

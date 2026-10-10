@@ -169,7 +169,7 @@ def _research_event(
     symbol = str(document["symbol"]).upper()
     slug = packet_prefix.replace(":", "_")
     context_path = pipeline.save_artifact("%s_context" % slug, context)
-    skills = pipeline.root / "skills"
+    skills = pipeline.root / "tradeagent/research/event-research/subagents"
 
     def packet(role: str, inputs: List[str], evidence: List[str], output: Mapping[str, object]) -> Dict[str, object]:
         return {

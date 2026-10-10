@@ -10,10 +10,10 @@ outlook 與 event_outlook 必須相同，僅表示該公司事件的結果，使
 
 舊 2.1 報告保留原始重建驗證，仍有逐股 sentiment；每日新報告使用 2.2，不把舊稿改寫成新版。舊四份 2.0 報告仍只沿用原始封存路徑。
 
-參見 [全市場與公司事件分工](../../../docs/event_market_scope.md)。Python schema 與 Validator 為最終契約。
+參見 [全市場與公司事件分工](../../../../../docs/event_market_scope.md)。Python schema 與 Validator 為最終契約。
 
 ### 全市場新聞資料包接入
 
-DecisionInputBundle 可包含 market_news_input 的 bundle/result 成對資料。market_sentiment 由來源回應、完整標籤及綜合 findings 重建，不能改寫已驗證結果。RSS Provider 已接入；真實來源的比賽使用權尚未確認，所以本次正式結果 unavailable，新聞診斷結果只供研究測試。詳細資料契約見 [接入說明](../../../docs/market_news_integration.md)。
+DecisionInputBundle 可包含 market_news_input 的 bundle/result 成對資料。market_sentiment 由來源回應、完整標籤及綜合 findings 重建，不能改寫已驗證結果。RSS Provider 已接入；真實來源的比賽使用權尚未確認，所以本次正式結果 unavailable，新聞診斷結果只供研究測試。詳細資料契約見 [接入說明](../../../../../docs/market_news_integration.md)。
 
 市場新聞1.1資料包可包含RSS與歷史原頁。原頁必須重建發布／取得時間與標題摘要；同媒體不同管道不增加來源數。舊1.0封存結果維持原重建，不改寫。1.1只交代具體查詢範圍，不固定加入「尚不能涵蓋全部歷史」警語。

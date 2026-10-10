@@ -53,7 +53,7 @@ Data Agent → 不可變 ResearchSnapshot
 
 ## 4. 擬定資料契約
 
-FR0 已固定以下首版 schema；實際欄位與操作方式見 `skills/fundamental-research/references/fundamental-contract.md`。
+FR0 已固定以下首版 schema；實際欄位與操作方式見 `tradeagent/analysis/fundamental/fundamental-research/references/fundamental-contract.md`。
 
 | 物件 | 必要內容 |
 | --- | --- |
@@ -99,7 +99,7 @@ Validator 必須：
 
 CLI 已提供：`status → build-bundle → compute-metrics → validate-result → archive`。本地 Agent 讀取 bundle／metrics 後提出結構化 result，再交給 Validator。exit code 已固定為 0＝完整通過、2＝明確降級／不可用或驗證不通過、1＝輸入、時間、版本或封存錯誤；不可僅憑檔案存在認定成功。`archive` 以不覆寫方式保存已驗證 result。
 
-Skill 預定為 `skills/fundamental-research/SKILL.md`，詳細契約放 references，`agents/openai.yaml` 的 default_prompt 必須明列 `$fundamental-research`。首版不自動補抓資料，驗證失敗最多修正兩次；禁止改寫原始數字，耗盡後封存失敗原因。不建立 commit、排程、送件或下單副作用。
+Skill 預定為 `tradeagent/analysis/fundamental/fundamental-research/SKILL.md`，詳細契約放 references，`agents/openai.yaml` 的 default_prompt 必須明列 `$fundamental-research`。首版不自動補抓資料，驗證失敗最多修正兩次；禁止改寫原始數字，耗盡後封存失敗原因。不建立 commit、排程、送件或下單副作用。
 
 ## 7. 開發順序與驗收
 

@@ -437,7 +437,7 @@ class DailyDecisionPipeline:
                     name,
                     "你是 $%s-analyst。先讀 %s，再讀本批輸入摘要 %s。只輸出本批 %d 檔股票（%s），每一檔都必須出現一次。%s"
                     % (
-                        analyst, self.root / ("skills/%s-analyst/SKILL.md" % analyst), brief_path,
+                        analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
                         len(batch["symbols"]), "、".join(batch["symbols"]), _SHARED_RULES,
                     ),
                     EVENT_ANALYST_SCHEMA if analyst == "event" else ANALYST_SCHEMA,
@@ -493,7 +493,7 @@ class DailyDecisionPipeline:
                     "每一檔剛好交付一次，找不到充分理由時明示沒有充分論點；交付欄位與引用依參考文件。"
                     "不得讀取或推測另一方研究員的輸出。%s"
                     % (
-                        role, self.root / ("skills/%s-researcher/SKILL.md" % role), brief_path,
+                        role, self.root / ("tradeagent/research/stock-research/%s-researcher/SKILL.md" % role), brief_path,
                         len(batch["symbols"]), "、".join(batch["symbols"]),
                         "最強的做多（值得持有或買進）論點" if role == "bull" else "最強的反對（不宜持有或應避開）論點",
                         _SHARED_RULES,
@@ -575,7 +575,7 @@ class DailyDecisionPipeline:
                 "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
                 "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s"
                 % (
-                    self.root / "skills/trader/SKILL.md", brief_path,
+                    self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
@@ -652,7 +652,7 @@ class DailyDecisionPipeline:
             "依 regime、分析師看法分布、交易決策、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive。"
             "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
             "evidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
-            % (self.root / "skills/portfolio-risk-review/SKILL.md", brief_path, _SHARED_RULES),
+            % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md", brief_path, _SHARED_RULES),
             CASH_STANCE_SCHEMA,
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)
@@ -732,7 +732,7 @@ class DailyDecisionPipeline:
             "increase_cash_buffer（value 不得低於目前現金緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
             "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
             % (
-                self.root / "skills/portfolio-risk-review/SKILL.md",
+                self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
                 names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], citable_path,
                 revision, int(policy["max_revisions"]), _SHARED_RULES,
             ),

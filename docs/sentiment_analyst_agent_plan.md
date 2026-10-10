@@ -33,7 +33,7 @@ ResearchSnapshot → 事件研究 Agent → ResearchResult
 - 已版本化的 `PerceptionDataBundle`。
 - 選配的已驗證 `ResearchResult 2.1`，只在計算事件預期差時需要。
 
-輸出 `MarketPerceptionResult 1.0`，包含逐筆情緒標籤、聚合方向、分歧、熱度、操縱風險、共識中位數、貢獻者數、分散度、修正、預期差、證據引用及研究狀態。詳細欄位見 `skills/sentiment-analyst/references/perception-contract.md`。
+輸出 `MarketPerceptionResult 1.0`，包含逐筆情緒標籤、聚合方向、分歧、熱度、操縱風險、共識中位數、貢獻者數、分散度、修正、預期差、證據引用及研究狀態。詳細欄位見 `tradeagent/analysis/event/sentiment-analyst/references/perception-contract.md`。
 
 ## 工具與物件
 
