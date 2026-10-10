@@ -42,6 +42,29 @@ class EventMarketScopeTests(unittest.TestCase):
         self.assertIn('market_sentiment', brief)
         self.assertTrue(all('sentiment' not in row for row in brief['symbols']))
 
+    def test_both_stock_researchers_receive_same_market_channel_once(self):
+        from etf_agent.decision import MomentumEngine, build_stance_brief
+        from test_analysts import technical_items, report as analyst_report
+        bundle = bundle_with_event()
+        reports = {
+            'technical': analyst_report(bundle, 'technical', technical_items()),
+            'fundamental': analyst_report(bundle, 'fundamental', [
+                {'symbol': row['symbol'], 'outlook': 'unknown', 'findings': [], 'data_gaps': ['缺少財報']}
+                for row in technical_items()
+            ]),
+            'event': report(bundle),
+        }
+        momentum = MomentumEngine(bundle).run()
+        bull = build_stance_brief(bundle, momentum, reports, {}, 'bull')
+        bear = build_stance_brief(bundle, momentum, reports, {}, 'bear')
+        self.assertEqual(bull['market_sentiment'], reports['event']['market_sentiment'])
+        self.assertEqual(bull['market_sentiment'], bear['market_sentiment'])
+        self.assertEqual(bull['packet_envelope']['shared_input_sha256'], bear['packet_envelope']['shared_input_sha256'])
+        self.assertEqual(bull['market_sentiment']['status'], 'unavailable')
+        self.assertEqual(bull['market_sentiment']['findings'], [])
+        self.assertTrue(all('market_sentiment' not in row and 'sentiment' not in row for row in bull['symbols']))
+        self.assertEqual(bull['symbols'][1]['analysts']['event']['outlook'], 'positive')
+
     def test_changed_market_even_when_rehashed_rejected(self):
         bundle = bundle_with_event()
         for field, value in [('outlook', 'neutral'), ('snapshot_id', 'wrong'), ('decision_cutoff', '2026-10-01T00:00:00+00:00')]:

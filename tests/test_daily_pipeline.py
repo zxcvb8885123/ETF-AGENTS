@@ -1,4 +1,5 @@
 import json
+import copy
 import tempfile
 from decimal import Decimal
 import unittest
@@ -12,7 +13,7 @@ from etf_agent.automation.daily_pipeline import (
 )
 from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest, next_trading_session
 from etf_agent.data.trading_status import DEFAULT_REQUIRED_CATEGORIES
-from etf_agent.decision import DecisionRepository
+from etf_agent.decision import DecisionRepository, DecisionFinalizer
 
 from test_decision_input_builder import builder_inputs, seed_history
 
@@ -155,16 +156,74 @@ class DailyPipelineTests(unittest.TestCase):
             run_dir = DecisionRepository(world.repository).verify("decision-fixture")
             team = json.loads((run_dir / "team_inputs.json").read_text(encoding="utf-8"))
             self.assertEqual(team["cash_stance"]["level"], "neutral")
+            self.assertEqual(team["schema_version"], "2.1")
+            self.assertNotIn("research_result", team)
             event_report = json.loads((world.run_dir / "analyst_event.json").read_text(encoding="utf-8"))
             self.assertEqual(event_report["schema_version"], "2.2")
             self.assertEqual(event_report["market_sentiment"]["outlook"], "unknown")
             self.assertTrue(all("sentiment" not in row for row in event_report["items"]))
             self.assertEqual(json.loads((run_dir / "debate.json").read_text(encoding="utf-8"))["schema_version"], "2.0")
-            research = json.loads(result.research_result_path.read_text(encoding="utf-8"))
-            self.assertEqual((research["status"], research["items"]), ("completed", []))
+            self.assertIsNone(result.research_result_path)
+            self.assertFalse((world.run_dir / "event_research_result.json").exists())
             policy = json.loads((world.run_dir / "policy.json").read_text(encoding="utf-8"))
             self.assertEqual(policy["cash_buffer_rate"], "0.10")
             self.assertEqual(policy["position_sizing"]["conviction_by_symbol"], {"2317.TW": "medium"})
+
+    def test_high_event_goes_directly_to_stock_research_and_risk(self):
+        from test_analysts import bundle_with_event, EVENT_ID
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            source = bundle_with_event()["snapshot"]
+            world.snapshot["documents"].append(source["documents"][-1])
+            world.snapshot["source_evidence"].append(source["source_evidence"][-1])
+            world.paths["snapshot"].write_text(json.dumps(world.snapshot), encoding="utf-8")
+            events = copy.deepcopy(EVENT)
+            events["items"][1].update(
+                outlook="positive", event_outlook="positive", data_gaps=[],
+                findings=[finding("event-2330-high", EVENT_ID)],
+                events=[{"evidence_id": EVENT_ID, "materiality": "high", "summary": "董事會核准資本預算。"}],
+            )
+            bull = copy.deepcopy(BULL)
+            bull["items"][1]["claims"] = [stance_claim("bull-2330-1", EVENT_ID, ["event-2330-high"])]
+            runner = FakeRunner(team_outputs(event_b0=[events], bull_b0=[bull]))
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertFalse(any(name.startswith("research_e") for name, _ in runner.prompts))
+            brief = json.loads((world.run_dir / "brief_bull_b0.json").read_text())
+            row = next(item for item in brief["symbols"] if item["symbol"] == "2330.TW")
+            self.assertEqual(row["analysts"]["event"]["events"][0]["materiality"], "high")
+            self.assertNotIn("event_research", row)
+            risk = json.loads((world.run_dir / "brief_cash_stance.json").read_text())
+            self.assertEqual(risk["company_events"][1]["events"][0]["evidence_id"], EVENT_ID)
+
+    def test_integrated_team_rejects_legacy_research_injection_and_version_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            result = world.run(FakeRunner(team_outputs()))
+            self.assertEqual(result.status, "completed", result.errors)
+            run = DecisionRepository(world.repository).verify("decision-fixture")
+            artifacts = {name: json.loads((run / (name + ".json")).read_text())
+                         for name in ("team_inputs", "policy", "momentum", "debate", "intent")}
+            bundle = json.loads((world.run_dir / "decision_input.json").read_text())
+            for change in ({"research_result": {}}, {"schema_version": "2.0"}, {"schema_version": "9.0"},
+                           {"schema_version": [], "research_result": {}}):
+                team = dict(artifacts["team_inputs"], **change)
+                finalizer = DecisionFinalizer(bundle, artifacts["policy"], artifacts["momentum"],
+                                              artifacts["debate"], artifacts["intent"], team)
+                self.assertTrue(finalizer._validate_team_chain())
+
+    def test_legacy_run_cannot_relabel_cached_outputs_as_integrated_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            raw = world.run_dir / "technical_b0_raw_1.json"
+            raw.write_text(json.dumps(TECHNICAL), encoding="utf-8")
+            runner = FakeRunner(team_outputs())
+            result = world.run(runner)
+            self.assertEqual(result.status, "failed")
+            self.assertIn("舊版 run 不可直接續跑", result.errors[0])
+            self.assertEqual(runner.prompts, [])
+            self.assertEqual(json.loads(raw.read_text()), TECHNICAL)
+            self.assertFalse((world.run_dir / "decision_chain.json").exists())
 
     def test_invalid_agent_output_is_retried_with_validator_errors(self):
         broken = json.loads(json.dumps(TRADE))
@@ -266,6 +325,9 @@ class ResumeTests(unittest.TestCase):
             world = PipelineWorld(Path(directory), approved_status=True)
             stale = json.loads(json.dumps(TECHNICAL))
             stale["items"] = stale["items"][:1]
+            (world.run_dir / "decision_chain.json").write_text(
+                json.dumps({"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}), encoding="utf-8"
+            )
             (world.run_dir / "technical_b0_raw_1.json").write_text(json.dumps(stale), encoding="utf-8")
             runner = FakeRunner(team_outputs())
             pipeline = DailyDecisionPipeline(ROOT, world.run_dir, runner, world.repository, log=lambda _: None, resume=True)

@@ -276,8 +276,7 @@ def main() -> int:
         )
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
-        research_path = result.research_result_path
-        summary["research_status"] = json.loads(research_path.read_text(encoding="utf-8")).get("status")
+        summary["event_analysis_mode"] = "integrated_analyst"
         summary["status"] = "completed"
     except Exception as error:  # noqa: BLE001 — 任何失敗都要寫入摘要並通知
         summary["status"] = "failed"

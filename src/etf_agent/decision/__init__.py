@@ -40,6 +40,7 @@ from .trader import (
     trade_decision_envelope,
 )
 from .sizing import SIZING_METHOD
+from .trader_report import render_trader_report
 from .policy_builder import build_decision_policy
 from .allocation import (
     AllocationOrderEngine,
@@ -100,6 +101,7 @@ __all__ = [
     "apply_trade_decision",
     "seal_trade_decision",
     "trade_decision_envelope",
+    "render_trader_report",
     "SIZING_METHOD",
     "build_decision_policy",
     "AllocationOrderEngine",

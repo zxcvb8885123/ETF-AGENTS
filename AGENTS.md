@@ -17,7 +17,7 @@
 - 只提供資料事實、來源證據與品質狀態，不建立投資方向、權重或訂單。
 - 所有資料必須保存來源、抓取時間、內容時間、版本及原始回應識別。
 
-### Event Research Agent
+### Event Research Agent（獨立研究與舊封存，非目前每日決策鏈）
 
 - 主控 Fact、Bull、Bear、Adjudicator 四個子 Agent。
 - Fact 只整理可驗證事實；Bull 與 Bear 只讀同一 FactPacket，彼此不得先讀對方輸出；Adjudicator 不得新增事實。
@@ -37,11 +37,11 @@
 
 ### 後續 Agent
 
-- 每日決策鏈依[決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md)採分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
-- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件必須另跑 Fact／Bull／Bear／Adjudicator。
+- 每日決策鏈依[決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md)採分析團隊 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
+- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
-- 交易 Agent 逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
-- Decision run 必須另存 `team_inputs`（三份分析報告、事件研究、現金姿態；舊四份封存保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
+- 交易 Agent 作為多頭／空頭研究的整合者，先說明兩方論點的取捨，再逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
+- Decision run 必須另存 `team_inputs`（2.1 為三份分析報告與現金姿態；舊 2.0 的三／四份分析報告及事件研究保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
 - 子 Agent 只輸出市場狀態解讀、多空論點、買賣意圖與信心分級、現金姿態或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
 - 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
@@ -132,6 +132,6 @@ Notes:
 ````
 
 - 使用下一個經使用者確認的編號，不自行跳號或重寫既有 commit。
-- `Date`、`Start`、`End` 使用 Asia/Taipei 時區；無法確認開始時間時先詢問，不捏造。
+- `Date`、`Start`、`End` 使用 Asia/Taipei 時區。`Start` 使用使用者提出本次修改要求的時間，優先從本次對話時間戳核對；之後的 commit 都沿用此方式。無法核對時再詢問，不捏造。
 - commit 前執行相關測試與 `git diff --check`，並確認只納入本次任務檔案。
 - amend、rebase、reset 或其他會改寫歷史的操作，只有在使用者明確要求時執行。

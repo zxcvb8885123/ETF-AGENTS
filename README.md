@@ -3,7 +3,7 @@
 AI CUP 2026「Agent 基金經理人」的台股 ETF Agent 系統。每天完成資料蒐集、研究、買賣決策、組合與資金風控，最後產生供人工檢視的決策報告與 D-Plan 候選檔。
 
 ```text
-資料蒐集 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險 → 確定性配置／Guard → 報告與 D-Plan 候選檔 → 人工檢視
+資料蒐集 → 分析團隊 → 多空研究 → 交易整合 → 風險 → 確定性配置／Guard → 報告與 D-Plan 候選檔 → 人工檢視
 ```
 
 設計原則是「確定性歸程式，不確定性歸 LLM」：指標、權重、張數、費稅、現金與競賽規則全部由 Python 計算並由 Validator 重算；子 Agent 只輸出有限選項的判斷與引用證據。系統**不自動下單、不送件**，平台送件與交易由人工在系統外處理。
@@ -42,7 +42,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 .venv/bin/python scripts/run_daily_pipeline.py
 ```
 
-依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20～40 次）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
+依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 多空研究 → 交易整合 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20 次，不再額外跑事件四子 Agent）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
 
 | 選項 | 用途 |
 | --- | --- |
@@ -98,9 +98,9 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 
 - **資料層**：SQLite 保存行情、原始回應、抓取時間與執行紀錄；每日以 yfinance 更新 150 檔研究日線並檢查當日覆蓋，TWSE／TPEx 當日官方價量仍供帳本結算，`daily` 決策只補抓延遲的上市個股官方價量；月營收、重大訊息與官方財報彙總（24 個端點，2026 Q2 實測 298/300）；FinMind 三大報表與個股新聞線索分時擷取，新聞授權與時間未核准，不進 Snapshot／每日決策；150 檔交易池逐檔驗證與 Snapshot fail-closed 閘門；正式產業分類 150／150。
 - **交易狀態與交易日曆**：TS1～TS4 契約、Parser、Validator、SQLite、CLI 與 Guard；政府開放 CSV 確定性映射。官方開休市日曆（`TradingCalendar`）統一用於每日是否執行、目標交易時段與帳本 T+2 交割，區分休市日與「僅辦理結算交割」日；日曆缺漏或未涵蓋年度時停止。**2026-09-28 已核准七個政府開放來源**（時效 72 小時），TWSE「管理股票」依證交所營業細則第 52 條列為不適用；9/28 實跑結果 148 檔 allowed、2 檔 blocked（處置）、unknown 0。
-- **研究層**：事件研究 Agent（Fact／Bull／Bear／Adjudicator、雙重 validator）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
+- **研究層**：獨立事件研究工具（Fact／Bull／Bear／Adjudicator、雙重 validator；保留舊封存驗證及單獨研究，不在每日決策鏈）；市場情緒與分析師 Agent MVP（無核准來源時 `unavailable`）；基本面 FR0～FR3 fixture MVP；Research Report V0。
 - **每日情緒／共識與帳戶接入**：已支援授權資料包逐筆標註、全池聚合、決策與報告接線；帳戶補上原價估值、cutoff、缺行情等待與重跑重用。真實情緒／共識資料商尚未接入，見[操作與限制](docs/daily_perception_account_integration.md)。
-- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件與市場情緒，共三位）→ 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（Buy／Sell／Trade Adjudicator，P0～P6）已於 2026-09-30 移除，不再支援重建。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
+- **決策層新鏈（R1～R6）**：分析團隊（技術／基本面／事件與市場情緒，共三位）→ 多空研究員 → 交易 Agent → 風險 Agent 現金姿態與分級 → 確定性配置、情境、CompetitionGuard → 封存與重建驗證。舊版 Portfolio Decision 1.0 鏈（Buy／Sell／Trade Adjudicator，P0～P6）已於 2026-09-30 移除，不再支援重建。前一交易日未成交缺口由帳本整理後逐檔交給交易 Agent（不自動補單，是否再 buy／add 由 Agent 決定）；風險審查另收到程式計算的各產業實際權重。
 - **帳務與回測**：虛擬帳本 VA1～VA3（唯一開帳、決策前帳戶快照、模擬成交、日終封存）；回測 B0～B2 fixture（歷史時鐘、整張成交、交割、公司行動）；B3 fixture 策略比較第一版（同一 `BacktestRequest` 重播多組逐日輸入，計算報酬、回撤、成本與 24 交易日視窗，可重建驗證，結果固定標示 `evidence_status=insufficient`）；外部帳戶匯入 AC1～AC4 fixture 工具鏈。
 - **交付**：D-Plan v4.0 候選匯出與本地結構／引用鏈檢查（匯出前核對 Decision run 的帳戶快照與帳戶目前 latest 的 prepare-day 封存一致）、唯讀績效儀表板。DailyReport／FailureReport 與報告工作流已於 2026-09-29 移除（比賽只需 D-Plan），舊封存仍留在 `artifacts/report_runs/` 供稽核。
 
@@ -109,6 +109,8 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 整條新鏈以真實資料跑完，Decision run `decision-20260928T084128Z` **approved、30 筆買進委託**（現金 11.5%、周轉率 88%、現金姿態 neutral）。
 
 第一次執行曾被拒絕：提案通過全部規則，但 `liquidity_stress` 壓力情境（成交率 50%、滑價 2 倍）下現金比例 60% 超過 25% 上限；從全現金建倉時這個情境結構上無法通過。現已改為：現金上限只在頂層 `CASH_WEIGHT` 與 `base` 情境為硬性規則，壓力情境現金超標只記警告，其餘情境檢查仍為硬性。被拒絕的封存與舊報告移至各 repository 的 `.superseded/` 保留稽核，未刪除。風險 Agent 留下兩項未解風險：產業實際權重未提供給審查、部分成交後的補單規則尚未納入下一交易日流程。
+
+2026-10-09 已完成事件研究併入分析團隊：high 事件保留在事件分析師報告，直接交給股票層級多空研究員，不再另跑事件四子 Agent。新 `team_inputs` 2.1 只保存三份分析報告與現金姿態，舊 2.0 沿用原始 `ResearchResult` 重建。詳細契約見 [事件研究併入分析團隊](docs/integrated_event_analysis.md)。
 
 ### 尚未完成
 
@@ -219,7 +221,7 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | --- | --- |
 | [分析團隊 prompt 五輪比較](docs/analyst_prompt_evaluation.md) | 五輪比較及後續技術試跑分版保存；技術已接入整段歷史路徑，區分回檔與趨勢轉變；未證實交易績效優勢 |
 | [技術分析整段歷史輸入](docs/technical_trend_history.md) | 完整封存價格視窗、逐日MA20／MA60、來源與cutoff驗證；已接入正式技術brief builder |
-| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **R1～R6 已完成**：分析團隊 → 重大事件研究 → 多空研究員 → 交易 Agent → 風險 Agent；§11 為 2026-09-30 架構調整提案（尚未實作） |
+| [決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md) | **R1～R6 已完成**：分析團隊 → 多空研究員 → 交易 Agent → 風險 Agent；§11 的 S2 已於 2026-10-09 完成，其他項目依個別進度 |
 | [M1 官方交易狀態接入](docs/trading_status_m1_plan.md) | 契約、Parser、Validator、SQLite、CLI 與 Guard |
 | [TS0 來源核准行動計畫](docs/source_audit/2026-09-25_ts0_approval_plan.md) | 政府開放 CSV 查證、確定性映射與 2026-09-28 核准紀錄 |
 | [Agent 開發架構](docs/agent_plan.md) | 資料庫、策略、風控買賣及報告流程 |
@@ -270,7 +272,7 @@ artifacts/              每日輸出檔案（不納入 Git）
 
 事件摘要已接入同一快照的財報背景（原值、單位、期間、引用），每日 pipeline 另唯讀盤點資料庫的現金流／新聞候選，避免把「已取得但尚未核對接入」誤寫成來源沒有資料。候選只提供取得狀態，不產生方向；超過歷史 cutoff 的候選不得回填。見 [事件資料接線](docs/event_data_availability.md)。
 
-每日團隊交付三份報告。`event-analyst` 已改為「事件與市場情緒分析師」，同一位 Agent 讀事件與已驗證情緒通道，輸出 AnalystReport(event) 2.1。情緒聚合由程式重建；無核准來源時明確標示無法判斷。`sentiment-analyst` 保留為資料標註與聚合流程，不再是另一個交付席位。high 事件仍交深入研究。舊四份報告只沿用原始封存重建路徑，不轉寫成新格式。見[合併契約與限制](docs/event_sentiment_merge.md)。
+每日團隊交付三份報告。`event-analyst` 已改為「事件與市場情緒分析師」，同一位 Agent 讀事件與已驗證情緒通道，輸出 AnalystReport(event) 2.1。情緒聚合由程式重建；無核准來源時明確標示無法判斷。`sentiment-analyst` 保留為資料標註與聚合流程，不再是另一個交付席位。high 事件保留在事件分析師報告，直接交股票層級多空研究，不另跑四子 Agent。舊四份報告只沿用原始封存重建路徑，不轉寫成新格式。見[合併契約與限制](docs/event_sentiment_merge.md)。
 
 ### 全市場新聞接入（2026-10-05）
 
@@ -283,3 +285,13 @@ artifacts/              每日輸出檔案（不納入 Git）
 ### 市場新聞來源使用紀錄接入（2026-10-05）
 
 已補上來源使用核對及原始規範的追加式資料庫保存。市場新聞接入可透過 `integrate --database` 讀取截止時間前的核對版本；不把新聞存在視為核准。若僅剩來源使用範圍未確認，中文報告會直接說明這個原因。現有資料庫未查到三個新聞供應來源的比賽研究核准紀錄，正式結果仍拒絕使用未確認來源。詳見 [接入與目前限制](docs/market_news_integration.md)。
+
+### 多空研究指令整理（2026-10-09）
+
+多頭／空頭 Skill 改用中文說明研究目的、證據與推論、強度和何時需重估；欄位及引用規則移至各自的 references/data-rules.md。逐家公司事件與一次全市場情緒分開閱讀，正式市場通道不可用時保留 unknown／unavailable；市場背景不能替代個股依據。多空 brief 已補入 event 2.2 頂層的 market_sentiment，兩方讀同一份通道，不改輸出契約與舊封存雜湊。
+
+### 交易 Agent 的多空整合定位（2026-10-09）
+
+交易 Agent 是多頭與空頭研究的整合者，讀取兩方既有論點後，說明採納與否決的理由，再形成每檔單一交易意圖與 buy／add 信心。它不按論點數量投票、不新增事實或 claim；現金姿態由風險 Agent 判斷，配置及交易數量由 Python 計算。Skill 主文件說明整合主線，正式欄位與限制移到 [交付規則](skills/trader/references/data-rules.md)。程式識別字 trader 與 TradeDecision 2.0 不變。
+
+交易 Agent 的閱讀版 `trader_report.md` 只顯示整合後的逐檔交易意圖、信心、理由、未解問題與重估條件，不附多空報告或論點全文。原始研究與採納／否決 ID 仍保存在 JSON 供驗證與稽核。

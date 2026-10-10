@@ -1,7 +1,7 @@
 """研究團隊：多頭／空頭研究員的隔離輸入、StancePacket 與 ResearchDebateBundle。
 
 兩位研究員讀取同一份共同輸入（DecisionInputBundle、MomentumResult、三份（舊封存四份）
-AnalystReport 與重大事件 ResearchResult），彼此看不到對方；每位都必須對交易池
+AnalystReport；只有舊封存另含重大事件 ResearchResult），彼此看不到對方；每位都必須對交易池
 每一檔表態。強度、論點與引用由 LLM 判斷，覆蓋、引用歸屬、ID 唯一與隔離由程式驗證。
 """
 
@@ -129,7 +129,7 @@ def build_stance_brief(
                 "event_research": research.get(symbol, []),
             }
         )
-    return {
+    brief = {
         "role": role,
         "packet_envelope": stance_envelope(bundle, momentum, shared, role),
         "regime_assessment": momentum.get("regime_assessment"),
@@ -137,6 +137,13 @@ def build_stance_brief(
         "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
         "symbols": symbols,
     }
+    if not research_result:
+        brief.pop("research_status")
+        for item in symbols:
+            item.pop("event_research")
+    if "market_sentiment" in analyst_reports["event"]:
+        brief["market_sentiment"] = dict(analyst_reports["event"]["market_sentiment"])
+    return brief
 
 
 class StancePacketValidator:
