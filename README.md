@@ -42,7 +42,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 .venv/bin/python scripts/run_daily_pipeline.py
 ```
 
-依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 多空研究 → 交易整合 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20 次，不再額外跑事件四子 Agent）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。每日流程不產生 DailyReport；對外交付由 `cli/dplan.py` 從封存 Decision run 匯出 D-Plan。
+依序執行：執行前檢查（Docker、`claude` 登入、帳戶、必要檔案、磁碟，任一失敗即在呼叫 Agent 前停止）→ 封存交易狀態 CSV → `./start.sh daily`（資料、Snapshot、虛擬帳本）→ 交易狀態包 → 分析團隊 → 多空研究 → 交易整合 → 風險（子 Agent 經 `claude -p`，結構化輸出並由 Validator 驗證，一般日約 20 次，不再額外跑事件四子 Agent）→ 封存 Decision run（含 `team_inputs`）→ macOS 通知。封存後由交付服務重建最終中文 JSON／Markdown 並更新 latest；D-Plan 尚未自動映射，報告明列阻擋原因，既有 `cli/dplan.py` 保留獨立候選匯出。
 
 | 選項 | 用途 |
 | --- | --- |
@@ -57,7 +57,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 init --st
 結果位置：
 
 - 執行摘要：`artifacts/daily_runs/<run_id>/pipeline.json`（含交易狀態 allowed／blocked／unknown 數、決策狀態、委託數與 Agent 呼叫）
-- 報告：`artifacts/reports/latest.md`
+- 最終報告：`artifacts/reports/latest.md`；權威索引為同目錄 `latest.json`，內含交付識別、決策狀態與 D-Plan 阻擋原因。只重建已封存每日結果可用 `python3 scripts/run_daily_pipeline.py --delivery-only DAILY_RUN_ID`，不重跑 Agent。
 - 封存決策：`artifacts/portfolio_decisions/<decision_run_id>/`
 
 排程樣板見 `scripts/launchd/`（尚未正式啟用）。
@@ -76,7 +76,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 ./start.sh dashboard
 ```
 
-瀏覽器開啟 <http://127.0.0.1:8000>，`Ctrl+C` 關閉。儀表板唯讀，顯示起始本金、目前 NAV、今日／累積報酬率、現金、持倉與每日紀錄；`/api/performance` 提供同一份 JSON。只讀已驗證的虛擬帳本，驗證失敗回 409。選股與研究內容不在儀表板，請看 `artifacts/reports/latest.md` 與 run 目錄。
+瀏覽器開啟 <http://127.0.0.1:8000>，`Ctrl+C` 關閉。儀表板唯讀，顯示起始本金、目前 NAV、今日／累積報酬率、現金、持倉與每日紀錄；`/api/performance` 提供同一份 JSON。只讀已驗證的虛擬帳本，驗證失敗回 409。選股與研究內容不在儀表板，請看 `artifacts/reports/latest.md` 與 run 目錄；核對交付識別及資料截止時間，詳細契約見[交付層設計](docs/final_decision_delivery_plan.md)。
 
 ### `start.sh` 模式
 
@@ -114,6 +114,7 @@ PYTHONPATH=src python3 cli/virtual_account.py --account-id ai-cup-2026 settle
 
 ### 尚未完成
 
+- 風控後中文報告已接入每日流程；D-Plan context 自動映射與真實資料端到端交付尚未完成，見[交付層進度](docs/final_decision_delivery_plan.md)。目前新報告明列 D-Plan blocked，不冒充比賽候選。
 - 虛擬帳本 VA4／VA5 自動化與跨日真實資料驗收；正式排程啟用。步驟見[每日自動化與回測就緒計畫](docs/automation_backtest_readiness_plan.md)。
 - D-Plan：Decision run 到「來源→事實→市場姿態→全持股決策」的完整映射、真實資料端到端演練；主辦方伺服器語意驗證（`verify_dplan.py`）未取得，本地檢查不等同平台驗證。
 - 策略說明書（ETF 名稱、投資主題、投資理念）：繳交期間 2026-10-21 至 10-26。
@@ -194,6 +195,8 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 
 | 指令 | 用途 |
 | --- | --- |
+| `.venv/bin/python cli/decision_delivery.py build --decision-run-id RUN` | 從封存決策重建最終中文報告／診斷（歷史重建不更新 latest）；Windows 使用 `.venv/Scripts/python.exe` |
+| `.venv/bin/python cli/decision_delivery.py validate --delivery-id DELIVERY` | 重建報告、驗證封存及 Markdown 閱讀副本 |
 | `.venv/bin/python cli/dplan.py build ... --virtual-account-account-id ID --virtual-account-run-id PREPARE_RUN`／`validate --input D-Plan.json` | D-Plan v4.0 候選匯出（須指定決策使用的 prepare-day 帳本 run）與本地結構／引用鏈檢查（不等同主辦方伺服器驗證） |
 | `.venv/bin/python cli/backtest.py --request REQ.json compare-strategies --strategies S.json --baseline ID --output C.json` | B3 fixture 策略比較；`validate-comparison` 加 `--input C.json` 重播檢查。介面見[回測 Agent 計畫](docs/backtest_agent_plan.md) |
 | `python3 scripts/run_strategy.py --input snapshot.json` | 原型事件策略 V1（僅供對照，不在正式決策路徑） |
@@ -210,7 +213,8 @@ MoM／YoY 只是歷史基準，不能等同市場預期或單獨形成方向。f
 | `artifacts/daily_runs/` | 每日流程 run 目錄與 Agent 原始輸出 |
 | `artifacts/portfolio_decisions/` | 封存的 Decision run |
 | `artifacts/virtual_accounts/` | 虛擬帳本 |
-| `artifacts/reports/latest.md` | 最新報告 |
+| `artifacts/reports/latest.json`／`latest.md` | 本次交付權威索引／閱讀捷徑，失敗亦更新診斷；歷史重建不更新 |
+| `artifacts/decision_deliveries/runs/`／`views/` | 不可變 JSON 封存（含精確 Markdown 文字）／經驗證的 Markdown 閱讀副本 |
 | `artifacts/source-audit/` | 交易狀態 CSV 等來源稽核封存 |
 
 `artifacts/` 不納入 Git。

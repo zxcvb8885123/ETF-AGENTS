@@ -12,6 +12,7 @@
 | `portfolio_decision.py` | 動能、配置、風控、最終決策與封存 |
 | `backtest.py` | 歷史重播、帳務驗證與回測報告 |
 | `dplan.py` | D-Plan v4.0 候選匯出（核對 prepare-day 帳本）與本地結構檢查 |
+| `decision_delivery.py` | 從封存 Decision run 建立風控後中文 JSON／Markdown；重建驗證及拒絕診斷，不產 D-Plan |
 
 從專案根目錄執行，例如：
 
