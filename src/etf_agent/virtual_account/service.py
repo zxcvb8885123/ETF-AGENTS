@@ -186,6 +186,16 @@ class VirtualAccountService:
     def __init__(self, repository: VirtualAccountRepository):
         self.repository = repository
 
+    def ensure_initialized(self, rules_path: Path, account_id: str, started_at: str) -> Mapping[str, object]:
+        """只在全新帳戶開帳；已有帳本須先通過驗證，絕不重建 genesis。"""
+        current = self.repository.latest(optional=True)
+        if current is not None:
+            self.repository.verify("genesis")
+            return {"reused": True, "state": current["state"]}
+        if self.repository.root.exists() and any(self.repository.root.iterdir()):
+            raise VirtualAccountError("帳戶目錄已有資料但缺少有效 latest，拒絕重新開帳")
+        return self.initialize(rules_path, account_id, started_at)
+
     @staticmethod
     def read_snapshot(path: Path) -> Mapping[str, object]:
         snapshot = _read(path, "ResearchSnapshot")

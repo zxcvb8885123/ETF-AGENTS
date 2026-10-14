@@ -50,6 +50,9 @@ def main(argv=None) -> int:
     init.add_argument("--rules", type=Path, default=ROOT / "config" / "competition_rules.json")
     init.add_argument("--started-at", required=True)
 
+    ensure = commands.add_parser("ensure-init", help="全新帳戶自動開帳；已有帳本驗證後沿用")
+    ensure.add_argument("--rules", type=Path, default=ROOT / "config" / "competition_rules.json")
+
     prepare = commands.add_parser("prepare-day", help="結算到期款項並產生決策前帳戶快照")
     prepare.add_argument("--snapshot", type=Path, required=True)
     prepare.add_argument("--run-id", required=True)
@@ -98,6 +101,12 @@ def main(argv=None) -> int:
         if args.command == "init":
             result = service.initialize(args.rules, args.account_id, args.started_at)
             print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "ensure-init":
+            result = service.ensure_initialized(
+                args.rules, args.account_id, datetime.now(timezone.utc).isoformat(timespec="seconds")
+            )
+            print(json.dumps({"reused": result["reused"], "account_id": args.account_id}, ensure_ascii=False))
             return 0
         if args.command == "prepare-day":
             actions = read_json(args.corporate_actions).get("items", []) if args.corporate_actions else []

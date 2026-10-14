@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""每日一鍵：資料 → 決策子 Agent（claude -p）→ 封存 Decision run → 通知。
+"""每日一鍵：資料 → 決策子 Agent → 封存 Decision run → 最終中文交付 → 通知。
 
 不自動下單或送件；產出的是供人工檢視的封存決策。設計給 launchd 平日定時執行，
 也可手動執行。同一台北日期已完成時不重跑（--force 可強制）。
 """
 
 import argparse
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows 以 msvcrt 鎖定同一執行鎖。
+    fcntl = None
 import json
+import math
 import os
 import re
 import subprocess
@@ -18,8 +22,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from etf_agent.decision_delivery import build_delivery, save_failure
+from etf_agent.decision_delivery.repository import publication_lock
+
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
+    CodexAgentRunner,
     DailyDecisionPipeline,
 )
 from etf_agent.automation.preflight import (  # noqa: E402
@@ -93,6 +101,12 @@ def named_resumable_run(runs_root: Path, name: str) -> Path:
     return run_dir
 
 
+def resumable_agent_cli(run_dir: Path) -> str:
+    """續跑必須沿用該 run 已記錄的執行器；舊版摘要預設為 Claude。"""
+    previous = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8"))
+    return previous.get("agent_cli", "claude")
+
+
 def resumed_decision_run_id(run_dir: Path):
     """續跑目錄先前預定的 decision run ID；舊版 summary 沒記錄時，由已保存的事件研究輸出檔名推回。"""
     planned = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8")).get("planned_decision_run_id")
@@ -122,11 +136,41 @@ def trading_day_check(captures_root: Path, now: datetime) -> bool:
     return calendar_from_capture(capture).is_trading_day(now.date())
 
 
+def deliver_saved_run(root: Path, name: str) -> dict:
+    """只重建已封存決策的交付，不抓資料或重跑模型。"""
+    with publication_lock(root / "artifacts/daily_runs", filename=".lock"):
+        return _deliver_saved_run(root, name)
+
+
+def _deliver_saved_run(root: Path, name: str) -> dict:
+    if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name):
+        raise ValueError("每日 run 名稱不符合白名單")
+    summary_path = root / "artifacts/daily_runs" / name / "pipeline.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    decision_id = summary.get("decision_run_id") or summary.get("planned_decision_run_id")
+    if not decision_id:
+        raise ValueError("此 run 沒有封存決策識別，不能只續跑交付")
+    delivery = build_delivery(root / "artifacts/portfolio_decisions", decision_id,
+        root / "artifacts/decision_deliveries", reports_root=root / "artifacts/reports",
+        started_at=summary["started_at"])
+    summary["delivery"] = delivery
+    if delivery["report_status"] == "ready":
+        summary["status"] = "completed"
+        summary["decision_status"] = delivery["decision_status"]
+        summary.pop("error", None)
+    else:
+        summary["status"] = "failed"
+        summary["error"] = "最終報告重建失敗，詳見交付診斷"
+    write_json(summary_path, summary)
+    return delivery
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--perception-bundle", type=Path, help="已核准授權且同 cutoff 的情緒與共識資料包")
     parser.add_argument("--perception", type=Path, help="與資料包成對的已驗證情緒與共識結果")
     parser.add_argument("--account-id", default="ai-cup-2026")
+    parser.add_argument("--delivery-only", metavar="DAILY_RUN_ID", help="只重建既有每日 run 的最終交付，不執行資料準備或 Agent")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="休市日（週末或官方開休市日期表列出者）或當日已完成仍執行")
     parser.add_argument(
@@ -137,26 +181,48 @@ def main() -> int:
         "--resume-run", metavar="RUN_ID",
         help="指定要續跑的 run 目錄名稱（如 daily-20260929）並隱含 --resume；用量上限重置或跨午夜後，今天的日期已找不到前一天的 run",
     )
-    parser.add_argument("--model", help="子 Agent 使用的 Claude 模型；預設沿用 claude CLI 設定")
-    parser.add_argument("--preflight-only", action="store_true", help="只執行執行前檢查（Docker、claude 登入、帳戶、必要檔案、磁碟）後結束")
+    parser.add_argument("--agent-cli", choices=("claude", "codex"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
+    parser.add_argument("--model", help="子 Agent 模型；預設沿用所選 CLI 設定")
+    parser.add_argument("--preflight-only", action="store_true", help="只檢查 Docker、所選 Agent CLI 登入、帳戶、必要檔案與磁碟")
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
-    parser.add_argument("--max-budget-usd", type=float, default=3.0, help="單次子 Agent 的估算用量上限（防失控；claude.ai 訂閱登入時不另計費）")
+    parser.add_argument("--max-budget-usd", type=float, help="Claude CLI 單次子 Agent 的估算用量上限；預設 3 美元")
     args = parser.parse_args()
+    if args.agent_cli == "codex" and args.max_budget_usd is not None:
+        parser.error("--max-budget-usd 只適用 Claude CLI")
+    if args.max_budget_usd is not None and (not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0):
+        parser.error("--max-budget-usd 必須是大於 0 的有限數值")
+    if args.delivery_only:
+        try:
+            delivery = deliver_saved_run(ROOT, args.delivery_only)
+            log(json.dumps(delivery, ensure_ascii=False))
+            return 0 if delivery["report_status"] == "ready" else 1
+        except (ValueError, OSError, KeyError) as error:
+            log("交付續跑失敗：%s" % error)
+            return 1
     if args.perception is not None and args.perception_bundle is None:
         parser.error("--perception 必須搭配 --perception-bundle")
 
     now = datetime.now(TAIPEI_TIMEZONE)
     runs_root = ROOT / "artifacts" / "daily_runs"
     runs_root.mkdir(parents=True, exist_ok=True)
-    lock_handle = (runs_root / ".lock").open("w")
+    lock_handle = (runs_root / ".lock").open("a+b")
     try:
-        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        if fcntl is not None:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            import msvcrt
+            lock_handle.seek(0)
+            if not lock_handle.read(1):
+                lock_handle.write(b"0")
+                lock_handle.flush()
+            lock_handle.seek(0)
+            msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
         log("另一個每日流程正在執行，本次略過。")
         return 0
     min_free_bytes = int(args.min_free_gb * 1024 ** 3)
     if args.preflight_only:
-        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes)
+        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes, agent_cli=args.agent_cli)
         for check in checks:
             log("%s %s：%s" % ("通過" if check.ok else "失敗", check.name, check.detail))
         return 0 if all(check.ok for check in checks) else 1
@@ -168,6 +234,12 @@ def main() -> int:
                 return 0
         except (TradingCalendarError, OSError, ValueError) as error:
             log("無法判定今天是否為交易日，停止：%s" % error)
+            try:
+                save_failure(ROOT / "artifacts/decision_deliveries", str(error),
+                    "calendar-%s" % now.strftime("%Y%m%dT%H%M%S"),
+                    reports_root=ROOT / "artifacts/reports", started_at=now.isoformat())
+            except (ValueError, OSError) as publish_error:
+                log("交付診斷發布失敗：%s" % publish_error)
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
             return 1
     run_id = "daily-%s" % now.strftime("%Y%m%d")
@@ -188,6 +260,10 @@ def main() -> int:
     else:
         resumable = latest_resumable_run(runs_root, run_id) if args.resume else None
     if resumable is not None:
+        previous_cli = resumable_agent_cli(resumable)
+        if previous_cli != args.agent_cli:
+            log("無法續跑：原 run 使用 %s，這次選擇 %s" % (previous_cli, args.agent_cli))
+            return 1
         # 續跑沿用最近一個未完成且已有 Agent 輸出的 run 目錄，否則新目錄中沒有可沿用的輸出。
         run_id = resumable.name
         run_dir = resumable
@@ -203,13 +279,16 @@ def main() -> int:
     if resumable is not None:
         # Agent 任務名與 envelope 都含 decision run ID；續跑必須沿用同一個，已驗證輸出才對得上。
         decision_run_id = resumed_decision_run_id(run_dir) or decision_run_id
-    summary = {"run_id": run_id, "started_at": now.isoformat(), "status": "running", "planned_decision_run_id": decision_run_id}
+    original_start = json.loads(summary_path.read_text(encoding="utf-8"))["started_at"] if resumable is not None else now.isoformat()
+    summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli}
+    if resumable is not None:
+        summary["resumed_at"] = now.isoformat()
     write_json(summary_path, summary)
 
     try:
         # 在抓資料與呼叫任何子 Agent 前確認環境；一次列出全部失敗項目。
-        log("[預檢] Docker、claude 登入、帳戶、必要檔案、磁碟空間")
-        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes)
+        log("[預檢] Docker、%s 登入、帳戶、必要檔案、磁碟空間" % args.agent_cli)
+        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes, agent_cli=args.agent_cli)
         summary["preflight"] = checks_to_dict(checks)
         require_preflight(checks)
         snapshot_path = ROOT / "artifacts" / "research_snapshot_latest.json"
@@ -248,10 +327,12 @@ def main() -> int:
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
 
-        log("[3/4] 決策鏈：分析團隊 → 重大事件研究 → 多空研究 → 交易 → 風險（子 Agent 經 claude -p）")
+        log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s）" % args.agent_cli)
+        agent_runner = (ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=args.max_budget_usd or 3.0)
+                        if args.agent_cli == "claude" else CodexAgentRunner(ROOT, model=args.model))
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
-            ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=args.max_budget_usd),
+            agent_runner,
             ROOT / "artifacts" / "portfolio_decisions",
             log=log,
             resume=args.resume,
@@ -277,23 +358,46 @@ def main() -> int:
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
         summary["event_analysis_mode"] = "integrated_analyst"
+        log("[交付] 重建風控後最終中文報告")
+        summary["delivery"] = build_delivery(
+            ROOT / "artifacts/portfolio_decisions", result.decision_run_id,
+            ROOT / "artifacts/decision_deliveries", reports_root=ROOT / "artifacts/reports",
+            started_at=summary["started_at"],
+        )
+        if summary["delivery"]["report_status"] != "ready":
+            raise RuntimeError("最終報告重建失敗，詳見交付診斷")
         summary["status"] = "completed"
     except Exception as error:  # noqa: BLE001 — 任何失敗都要寫入摘要並通知
         summary["status"] = "failed"
         summary["error"] = str(error)
         log("失敗：%s" % error)
+        if "delivery" not in summary:
+            try:
+                summary["delivery"] = save_failure(
+                    ROOT / "artifacts/decision_deliveries", str(error), run_id,
+                    reports_root=ROOT / "artifacts/reports", started_at=summary["started_at"],
+                )
+            except (ValueError, OSError) as publish_error:
+                summary["delivery_publish_error"] = str(publish_error)
+                log("交付診斷發布失敗：%s" % publish_error)
     summary["finished_at"] = datetime.now(TAIPEI_TIMEZONE).isoformat()
     write_json(summary_path, summary)
 
     log("[4/4] 通知")
     if summary["status"] == "completed":
-        message = "決策 %s，%d 筆委託，現金姿態 %s，Agent 估算用量 $%s（訂閱不計費）" % (
+        message = "決策 %s，%d 筆委託，現金姿態 %s，CLI %s" % (
             summary.get("decision_status"), summary.get("order_count", 0),
-            summary.get("cash_stance"), summary.get("agent_estimated_usage_usd"),
+            summary.get("cash_stance"), args.agent_cli,
         )
+        if args.agent_cli == "claude":
+            message += "，Agent 估算用量 $%s（訂閱不計費）" % summary.get("agent_estimated_usage_usd")
     else:
         message = "失敗：%s" % str(summary.get("error"))[:120]
+    if summary.get("delivery"):
+        message += "；報告 %s；D-Plan %s" % (summary["delivery"]["report_status"], summary["delivery"]["dplan_status"])
     notify("ETF Agent 每日決策", message)
+    if summary.get("delivery"):
+        log("最終報告：%s；D-Plan：%s" % (summary["delivery"]["report_path"], summary["delivery"]["dplan_status"]))
     log(message)
     log("摘要：%s" % summary_path)
     return 0 if summary["status"] == "completed" else 1

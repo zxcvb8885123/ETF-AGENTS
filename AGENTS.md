@@ -37,7 +37,7 @@
 
 ### 後續 Agent
 
-- 每日決策鏈依[決策層 Agent 團隊重構計畫](docs/agent_team_refactor_plan.md)採分析團隊 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
+- 每日決策鏈依[目前每日決策架構](docs/architecture.md)採分析團隊 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
 - 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 作為多頭／空頭研究的整合者，先說明兩方論點的取捨，再逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
@@ -68,7 +68,7 @@
 
 ## 程式與 Skill 慣例
 
-- 核心邏輯放在 `src/etf_agent/`；`cli/` 只提供穩定 CLI 包裝，不複製資料邏輯。Skill 只保存工作流程、契約參考與產品 metadata。
+- 核心邏輯放在 `src/etf_agent/`；`cli/` 只提供穩定 CLI 包裝，不複製資料邏輯。Skill 來源放在 `tradeagent/` 並依職責分組，只保存工作流程、契約參考與產品 metadata。
 - 可重複的數值計算、時間檢查、引用驗證及停止條件必須由 Python 實作，不只寫在 prompt。
 - Canonical JSON／content hash、含時區時間解析與有限 Decimal 解析一律使用 `etf_agent.core`，不得在模組內另寫一份；需要模組專屬錯誤時以 `error=` 傳入。新的不可變 run 保存優先繼承 `etf_agent.core.artifact_store.ImmutableRunStore`。
 - 新 Agent 優先提供：計畫文件、資料契約、Provider 邊界、確定性工具、Validator、Skill、CLI 與測試。
@@ -93,7 +93,7 @@ PYTHONPATH=src PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
   .venv/bin/python -m unittest discover -s tests -v
 
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
-  .venv/bin/python -m compileall -q src skills tests
+  .venv/bin/python -m compileall -q src tradeagent tests
 
 git diff --check
 ```
@@ -103,7 +103,7 @@ git diff --check
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
   .venv/bin/python /Users/apollo/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
-  skills/SKILL_NAME
+  tradeagent/GROUP/SKILL_NAME
 ```
 
 測試應涵蓋正常流程及 fail-closed 分支，尤其是：

@@ -86,6 +86,18 @@ def check_claude(runner: CommandRunner, which: Callable[[str], Optional[str]], e
     return PreflightCheck("claude", True, "已登入（%s）" % status.get("authMethod", "unknown"))
 
 
+def check_codex(runner: CommandRunner, which: Callable[[str], Optional[str]], executable: str = "codex") -> PreflightCheck:
+    if which(executable) is None:
+        return PreflightCheck("codex", False, "找不到 %s 指令" % executable)
+    try:
+        completed = _run(runner, [executable, "login", "status"])
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return PreflightCheck("codex", False, "無法讀取登入狀態：%s" % error)
+    if completed.returncode != 0:
+        return PreflightCheck("codex", False, "Codex CLI 未登入或登入狀態不可用（請執行 codex login）")
+    return PreflightCheck("codex", True, "已登入")
+
+
 def check_account(root: Path, account_id: str) -> PreflightCheck:
     account_root = root / "artifacts" / "virtual_accounts"
     # 先確認索引存在，避免建立 repository 時替未開帳的帳戶建出空目錄。
@@ -120,6 +132,8 @@ def run_preflight(
     disk_usage: Callable[[Path], object] = shutil.disk_usage,
     min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
     claude_executable: str = "claude",
+    agent_cli: str = "claude",
+    codex_executable: str = "codex",
 ) -> List[PreflightCheck]:
     """依序執行全部檢查並回傳結果；不在第一個失敗就停，方便一次看到所有問題。"""
     root = Path(root)
@@ -127,8 +141,12 @@ def run_preflight(
     if not skip_data:
         # 資料階段經 ./start.sh 在 Docker 內執行；--skip-data 時不需要。
         checks.append(check_docker(runner, which))
+    if agent_cli not in ("claude", "codex"):
+        raise ValueError("不支援的 Agent CLI：%s" % agent_cli)
+    agent_check = (check_claude(runner, which, claude_executable) if agent_cli == "claude"
+                   else check_codex(runner, which, codex_executable))
     checks += [
-        check_claude(runner, which, claude_executable),
+        agent_check,
         check_account(root, account_id),
         check_files(root, required_files(account_id, skip_data)),
         check_disk(root, min_free_bytes, disk_usage),

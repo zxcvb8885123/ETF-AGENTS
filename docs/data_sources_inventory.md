@@ -20,4 +20,4 @@
 
 首次實抓 2026-09-29：FinMind 個股新聞對 150 檔各查一次，116 檔有線索、34 檔空結果，保存 1,004 筆；這是候選覆蓋，不代表新聞內容完整或可用於正式研究。
 
-來源依據：[FinMind 基本面](https://finmind.github.io/tutor/TaiwanMarket/Fundamental/)、[FinMind 個股新聞欄位與單日限制](https://finmind.github.io/en/tutor/TaiwanMarket/Others/)、[FinMind 資料授權說明](https://finmind.github.io/en/Disclaimer/)、[主辦方 D-Plan 指南](../game_docs/D-Plan_撰寫指南_v4.2.md)。
+來源依據：[FinMind 基本面](https://finmind.github.io/tutor/TaiwanMarket/Fundamental/)、[FinMind 個股新聞欄位與單日限制](https://finmind.github.io/en/tutor/TaiwanMarket/Others/)、[FinMind 資料授權說明](https://finmind.github.io/en/Disclaimer/)、[主辦方 D-Plan 指南](../game_docs/D-Plan_撰寫指南_v4.3.md)。

@@ -91,6 +91,26 @@ class VirtualAccountTests(unittest.TestCase):
         self.assertEqual(second["state"]["state_id"], first["state"]["state_id"])
         self.assertEqual(self.repository.latest()["state"]["sequence"], 0)
 
+    def test_ensure_initialized_creates_once_and_reuses_verified_account(self):
+        first = self.service.ensure_initialized(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        self.assertFalse(first["reused"])
+        second = self.service.ensure_initialized(self.rules, "cup-test", "2026-09-19T17:00:00+08:00")
+        self.assertTrue(second["reused"])
+        self.assertEqual(second["state"]["state_id"], first["state"]["state_id"])
+        self.assertEqual(self.repository.latest()["state"]["sequence"], 0)
+
+    def test_ensure_initialized_rejects_orphan_or_tampered_account(self):
+        self.repository.root.mkdir(parents=True)
+        (self.repository.root / "runs").mkdir()
+        with self.assertRaisesRegex(VirtualAccountError, "拒絕重新開帳"):
+            self.service.ensure_initialized(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        self.assertFalse((self.repository.root / "latest.json").exists())
+        (self.repository.root / "runs").rmdir()
+        self.service.ensure_initialized(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        (self.repository.root / "latest.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(VirtualAccountError):
+            self.service.ensure_initialized(self.rules, "cup-test", "2026-09-19T17:00:00+08:00")
+
     def test_prepare_day_creates_cutoff_account_snapshot_and_advances_parent(self):
         self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
         snapshot = {
