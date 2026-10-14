@@ -1,9 +1,10 @@
-"""以 ``claude -p`` 執行隔離子 Agent 的共用型別與 runner。"""
+"""每日決策子 Agent 的共用型別與 CLI runner。"""
 
 from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Protocol, Sequence
@@ -98,3 +99,53 @@ class ClaudeAgentRunner:
         if payload.get("is_error") or not isinstance(output, dict):
             raise DailyPipelineError("%s Agent 未產生結構化輸出：%s" % (task.name, str(payload.get("result"))[:500]))
         return AgentCall(task.name, 0, output, float(payload.get("total_cost_usd") or 0.0))
+
+
+class CodexAgentRunner:
+    """以唯讀 ``codex exec`` 取得符合 JSON Schema 的單次研究輸出。"""
+
+    def __init__(
+        self,
+        project_root: Path,
+        executable: str = "codex",
+        model: Optional[str] = None,
+        timeout_seconds: int = 1800,
+    ):
+        self.project_root = project_root
+        self.executable = executable
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
+        # 每次呼叫使用獨立暫存目錄，避免續跑或重試讀到前一次的輸出。
+        with tempfile.TemporaryDirectory(prefix="codex-agent-", dir=run_dir) as temporary:
+            schema_path = Path(temporary) / "schema.json"
+            output_path = Path(temporary) / "output.json"
+            schema_path.write_text(json.dumps(task.schema, ensure_ascii=False), encoding="utf-8")
+            command = [
+                self.executable, "exec", "--sandbox", "read-only",
+                "--output-schema", str(schema_path),
+                "--output-last-message", str(output_path),
+            ]
+            if self.model:
+                command += ["--model", self.model]
+            command += ["-"]
+            try:
+                completed = subprocess.run(
+                    command, input=task.prompt, cwd=self.project_root,
+                    capture_output=True, text=True, timeout=self.timeout_seconds, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise DailyPipelineError("%s Codex Agent 執行失敗：%s" % (task.name, error)) from error
+            if completed.returncode != 0:
+                raise DailyPipelineError(
+                    "%s Codex Agent 失敗（exit %d）：%s" %
+                    (task.name, completed.returncode, completed.stderr[-500:])
+                )
+            try:
+                output = json.loads(output_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise DailyPipelineError("%s Codex Agent 未產生有效 JSON：%s" % (task.name, error)) from error
+            if not isinstance(output, dict):
+                raise DailyPipelineError("%s Codex Agent 輸出不是物件" % task.name)
+            return AgentCall(task.name, 0, output)

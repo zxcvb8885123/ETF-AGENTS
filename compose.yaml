@@ -46,4 +46,4 @@ services:
     init: true
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-8000}:8000"
-    command: ["python3", "cli/dashboard.py", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python3", "cli/dashboard.py", "--account-id", "${ACCOUNT_ID:-ai-cup-2026}", "--host", "0.0.0.0", "--port", "8000"]

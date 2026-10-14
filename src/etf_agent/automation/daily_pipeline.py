@@ -1,4 +1,4 @@
-"""每日決策鏈：確定性工具與以 ``claude -p`` 執行的隔離子 Agent。
+"""每日決策鏈：確定性工具與 CLI 執行的隔離子 Agent。
 
 Agent 只輸出受 JSON Schema 限制的判斷內容（items、等級、審查結論）；envelope、
 ID、內容雜湊、驗證、配置與封存全部由 Python 完成。每個 Agent 輸出都先經既有
@@ -57,6 +57,7 @@ from .agent_runner import (  # noqa: F401 — 對外仍由本模組匯出
     AgentRunner,
     AgentTask,
     ClaudeAgentRunner,
+    CodexAgentRunner,
     DailyPipelineError,
     _TEXT,
     _object,

@@ -56,10 +56,10 @@ class PreflightTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_checks(self, runner=None, which=which_all, free=50 * GIB, skip_data=False, account_id="cup-test"):
+    def run_checks(self, runner=None, which=which_all, free=50 * GIB, skip_data=False, account_id="cup-test", agent_cli="claude"):
         checks = run_preflight(
             self.root, account_id, skip_data, runner=runner or FakeRunner(), which=which,
-            disk_usage=lambda _: Usage(0, 0, free), min_free_bytes=2 * GIB,
+            disk_usage=lambda _: Usage(0, 0, free), min_free_bytes=2 * GIB, agent_cli=agent_cli,
         )
         return {check.name: check for check in checks}
 
@@ -101,6 +101,17 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(self.run_checks(runner=runner)["claude"].ok)
         checks = self.run_checks(which=lambda name: None if name == "claude" else which_all(name))
         self.assertIn("PATH", checks["claude"].detail)
+
+    def test_codex_selected_and_login_failure_is_closed(self):
+        runner = FakeRunner()
+        checks = self.run_checks(runner=runner, agent_cli="codex")
+        self.assertIn("codex", checks)
+        self.assertNotIn("claude", checks)
+        self.assertIn(["codex", "login", "status"], runner.commands)
+        checks = self.run_checks(agent_cli="codex", which=lambda name: None if name == "codex" else which_all(name))
+        self.assertFalse(checks["codex"].ok)
+        checks = self.run_checks(agent_cli="codex", runner=FakeRunner(raise_for="codex"))
+        self.assertFalse(checks["codex"].ok)
 
     def test_uninitialized_account_fails_without_creating_directory(self):
         checks = self.run_checks(account_id="missing")

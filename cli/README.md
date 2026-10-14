@@ -1,6 +1,6 @@
 # ETF Agent CLI
 
-這個目錄是人工操作、排程器與 Skill 共用的穩定命令入口。每個檔案只解析參數並呼叫 `src/etf_agent/` 的核心服務，不含資料蒐集、投資判斷或數值計算邏輯。
+這個目錄提供人工操作、排程器與 Skill 共用的單步命令入口。每日自動流程在 `scripts/run_daily_pipeline.py`；可用 `--agent-cli claude` 或 `--agent-cli codex` 選擇子 Agent CLI。此處只解析參數並呼叫 `src/etf_agent/` 的核心服務，不複製資料蒐集、投資判斷或數值計算邏輯。
 
 | 入口 | 核心領域 |
 | --- | --- |
@@ -11,6 +11,7 @@
 | `research_report.py` | Research Report V0 建立與重建驗證 |
 | `portfolio_decision.py` | 動能、配置、風控、最終決策與封存 |
 | `backtest.py` | 歷史重播、帳務驗證與回測報告 |
+| `virtual_account.py` | `ensure-init` 首次開帳或驗證既有帳本；其餘命令處理決策前快照與模擬成交 |
 | `dplan.py` | D-Plan v4.0 候選匯出（核對 prepare-day 帳本）與本地結構檢查 |
 | `decision_delivery.py` | 從封存 Decision run 建立風控後中文 JSON／Markdown；重建驗證及拒絕診斷，不產 D-Plan |
 
@@ -29,3 +30,5 @@ PYTHONPATH=src python3 cli/trading_status.py validate --input artifacts/trading-
 ```
 
 `tradeagent/` 只定義 Codex／Claude 的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。
+
+單步 CLI 的部分功能供離線驗證或 fixture 研究使用；不能因命令可執行就視為已接入每日正式決策。各來源的核准與限制見 [資料來源清單](../docs/data_sources_inventory.md)。

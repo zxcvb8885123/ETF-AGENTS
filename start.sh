@@ -4,21 +4,20 @@ set -eu
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$PROJECT_DIR"
 
-MODE=${1:-auto}
+MODE=${1:-dashboard}
 
 case "$MODE" in
   auto|official|all|check|data|daily|dashboard)
     ;;
   *)
     echo "用法：./start.sh [auto|official|all|check|data|daily|dashboard]" >&2
-    echo "  auto      有官方交易池就正式抓取，否則使用開發模式（預設）" >&2
+    echo "  dashboard 驗證或建立虛擬帳戶，啟動唯讀績效儀表板（預設）" >&2
+    echo "  auto      有官方交易池就正式抓取，否則使用開發模式" >&2
     echo "  official  僅抓取官方交易池，交易池空白時停止" >&2
     echo "  all       開發用，抓取 TWSE 端點全部可解析證券" >&2
     echo "  check     視需要建置映像並執行環境檢查與測試，不抓資料" >&2
     echo "  data      每日資料擷取，不建立 Snapshot 或推進帳本" >&2
-    echo "  daily     一鍵驗證來源、更新行情／事件、建立 Snapshot 並交付報告" >&2
-    echo "  report    使用既有 Snapshot 執行或續跑報告工作流" >&2
-    echo "  dashboard 啟動唯讀績效儀表板 http://127.0.0.1:8000" >&2
+    echo "  daily     驗證來源、更新資料、建立 Snapshot 並推進虛擬帳本" >&2
     exit 2
     ;;
 esac
@@ -63,7 +62,13 @@ else
 fi
 
 if [ "$MODE" = "dashboard" ]; then
-  echo "[2/2] 啟動績效儀表板：http://127.0.0.1:${DASHBOARD_PORT:-8000}"
+  ACCOUNT_ID=${ACCOUNT_ID:-ai-cup-2026}
+  export ACCOUNT_ID
+  mkdir -p artifacts/virtual_accounts
+  echo "[2/3] 驗證既有帳戶或建立新帳戶：$ACCOUNT_ID"
+  docker compose run --rm agent python3 cli/virtual_account.py \
+    --account-id "$ACCOUNT_ID" ensure-init
+  echo "[3/3] 啟動績效儀表板：http://127.0.0.1:${DASHBOARD_PORT:-8000}"
   exec docker compose up dashboard
 fi
 
