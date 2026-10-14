@@ -1,58 +1,58 @@
 {
-  "_NOTE": "反例檔（TEAM_043 為示範用虛構隊）。【拒收 1 項】V1[C1] D3 引用不存在的 I9＝孤兒決策（反推指紋）。【警告 2 項】V2[C2] 2330 委託 3000 股≠官方公式推導值 2000——可能為記帳偏差，僅警示，蓄意不一致轉六(十四)(6)抽檢；V3[C9] 宣告 defensive/reduce、現金目標 8–15%，實際淨買超 +265 萬且預估現金 3.75%＝嘴上保守、手上激進（T-1 估算，僅警示）。",
-  "schema_version": "4.2",
+  "_NOTE": "反例範例檔（TEAM_043 為虛構隊）。示範三種問題：孤兒決策（D3 引用不存在的 I9）、委託股數與推導不一致（2330）、市場姿態宣告與委託方向相反。市場數據為推估值，非真實行情。",
+  "schema_version": "4.3",
   "doc_type": "D-Plan",
   "team_id": "TEAM_043",
-  "trade_date": "2026-10-27",
+  "trade_date": "2026-10-28",
   "sources": [
     {
       "source_id": "S1",
       "authority": "twse",
       "name": "TWSE 盤後資訊：上市個股日收盤價量 + 三大法人買賣超（參賽者自抓官方 OpenAPI）",
       "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-      "content_as_of": "2026-10-26T18:30:00+08:00",
-      "fetched_at": "2026-10-27T05:04:12+08:00"
+      "content_as_of": "2026-10-27T18:30:00+08:00",
+      "fetched_at": "2026-10-28T05:04:12+08:00"
     },
     {
       "source_id": "S2",
-      "name": "美股收盤行情（SOX / NDX / SPX，2026-10-26 美東收盤）",
-      "url": "https://finance.example.com/us-close/2026-10-26",
-      "content_as_of": "2026-10-27T04:00:00+08:00",
-      "fetched_at": "2026-10-27T05:08:33+08:00",
+      "name": "美股收盤行情（SOX / NDX / SPX，2026-10-27 美東收盤）",
+      "url": "https://finance.example.com/us-close/2026-10-27",
+      "content_as_of": "2026-10-28T04:00:00+08:00",
+      "fetched_at": "2026-10-28T05:08:33+08:00",
       "authority": "vendor"
     },
     {
       "source_id": "S3",
       "name": "台指期夜盤收盤（TAIFEX 盤後行情表）",
       "url": "https://www.taifex.com.tw/cht/3/futDailyMarketReport",
-      "content_as_of": "2026-10-27T05:00:00+08:00",
-      "fetched_at": "2026-10-27T05:11:47+08:00",
+      "content_as_of": "2026-10-28T05:00:00+08:00",
+      "fetched_at": "2026-10-28T05:11:47+08:00",
       "authority": "taifex"
     },
     {
       "source_id": "S4",
-      "name": "台股 ADR 收盤（TSM / UMC，2026-10-26 美東收盤）",
-      "url": "https://finance.example.com/adr/2026-10-26",
-      "content_as_of": "2026-10-27T04:00:00+08:00",
-      "fetched_at": "2026-10-27T05:09:02+08:00",
+      "name": "台股 ADR 收盤（TSM / UMC，2026-10-27 美東收盤）",
+      "url": "https://finance.example.com/adr/2026-10-27",
+      "content_as_of": "2026-10-28T04:00:00+08:00",
+      "fetched_at": "2026-10-28T05:09:02+08:00",
       "authority": "vendor"
     },
     {
       "source_id": "S5",
       "name": "Reuters:〈Fed officials signal further easing path at October meeting〉",
-      "url": "https://www.reuters.com/markets/us/fed-october-easing-2026-10-26/",
-      "published_at": "2026-10-27T03:41:00+08:00",
-      "content_as_of": "2026-10-27T03:41:00+08:00",
-      "fetched_at": "2026-10-27T06:02:19+08:00",
+      "url": "https://www.reuters.com/markets/us/fed-october-easing-2026-10-27/",
+      "published_at": "2026-10-28T03:41:00+08:00",
+      "content_as_of": "2026-10-28T03:41:00+08:00",
+      "fetched_at": "2026-10-28T06:02:19+08:00",
       "authority": "media"
     },
     {
       "source_id": "S6",
       "name": "盤前快訊:〈金融股試撮走高，2891 試撮價 +1.8%〉",
-      "url": "https://news.example.com/preopen/2026-10-27-fin-auction",
-      "published_at": "2026-10-27T08:41:00+08:00",
-      "content_as_of": "2026-10-27T08:41:00+08:00",
-      "fetched_at": "2026-10-27T08:43:26+08:00",
+      "url": "https://news.example.com/preopen/2026-10-28-fin-auction",
+      "published_at": "2026-10-28T08:41:00+08:00",
+      "content_as_of": "2026-10-28T08:41:00+08:00",
+      "fetched_at": "2026-10-28T08:43:26+08:00",
       "authority": "media"
     }
   ],
@@ -259,8 +259,8 @@
   "agent_metadata": {
     "model_provider": "anthropic",
     "model_version": "claude-opus-4-7",
-    "run_started_at": "2026-10-27T08:31:40+08:00",
-    "run_completed_at": "2026-10-27T08:47:12+08:00",
+    "run_started_at": "2026-10-28T08:31:40+08:00",
+    "run_completed_at": "2026-10-28T08:47:12+08:00",
     "input_tokens": 51300,
     "output_tokens": 11200,
     "tool_use_count": 15,
