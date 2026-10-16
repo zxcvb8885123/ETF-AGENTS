@@ -1,7 +1,7 @@
-"""Deterministic D-Plan v4.0 export and local validation.
+"""Deterministic D-Plan v4.3 export and local validation.
 
 This module implements the structural and locally reproducible checks supported
-by the supplied v4.0 schema and authoring guide. It is not the organizer's
+by the supplied v4.3 schema and authoring guide. It is not the organizer's
 server-side verify_dplan.py semantic validator.
 """
 
@@ -23,7 +23,7 @@ class DPlanError(ValueError):
 
 
 class DPlanValidator:
-    """Fail-closed subset of schema v4.0 and guide-level reference checks."""
+    """Fail-closed subset of schema v4.3 and guide-level reference checks."""
 
     TOP = {
         "_NOTE", "schema_version", "doc_type", "team_id", "trade_date", "sources",
@@ -35,12 +35,12 @@ class DPlanValidator:
         errors: List[str] = []
         unknown = sorted(set(plan) - self.TOP)
         if unknown:
-            errors.append("D-Plan 含 schema v4.0 未定義欄位：" + ", ".join(unknown))
+            errors.append("D-Plan 含 schema v4.3 未定義欄位：" + ", ".join(unknown))
         for field in sorted(self.TOP - {"_NOTE"}):
             if field not in plan:
                 errors.append("D-Plan 缺少欄位：%s" % field)
-        if plan.get("schema_version") != "4.0" or plan.get("doc_type") != "D-Plan":
-            errors.append("schema_version/doc_type 必須為 4.0/D-Plan")
+        if plan.get("schema_version") != "4.3" or plan.get("doc_type") != "D-Plan":
+            errors.append("schema_version/doc_type 必須為 4.3/D-Plan")
         team = plan.get("team_id")
         if not isinstance(team, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", team):
             errors.append("team_id 必須是主辦方配發的 1–32 位英數、底線或連字號")
@@ -54,9 +54,9 @@ class DPlanValidator:
         sources = self._array(plan, "sources", 1, 50, errors)
         observations = self._array(plan, "observations", 1, 100, errors)
         inferences = self._array(plan, "inferences", 1, 60, errors)
-        decisions = self._array(plan, "decisions", 0, 30, errors)
+        decisions = self._array(plan, "decisions", 0, 60, errors)
         no_trade = self._array(plan, "no_trade_decisions", 0, 30, errors)
-        orders = self._array(plan, "orders", 0, 30, errors)
+        orders = self._array(plan, "orders", 0, 60, errors)
         ids: Dict[str, set] = {"S": set(), "O": set(), "I": set(), "D": set()}
         self._objects(sources, "sources", {"source_id", "authority", "url", "content_as_of", "name", "archive_url", "published_at", "fetched_at"},
                       {"source_id", "authority", "url", "content_as_of"}, errors)
@@ -156,7 +156,7 @@ class DPlanValidator:
         DPlanValidator._object(value, "agent_metadata", fields, {"model_provider", "model_version", "run_started_at", "run_completed_at", "code_version"}, errors)
         if isinstance(value, Mapping):
             if value.get("model_provider") not in allowed_provider:
-                errors.append("agent_metadata.model_provider 不在 schema v4.0 列舉值")
+                errors.append("agent_metadata.model_provider 不在 schema v4.3 列舉值")
             for field in ("run_started_at", "run_completed_at"):
                 if not isinstance(value.get(field), str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?\+08:00", value[field]):
                     errors.append("agent_metadata.%s 必須含台北時區 +08:00" % field)
@@ -237,8 +237,8 @@ class DPlanValidator:
                 if not isinstance(row.get("statement"), str) or not 5 <= len(row["statement"]) <= 500:
                     errors.append("observation.statement 長度須為 5–500")
                 refs = row.get("source_ref")
-                if not isinstance(refs, list) or not 1 <= len(refs) <= 5:
-                    errors.append("observation.source_ref 須為 1–5 個來源引用")
+                if not isinstance(refs, list) or not 1 <= len(refs) <= 10:
+                    errors.append("observation.source_ref 須為 1–10 個來源引用")
                 if "topic" in row and (not isinstance(row["topic"], str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,40}", row["topic"])):
                     errors.append("observation.topic 格式不合法")
                 values = row.get("values")
@@ -276,8 +276,8 @@ class DPlanValidator:
                 if row.get("action") not in {"BUY", "ADD", "TRIM", "SELL_ALL"}:
                     errors.append("decision.action 不合法")
                 refs = row.get("inference_refs")
-                if not isinstance(refs, list) or not 1 <= len(refs) <= 5:
-                    errors.append("decision.inference_refs 須為 1–5 個推論引用")
+                if not isinstance(refs, list) or not 1 <= len(refs) <= 8:
+                    errors.append("decision.inference_refs 須為 1–8 個推論引用")
                 try:
                     weight = Decimal(str(row.get("target_weight")))
                     if weight < 0 or weight > Decimal("0.25"):
@@ -325,7 +325,7 @@ class DPlanExporter:
             raise DPlanError("trade_date 必須晚於決策資料 cutoff 日期")
         required_context = {
             "sources", "observations", "market_view", "inferences", "inference_refs_by_ticker",
-            "agent_metadata", "eligible_tickers", "eligible_universe_source_refs", "strategy_statement",
+            "agent_metadata", "eligible_tickers", "strategy_statement",
         }
         if required_context - set(context):
             raise DPlanError("D-Plan context 缺少：" + ", ".join(sorted(required_context - set(context))))
@@ -348,8 +348,8 @@ class DPlanExporter:
         held = {str(row["symbol"]): int(row["shares"]) for row in account.get("positions", [])}
         latest_prices = {str(row["symbol"]): Decimal(str(row["analysis_close_price"])) for row in bundle["snapshot"].get("latest_prices", [])}
         target = {str(row["symbol"]): int(row["shares"]) for row in positions}
-        if any(not re.fullmatch(r"\d{4}\.TW", symbol) for symbol in set(held) | set(target)):
-            raise DPlanError("D-Plan 只支援具四位數台股代碼且可映射為 ####.TW 的標的")
+        if any(not re.fullmatch(r"\d{4}\.(?:TW|TWO)", symbol) for symbol in set(held) | set(target)):
+            raise DPlanError("D-Plan 只支援具四位數台股代碼且可映射為 ####.TW／####.TWO 的標的")
         nav = Decimal(str(account["nav"]))
         refs_map = context.get("inference_refs_by_ticker")
         if not isinstance(refs_map, Mapping):
@@ -357,12 +357,6 @@ class DPlanExporter:
         eligible = context.get("eligible_tickers")
         if not isinstance(eligible, list) or any(not isinstance(item, str) or not re.fullmatch(r"\d{4}", item) for item in eligible) or len(eligible) != 150 or len(set(eligible)) != 150:
             raise DPlanError("eligible_tickers 必須是已核實的 150 檔四位數官方交易池；ETF 清單不可代替")
-        universe_refs = context.get("eligible_universe_source_refs")
-        if not isinstance(universe_refs, list) or not universe_refs:
-            raise DPlanError("缺少 150 檔官方交易池的來源引用")
-        source_ids = {str(item.get("source_id")) for item in context["sources"] if isinstance(item, Mapping)}
-        if any(ref not in source_ids for ref in universe_refs):
-            raise DPlanError("官方交易池引用不存在於 sources")
         self._validate_strategy_statement(context.get("strategy_statement"))
         metadata = context.get("agent_metadata")
         try:
@@ -430,7 +424,7 @@ class DPlanExporter:
         if proposed != derived:
             raise DPlanError("主辦方 target_weight 股數公式與已核准 Decision orders 不一致；拒絕輸出 D-Plan")
         plan = {
-            "schema_version": "4.0", "doc_type": "D-Plan", "team_id": team_id, "trade_date": trade_date,
+            "schema_version": "4.3", "doc_type": "D-Plan", "team_id": team_id, "trade_date": trade_date,
             "sources": context["sources"], "observations": context["observations"], "market_view": context["market_view"],
             "inferences": context["inferences"], "decisions": decisions, "no_trade_decisions": no_trade,
             "orders": order_rows, "agent_metadata": context["agent_metadata"],
@@ -461,9 +455,15 @@ class DPlanExporter:
     @staticmethod
     def _validate_official_posture(plan: Mapping[str, object], account: Mapping[str, object], bundle: Mapping[str, object], orders: Sequence[Mapping[str, object]], prices: Mapping[str, Decimal], target: Mapping[str, int]) -> None:
         posture = plan["market_view"]["posture"]
+        ticker_prices = {}
+        for symbol, price in prices.items():
+            ticker = symbol[:4]
+            if ticker in ticker_prices and ticker_prices[ticker] != price:
+                raise DPlanError("同一四位數 ticker 對應多個交易所價格，無法安全匯出：%s" % ticker)
+            ticker_prices[ticker] = price
         buy, sell = Decimal("0"), Decimal("0")
         for row in orders:
-            amount = Decimal(int(row["shares"])) * prices[row["ticker"] + ".TW"]
+            amount = Decimal(int(row["shares"])) * ticker_prices[row["ticker"]]
             if row["side"] == "BUY":
                 buy += amount
             else:
@@ -484,7 +484,7 @@ class DPlanExporter:
         minimum_commission = Decimal(str(rules.get("minimum_commission", "0")))
         estimated_cash = cash
         for row in orders:
-            gross = Decimal(int(row["shares"])) * prices[row["ticker"] + ".TW"]
+            gross = Decimal(int(row["shares"])) * ticker_prices[row["ticker"]]
             fee = max(gross * commission, minimum_commission)
             tax = gross * sell_tax if row["side"] == "SELL" else Decimal("0")
             estimated_cash += -gross - fee if row["side"] == "BUY" else gross - fee - tax

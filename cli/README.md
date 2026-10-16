@@ -12,7 +12,7 @@
 | `portfolio_decision.py` | 動能、配置、風控、最終決策與封存 |
 | `backtest.py` | 歷史重播、帳務驗證與回測報告 |
 | `virtual_account.py` | `ensure-init` 首次開帳或驗證既有帳本；其餘命令處理決策前快照與模擬成交 |
-| `dplan.py` | D-Plan v4.0 候選匯出（核對 prepare-day 帳本）與本地結構檢查 |
+| `dplan.py` | 從封存決策自動整理 D-Plan context、匯出 v4.3 候選（核對 prepare-day 帳本）與本地結構檢查 |
 | `decision_delivery.py` | 從封存 Decision run 建立風控後中文 JSON／Markdown；重建驗證及拒絕診斷，不產 D-Plan |
 
 從專案根目錄執行，例如：
@@ -22,11 +22,18 @@
 # 已保存的官方狀態回應需先轉成 records／coverage，再固定 cutoff 建立 bundle
 PYTHONPATH=src python3 cli/trading_status.py validate --input artifacts/trading-status/bundle.json
 
-# 從封存 Decision run 匯出 D-Plan；帳本 run 必須是決策使用、且仍為 latest 的 prepare-day 封存
-.venv/bin/python cli/dplan.py build --team-id TEAM --trade-date YYYY-MM-DD \
-  --context CONTEXT.json \
+# 從封存 Decision run 自動整理 context 並匯出 D-Plan；帳本 run 必須是決策使用、且仍為 latest 的 prepare-day 封存。
+# competition_profile.json 的策略與模型資訊必須先由人工確認，否則命令 fail-closed。
+.venv/bin/python cli/dplan.py build --trade-date YYYY-MM-DD \
+  --daily-run artifacts/daily_runs/DAILY_RUN_ID/pipeline.json \
   --decision-repository artifacts/portfolio_decisions --decision-run-id DECISION_RUN_ID \
   --virtual-account-account-id ai-cup-2026 --virtual-account-run-id PREPARE_RUN_ID
+
+# 只測試自動 context 整理，不建立正式 D-Plan
+.venv/bin/python cli/dplan.py build-context \
+  --decision-repository artifacts/portfolio_decisions --decision-run-id DECISION_RUN_ID \
+  --daily-run artifacts/daily_runs/DAILY_RUN_ID/pipeline.json \
+  --output artifacts/competition/contexts/context_DECISION_RUN_ID.json
 ```
 
 `tradeagent/` 只定義 Codex／Claude 的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。
