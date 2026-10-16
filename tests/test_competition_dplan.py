@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from etf_agent.competition import (
-    DPlanError, DPlanExporter, DPlanValidator, load_decision_run, verify_account_binding,
+    DPlanContextBuilder, DPlanError, DPlanExporter, DPlanValidator, load_decision_run,
+    verify_account_binding,
 )
 from etf_agent.decision import (
     AllocationOrderEngine, CompetitionGuardV2, DecisionFinalizer,
@@ -64,14 +65,63 @@ def approved_artifacts():
 def valid_plan():
     context = valid_context()
     return {
-        "schema_version": "4.0", "doc_type": "D-Plan", "team_id": "TEAM_042", "trade_date": "2026-09-22",
+        "schema_version": "4.3", "doc_type": "D-Plan", "team_id": "TEAM_042", "trade_date": "2026-09-22",
         "sources": context["sources"], "observations": context["observations"], "market_view": context["market_view"],
         "inferences": context["inferences"], "decisions": [], "no_trade_decisions": [], "orders": [],
         "agent_metadata": context["agent_metadata"],
     }
 
 
+def approved_profile():
+    return {
+        "schema_version": "1.0", "team_id": "TEAM_11067", "strategy_status": "approved",
+        "strategy": {
+            "etf_name": "主動測試ETF", "investment_theme": "測試用投資主題",
+            "investment_philosophy": "測試用投資理念。" * 12,
+            "approved_at": "2026-09-19T20:00:00+08:00",
+        },
+        "agent": {"model_provider": "openai", "model_version": "codex-test-1"},
+    }
+
+
+def daily_run():
+    return {
+        "run_id": "daily-test", "started_at": "2026-09-19T20:01:00+08:00",
+        "finished_at": "2026-09-19T20:02:00+08:00",
+    }
+
+
 class DPlanContractTests(unittest.TestCase):
+    def test_context_builder_uses_sealed_artifacts_and_rejects_unapproved_profile(self):
+        artifacts = approved_artifacts()
+        with self.assertRaisesRegex(DPlanError, "策略尚未確認"):
+            DPlanContextBuilder().build(artifacts, {"schema_version": "1.0", "team_id": "TEAM_11067", "strategy_status": "pending_user_confirmation"}, daily_run(), "git:test")
+        for row in artifacts["decision_input"]["snapshot"]["source_evidence"]:
+            row["url"] = "https://data.example.test/%s" % row["evidence_id"]
+            row["authority"] = "vendor"
+            row["source"] = "TEST_VENDOR"
+            row["content_as_of"] = "2026-09-19T18:00:00+08:00"
+            row["fetched_at"] = "2026-09-19T18:01:00+08:00"
+        for row in artifacts["intent"]["items"]:
+            if len(row.get("rationale", "")) < 20:
+                row["rationale"] = "此為測試用既有交易理由，僅驗證 D-Plan context 自動引用鏈。"
+        snapshot = artifacts["decision_input"]["snapshot"]
+        existing = {row["symbol"][:4] for row in snapshot["latest_prices"]}
+        for number in range(1000, 9999):
+            ticker = "%04d" % number
+            if ticker in existing:
+                continue
+            snapshot["latest_prices"].append({"symbol": ticker + ".TW"})
+            existing.add(ticker)
+            if len(existing) == 150:
+                break
+        snapshot["universe_size"] = 150
+        context = DPlanContextBuilder().build(artifacts, approved_profile(), daily_run(), "git:test")
+        self.assertNotIn("eligible_universe_source_refs", context)
+        self.assertEqual(context["agent_metadata"]["model_provider"], "openai")
+        self.assertEqual(context["market_view"]["basis_refs"], ["O1"])
+        self.assertTrue(context["inference_refs_by_ticker"])
+
     def test_detects_orphan_references_unknown_fields_and_noncontiguous_ids(self):
         plan = valid_plan()
         self.assertEqual(DPlanValidator().validate(plan), [])
@@ -97,6 +147,85 @@ class DPlanContractTests(unittest.TestCase):
         self.assertTrue(any("引用不存在" in error for error in errors))
         self.assertTrue(any("1,000 股整數倍" in error for error in errors))
 
+    def test_validator_accepts_v43_array_boundaries(self):
+        plan = valid_plan()
+        plan["sources"] = [
+            {
+                "source_id": "S%d" % index,
+                "authority": "vendor",
+                "url": "https://data.example.test/%d" % index,
+                "content_as_of": "2026-09-19T18:00:00+08:00",
+            }
+            for index in range(1, 11)
+        ]
+        plan["observations"][0]["source_ref"] = ["S%d" % index for index in range(1, 11)]
+        plan["inferences"] = [
+            {
+                "inf_id": "I%d" % index,
+                "premise_refs": ["O1"],
+                "logic": "此為測試用推論內容，僅用於驗證 v4.3 引用數量上限。",
+                "counter_evidence": None,
+            }
+            for index in range(1, 9)
+        ]
+        refs = ["I%d" % index for index in range(1, 9)]
+        plan["decisions"] = [
+            {
+                "decision_id": "D%d" % index,
+                "ticker": "%04d" % (1000 + index),
+                "action": "BUY",
+                "target_weight": 0.01,
+                "inference_refs": refs,
+            }
+            for index in range(1, 61)
+        ]
+        plan["orders"] = [
+            {
+                "ticker": "%04d" % (1000 + index),
+                "side": "BUY",
+                "shares": 1000,
+                "decision_ref": "D%d" % index,
+            }
+            for index in range(1, 61)
+        ]
+        self.assertEqual(DPlanValidator().validate(plan), [])
+
+    def test_validator_rejects_legacy_v40_and_v43_array_overflow(self):
+        plan = valid_plan()
+        plan["schema_version"] = "4.0"
+        errors = DPlanValidator().validate(plan)
+        self.assertTrue(any("4.3/D-Plan" in error for error in errors))
+
+        plan = valid_plan()
+        plan["sources"] += [
+            {
+                "source_id": "S%d" % index,
+                "authority": "vendor",
+                "url": "https://data.example.test/%d" % index,
+                "content_as_of": "2026-09-19T18:00:00+08:00",
+            }
+            for index in range(2, 12)
+        ]
+        plan["observations"][0]["source_ref"] = ["S%d" % index for index in range(1, 12)]
+        errors = DPlanValidator().validate(plan)
+        self.assertTrue(any("1–10 個來源引用" in error for error in errors))
+
+        plan = valid_plan()
+        plan["decisions"] = [{}] * 61
+        plan["orders"] = [{}] * 61
+        plan["decisions"][0]["inference_refs"] = ["I%d" % index for index in range(1, 10)]
+        errors = DPlanValidator().validate(plan)
+        self.assertTrue(any("decisions 必須是 0–60 筆陣列" in error for error in errors))
+        self.assertTrue(any("orders 必須是 0–60 筆陣列" in error for error in errors))
+
+        plan = valid_plan()
+        plan["decisions"] = [{
+            "decision_id": "D1", "ticker": "2330", "action": "BUY",
+            "target_weight": 0.1,
+            "inference_refs": ["I%d" % index for index in range(1, 10)],
+        }]
+        errors = DPlanValidator().validate(plan)
+        self.assertTrue(any("1–8 個推論引用" in error for error in errors))
 
 class DPlanAccountBindingTests(unittest.TestCase):
     def setUp(self):

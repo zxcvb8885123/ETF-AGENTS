@@ -81,7 +81,7 @@ Windows PowerShell 的本機 Python 路徑是 `.venv\Scripts\python.exe`；`star
 | 每日決策 | 三位分析師 → 多空研究 → 交易 Agent → 風險 Agent → 確定性配置／Guard 已接入每日流程；封存結果可重建驗證 |
 | 情緒與共識 | 全市場正式情緒 Provider、合法且歷史化的分析師共識尚未接入，正式通道維持 `unavailable`；市場交易背景不能充當情緒 |
 | 候選資料 | FinMind 三大報表、個股新聞與市場新聞可保存或診斷；未完成授權、時間與覆蓋核對的資料不進正式 Snapshot／決策 |
-| 交付與回測 | 中文決策報告已接入；D-Plan 自動映射、主辦方伺服器驗證及正式歷史 Agent 回測尚未完成。現有 B0～B3 回測屬 fixture／離線驗證 |
+| 交付與回測 | 中文決策報告與 D-Plan v4.3 候選匯出已接入；CLI 可由已驗證的決策封存自動整理 context。競賽設定檔的策略與模型資訊未確認、決策未核准或帳本綁定不一致時一律停止；每日腳本尚未自動呼叫匯出器，主辦方伺服器驗證及正式歷史 Agent 回測尚未完成。現有 B0～B3 回測屬 fixture／離線驗證 |
 
 實際來源、用途與限制見 [資料來源清單](docs/data_sources_inventory.md)；目前分工與重建規則見 [每日決策架構](docs/architecture.md)。MoM／YoY 是歷史比較，不是市場預期或交易訊號。
 
@@ -92,7 +92,7 @@ Windows PowerShell 的本機 Python 路徑是 `.venv\Scripts\python.exe`；`star
 | `src/etf_agent/` | 資料、研究、決策、帳務與風控的核心 Python 程式 |
 | `cli/`、`scripts/` | 單步命令與每日流程入口 |
 | `tradeagent/` | Codex／Claude 共用的角色 Skill；計算與驗證仍由 Python 執行 |
-| `config/`、`data/` | 規則、來源核准設定與交易池輸入 |
+| `config/`、`data/` | 規則、來源核准設定、交易池輸入，以及競賽隊伍／策略資料填寫（見 `config/competition_profile.md`） |
 | `tests/`、`docs/` | 確定性測試與設計、來源稽核文件 |
 
 ## 輸入與產出
