@@ -2,6 +2,8 @@
 
 本文件說明已接線的每日決策流程。詳細欄位以 `src/etf_agent/` 的契約與 Validator 為準；Agent Skill 位於 `tradeagent/`。流程產出供人工檢視的封存決策與中文報告，不自動下單或送件。
 
+帳本若有前次已封存決策，須先以該決策指定成交日的 TWSE／TPEx 官方價量結算，才能建立新的決策前帳戶快照。歷史上櫃價量缺口可用 `scripts/repair_pending_tpex_close.py` 從 TPEx 指定日期原頁補抓；抓取時間不回填成歷史可得時間，原文與來源雜湊留存，仍需通過原帳本結算驗證。
+
 ```text
 資料與 ResearchSnapshot → 技術／基本面／事件分析師
   → 同輸入且互相隔離的多頭／空頭研究員
@@ -18,6 +20,8 @@
 | 風險 | 配置前給現金姿態；配置後審查並提出受限修正 | 重算費稅、現金、情境與競賽限制；硬性規則失敗即拒絕，修正循環最多三次 |
 
 決策與帳本用價是 Snapshot `latest_prices` 的 `execution_close_price`（同日官方原價，附 `execution_price_source` 與 `execution_source_evidence_id`）；`analysis_close_price` 是調整價，只供研究與技術指標。同日沒有官方價時 `execution_*` 為空，配置、風控與 D-Plan 退回 `analysis_close_price`，重放過去日期時該價含事後除權息調整，屬已知限制。舊封存沒有此欄位仍可重建驗證。
+
+配置程式在產生提案時就以 Policy 的單股上限（含特殊上限）檢查既有持股與候選，按整張降低預計超重部位，並用同一情境引擎檢查部分成交後的曝險；`constraint_flags.RISK_STOCK_WEIGHT` 記錄程式必要的硬規則減碼，原交易 Agent 的 `hold` 等意圖不被偽改。風險 Agent 不手寫股數或權重；交易受限、整張／現金／換手等限制無法同時滿足時，CompetitionGuard 仍須拒絕。
 
 Decision run 另存 `team_inputs`。目前 2.1 版包含三份分析報告與現金姿態；舊 2.0 封存仍按其原始分析報告及事件研究輸入重建。Finalizer 與下游驗證缺少必要輸入、引用不存在、版本不合或數值被改寫時拒絕。1.0 Buy／Sell 舊決策鏈不再接受。
 

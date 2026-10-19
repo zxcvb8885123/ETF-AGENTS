@@ -25,6 +25,16 @@ def world(rejected=False):
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_legacy_report_index_can_be_replaced_by_later_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            reports.mkdir()
+            (reports / "latest.json").write_text(json.dumps({"schema_version": "1.0", "workflow_run_id": "old", "generated_at": "2026-09-29T16:33:20+08:00"}), encoding="utf-8")
+            result = save_failure(root / "delivery", "舊帳本待結算", "today", reports_root=reports, started_at="2026-10-19T20:24:30+08:00")
+            self.assertTrue(result["published"])
+            self.assertIn("started_at", json.loads((reports / "latest.json").read_text(encoding="utf-8")))
+
     def test_interrupted_latest_copy_is_repairable(self):
         from etf_agent.decision_delivery import repository
         with tempfile.TemporaryDirectory() as directory:

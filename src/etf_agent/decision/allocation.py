@@ -340,6 +340,10 @@ class AllocationOrderEngine:
             orders, starting_cash, starting_total_cash, marked_nav, effective
         )
         constraint_flags.extend(cash_flags)
+        orders, projected_cash, weight_flags = self._fit_stock_weights(
+            current, orders, projected_cash, effective
+        )
+        constraint_flags.extend(weight_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1
@@ -555,6 +559,70 @@ class AllocationOrderEngine:
             side = "buy" if delta > 0 else "sell"
             orders.append(self._order(symbol, side, abs(delta), intents.get(symbol, "hold"), effective))
         return sorted(orders, key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
+
+    def _fit_stock_weights(
+        self,
+        current: Mapping[str, int],
+        orders: List[Dict[str, object]],
+        cash: Decimal,
+        effective: Mapping[str, object],
+    ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
+        """在 Guard 前按整張降低預計超重部位；費稅改變 NAV 時逐張重算。"""
+        fitted = list(orders)
+        shares = dict(current)
+        for order in fitted:
+            symbol = str(order["symbol"])
+            shares[symbol] = shares.get(symbol, 0) + (1 if order["side"] == "buy" else -1) * int(order["shares"])
+        original = dict(shares)
+        lot = int(effective["lot_size"])
+        # 沿用正式情境引擎的成交率、費稅與 NAV 計算，不自行近似壓力情境。
+        from .risk import ScenarioEngine
+
+        scenarios = ScenarioEngine(self.context.bundle, self.policy)
+        while True:
+            changed = False
+            for symbol in sorted(shares):
+                limit = self._weight_limit(symbol, effective) * LIMIT_HEADROOM
+                while shares[symbol] > 0:
+                    result = scenarios.run({"proposal_id": "risk-fit", "order_proposal": {"orders": fitted}})
+                    overweight = False
+                    for scenario in result["scenarios"]:
+                        nav = decimal_value(scenario["nav"], "scenario.nav")
+                        if nav <= 0:
+                            raise DecisionToolError("風險限額調整後情境 NAV 必須大於 0")
+                        value = next((decimal_value(row["assumed_value"], "assumed_value") for row in scenario["positions"] if row["symbol"] == symbol), Decimal("0"))
+                        if value > nav * limit:
+                            overweight = True
+                            break
+                    if not overweight:
+                        break
+                    existing = next((item for item in fitted if item["symbol"] == symbol), None)
+                    if existing is not None and existing["side"] == "buy":
+                        remaining = int(existing["shares"]) - lot
+                        replacement = self._order(symbol, "buy", remaining, str(existing["intent"]), effective) if remaining else None
+                    else:
+                        remaining = int(existing["shares"]) + lot if existing is not None else lot
+                        replacement = self._order(symbol, "sell", remaining, str(existing["intent"]) if existing else "hold", effective)
+                    if existing is not None:
+                        fitted.remove(existing)
+                        cash -= decimal_value(existing["net_cash_impact"], "net_cash_impact")
+                    if replacement is not None:
+                        fitted.append(replacement)
+                        cash += decimal_value(replacement["net_cash_impact"], "net_cash_impact")
+                    shares[symbol] -= lot
+                    changed = True
+            if not changed:
+                break
+        flags: List[Dict[str, object]] = []
+        for symbol in sorted(shares):
+            if shares[symbol] != original[symbol]:
+                flags.append({
+                    "symbol": symbol,
+                    "code": "RISK_STOCK_WEIGHT",
+                    "detail": "單股硬性上限風險調整：預計股數由 %d 降為 %d（交易 Agent 原意圖未改）" % (original[symbol], shares[symbol]),
+                })
+        fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
+        return fitted, cash, flags
 
     def _order(
         self,
