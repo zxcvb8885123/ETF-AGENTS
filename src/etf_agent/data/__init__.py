@@ -91,6 +91,7 @@ from .source_health import (
     write_json_artifact,
 )
 from .status import (
+    format_status_time,
     CollectionRunStatus,
     DataAgentStatus,
     DataAgentStatusRepository,
@@ -183,6 +184,7 @@ __all__ = [
     "SourceProbeDefinition",
     "SourceDocument",
     "SourceReportStatus",
+    "format_status_time",
     "TwseDailyProvider",
     "TpexDailyProvider",
     "YFinanceCollectionResult",
