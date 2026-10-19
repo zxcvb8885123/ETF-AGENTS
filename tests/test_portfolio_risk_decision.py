@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -108,6 +109,44 @@ def risk_review(bundle, proposal, scenario, guard, decision="approve", revision=
 
 
 class PortfolioRiskDecisionTests(unittest.TestCase):
+    def test_existing_hold_over_stock_limit_is_trimmed_before_guard(self):
+        bundle, _, _, _ = valid_inputs()
+        account = bundle["account_snapshot"]
+        account["positions"][0]["shares"] = 5000
+        price = Decimal(bundle["snapshot"]["latest_prices"][0]["analysis_close_price"])
+        account["nav"] = str(Decimal(account["cash"]) + 5000 * price)
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        bundle, _, _, intent, _, _, _, _ = chain_inputs(bundle)
+        self.assertEqual(next(item for item in intent["items"] if item["symbol"] == "2330.TW")["intent"], "hold")
+        settings = policy()
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        trims = [item for item in proposal["order_proposal"]["orders"] if item["symbol"] == "2330.TW"]
+        self.assertEqual(len(trims), 1)
+        self.assertEqual((trims[0]["side"], trims[0]["intent"]), ("sell", "hold"))
+        self.assertTrue(any(item["code"] == "RISK_STOCK_WEIGHT" for item in proposal["constraint_flags"]))
+        self.assertEqual(ProposalValidator(bundle, settings, intent).validate(proposal), [])
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        self.assertTrue(guard["passed"], [(item["rule_id"], item["details"]) for item in guard["checks"] if not item["passed"]])
+
+    def test_zero_liquidity_cannot_claim_overweight_was_repaired(self):
+        bundle, _, _, _ = valid_inputs()
+        account = bundle["account_snapshot"]
+        account["positions"][0]["shares"] = 5000
+        price = Decimal(bundle["snapshot"]["latest_prices"][0]["analysis_close_price"])
+        account["nav"] = str(Decimal(account["cash"]) + 5000 * price)
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        bundle, _, _, intent, _, _, _, _ = chain_inputs(bundle)
+        settings = policy()
+        settings["liquidity_fill_rate"] = "0"
+        settings["content_sha256"] = decision_policy_sha256(settings)
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        self.assertFalse(guard["passed"])
+        stress = next(item for item in guard["checks"] if item["rule_id"] == "SCENARIOS")
+        self.assertFalse(next(item for item in stress["details"] if item["name"] == "liquidity_stress")["stock_weight_ok"])
+
     def test_no_official_etf_benchmark_uses_competition_limits_only(self):
         bundle, _, _, _ = valid_inputs()
         bundle["rules"]["required_benchmark_ids"] = []

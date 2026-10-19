@@ -10,7 +10,7 @@
 | 公司基本資料 | TWSE／TPEx `t187ap03`：公司與產業分類 | `scripts/collect_sector_classification.py`；每日保存候選 | 正式決策仍讀已驗證的 `data/sector_classification.json` |
 | 多季基本面候選 | FinMind `TaiwanStockFinancialStatements`、`TaiwanStockBalanceSheet`、`TaiwanStockCashFlowsStatement` | `scripts/collect_supplemental_sources.py finmind`；`./start.sh data` 每日逐股更新 | 2026-09-30 實抓三表各 149／150，`3718.TWO` 空結果；`date` 是財報期間，不是發布時間；尚未接 Snapshot 或歷史回測 |
 | 150 檔個股新聞線索 | FinMind `TaiwanStockNews`：股票代號、標題、原媒體、連結、來源時間字串 | `scripts/collect_supplemental_sources.py finmind-news`；平日 22:00 與財報錯開 | 只存 `license_status=unverified` 的候選；來源時間無時區，`published_at` 留空、`available_at` 為抓取時間；不得進正式情緒、事件判斷或回測 |
-| 正式帳本價量 | TWSE `STOCK_DAY_ALL`、TPEx `tpex_mainboard_quotes`；上市全市場端點延遲時補 TWSE `exchangeReport/STOCK_DAY` | `scripts/collect_latest_prices.py`、`scripts/collect_official_history.py`；僅 `./start.sh daily` | 主辦方要求交易所前日收盤價推導委託股數、當日成交金額 ÷ 股數結算；缺官方價量時等待，不以 Yahoo 代替 |
+| 正式帳本價量 | TWSE `STOCK_DAY_ALL`、TPEx `tpex_mainboard_quotes`；上市全市場端點延遲時補 TWSE `exchangeReport/STOCK_DAY`；待結算歷史上櫃缺口可補 TPEx `afterTrading/dailyQuotes` 指定日期原始股數／元 | `scripts/collect_latest_prices.py`、`scripts/collect_official_history.py`；歷史上櫃帳本缺口使用 `scripts/repair_pending_tpex_close.py` | 主辦方要求交易所前日收盤價推導委託股數、當日成交金額 ÷ 股數結算；歷史補抓保留原始回應、實際抓取時間與來源；缺官方價量時等待，不以 Yahoo 代替 |
 | 交易限制與日曆 | 已核准的政府開放 CSV × 7、TWSE 開休市日期表 | `scripts/run_daily_pipeline.py` 的來源保存與驗證 | 正式風控和 T+2 交割的必要輸入；缺漏或過期時 fail-closed |
 | 交易池 | 主辦方名單整理成 `data/official_universe.csv` | `data/universe.py` 驗證 150 檔 | 一次性版本化輸入，不是每日網路擷取 |
 
