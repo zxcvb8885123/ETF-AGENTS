@@ -10,7 +10,7 @@ from typing import Optional, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from etf_agent.data import DataAgentStatusRepository, MarketDataDatabase  # noqa: E402
+from etf_agent.data import DataAgentStatusRepository, MarketDataDatabase, format_status_time  # noqa: E402
 
 
 class DataStatusApplication:
@@ -66,25 +66,32 @@ class DataStatusApplication:
         )
         if status.latest_collection:
             latest = status.latest_collection
-            print("最近執行：%s / %s" % (latest.run_id, latest.status))
+            print(
+                "資料更新：%s；最後更新：%s"
+                % (
+                    "成功" if latest.status == "success" else "未成功（%s）" % latest.status,
+                    format_status_time(latest.finished_at),
+                )
+            )
             if latest.error_message:
                 print("錯誤：%s" % latest.error_message)
         if status.latest_source_report:
             latest = status.latest_source_report
             print(
-                "最近來源探測：%s / %s / %s"
-                % (latest.report_id, latest.status, latest.generated_at)
+                "來源檢查：%s；最後更新：%s"
+                % (
+                    "通過" if latest.status == "passed" else "未通過（%s）" % latest.status,
+                    format_status_time(latest.generated_at),
+                )
             )
         else:
-            print("最近來源探測：無")
+            print("來源檢查：尚無紀錄")
         if status.latest_universe_validation:
             latest = status.latest_universe_validation
             print(
-                "最近交易池驗證：%s / %s / usable=%s / 可交易 %d／不可交易 %d／不一致 %d／總計 %d"
+                "交易池：%s；可交易 %d／不可交易 %d／不一致 %d／總計 %d"
                 % (
-                    latest.validation_id,
-                    latest.status,
-                    "是" if latest.usable else "否",
+                    "可用" if latest.usable else "不可用",
                     latest.tradable_count,
                     latest.not_tradable_count,
                     latest.mismatch_count,
@@ -92,7 +99,7 @@ class DataStatusApplication:
                 )
             )
         else:
-            print("最近交易池驗證：無")
+            print("交易池：尚未驗證")
         return 0
 
 

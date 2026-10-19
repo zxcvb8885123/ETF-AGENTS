@@ -5,19 +5,47 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$PROJECT_DIR"
 
 MODE=${1:-dashboard}
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+usage() {
+  echo "用法：./start.sh [dashboard|auto|run|status|daily|check|data|official|all]"
+  echo "  dashboard 看帳戶與績效（預設；首次建立虛擬帳戶）"
+  echo "  auto      更新行情與研究資料，不建立快照或推進帳本"
+  echo "  run       完整每日分析與決策，可接 --agent-cli codex 等原有參數"
+  echo "  status    查看既有資料狀態，可接 --database 路徑"
+  echo "  daily     只更新資料、建立快照與準備帳本，不執行決策 Agent"
+  echo "  check     檢查 Docker 環境與執行測試"
+  echo "  data      auto 的相容別名"
+  echo "  official  只更新官方交易池行情；空白時停止"
+  echo "  all       開發模式：更新全部可解析 TWSE 最新行情"
+  echo "  --help    顯示此說明；run --help／status --help 查看完整參數"
+}
 
 case "$MODE" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  run|status)
+    if [ ! -x "$PROJECT_DIR/.venv/bin/python" ]; then
+      echo "找不到專案 Python 環境，請先執行 python3 -m venv .venv，再執行 .venv/bin/python -m pip install -r requirements.txt。" >&2
+      exit 1
+    fi
+    if [ "$MODE" = "run" ]; then
+      exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/run_daily_pipeline.py" "$@"
+    fi
+    exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/data_status.py" "$@"
+    ;;
   auto|official|all|check|data|daily|dashboard)
+    if [ "$#" -gt 0 ]; then
+      echo "此模式不接受額外參數：${MODE}；請執行 ./start.sh --help 查看用法。" >&2
+      exit 2
+    fi
     ;;
   *)
-    echo "用法：./start.sh [auto|official|all|check|data|daily|dashboard]" >&2
-    echo "  dashboard 驗證或建立虛擬帳戶，啟動唯讀績效儀表板（預設）" >&2
-    echo "  auto      有官方交易池就正式抓取，否則使用開發模式" >&2
-    echo "  official  僅抓取官方交易池，交易池空白時停止" >&2
-    echo "  all       開發用，抓取 TWSE 端點全部可解析證券" >&2
-    echo "  check     視需要建置映像並執行環境檢查與測試，不抓資料" >&2
-    echo "  data      每日資料擷取，不建立 Snapshot 或推進帳本" >&2
-    echo "  daily     驗證來源、更新資料、建立 Snapshot 並推進虛擬帳本" >&2
+    usage >&2
     exit 2
     ;;
 esac
@@ -38,10 +66,10 @@ export HOST_UID HOST_GID
 
 DAILY_RUN=0
 DATA_ONLY=0
-if [ "$MODE" = "data" ]; then
+if [ "$MODE" = "data" ] || [ "$MODE" = "auto" ]; then
   DAILY_RUN=1
   DATA_ONLY=1
-  MODE=official
+  MODE=auto
 elif [ "$MODE" = "daily" ]; then
   DAILY_RUN=1
   MODE=official
@@ -97,14 +125,13 @@ if [ "$MODE" = "auto" ]; then
     echo "偵測到官方交易池 $UNIVERSE_ROWS 檔，使用正式模式。"
   else
     MODE=all
+    DAILY_RUN=0
     echo "官方交易池尚未填入，使用開發模式抓取全部 TWSE 最新行情。"
   fi
 fi
 
 if [ "$MODE" = "official" ]; then
-  if [ "$DATA_ONLY" -eq 0 ]; then
-    docker compose run --rm agent python3 scripts/collect_latest_prices.py
-  fi
+  docker compose run --rm agent python3 scripts/collect_latest_prices.py
   if [ "$DATA_ONLY" -eq 1 ]; then
     set +e
     docker compose run --rm agent python3 scripts/collect_history.py
@@ -218,4 +245,9 @@ docker compose run --rm agent python3 scripts/data_status.py
 if [ "$DAILY_RUN" -eq 1 ] && [ "${ACCOUNT_EXIT:-0}" -ne 0 ]; then
   echo "虛擬帳本推進失敗，績效儀表板不會更新；請查看上方錯誤訊息。" >&2
   exit "$ACCOUNT_EXIT"
+fi
+
+if [ "$DATA_ONLY" -eq 1 ] && [ "$DAILY_RUN" -eq 0 ]; then
+  echo "官方交易池空白；僅更新開發行情，研究資料未更新。" >&2
+  exit 2
 fi

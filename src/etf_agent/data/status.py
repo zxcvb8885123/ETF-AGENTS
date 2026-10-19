@@ -2,8 +2,22 @@
 
 from dataclasses import dataclass
 from typing import List, Optional
+from zoneinfo import ZoneInfo
+
+from etf_agent.core import parse_aware_time
 
 from .database import MarketDataDatabase
+
+
+def format_status_time(value: Optional[str]) -> str:
+    """顯示紀錄原有時間；缺少或無時區時不推測更新時間。"""
+    if value is None:
+        return "未記錄"
+    try:
+        parsed = parse_aware_time(value, "狀態時間")
+    except ValueError:
+        return "時間無效"
+    return parsed.astimezone(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S（台北時間）")
 
 
 @dataclass(frozen=True)
