@@ -1,7 +1,6 @@
 """Whole-lot order execution with commission and sell tax.
 
-Shared by historical backtests and the forward virtual account so both use
-the same fill, fee and cash rules.
+Used by the virtual account so fills, fees and cash follow one rule set.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Execution and account ledger shared by backtest and virtual account."""
+"""Execution and account ledger used by the virtual account."""
 
 from .account import AccountLedger
 from .contracts import LedgerError
