@@ -11,36 +11,43 @@ docker info
 docker compose version
 ```
 
-## 最快使用方式
+## 啟動與入口
 
-在專案根目錄執行：
+在專案根目錄執行 `./start.sh`。首次會建置映像（之後僅在映像不存在、`requirements.txt` 或 Dockerfile 變更時重建），驗證預設虛擬帳戶 `ai-cup-2026`；不存在時依 `config/competition_rules.json` 建立唯一 genesis，然後啟動唯讀儀表板 <http://127.0.0.1:8000>。已有帳戶只驗證並沿用，帳本不完整時停止，不重新注資。此模式不抓資料、不執行決策。
 
-```bash
-./start.sh
-```
-
-首次執行會建置映像；之後僅在映像不存在、`requirements.txt` 或 Dockerfile 變更時重建。無參數的 `./start.sh` 會驗證預設虛擬帳戶 `ai-cup-2026`；若不存在，依 `config/competition_rules.json` 建立唯一 genesis，然後啟動唯讀儀表板 <http://127.0.0.1:8000>。已有帳戶只驗證並沿用；帳本資料不完整時停止，不重新注資。這個模式不抓行情或執行決策。
-
-`src/`、`cli/`、`scripts/`、`tradeagent/`、`tests/` 從工作區唯讀掛載，程式碼修改後可直接執行。原本無參數的資料擷取模式改由 `./start.sh auto` 明確呼叫：有官方交易池時抓 TWSE／TPEx 最新官方價量與 150 檔 yfinance 研究日線；交易池空白時使用開發模式抓取 TWSE 最新行情端點的全部可解析證券。資料專用排程不補官方個股月行情，`daily` 決策只補上市個股價量，上櫃個股月擷取器已移除。
-
-Dockerfile 與本機 `.venv` 共用 `requirements.txt`，其中包含 Skill 驗證使用的 PyYAML。修改依賴後重新執行 `./start.sh check` 就會自動重建；可用 `docker compose run --rm agent python3 -c 'import yaml; print(yaml.__version__)'` 確認新映像已安裝。
-手動要求重建可執行 `FORCE_DOCKER_BUILD=1 ./start.sh check`。Dockerfile 以 pip 下載快取加快後續依賴更新；首次下載仍取決於網路速度。
+`src/`、`cli/`、`scripts/`、`tradeagent/`、`tests/` 從工作區唯讀掛載，程式碼修改後可直接執行。
 
 ```bash
-./start.sh auto      # 依交易池選正式或開發模式抓取行情
-./start.sh official  # 只抓官方交易池；空白時停止
-./start.sh all       # 開發模式：抓全部 TWSE 最新行情
-./start.sh check     # 建置映像並執行設定檢查與測試
-./start.sh data      # 每日資料擷取，不呼叫決策 Agent 或推進帳本
-./start.sh daily     # 一鍵驗證來源、更新行情／事件、建立 Snapshot 並推進虛擬帳本
-./start.sh dashboard # 與無參數相同：確保帳戶存在並啟動唯讀儀表板
+./start.sh                       # 開帳／驗證帳戶，啟動儀表板（同 dashboard）
+./start.sh auto                  # 更新行情與研究資料，不建快照、不推進帳本
+./start.sh daily                 # 更新資料、建立 Snapshot、準備虛擬帳本，不跑 Agent
+./start.sh run                   # 完整每日決策（本機 .venv，資料階段用 Docker）
+./start.sh run --agent-cli codex # 改用已登入的 Codex CLI
+./start.sh status                # 查看既有資料狀態（本機 .venv，不需 Docker）
+./start.sh check                 # 建置映像並執行設定檢查與測試
+./start.sh official              # 只抓官方交易池行情；空白時停止
+./start.sh all                   # 開發模式：抓全部 TWSE 最新行情
+./start.sh data                  # auto 的相容別名
+./start.sh --help                # 查看所有入口
 ```
 
-`daily` 會先驗證官方來源與交易池，再更新官方帳本價量、yfinance 研究日線、月營收／重大訊息與財報；公司分類及 FinMind 三大報表每日擷取為候選資料。個股新聞另由平日 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。yfinance 截止日若未覆蓋 150 檔即停止。最後以 `DAILY_CUTOFF`（未設定時使用 Asia/Taipei 現在時間）建立 Snapshot 並推進虛擬帳本；帳本推進失敗時以非零狀態結束。決策鏈由 `scripts/run_daily_pipeline.py` 接續執行。不會自動產生或送出訂單。
+### 資料更新（auto／data）
 
-`data` 執行 yfinance 150 檔日線、官方財報與公司資料、FinMind 三大報表候選的擷取及狀態檢查，略過 TWSE／TPEx 價格 OpenAPI、Snapshot、帳本與決策。Yahoo 當日缺檔不會跳過其他來源，最後以非零狀態回報；缺 FinMind 憑證或候選來源失敗也回報降級。macOS `com.etf-agents.data` 於台北時間平日 20:00 執行 `data`；`com.etf-agents.finmind-news` 於 22:00 執行個股新聞候選擷取。樣板在 `scripts/launchd/`，日誌在 `artifacts/daily_runs/`。FinMind Token 依序讀取執行環境、專案根目錄的 `.env`（`FINMIND_TOKEN=...`、權限 600、Git 忽略）；財報流程還可回退至 macOS 鑰匙圈服務 `etf-agent-finmind`。
+有官方交易池時抓 TWSE／TPEx 最新官方價量、150 檔 yfinance 日線、官方月營收／重大訊息／已到期季度財報、公司基本資料與產業分類，以及選配的 FinMind 財報候選；略過 Snapshot、帳本與決策。交易池空白時只抓 TWSE 全部可解析證券，研究資料不更新並以 exit 2 回報。Yahoo 當日缺檔不會跳過其他來源，最後以非零狀態回報；缺 FinMind 憑證或候選來源失敗也回報降級。
 
-完整每日決策由主機上的 `scripts/run_daily_pipeline.py` 啟動，透過 `--agent-cli claude|codex` 選擇已登入的 CLI；資料階段仍使用 Docker 的 `./start.sh daily`。兩種執行器都把輸出交給同一套 Python Validator。Codex 執行器目前通過模擬 CLI 測試，尚未做真實資料端到端驗收。Windows PowerShell 可執行單步 Python CLI；`start.sh` 的原生 PowerShell 對應入口尚未實作。
+macOS 排程：`com.etf-agents.data` 於台北時間平日 20:00 執行 `data`，`com.etf-agents.finmind-news` 於 22:00 擷取個股新聞候選。樣板在 `scripts/launchd/`，日誌在 `artifacts/daily_runs/`。FinMind Token 依序讀取執行環境、專案根目錄 `.env`（`FINMIND_TOKEN=...`、權限 600、Git 忽略），財報流程還可回退至 macOS 鑰匙圈服務 `etf-agent-finmind`。
+
+### 每日流程（daily／run）
+
+`daily` 先驗證官方來源與交易池，再更新官方帳本價量、yfinance 日線、月營收／重大訊息與財報（yfinance 截止日未覆蓋 150 檔即停止），最後以 `DAILY_CUTOFF`（未設定時為 Asia/Taipei 現在時間）建立 Snapshot 並推進虛擬帳本；帳本推進失敗時以非零狀態結束。個股新聞由 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。
+
+`run` 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py` 並原樣傳遞參數，以 `--agent-cli claude|codex` 選擇已登入的 CLI，資料階段仍走 Docker 的 `daily`。缺少 `.venv` 時會停止並提示安裝方式。兩種執行器都交給同一套 Python Validator；Codex 執行器目前只通過模擬 CLI 測試，尚未做真實資料端到端驗收。不會自動產生或送出訂單。
+
+Windows PowerShell 可執行單步 Python CLI；`start.sh` 的 PowerShell 對應入口尚未實作。
+
+### 依賴與重建
+
+Dockerfile 與本機 `.venv` 共用 `requirements.txt`（含 Skill 驗證用的 PyYAML）。修改依賴後執行 `./start.sh check` 會自動重建；強制重建用 `FORCE_DOCKER_BUILD=1 ./start.sh check`，可用 `docker compose run --rm agent python3 -c 'import yaml; print(yaml.__version__)'` 確認。
 
 ## 手動 Docker 指令
 
