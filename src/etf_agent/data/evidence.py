@@ -48,7 +48,22 @@ class SourceEvidenceBuilder:
     def build_for_prices(self, rows):
         evidence = []
         seen = set()
+        candidates = []
         for row in rows:
+            candidates.append(row)
+            if "execution_close_price" in row.keys() and row["execution_close_price"] is not None:
+                candidates.append(
+                    {
+                        "symbol": row["symbol"],
+                        "trade_date": row["trade_date"],
+                        "source": row["execution_source"],
+                        "endpoint": row["execution_endpoint"],
+                        "payload_fetched_at": row["execution_payload_fetched_at"],
+                        "raw_sha256": row["execution_raw_sha256"],
+                        "raw_payload_id": row["execution_raw_payload_id"],
+                    }
+                )
+        for row in candidates:
             evidence_id = self.price_evidence_id(row)
             if evidence_id in seen:
                 continue

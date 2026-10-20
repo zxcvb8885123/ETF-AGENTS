@@ -39,7 +39,7 @@ macOS 排程：`com.etf-agents.data` 於台北時間平日 20:00 執行 `data`�
 
 ### 每日流程（daily／run）
 
-`daily` 先驗證官方來源與交易池，再更新官方帳本價量、yfinance 日線、月營收／重大訊息與財報（yfinance 截止日未覆蓋 150 檔即停止），最後以 `DAILY_CUTOFF`（未設定時為 Asia/Taipei 現在時間）建立 Snapshot 並推進虛擬帳本；帳本推進失敗時以非零狀態結束。個股新聞由 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。
+`daily` 先驗證官方來源與交易池，再更新官方帳本價量、yfinance 日線、月營收／重大訊息與財報（yfinance 截止日未覆蓋 150 檔即停止），最後以 `DAILY_CUTOFF`（未設定時為 Asia/Taipei 現在時間）建立 Snapshot 並推進虛擬帳本；帳本推進失敗時以非零狀態結束。官方個股月行情由 `scripts/collect_official_history.py` 補上市（TWSE `STOCK_DAY`，來源 `TWSE_STOCK_DAY`）與上櫃（TPEx `tradingStock`，來源 `TPEX_TRADING_STOCK`），兩市場共用同一個節流器，全新環境首次回看兩年約需數十分鐘；資料專用排程（`data`）不補。個股新聞由 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。
 
 `run` 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py` 並原樣傳遞參數，以 `--agent-cli claude|codex` 選擇已登入的 CLI，資料階段仍走 Docker 的 `daily`。缺少 `.venv` 時會停止並提示安裝方式。兩種執行器都交給同一套 Python Validator；Codex 執行器目前只通過模擬 CLI 測試，尚未做真實資料端到端驗收。不會自動產生或送出訂單。
 

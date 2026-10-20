@@ -197,7 +197,7 @@ class DecisionInputBuilderTests(unittest.TestCase):
 
 
 class PriceHistoryRepositoryTests(unittest.TestCase):
-    def test_history_prefers_yahoo_research_source_and_respects_cutoff_and_limit(self):
+    def test_history_prefers_same_day_yahoo_and_fills_gap_with_official(self):
         base = {
             "symbol": "2330.TW", "open_price": "10", "high_price": "11",
             "low_price": "9", "close_price": "10", "volume_shares": 1,
@@ -230,8 +230,167 @@ class PriceHistoryRepositoryTests(unittest.TestCase):
                 ]
         self.assertEqual(
             [(row["trade_date"], row["source"], row["close_price"]) for row in loaded],
-            [("2026-09-16", "YAHOO_FINANCE", "10"), ("2026-09-17", "YAHOO_FINANCE", "10")],
+            # 09-18 缺 Yahoo；前一列係數 0.97 不是最新基準，無法確定還原係數而排除。
+            [("2026-09-17", "YAHOO_FINANCE", "10")],
         )
+
+    def _history(self, rows, limit=10):
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "market.db")
+            seed_history(database, rows)
+            repository = SnapshotRepository(database)
+            with repository.connect() as connection:
+                for row in rows:
+                    if "ex_rights" in row:
+                        connection.execute(
+                            "UPDATE daily_prices SET ex_rights_marker = ? "
+                            "WHERE symbol = ? AND trade_date = ? AND source = ?",
+                            (row["ex_rights"], row["symbol"], row["trade_date"], row["source"]),
+                        )
+                return [
+                    (row["trade_date"], row["source"], row["adjusted_close_price"])
+                    for row in repository.load_price_history(
+                        connection, "2026-09-30", "2026-09-30T00:00:00+00:00", limit
+                    )
+                ]
+
+    @staticmethod
+    def _row(trade_date, source, close, adjusted=None):
+        return {
+            "symbol": "2330.TW", "trade_date": trade_date, "source": source,
+            "open_price": close, "high_price": close, "low_price": close,
+            "close_price": close, "adjusted_close_price": adjusted, "volume_shares": 1,
+            "fetched_at": "2026-09-29T00:00:00+00:00",
+        }
+
+    def test_official_gap_is_rebased_with_matching_neighbour_factor(self):
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "100", "95"),
+            self._row("2026-09-21", "TWSE_STOCK_DAY", "100"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "102"),
+            self._row("2026-09-23", "YAHOO_FINANCE", "104", "98.8"),
+            self._row("2026-09-23", "TWSE_STOCK_DAY", "104"),
+        ]
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "YAHOO_FINANCE", "95"),
+            ("2026-09-22", "TWSE_STOCK_DAY", "96.9000"),
+            ("2026-09-23", "YAHOO_FINANCE", "98.8"),
+        ])
+
+    def test_official_gap_is_excluded_when_dividend_falls_between_neighbours(self):
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "100", "95"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "97"),
+            self._row("2026-09-23", "YAHOO_FINANCE", "98", "98"),
+        ]
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "YAHOO_FINANCE", "95"),
+            ("2026-09-23", "YAHOO_FINANCE", "98"),
+        ])
+
+    def _ex_dividend_rows(self, gap_date, marked_date):
+        """09-21 前基準 0.95、09-24 後基準 1；09-22、09-23 皆有官方列，09-23 缺 Yahoo。"""
+        official = {day: dict(self._row(day, "TWSE_STOCK_DAY", close), ex_rights=int(day == marked_date))
+                    for day, close in (("2026-09-22", "100"), ("2026-09-23", "98"), ("2026-09-24", "99"))}
+        rows = [self._row("2026-09-21", "YAHOO_FINANCE", "100", "95")]
+        for day in ("2026-09-22", "2026-09-23", "2026-09-24"):
+            if day != gap_date:
+                rows.append(self._row(day, "YAHOO_FINANCE", official[day]["close_price"],
+                                      "95" if day < marked_date else official[day]["close_price"]))
+        return rows + list(official.values())
+
+    def test_gap_on_ex_rights_day_uses_post_dividend_factor(self):
+        rows = self._ex_dividend_rows("2026-09-23", marked_date="2026-09-23")
+        self.assertIn(("2026-09-23", "TWSE_STOCK_DAY", "98.0000"), self._history(rows))
+
+    def test_gap_before_ex_rights_day_uses_pre_dividend_factor(self):
+        rows = self._ex_dividend_rows("2026-09-23", marked_date="2026-09-24")
+        # 09-22 的 Yahoo 係數 0.95，09-24 才除息，09-23 應沿用 0.95：98 × 0.95。
+        self.assertIn(("2026-09-23", "TWSE_STOCK_DAY", "93.1000"), self._history(rows))
+
+    def test_gap_is_excluded_when_ex_rights_marker_is_unknown(self):
+        rows = self._ex_dividend_rows("2026-09-23", marked_date="2026-09-23")
+        for row in rows:
+            row.pop("ex_rights", None)
+        self.assertNotIn("2026-09-23", [day for day, _, _ in self._history(rows)])
+
+    def test_gap_is_excluded_when_multiple_ex_rights_days_in_window(self):
+        rows = self._ex_dividend_rows("2026-09-23", marked_date="2026-09-23")
+        for row in rows:
+            if row["source"] == "TWSE_STOCK_DAY" and row["trade_date"] == "2026-09-24":
+                row["ex_rights"] = 1
+        self.assertNotIn("2026-09-23", [day for day, _, _ in self._history(rows)])
+
+    def test_trailing_gap_after_ex_rights_day_uses_raw_price(self):
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "100", "95"),
+            dict(self._row("2026-09-21", "TWSE_STOCK_DAY", "100"), ex_rights=0),
+            dict(self._row("2026-09-22", "TWSE_STOCK_DAY", "96"), ex_rights=1),
+            dict(self._row("2026-09-30", "TWSE_STOCK_DAY", "97"), ex_rights=0),
+        ]
+        # 09-30 為 Snapshot 最新日（不在歷史內）；09-22 除息後即最新基準，原價就是還原價。
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "YAHOO_FINANCE", "95"),
+            ("2026-09-22", "TWSE_STOCK_DAY", "96.0000"),
+        ])
+
+    def test_trailing_official_gap_uses_raw_price_only_on_latest_basis(self):
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "100", "100"),
+            self._row("2026-09-21", "TWSE_STOCK_DAY", "100"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "101"),
+        ]
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "YAHOO_FINANCE", "100"),
+            ("2026-09-22", "TWSE_STOCK_DAY", "101.0000"),
+        ])
+
+    def test_gap_uses_yahoo_adj_over_official_close_when_yahoo_close_was_rewritten(self):
+        # 配股／分割後 Yahoo 把事件前 Close 一併縮小（官方原價 100／104 → Yahoo 50／52）。
+        # 還原係數必須是 adj ÷ 官方原價（0.475），而不是 adj ÷ Yahoo Close（0.95）。
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "50", "47.5"),
+            self._row("2026-09-21", "TWSE_STOCK_DAY", "100"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "102"),
+            self._row("2026-09-23", "YAHOO_FINANCE", "52", "49.4"),
+            self._row("2026-09-23", "TWSE_STOCK_DAY", "104"),
+        ]
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "YAHOO_FINANCE", "47.5"),
+            ("2026-09-22", "TWSE_STOCK_DAY", "48.4500"),
+            ("2026-09-23", "YAHOO_FINANCE", "49.4"),
+        ])
+
+    def test_gap_is_excluded_when_yahoo_neighbours_have_no_same_day_official_close(self):
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "50", "47.5"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "102"),
+            self._row("2026-09-23", "YAHOO_FINANCE", "52", "49.4"),
+        ]
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "YAHOO_FINANCE", "47.5"),
+            ("2026-09-23", "YAHOO_FINANCE", "49.4"),
+        ])
+
+    def test_symbol_without_yahoo_keeps_official_raw_series(self):
+        rows = [
+            self._row("2026-09-21", "TWSE_STOCK_DAY", "100"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "101"),
+        ]
+        self.assertEqual(self._history(rows), [
+            ("2026-09-21", "TWSE_STOCK_DAY", None),
+            ("2026-09-22", "TWSE_STOCK_DAY", None),
+        ])
+
+    def test_official_rows_after_cutoff_do_not_supply_basis(self):
+        rows = [
+            self._row("2026-09-21", "YAHOO_FINANCE", "100", "95"),
+            self._row("2026-09-22", "TWSE_STOCK_DAY", "102"),
+            dict(self._row("2026-09-23", "YAHOO_FINANCE", "104", "98.8"),
+                 fetched_at="2026-10-01T00:00:00+00:00"),
+        ]
+        # 09-23 的 Yahoo 在 cutoff 後才取得，不得用來推算；前一列係數 0.95 無法確定 09-22。
+        self.assertEqual(self._history(rows), [("2026-09-21", "YAHOO_FINANCE", "95")])
 
     def test_service_writes_bundle_from_snapshot_database_and_rules(self):
         snapshot, rules, history, account = builder_inputs()

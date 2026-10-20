@@ -31,6 +31,10 @@ class SnapshotPrice:
     transactions: int
     source: str
     source_evidence_id: str
+    # 同日官方原價；決策與帳本用價。analysis_close_price 是調整價，重放時含之後的除權息。
+    execution_close_price: Optional[str] = None
+    execution_price_source: Optional[str] = None
+    execution_source_evidence_id: Optional[str] = None
 
     @classmethod
     def from_row(cls, row, evidence_builder: SourceEvidenceBuilder):
@@ -52,7 +56,24 @@ class SnapshotPrice:
             transactions=int(row["transactions"]),
             source=str(row["source"]),
             source_evidence_id=evidence_builder.price_evidence_id(row),
+            **cls._execution_fields(row, evidence_builder),
         )
+
+    @staticmethod
+    def _execution_fields(row, evidence_builder: SourceEvidenceBuilder) -> Dict[str, object]:
+        if "execution_close_price" not in row.keys() or row["execution_close_price"] is None:
+            return {}
+        return {
+            "execution_close_price": str(row["execution_close_price"]),
+            "execution_price_source": str(row["execution_source"]),
+            "execution_source_evidence_id": evidence_builder.price_evidence_id(
+                {
+                    "raw_payload_id": row["execution_raw_payload_id"],
+                    "symbol": row["symbol"],
+                    "trade_date": row["trade_date"],
+                }
+            ),
+        }
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -71,6 +92,9 @@ class SnapshotPrice:
             "transactions": self.transactions,
             "source": self.source,
             "source_evidence_id": self.source_evidence_id,
+            "execution_close_price": self.execution_close_price,
+            "execution_price_source": self.execution_price_source,
+            "execution_source_evidence_id": self.execution_source_evidence_id,
         }
 
 

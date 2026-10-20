@@ -72,6 +72,9 @@ def main() -> int:
     print("截止日 %s 覆蓋：%d/%d" % (end, len(universe) - len(missing_end), len(universe)))
     print("寫入日線：%d" % result.stored_rows)
     print("警告：%d" % len(result.warnings))
+    rebased = getattr(result, "rebased_symbols", ())
+    if rebased:
+        print("還原基準重抓：%d 檔（%s）" % (len(rebased), ", ".join(rebased)))
     print("run_id：%s" % ", ".join(run_ids))
     if result.missing_symbols:
         print("MISSING  " + ", ".join(result.missing_symbols))

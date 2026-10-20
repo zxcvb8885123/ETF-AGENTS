@@ -13,6 +13,7 @@ from .contracts import (
     artifact_content_sha256,
     canonical_sha256,
     decimal_value,
+    snapshot_execution_price,
     reject_unknown_fields,
     required_string,
     string_list,
@@ -92,7 +93,7 @@ class ScenarioEngine:
         settled_cash = decimal_value(account["settled_cash"], "account_snapshot.settled_cash")
         lot_size = int(self.policy["lot_size"])
         prices = {
-            str(row["symbol"]).upper(): decimal_value(row["analysis_close_price"], "analysis_close_price")
+            str(row["symbol"]).upper(): snapshot_execution_price(row, "latest_prices")
             for row in self.context.snapshot["latest_prices"]
         }
         starting_positions = {

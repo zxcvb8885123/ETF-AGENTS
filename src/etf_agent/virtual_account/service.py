@@ -389,7 +389,9 @@ class VirtualAccountService:
             if not isinstance(row, Mapping):
                 raise VirtualAccountError("Snapshot latest_prices 格式錯誤")
             symbol = str(row.get("symbol", "")).upper()
-            price = row.get("close_price")
+            price = row.get("execution_close_price")
+            if price is None:
+                price = row.get("close_price")
             if not symbol or price is None or symbol in prices:
                 raise VirtualAccountError("Snapshot 股票價格缺漏或重複")
             parsed = parse_decimal(price, "close_price", error=VirtualAccountError)
