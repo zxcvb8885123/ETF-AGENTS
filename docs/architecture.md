@@ -21,10 +21,12 @@
 
 決策與帳本用價是 Snapshot `latest_prices` 的 `execution_close_price`（同日官方原價，附 `execution_price_source` 與 `execution_source_evidence_id`）；`analysis_close_price` 是調整價，只供研究與技術指標。同日沒有官方價時 `execution_*` 為空，配置、風控與 D-Plan 退回 `analysis_close_price`，重放過去日期時該價含事後除權息調整，屬已知限制。舊封存沒有此欄位仍可重建驗證。
 
+目前每日技術分析仍讀完整 `trend_history`；固定錨點摘要與事件首尾摘錄只在另存的研究試驗中使用，未替換每日決策輸入。交易 brief 已將重複的完整帳戶持倉改成帳戶現金／NAV、持股代號及檔數，本批逐股 `held_shares` 仍保留；完整 AccountSnapshot 和分析師原始報告繼續供 Validator 重建。試驗差異與後續門檻見[降 token 計劃](token_reduction_plan.md)。
+
 配置程式在產生提案時就以 Policy 的單股上限（含特殊上限）檢查既有持股與候選，按整張降低預計超重部位，並用同一情境引擎檢查部分成交後的曝險；`constraint_flags.RISK_STOCK_WEIGHT` 記錄程式必要的硬規則減碼，原交易 Agent 的 `hold` 等意圖不被偽改。風險 Agent 不手寫股數或權重；交易受限、整張／現金／換手等限制無法同時滿足時，CompetitionGuard 仍須拒絕。
 
 Decision run 另存 `team_inputs`。目前 2.1 版包含三份分析報告與現金姿態；舊 2.0 封存仍按其原始分析報告及事件研究輸入重建。Finalizer 與下游驗證缺少必要輸入、引用不存在、版本不合或數值被改寫時拒絕。1.0 Buy／Sell 舊決策鏈不再接受。
 
 重大公司事件保留於事件分析師報告，直接交股票層級多頭／空頭研究；每日鏈不再額外執行 Fact／Bull／Bear／Adjudicator。獨立事件研究與舊封存驗證仍可使用，詳見[事件研究整合說明](integrated_event_analysis.md)。第三位分析師將全市場情緒與逐家公司事件分開，詳見[市場與公司事件範圍](event_market_scope.md)。
 
-每日腳本可用 `--agent-cli claude|codex` 選擇子 Agent 執行器；兩者輸出都進入同一套 Validator。Codex 執行器已通過模擬 CLI 測試，尚未完成真實資料端到端驗收。沒有合法、歷史化的全市場情緒或分析師共識 Provider 時，正式結果維持 `unavailable`，不得由公司新聞或交易背景補值。
+每日腳本可用 `--agent-cli claude|codex|opencode` 選擇子 Agent 執行器；三者輸出都進入同一套 Validator，續跑必須沿用原執行器。Codex 已完成真實 150 檔每日鏈；OpenCode 使用 `run --pure --format json` 與單次隔離的唯讀 Agent，只准讀檔（`.env` 及外部目錄禁止）、不准執行命令或修改檔案。OpenCode CLI 沒有本流程可直接使用的 `--output-schema`，所以提示帶 JSON Schema，但仍必須靠確定性 Validator／有限重試拒絕不合格結果；已通過本機唯讀、JSONL、預檢煙霧測試，尚未執行真實 150 檔端到端驗收。沒有合法、歷史化的全市場情緒或分析師共識 Provider 時，正式結果維持 `unavailable`，不得由公司新聞或交易背景補值。

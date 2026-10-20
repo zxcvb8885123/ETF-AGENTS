@@ -41,6 +41,22 @@ class TechnicalTrendHistoryTests(unittest.TestCase):
         for role in ("fundamental", "event"):
             self.assertTrue(all("trend_history" not in r for r in build_analyst_brief(bundle, momentum, role)["symbols"]))
 
+    def test_summary_keeps_endpoints_extrema_recent_and_rebuilds(self):
+        bundle = decision_bundle()
+        tools = TechnicalTrendHistoryTools(bundle)
+        full = tools.for_symbol("2330.TW")
+        summary = tools.summary_for_symbol("2330.TW")
+        self.assertEqual(summary["observation_count"], len(full["rows"]))
+        self.assertLess(len(summary["rows"]), len(full["rows"]))
+        self.assertEqual(summary["rows"][0], full["rows"][0])
+        self.assertEqual(summary["rows"][-5:], full["rows"][-5:])
+        self.assertEqual(summary["source_series_sha256"], full["source_series_sha256"])
+        self.assertEqual(TechnicalTrendHistoryValidator(bundle).validate_summary(summary, "2330.TW"), [])
+        tampered = copy.deepcopy(summary)
+        tampered["rows"][0]["close"] = "999"
+        tampered["content_sha256"] = canonical_sha256({key: value for key, value in tampered.items() if key != "content_sha256"})
+        self.assertTrue(TechnicalTrendHistoryValidator(bundle).validate_summary(tampered, "2330.TW"))
+
     def test_rejects_modified_paths_even_with_resealed_hash_and_foreign_symbol(self):
         bundle = decision_bundle()
         history = TechnicalTrendHistoryTools(bundle).for_symbol("2330.TW")

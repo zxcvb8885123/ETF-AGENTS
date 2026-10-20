@@ -168,6 +168,13 @@ class DailyPipelineTests(unittest.TestCase):
             policy = json.loads((world.run_dir / "policy.json").read_text(encoding="utf-8"))
             self.assertEqual(policy["cash_buffer_rate"], "0.10")
             self.assertEqual(policy["position_sizing"]["conviction_by_symbol"], {"2317.TW": "medium"})
+            trader_brief = json.loads((world.run_dir / "brief_trader_b0.json").read_text(encoding="utf-8"))
+            self.assertEqual(trader_brief["account"]["position_count"], 1)
+            self.assertEqual(trader_brief["account"]["held_symbols"], ["2330.TW"])
+            self.assertNotIn("positions", trader_brief["account"])
+            held = next(row for row in trader_brief["symbols"] if row["symbol"] == "2330.TW")
+            self.assertGreater(held["held_shares"], 0)
+            self.assertTrue(held["bull"]["claims"])
 
     def test_high_event_goes_directly_to_stock_research_and_risk(self):
         from test_analysts import bundle_with_event, EVENT_ID

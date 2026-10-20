@@ -29,13 +29,16 @@ python3 -m venv .venv
 | 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
-首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；改用 Codex：
+首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
 
 ```bash
 ./start.sh run --agent-cli codex
+./start.sh run --agent-cli opencode
 ```
 
 參數會原樣傳給 `run`／`status`，用 `./start.sh run --help` 查看（如 `--preflight-only`、`--resume`）。環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。
+
+ChatGPT.app 內附的 Codex CLI 路徑已加入本機 zsh 的 PATH；`start.sh` 也會在 macOS 非互動環境偵測該路徑。OpenCode 以隔離唯讀 Agent 執行，禁用外部插件及寫入／命令工具；其 JSONL 用量只記錄 CLI 回報數值，並不等於實際訂閱費用。兩者的輸出均由同一套 Python Validator 重建；換執行器時不可續用其他執行器的 run。
 
 ## 決策流程
 

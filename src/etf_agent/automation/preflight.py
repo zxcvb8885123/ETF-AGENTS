@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -98,6 +99,19 @@ def check_codex(runner: CommandRunner, which: Callable[[str], Optional[str]], ex
     return PreflightCheck("codex", True, "已登入")
 
 
+def check_opencode(runner: CommandRunner, which: Callable[[str], Optional[str]], executable: str = "opencode") -> PreflightCheck:
+    if which(executable) is None:
+        return PreflightCheck("opencode", False, "找不到 opencode 指令")
+    try:
+        completed = _run(runner, [executable, "auth", "list", "--pure"])
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return PreflightCheck("opencode", False, "無法檢查 OpenCode 登入狀態：%s" % error)
+    # 不保存憑證路徑、提供者帳戶或使用者識別；只保留 CLI 回報的數量狀態。
+    if completed.returncode != 0 or re.search(r"\b[1-9]\d* credentials\b", completed.stdout) is None:
+        return PreflightCheck("opencode", False, "OpenCode 未找到可用憑證（請先執行 opencode auth login）")
+    return PreflightCheck("opencode", True, "已設定憑證")
+
+
 def check_account(root: Path, account_id: str) -> PreflightCheck:
     account_root = root / "artifacts" / "virtual_accounts"
     # 先確認索引存在，避免建立 repository 時替未開帳的帳戶建出空目錄。
@@ -134,6 +148,7 @@ def run_preflight(
     claude_executable: str = "claude",
     agent_cli: str = "claude",
     codex_executable: str = "codex",
+    opencode_executable: str = "opencode",
 ) -> List[PreflightCheck]:
     """依序執行全部檢查並回傳結果；不在第一個失敗就停，方便一次看到所有問題。"""
     root = Path(root)
@@ -141,10 +156,13 @@ def run_preflight(
     if not skip_data:
         # 資料階段經 ./start.sh 在 Docker 內執行；--skip-data 時不需要。
         checks.append(check_docker(runner, which))
-    if agent_cli not in ("claude", "codex"):
+    if agent_cli not in ("claude", "codex", "opencode"):
         raise ValueError("不支援的 Agent CLI：%s" % agent_cli)
-    agent_check = (check_claude(runner, which, claude_executable) if agent_cli == "claude"
-                   else check_codex(runner, which, codex_executable))
+    agent_check = {
+        "claude": lambda: check_claude(runner, which, claude_executable),
+        "codex": lambda: check_codex(runner, which, codex_executable),
+        "opencode": lambda: check_opencode(runner, which, opencode_executable),
+    }[agent_cli]()
     checks += [
         agent_check,
         check_account(root, account_id),

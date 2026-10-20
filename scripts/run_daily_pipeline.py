@@ -28,6 +28,7 @@ from etf_agent.decision_delivery.repository import publication_lock
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
     CodexAgentRunner,
+    OpenCodeAgentRunner,
     DailyDecisionPipeline,
 )
 from etf_agent.automation.preflight import (  # noqa: E402
@@ -181,13 +182,13 @@ def main() -> int:
         "--resume-run", metavar="RUN_ID",
         help="指定要續跑的 run 目錄名稱（如 daily-20260929）並隱含 --resume；用量上限重置或跨午夜後，今天的日期已找不到前一天的 run",
     )
-    parser.add_argument("--agent-cli", choices=("claude", "codex"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
+    parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
     parser.add_argument("--model", help="子 Agent 模型；預設沿用所選 CLI 設定")
     parser.add_argument("--preflight-only", action="store_true", help="只檢查 Docker、所選 Agent CLI 登入、帳戶、必要檔案與磁碟")
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
     parser.add_argument("--max-budget-usd", type=float, help="Claude CLI 單次子 Agent 的估算用量上限；預設 3 美元")
     args = parser.parse_args()
-    if args.agent_cli == "codex" and args.max_budget_usd is not None:
+    if args.agent_cli != "claude" and args.max_budget_usd is not None:
         parser.error("--max-budget-usd 只適用 Claude CLI")
     if args.max_budget_usd is not None and (not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0):
         parser.error("--max-budget-usd 必須是大於 0 的有限數值")
@@ -329,7 +330,9 @@ def main() -> int:
 
         log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s）" % args.agent_cli)
         agent_runner = (ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=args.max_budget_usd or 3.0)
-                        if args.agent_cli == "claude" else CodexAgentRunner(ROOT, model=args.model))
+                        if args.agent_cli == "claude" else
+                        CodexAgentRunner(ROOT, model=args.model) if args.agent_cli == "codex" else
+                        OpenCodeAgentRunner(ROOT, model=args.model))
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             agent_runner,

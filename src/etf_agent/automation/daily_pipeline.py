@@ -58,6 +58,7 @@ from .agent_runner import (  # noqa: F401 — 對外仍由本模組匯出
     AgentTask,
     ClaudeAgentRunner,
     CodexAgentRunner,
+    OpenCodeAgentRunner,
     DailyPipelineError,
     _TEXT,
     _object,
@@ -239,7 +240,10 @@ class DailyDecisionPipeline:
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             call = self.runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
-            self.calls.append({"name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd})
+            item = {"name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd}
+            if call.usage_tokens is not None:
+                item["usage_tokens"] = call.usage_tokens
+            self.calls.append(item)
             self.save_artifact("%s_raw_%d" % (task.name, offset + attempt), call.output)
             artifact = build(call.output)
             errors = validate(artifact)
@@ -548,7 +552,12 @@ class DailyDecisionPipeline:
                 "brief_%s" % name,
                 {
                     "regime_assessment": momentum.get("regime_assessment"),
-                    "account": {key: bundle["account_snapshot"].get(key) for key in ("cash", "nav", "positions")},
+                    "account": {
+                        "cash": bundle["account_snapshot"].get("cash"),
+                        "nav": bundle["account_snapshot"].get("nav"),
+                        "held_symbols": sorted(held),
+                        "position_count": len(held),
+                    },
                     "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
                     "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                     "symbols": [

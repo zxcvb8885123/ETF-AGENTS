@@ -12,7 +12,7 @@ import json
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnapshotTools
-from etf_agent.core import parse_decimal, decimal_string, parse_aware_time
+from etf_agent.core import canonical_sha256, parse_decimal, decimal_string, parse_aware_time
 from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIRED_STATEMENT_TYPES
 from .trend_history import TechnicalTrendHistoryTools
 from .fundamental_language import chinese_gap_explanations
@@ -39,6 +39,8 @@ OUTLOOKS = ("positive", "negative", "neutral", "unknown")
 MATERIALITY = ("high", "medium", "low", "unknown")
 NO_SENTIMENT_SOURCE = "NO_LICENSED_SENTIMENT_SOURCE"
 _EVENT_BODY_LIMIT = 1500
+_EVENT_EXCERPT_HEAD = 500
+_EVENT_EXCERPT_TAIL = 160
 _MOMENTUM_FIELDS = (
     "close", "return_5d", "return_20d", "return_60d", "above_ma20", "above_ma60",
     "atr_14_pct", "downside_volatility_20d", "average_traded_value_20d",
@@ -109,7 +111,7 @@ def build_analyst_brief(
     momentum: Mapping[str, object],
     analyst: str,
     fundamental_metrics: Optional[Mapping[str, object]] = None,
-    *, event_market_scope: bool = False,
+    *, event_market_scope: bool = False, compact_technical: bool = False,
 ) -> Dict[str, object]:
     """只重排共同輸入中已存在的事實與程式計算結果，供分析師閱讀。"""
     if analyst not in LLM_ANALYSTS:
@@ -140,7 +142,8 @@ def build_analyst_brief(
                 **{field: _short_number(item[field]) if not isinstance(item.get(field), bool) else item[field]
                    for field in _MOMENTUM_FIELDS if field in item},
             }
-            entry["trend_history"] = trend_tools.for_symbol(symbol)
+            entry["trend_history"] = (trend_tools.summary_for_symbol(symbol) if compact_technical
+                                      else trend_tools.for_symbol(symbol))
         elif analyst == "fundamental":
             metrics = metrics_by_symbol.get(symbol, {})
             entry["metrics"] = [
@@ -248,6 +251,35 @@ def build_analyst_brief(
             pack = bundle["market_news_input"]["bundle"]
             brief["market_news"] = prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"])
     return brief
+
+
+def compact_event_batch(brief: Mapping[str, object], bundle: Mapping[str, object]) -> tuple[dict, dict]:
+    """事件逐筆全覆蓋；摘要保留首尾，完整原文另以同 Snapshot 證據索引供查閱。"""
+    if brief.get("analyst") != "event":
+        raise DecisionToolError("只有事件分析師輸入可以壓縮事件原文")
+    members = {row["symbol"] for row in brief["symbols"]}
+    source = {
+        "snapshot_id": bundle["snapshot_id"],
+        "decision_cutoff": bundle["decision_cutoff"],
+        "events": [
+            {key: document.get(key) for key in ("symbol", "source_evidence_id", "title", "published_at", "available_at", "body")}
+            for document in bundle["snapshot"]["documents"]
+            if document.get("document_type") == "material_event" and document.get("symbol") in members
+        ],
+    }
+    source["content_sha256"] = canonical_sha256(source)
+    output = {**brief, "symbols": []}
+    for row in brief["symbols"]:
+        compact = {**row, "events": []}
+        for event in row["events"]:
+            item = dict(event)
+            body = str(item["body"])
+            if len(body) > _EVENT_EXCERPT_HEAD + _EVENT_EXCERPT_TAIL:
+                item["body"] = body[:_EVENT_EXCERPT_HEAD] + " …［中段請依 evidence_id 查完整來源］… " + body[-_EVENT_EXCERPT_TAIL:]
+                item["brief_excerpt_truncated"] = True
+            compact["events"].append(item)
+        output["symbols"].append(compact)
+    return output, source
 
 
 def seal_report(envelope: Mapping[str, object], items: Sequence[Mapping[str, object]], status: str = "completed") -> Dict[str, object]:

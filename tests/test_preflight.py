@@ -113,6 +113,15 @@ class PreflightTests(unittest.TestCase):
         checks = self.run_checks(agent_cli="codex", runner=FakeRunner(raise_for="codex"))
         self.assertFalse(checks["codex"].ok)
 
+    def test_opencode_selected_and_credential_failure_is_closed(self):
+        runner = FakeRunner(auth_stdout="1 credentials")
+        checks = self.run_checks(runner=runner, agent_cli="opencode")
+        self.assertTrue(checks["opencode"].ok)
+        self.assertIn(["opencode", "auth", "list", "--pure"], runner.commands)
+        for fallback in (FakeRunner(auth_stdout="0 credentials"), FakeRunner(raise_for="opencode")):
+            self.assertFalse(self.run_checks(runner=fallback, agent_cli="opencode")["opencode"].ok)
+        self.assertFalse(self.run_checks(agent_cli="opencode", which=lambda name: None if name == "opencode" else which_all(name))["opencode"].ok)
+
     def test_uninitialized_account_fails_without_creating_directory(self):
         checks = self.run_checks(account_id="missing")
         self.assertIn("尚未開帳", checks["account"].detail)

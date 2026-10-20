@@ -1,5 +1,7 @@
 # 技術分析的整段歷史輸入
 
+研究試驗新增 `TechnicalTrendHistoryTools.summary_for_symbol()` 的 `1.1-summary`：從完整、同 Snapshot 的 `1.0` 歷史重建固定 12 個錨點、收盤極值、最大量與最後五筆，去重後按日期排序。`observation_count` 仍是完整歷史筆數，`rows` 僅代表抽樣；`TechnicalTrendHistoryValidator.validate_summary` 可從原始行情重算摘要。正式每日 brief 暫仍採 `for_symbol()` 完整序列；試驗在同 Snapshot 上的 150 檔中有 12 檔方向改變，尚待審查證據後才決定是否接入，舊封存不改寫。
+
 2026-10-02 已接入 `build_analyst_brief(..., "technical")`。技術分析師閱讀完整封存行情視窗，沿時間判讀價格與均線結構，再用當期 momentum 核對目前位置。只提供上升／下跌／盤整的市場狀態解讀，不執行買賣、排名或配置。
 
 ## 確定性資料契約

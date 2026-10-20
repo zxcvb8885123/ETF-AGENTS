@@ -55,6 +55,24 @@ class TechnicalTrendHistoryTools:
         body["content_sha256"] = canonical_sha256(body)
         return body
 
+    def summary_for_symbol(self, symbol: str) -> Dict[str, object]:
+        """固定歷史錨點、極值與近五筆；來源完整序列仍由 DecisionInput 保存。"""
+        full = self.for_symbol(symbol)
+        rows = full["rows"]
+        count = len(rows)
+        indices = {index * (count - 1) // 11 for index in range(12)}
+        indices.update(range(max(0, count - 5), count))
+        indices.add(min(range(count), key=lambda index: parse_decimal(rows[index]["close"], "close", error=DecisionToolError)))
+        indices.add(max(range(count), key=lambda index: parse_decimal(rows[index]["close"], "close", error=DecisionToolError)))
+        indices.add(max(range(count), key=lambda index: int(rows[index]["volume"])))
+        summary = {key: value for key, value in full.items() if key not in {"rows", "content_sha256"}}
+        summary["schema_version"] = "1.1-summary"
+        summary["rows"] = [rows[index] for index in sorted(indices)]
+        summary["sampling"] = "12_fixed_anchors_extrema_recent_5_v1"
+        summary["limitations"] = ["僅供 Agent 判斷的抽樣；非完整逐日行情。完整序列由同一 DecisionInput 原始價格與 Validator 重建。", *full["limitations"]]
+        summary["content_sha256"] = canonical_sha256(summary)
+        return summary
+
 
 class TechnicalTrendHistoryValidator:
     """從相同原始行情重建全部歷史，不只相信輸出的內容雜湊。"""
@@ -68,3 +86,10 @@ class TechnicalTrendHistoryValidator:
         except DecisionToolError as error:
             return [str(error)]
         return [] if dict(history) == expected else ["TechnicalTrendHistory 與原始行情重建結果不一致"]
+
+    def validate_summary(self, summary: Mapping[str, object], symbol: str) -> List[str]:
+        try:
+            expected = TechnicalTrendHistoryTools(self.bundle).summary_for_symbol(symbol)
+        except DecisionToolError as error:
+            return [str(error)]
+        return [] if dict(summary) == expected else ["TechnicalTrendHistory 摘要與原始行情重建結果不一致"]
