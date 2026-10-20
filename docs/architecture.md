@@ -17,6 +17,8 @@
 | 交易 | 逐檔取捨每個多空 claim，給買賣意圖及 buy／add 信心等級 | 驗證每個 claim 剛好採納或否決一次；依 Policy、ATR 與風險現金姿態計算權重與張數 |
 | 風險 | 配置前給現金姿態；配置後審查並提出受限修正 | 重算費稅、現金、情境與競賽限制；硬性規則失敗即拒絕，修正循環最多三次 |
 
+決策與帳本用價是 Snapshot `latest_prices` 的 `execution_close_price`（同日官方原價，附 `execution_price_source` 與 `execution_source_evidence_id`）；`analysis_close_price` 是調整價，只供研究與技術指標。同日沒有官方價時 `execution_*` 為空，配置、風控與 D-Plan 退回 `analysis_close_price`，重放過去日期時該價含事後除權息調整，屬已知限制。舊封存沒有此欄位仍可重建驗證。
+
 Decision run 另存 `team_inputs`。目前 2.1 版包含三份分析報告與現金姿態；舊 2.0 封存仍按其原始分析報告及事件研究輸入重建。Finalizer 與下游驗證缺少必要輸入、引用不存在、版本不合或數值被改寫時拒絕。1.0 Buy／Sell 舊決策鏈不再接受。
 
 重大公司事件保留於事件分析師報告，直接交股票層級多頭／空頭研究；每日鏈不再額外執行 Fact／Bull／Bear／Adjudicator。獨立事件研究與舊封存驗證仍可使用，詳見[事件研究整合說明](integrated_event_analysis.md)。第三位分析師將全市場情緒與逐家公司事件分開，詳見[市場與公司事件範圍](event_market_scope.md)。

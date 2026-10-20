@@ -111,10 +111,6 @@ FROM (
     FROM daily_prices
     JOIN instruments USING(symbol)
     WHERE instruments.in_competition_universe = 1
-      AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
-          SELECT 1 FROM daily_prices AS yahoo
-          WHERE yahoo.symbol = daily_prices.symbol AND yahoo.source = 'YAHOO_FINANCE'
-      ))
 )
 WHERE source_rank = 1;
 """
@@ -330,6 +326,11 @@ class MarketDataDatabase:
                 connection.execute(
                     "ALTER TABLE daily_prices ADD COLUMN adjusted_close_price TEXT"
                 )
+            if "ex_rights_marker" not in columns:
+                # NULL 表示來源未提供除權息標記，不得視為「非除權息日」。
+                connection.execute(
+                    "ALTER TABLE daily_prices ADD COLUMN ex_rights_marker INTEGER"
+                )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (2)"
             )
@@ -449,8 +450,8 @@ class MarketDataDatabase:
             INSERT INTO daily_prices(
                 symbol, trade_date, open_price, high_price, low_price, close_price,
                 adjusted_close_price, price_change, volume_shares, trade_value, transactions, source,
-                fetched_at, run_id, raw_payload_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fetched_at, run_id, raw_payload_id, ex_rights_marker
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, trade_date, source) DO UPDATE SET
                 open_price = excluded.open_price,
                 high_price = excluded.high_price,
@@ -463,7 +464,8 @@ class MarketDataDatabase:
                 transactions = excluded.transactions,
                 fetched_at = excluded.fetched_at,
                 run_id = excluded.run_id,
-                raw_payload_id = excluded.raw_payload_id
+                raw_payload_id = excluded.raw_payload_id,
+                ex_rights_marker = excluded.ex_rights_marker
             """,
             [
                 (
@@ -482,6 +484,7 @@ class MarketDataDatabase:
                     fetched_at,
                     run_id,
                     raw_payload_id,
+                    None if price.ex_rights is None else int(price.ex_rights),
                 )
                 for price in rows
             ],

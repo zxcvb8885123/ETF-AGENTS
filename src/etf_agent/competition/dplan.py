@@ -15,7 +15,7 @@ from decimal import Decimal, ROUND_FLOOR
 from typing import Dict, List, Mapping, Sequence
 
 from etf_agent.decision import DecisionInputValidator, DecisionResultValidator
-from etf_agent.decision.contracts import DecisionToolError, decimal_value
+from etf_agent.decision.contracts import DecisionToolError, decimal_value, snapshot_execution_price
 
 
 class DPlanError(ValueError):
@@ -346,7 +346,7 @@ class DPlanExporter:
         positions = artifacts["proposal"].get("allocation_proposal", {}).get("positions", [])
         account = bundle["account_snapshot"]
         held = {str(row["symbol"]): int(row["shares"]) for row in account.get("positions", [])}
-        latest_prices = {str(row["symbol"]): Decimal(str(row["analysis_close_price"])) for row in bundle["snapshot"].get("latest_prices", [])}
+        latest_prices = {str(row["symbol"]): snapshot_execution_price(row, "latest_prices") for row in bundle["snapshot"].get("latest_prices", [])}
         target = {str(row["symbol"]): int(row["shares"]) for row in positions}
         if any(not re.fullmatch(r"\d{4}\.(?:TW|TWO)", symbol) for symbol in set(held) | set(target)):
             raise DPlanError("D-Plan 只支援具四位數台股代碼且可映射為 ####.TW／####.TWO 的標的")
