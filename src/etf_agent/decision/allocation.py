@@ -12,6 +12,7 @@ from .contracts import (
     artifact_content_sha256,
     canonical_sha256,
     decimal_value,
+    snapshot_execution_price,
     intent_artifact_id,
     parse_time,
     reject_unknown_fields,
@@ -346,17 +347,22 @@ class AllocationOrderEngine:
                 order["shares"]
             )
         final_shares = {symbol: shares for symbol, shares in final_shares.items() if shares > 0}
+        # 與 _order 相同：先量化到 PRICE 再計算，Validator 才能由 position.price 精確重算。
+        position_prices = {
+            symbol: self.prices[symbol].quantize(PRICE, rounding=ROUND_HALF_UP)
+            for symbol in final_shares
+        }
         nav = projected_cash + sum(
-            Decimal(shares) * self.prices[symbol] for symbol, shares in final_shares.items()
+            Decimal(shares) * position_prices[symbol] for symbol, shares in final_shares.items()
         )
         positions = [
             {
                 "symbol": symbol,
                 "lots": shares // lot_size,
                 "shares": shares,
-                "price": _price(self.prices[symbol]),
-                "market_value": _money(Decimal(shares) * self.prices[symbol]),
-                "weight": _rate(Decimal(shares) * self.prices[symbol] / nav),
+                "price": _price(position_prices[symbol]),
+                "market_value": _money(Decimal(shares) * position_prices[symbol]),
+                "weight": _rate(Decimal(shares) * position_prices[symbol] / nav),
                 "intent": intents.get(symbol, "hold"),
             }
             for symbol, shares in sorted(final_shares.items())
@@ -422,9 +428,9 @@ class AllocationOrderEngine:
         result: Dict[str, Decimal] = {}
         for row in self.context.snapshot["latest_prices"]:
             symbol = str(row["symbol"]).upper()
-            price = decimal_value(row.get("analysis_close_price"), "analysis_close_price")
+            price = snapshot_execution_price(row, "latest_prices")
             if price <= 0:
-                raise DecisionToolError("%s analysis_close_price 必須大於 0" % symbol)
+                raise DecisionToolError("%s 決策用價必須大於 0" % symbol)
             result[symbol] = price
         return result
 

@@ -21,6 +21,8 @@ class DailyPrice:
     trade_value: int
     transactions: int
     adjusted_close: Optional[Decimal] = None
+    # 官方來源的除權息標記：True 為當日除權息、False 為確認非除權息、None 為來源未提供。
+    ex_rights: Optional[bool] = None
 
 
 def parse_roc_date(value: str) -> str:

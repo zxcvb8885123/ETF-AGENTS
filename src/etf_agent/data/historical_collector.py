@@ -14,6 +14,8 @@ from .historical import (
     HistoricalPriceProvider,
     HistoricalResponse,
     HistoryRefreshBatch,
+    SourceBlockedError,
+    SourceThrottledError,
     month_starts,
     plan_history_refresh,
 )
@@ -29,6 +31,9 @@ class HistoricalCollectionResult:
     fetched_payloads: int
     stored_rows: int
     warnings: Tuple[str, ...]
+
+
+MAX_THROTTLED_RETRIES = 10
 
 
 class HistoricalCollectionError(RuntimeError):
@@ -170,7 +175,15 @@ class HistoricalPriceCollector:
         warnings: List[str] = []
         failures: List[str] = []
         try:
+            blocked = False
             for month in months:
+                if blocked:
+                    # 來源已熔斷：不再派工，剩餘月份記為未請求。
+                    failures.extend(
+                        "%s %s：來源限流熔斷，未送出" % (instrument.symbol, month.strftime("%Y-%m"))
+                        for instrument in universe
+                    )
+                    continue
                 responses: List[HistoricalResponse] = []
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     future_map = {
@@ -181,6 +194,11 @@ class HistoricalPriceCollector:
                         instrument = future_map[future]
                         try:
                             responses.append(future.result())
+                        except SourceBlockedError as error:
+                            blocked = True
+                            failures.append(
+                                "%s %s：%s" % (instrument.symbol, month.strftime("%Y-%m"), error)
+                            )
                         except Exception as error:
                             failures.append(
                                 "%s %s：%s" % (instrument.symbol, month.strftime("%Y-%m"), error)
@@ -224,8 +242,8 @@ class HistoricalPriceCollector:
 
             if failures:
                 raise RuntimeError(
-                    "%d 個月份請求失敗；前 5 筆：%s"
-                    % (len(failures), " | ".join(failures[:5]))
+                    "%s%d 個月份請求失敗；前 5 筆：%s"
+                    % ("TWSE 限流熔斷；" if blocked else "", len(failures), " | ".join(failures[:5]))
                 )
             with self.database.connect() as connection:
                 connection.execute(
@@ -273,19 +291,32 @@ class HistoricalPriceCollector:
         )
 
     def _fetch_with_retry(self, instrument: Instrument, month: date) -> HistoricalResponse:
+        """一般錯誤依 retries 重試；限流由 provider 的 RequestGate 退避，直到熔斷為止。"""
         last_error = None
-        for attempt in range(self.retries + 1):
+        attempt = 0
+        throttled = 0
+        while attempt <= self.retries:
             try:
                 return self.provider.fetch(instrument, month)
+            except SourceBlockedError:
+                raise
+            except SourceThrottledError as error:
+                # 等待由閘門負責；此上限只防止未帶閘門的 provider 無限重試。
+                last_error = error
+                throttled += 1
+                if throttled > MAX_THROTTLED_RETRIES:
+                    break
+                continue
             except Exception as error:
                 last_error = error
                 if attempt < self.retries:
                     time.sleep(self.retry_delay_seconds * (2**attempt))
+                attempt += 1
         raise RuntimeError(str(last_error))
 
 
 class OfficialHistoricalRefreshService:
-    """以官方 TWSE 月行情更新並稽核上市股票的歷史日線。"""
+    """以官方 TWSE／TPEx 個股月行情更新並稽核歷史日線（上櫃需設定 tpex_url）。"""
 
     latest_sources = {
         "TWSE": "TWSE_STOCK_DAY_ALL",
@@ -316,8 +347,8 @@ class OfficialHistoricalRefreshService:
     ) -> OfficialHistoryRefreshResult:
         if not universe:
             raise ValueError("官方交易池是空的")
-        if any(instrument.market.upper() != "TWSE" for instrument in universe):
-            raise ValueError("官方個股月補抓只支援上市股票")
+        for instrument in universe:
+            self.provider.source_for(instrument)
         self.database.initialize()
         safe_end = self._safe_end_date(universe)
         target_end = safe_end if end is None else end
@@ -484,6 +515,4 @@ class OfficialHistoricalRefreshService:
         return tuple(dict.fromkeys(self._historical_source(item) for item in universe))
 
     def _historical_source(self, instrument: Instrument) -> str:
-        if instrument.market.upper() != "TWSE":
-            raise ValueError("官方個股月補抓只支援上市股票")
-        return self.provider.twse_source
+        return self.provider.source_for(instrument)

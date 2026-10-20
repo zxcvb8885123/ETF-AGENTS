@@ -8,5 +8,7 @@ artifacts/*
 var/*.db
 var/*.db-shm
 var/*.db-wal
+var/*.db.*
+var/logs/
 var/*.json
 !var/.gitkeep

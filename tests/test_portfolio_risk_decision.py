@@ -240,6 +240,38 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         errors = ProposalValidator(bundle, settings, intent).validate(proposal)
         self.assertIn("ProposalBundle 與確定性重算結果不一致", errors)
 
+    def test_non_tick_price_keeps_positions_and_nav_recomputable(self):
+        from decimal import Decimal
+
+        bundle, momentum, debate, intent = valid_inputs()
+        settings = policy()
+        original = AllocationOrderEngine._latest_prices
+
+        def odd_prices(engine):
+            prices = original(engine)
+            return {symbol: price + Decimal("0.0071") for symbol, price in prices.items()}
+
+        with patch.object(AllocationOrderEngine, "_latest_prices", odd_prices):
+            proposal = AllocationOrderEngine(bundle, settings).run(intent)
+            self.assertEqual(ProposalValidator(bundle, settings, intent)._invariant_errors(proposal), [])
+            self.assertEqual(ProposalValidator(bundle, settings, intent).validate(proposal), [])
+        allocation = proposal["allocation_proposal"]
+        self.assertTrue(allocation["positions"])
+        for position in allocation["positions"]:
+            self.assertEqual(position["price"], str(Decimal(position["price"]).quantize(Decimal("0.01"))))
+
+    def test_decision_price_prefers_official_execution_close_over_adjusted_price(self):
+        from decimal import Decimal
+
+        bundle, momentum, debate, intent = valid_inputs()
+        engine = AllocationOrderEngine(bundle, policy())
+        row = engine.context.snapshot["latest_prices"][0]
+        symbol = row["symbol"].upper()
+        adjusted = Decimal(row["analysis_close_price"])
+        self.assertEqual(engine._latest_prices()[symbol], adjusted)
+        row["execution_close_price"] = str(adjusted + Decimal("3"))
+        self.assertEqual(engine._latest_prices()[symbol], adjusted + Decimal("3"))
+
     def test_base_scenario_matches_hand_calculated_cash_and_nav(self):
         bundle, momentum, debate, intent = valid_inputs()
         settings = policy()

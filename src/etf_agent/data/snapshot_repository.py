@@ -1,13 +1,17 @@
 """ResearchSnapshot 的 SQLite 存取物件。"""
 
+import bisect
 import json
 import sqlite3
-from typing import Sequence
+from decimal import ROUND_HALF_EVEN, Decimal
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
+from .yfinance_history import BASIS_TOLERANCE
 
 
-# 研究日線同日優先 Yahoo；官方原價仍獨立保留給帳本結算與交叉核對。
+# 研究日線同日優先 Yahoo；只有該股該日缺 Yahoo 時才改用官方價，不因其他日期有 Yahoo 而丟棄。
+# 官方原價仍獨立保留給帳本結算與交叉核對。
 _SOURCE_PRIORITY_SQL = """CASE daily_prices.source
                                WHEN 'YAHOO_FINANCE' THEN 1
                                WHEN 'TPEX_TRADING_STOCK' THEN 2
@@ -114,22 +118,36 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date = ?
                   AND daily_prices.fetched_at <= ?
-                  AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
-                      SELECT 1 FROM daily_prices AS yahoo
-                      WHERE yahoo.symbol = daily_prices.symbol
-                        AND yahoo.source = 'YAHOO_FINANCE'
-                        AND yahoo.fetched_at <= ?
-                  ))
+            ), official AS (
+                -- 決策與帳本用價：同日官方原價（不含 Yahoo，其 Close 可能被事後調整）。
+                SELECT daily_prices.symbol, daily_prices.close_price,
+                       daily_prices.source, daily_prices.raw_payload_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY daily_prices.symbol ORDER BY %s
+                       ) AS official_rank
+                FROM daily_prices
+                WHERE daily_prices.trade_date = ?
+                  AND daily_prices.fetched_at <= ?
+                  AND daily_prices.source != 'YAHOO_FINANCE'
             )
             SELECT ranked.*, raw_payloads.endpoint,
                    raw_payloads.sha256 AS raw_sha256,
-                   raw_payloads.fetched_at AS payload_fetched_at
+                   raw_payloads.fetched_at AS payload_fetched_at,
+                   official.close_price AS execution_close_price,
+                   official.source AS execution_source,
+                   official.raw_payload_id AS execution_raw_payload_id,
+                   execution_payloads.endpoint AS execution_endpoint,
+                   execution_payloads.sha256 AS execution_raw_sha256,
+                   execution_payloads.fetched_at AS execution_payload_fetched_at
             FROM ranked
             JOIN raw_payloads ON raw_payloads.id = ranked.raw_payload_id
+            LEFT JOIN official ON official.symbol = ranked.symbol AND official.official_rank = 1
+            LEFT JOIN raw_payloads AS execution_payloads
+                   ON execution_payloads.id = official.raw_payload_id
             WHERE source_rank = 1
             ORDER BY ranked.symbol
-            """ % _SOURCE_PRIORITY_SQL,
-            (trade_date, cutoff, cutoff),
+            """ % (_SOURCE_PRIORITY_SQL, _SOURCE_PRIORITY_SQL),
+            (trade_date, cutoff, trade_date, cutoff),
         ).fetchall()
 
     @staticmethod
@@ -138,9 +156,13 @@ class SnapshotRepository:
         before_date: str,
         cutoff: str,
         bars_per_symbol: int,
-    ):
-        """每檔取 before_date 前最近 N 個交易日，來源優先序與 load_prices 相同。"""
-        return connection.execute(
+    ) -> List[Dict[str, object]]:
+        """每檔取 before_date 前最近 N 個交易日，來源優先序與 load_prices 相同。
+
+        Yahoo 缺某日而改用官方原價時，依相鄰 Yahoo 列的還原係數換算到同一基準；
+        無法確定係數的列排除，不以原價混入還原序列。
+        """
+        rows = connection.execute(
             """
             WITH ranked AS (
                 SELECT daily_prices.*,
@@ -153,12 +175,6 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date < ?
                   AND daily_prices.fetched_at <= ?
-                  AND (daily_prices.source = 'YAHOO_FINANCE' OR NOT EXISTS (
-                      SELECT 1 FROM daily_prices AS yahoo
-                      WHERE yahoo.symbol = daily_prices.symbol
-                        AND yahoo.source = 'YAHOO_FINANCE'
-                        AND yahoo.fetched_at <= ?
-                  ))
             ), recent AS (
                 SELECT ranked.*,
                        ROW_NUMBER() OVER (
@@ -174,8 +190,9 @@ class SnapshotRepository:
             WHERE recency <= ?
             ORDER BY symbol, trade_date
             """ % _SOURCE_PRIORITY_SQL,
-            (before_date, cutoff, cutoff, bars_per_symbol),
+            (before_date, cutoff, bars_per_symbol),
         ).fetchall()
+        return _rebase_official_gaps(connection, [dict(row) for row in rows], before_date, cutoff)
 
     @staticmethod
     def load_documents(connection: sqlite3.Connection, cutoff: str):
@@ -287,3 +304,121 @@ class SnapshotRepository:
                 for row in price_rows
             ],
         )
+
+
+_RATIO_QUANTUM = Decimal("0.0001")
+
+
+def _basis_factor(
+    trade_date: str,
+    dates: Sequence[str],
+    ratios: Sequence[Decimal],
+    markers: Dict[str, Optional[int]],
+    latest_date: str,
+) -> Optional[Decimal]:
+    """以缺口前後最近的 Yahoo 還原係數（Yahoo adj ÷ 同日官方原價）推得該日係數；無法確定時回傳 None。
+
+    係數只在除權息日改變。前後係數相同代表其間沒有除權息，直接沿用；缺口之後
+    沒有 Yahoo 列時，以最新一日（係數 1）作為後端。前後係數不同時，以官方漲跌
+    欄的除權息標記定位除權息日 E：E 不晚於缺口日則用後端係數，否則用前端係數。
+    區間內官方列缺標記、找不到或有多個除權息日時無法確定，回傳 None。
+    """
+    index = bisect.bisect_left(dates, trade_date)
+    if index < len(dates):
+        following_date, following = dates[index], ratios[index]
+    else:
+        following_date, following = latest_date, Decimal(1)
+    if index == 0:
+        return following
+    previous_date, previous = dates[index - 1], ratios[index - 1]
+    if abs(previous - following) <= BASIS_TOLERANCE * max(abs(previous), abs(following)):
+        return following
+    window = {day: flag for day, flag in markers.items() if previous_date < day <= following_date}
+    if following_date not in window or any(flag is None for flag in window.values()):
+        return None
+    ex_dates = [day for day, flag in window.items() if flag]
+    if len(ex_dates) != 1:
+        return None
+    return following if ex_dates[0] <= trade_date else previous
+
+
+def _rebase_official_gaps(
+    connection: sqlite3.Connection,
+    rows: List[Dict[str, object]],
+    before_date: str,
+    cutoff: str,
+) -> List[Dict[str, object]]:
+    gap_symbols = sorted({
+        str(row["symbol"]) for row in rows if row["source"] != "YAHOO_FINANCE"
+    })
+    if not gap_symbols:
+        return rows
+    placeholders = ",".join("?" for _ in gap_symbols)
+    # Yahoo Close 遇配股、分割、減資會被事後改寫，不是交易所原價；還原係數必須以
+    # 同日官方原價為分母（Yahoo adj ÷ 官方 close）。同日沒有官方原價的 Yahoo 列
+    # 無法確認基準，不作為參考。同日多個官方來源時以來源優先序最高者為準。
+    official_closes: Dict[Tuple[str, str], Decimal] = {}
+    for row in connection.execute(
+        """
+        SELECT symbol, trade_date, close_price
+        FROM daily_prices
+        WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
+          AND symbol IN (%s)
+        ORDER BY %s DESC
+        """ % (placeholders, _SOURCE_PRIORITY_SQL),
+        (before_date, cutoff, *gap_symbols),
+    ).fetchall():
+        official_closes[(str(row["symbol"]), str(row["trade_date"]))] = Decimal(str(row["close_price"]))
+    references: Dict[str, Tuple[List[str], List[Decimal]]] = {}
+    for row in connection.execute(
+        """
+        SELECT symbol, trade_date, adjusted_close_price
+        FROM daily_prices
+        WHERE source = 'YAHOO_FINANCE' AND adjusted_close_price IS NOT NULL
+          AND trade_date <= ? AND fetched_at <= ?
+          AND symbol IN (%s)
+        ORDER BY symbol, trade_date
+        """ % placeholders,
+        (before_date, cutoff, *gap_symbols),
+    ).fetchall():
+        dates, ratios = references.setdefault(str(row["symbol"]), ([], []))
+        official = official_closes.get((str(row["symbol"]), str(row["trade_date"])))
+        if official is None or official <= 0:
+            continue
+        dates.append(str(row["trade_date"]))
+        ratios.append(Decimal(str(row["adjusted_close_price"])) / official)
+    # 同日多個官方來源時，任一標記除權息即為除權息；全為 NULL 表示未知。
+    markers: Dict[str, Dict[str, Optional[int]]] = {}
+    for row in connection.execute(
+        """
+        SELECT symbol, trade_date, MAX(ex_rights_marker) AS marker
+        FROM daily_prices
+        WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
+          AND symbol IN (%s)
+        GROUP BY symbol, trade_date
+        """ % placeholders,
+        (before_date, cutoff, *gap_symbols),
+    ).fetchall():
+        markers.setdefault(str(row["symbol"]), {})[str(row["trade_date"])] = row["marker"]
+    result: List[Dict[str, object]] = []
+    for row in rows:
+        symbol = str(row["symbol"])
+        reference = references.get(symbol)
+        if row["source"] == "YAHOO_FINANCE" or reference is None:
+            # 從未有 Yahoo 的股票整段都是官方原價，本身口徑一致。
+            result.append(row)
+            continue
+        if not reference[0]:
+            # 有 Yahoo 列但沒有任何可核對官方原價的參考：無法確定基準，排除。
+            continue
+        factor = _basis_factor(
+            str(row["trade_date"]), *reference, markers.get(symbol, {}), before_date
+        )
+        if factor is None:
+            continue
+        adjusted = Decimal(str(row["close_price"])) * factor
+        result.append({
+            **row,
+            "adjusted_close_price": str(adjusted.quantize(_RATIO_QUANTUM, ROUND_HALF_EVEN)),
+        })
+    return result

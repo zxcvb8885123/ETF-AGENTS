@@ -57,6 +57,16 @@ def decimal_value(value: object, field: str) -> Decimal:
     return parse_decimal(value, field, error=DecisionToolError, parse_message="%(field)s 無法解析為數值")
 
 
+def snapshot_execution_price(row: Mapping[str, object], field: str) -> Decimal:
+    """決策與帳務用價：優先同日官方原價，沒有時退回 analysis_close_price。
+
+    analysis_close_price 是調整價，重放過去日期時含該日之後的除權息，不是當時成交價。
+    """
+    if row.get("execution_close_price") is not None:
+        return decimal_value(row.get("execution_close_price"), field + ".execution_close_price")
+    return decimal_value(row.get("analysis_close_price"), field + ".analysis_close_price")
+
+
 def decision_bundle_sha256(bundle: Mapping[str, object]) -> str:
     payload = dict(bundle)
     payload.pop("bundle_sha256", None)
@@ -370,6 +380,9 @@ class DecisionInputValidator:
                     "transactions",
                     "source",
                     "source_evidence_id",
+                    "execution_close_price",
+                    "execution_price_source",
+                    "execution_source_evidence_id",
                 },
                 "snapshot.latest_prices[%d]" % index,
                 errors,
@@ -476,9 +489,7 @@ class DecisionInputValidator:
                 errors.append(str(error))
         try:
             latest = {
-                str(row.get("symbol", "")).upper(): decimal_value(
-                    row.get("analysis_close_price"), "snapshot.analysis_close_price"
-                )
+                str(row.get("symbol", "")).upper(): snapshot_execution_price(row, "snapshot")
                 for row in self.snapshot.get("latest_prices", [])
                 if isinstance(row, Mapping)
             }

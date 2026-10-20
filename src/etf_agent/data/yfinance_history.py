@@ -38,6 +38,75 @@ class YFinanceRefreshResult:
     stored_rows: int
     missing_symbols: Tuple[str, ...]
     warnings: Tuple[str, ...]
+    rebased_symbols: Tuple[str, ...] = ()
+
+
+# Yahoo 還原價四捨五入至 0.0001；比值差距在此相對容忍度內視為同一還原基準。
+# 台股最小配息率仍遠大於 0.01%，不會把真正的除權息誤判為誤差。
+BASIS_TOLERANCE = Decimal("0.0001")
+
+
+def stale_basis_symbols(connection, source: str, symbols: Sequence[str]) -> List[str]:
+    """找出已存 Yahoo 序列混用不同還原基準的股票。
+
+    Yahoo 的還原係數（Adj Close ÷ Close）以最新資料為基準往回累乘除權息，
+    日期越早只會越小或相等。增量重抓只覆寫重疊區間，除權息後較舊列仍是舊基準，
+    會出現「較早日期比值大於較晚日期」；出現時整檔須重抓才能回到同一基準。
+    """
+    stale: List[str] = []
+    for symbol in symbols:
+        rows = connection.execute(
+            """
+            SELECT close_price, adjusted_close_price FROM daily_prices
+            WHERE symbol = ? AND source = ? AND adjusted_close_price IS NOT NULL
+            ORDER BY trade_date
+            """,
+            (symbol, source),
+        ).fetchall()
+        highest: Optional[Decimal] = None
+        for row in rows:
+            close = Decimal(str(row["close_price"]))
+            if close <= 0:
+                continue
+            ratio = Decimal(str(row["adjusted_close_price"])) / close
+            if highest is not None and ratio < highest * (1 - BASIS_TOLERANCE):
+                stale.append(symbol)
+                break
+            highest = ratio if highest is None else max(highest, ratio)
+    return stale
+
+
+def stored_closes(
+    connection, source: str, symbols: Sequence[str], start: date
+) -> Dict[Tuple[str, str], Decimal]:
+    """讀取已存的 Yahoo 原始 Close，供重抓前後比對 Yahoo 是否改了原價基準。"""
+    result: Dict[Tuple[str, str], Decimal] = {}
+    for symbol in symbols:
+        for row in connection.execute(
+            "SELECT trade_date, close_price FROM daily_prices "
+            "WHERE symbol = ? AND source = ? AND trade_date >= ?",
+            (symbol, source, start.isoformat()),
+        ).fetchall():
+            result[(symbol, str(row["trade_date"]))] = Decimal(str(row["close_price"]))
+    return result
+
+
+def close_rebased_symbols(
+    before: Mapping[Tuple[str, str], Decimal], after: Mapping[Tuple[str, str], Decimal]
+) -> List[str]:
+    """重抓前後同日 Close 相對差超過容忍度的股票。
+
+    配股、分割、減資時 Yahoo 會把事件前的 Close 與 Adj Close 同比例改寫，
+    Adj÷Close 不變，stale_basis_symbols 看不到；只有比對同日 Close 才抓得到。
+    """
+    changed = set()
+    for key, old in before.items():
+        new = after.get(key)
+        if new is None or old <= 0:
+            continue
+        if abs(new - old) > BASIS_TOLERANCE * max(old, new):
+            changed.add(key[0])
+    return sorted(changed)
 
 
 def _decimal(value: object) -> Optional[Decimal]:
@@ -102,25 +171,87 @@ class YFinanceHistoryCollector:
             overlap_days=overlap_days,
         )
         results: List[YFinanceCollectionResult] = []
+        price_changed: List[str] = []
         for batch in batches:
             if self.progress:
                 self.progress(
                     "增量區間 %s 至 %s：%d 檔"
                     % (batch.start_date.isoformat(), end.isoformat(), len(batch.instruments))
                 )
+            symbols = [item.symbol for item in batch.instruments]
+            with self.database.connect() as connection:
+                before = stored_closes(connection, self.source, symbols, batch.start_date)
             results.append(self.collect(batch.instruments, batch.start_date, end))
+            with self.database.connect() as connection:
+                after = stored_closes(connection, self.source, symbols, batch.start_date)
+            price_changed.extend(close_rebased_symbols(before, after))
 
+        rebased, rebase_results, warnings = self._rebase_stale_series(
+            universe, end, lookback_years, sorted(set(price_changed))
+        )
+        results.extend(rebase_results)
+        starts = [batch.start_date for batch in batches] + [
+            date.fromisoformat(item.start_date) for item in rebase_results
+        ]
         return YFinanceRefreshResult(
             run_ids=tuple(item.run_id for item in results),
-            start_date=min(batch.start_date for batch in batches).isoformat(),
+            start_date=min(starts).isoformat(),
             end_date=end.isoformat(),
             requested_symbols=len(universe),
             stored_rows=sum(item.stored_rows for item in results),
             missing_symbols=tuple(
                 sorted({symbol for item in results for symbol in item.missing_symbols})
             ),
-            warnings=tuple(warning for item in results for warning in item.warnings),
+            warnings=tuple(warning for item in results for warning in item.warnings) + warnings,
+            rebased_symbols=tuple(rebased),
         )
+
+    def _rebase_stale_series(
+        self,
+        universe: Sequence[Instrument],
+        end: date,
+        lookback_years: int,
+        price_changed: Sequence[str] = (),
+    ) -> Tuple[List[str], List[YFinanceCollectionResult], Tuple[str, ...]]:
+        """Yahoo 改了還原或原價基準後，整檔重抓已存區間回到同一基準。
+
+        price_changed 是增量重抓時同日 Close 被改寫的股票（配股、分割、減資）。
+        """
+        by_symbol = {item.symbol: item for item in universe}
+        with self.database.connect() as connection:
+            stale = sorted(
+                set(stale_basis_symbols(connection, self.source, list(by_symbol)))
+                | {symbol for symbol in price_changed if symbol in by_symbol}
+            )
+            first_dates = {
+                str(row["symbol"]): date.fromisoformat(str(row["first_date"]))
+                for row in connection.execute(
+                    "SELECT symbol, MIN(trade_date) AS first_date FROM daily_prices "
+                    "WHERE source = ? GROUP BY symbol",
+                    (self.source,),
+                ).fetchall()
+            }
+        if not stale:
+            return [], [], ()
+        floor = rolling_start(end, lookback_years)
+        grouped: Dict[date, List[Instrument]] = {}
+        for symbol in stale:
+            start = min(floor, first_dates.get(symbol, floor))
+            grouped.setdefault(start, []).append(by_symbol[symbol])
+        results: List[YFinanceCollectionResult] = []
+        for start, instruments in sorted(grouped.items()):
+            if self.progress:
+                self.progress(
+                    "還原基準已變動，整段重抓 %s 至 %s：%s"
+                    % (start.isoformat(), end.isoformat(), ", ".join(item.symbol for item in instruments))
+                )
+            results.append(self.collect(instruments, start, end))
+        with self.database.connect() as connection:
+            remaining = stale_basis_symbols(connection, self.source, stale)
+        warnings = tuple(
+            "%s 整段重抓後 Yahoo 還原基準仍不一致" % symbol for symbol in remaining
+        )
+        return stale, results, warnings
 
     def collect(
         self, universe: Sequence[Instrument], start: date, end: date
