@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import tempfile
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from etf_agent.core import parse_aware_time, canonical_sha256
@@ -69,6 +71,22 @@ class DeliveryRepository(ImmutableRunStore):
             if not view.exists():
                 atomic_text(view, expected)
         return path, view
+
+    def publish_dated_copy(self, run_id):
+        """ready 報告另存一份檔名含決策日期時間（台北）的閱讀副本；失敗或診斷報告不產生。
+
+        views/ 的資料夾名稱是內容雜湊，是驗證識別，不能改名；這份副本只方便人工尋找。"""
+        artifacts = self.verify_delivery(run_id)
+        if artifacts["delivery_status"].get("report_status") != "ready":
+            return None
+        match = re.fullmatch(r"decision-(\d{8}T\d{6})Z", str(artifacts["request"].get("decision_run_id")))
+        if match is None:
+            return None
+        taipei = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc) + timedelta(hours=8)
+        target = self.delivery_root / "dated" / ("決策報告_%s_%s.md" % (taipei.strftime("%Y-%m-%d_%H%M"), artifacts["delivery_status"]["decision_status"]))
+        with publication_lock(self.delivery_root):
+            atomic_text(target, artifacts["rendering"]["markdown"])
+        return target
 
     def verify_delivery(self, run_id):
         path = self.verify(run_id)

@@ -37,6 +37,7 @@ def save_delivery(output_root, artifacts, reports_root=None, started_at=None):
     repo = DeliveryRepository(output_root)
     path, view = repo.save_delivery(identity, artifacts)
     repo.verify_delivery(identity)
+    repo.publish_dated_copy(identity)
     published = False
     if reports_root is not None:
         if started_at is None:
