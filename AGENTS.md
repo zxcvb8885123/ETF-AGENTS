@@ -46,6 +46,8 @@
 - 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
 - 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
+- 單股硬性權重上限的減碼一律由程式執行（不依 Policy 的 `stock_weight_fit` 版本欄位開關）；因風控減碼產生的賣單，意圖由程式標為 `trim`（仍有持股）或 `exit`（減至零），不改寫交易 Agent 的原意圖，並留下 `RISK_STOCK_WEIGHT` 旗標。
+- 技術分析師啟用 `technical_gate` 時，分批 brief 只記錄該批股票的 `momentum_only_symbols` 與 `full_history_symbols`；每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。OpenCode 的 read 權限須拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 
 ### Research Report V0
@@ -79,7 +81,7 @@
 
 ## 開發與 Docker 環境
 
-- `requirements.txt` 是本機 `.venv` 與 Docker 的共用依賴，包含 Skill 驗證需要的 PyYAML；Dockerfile 安裝同一份檔案。改動依賴後須重建 Docker 映像。
+- `requirements.txt` 是本機 `.venv` 與 Docker 的共用依賴，包含 Skill 驗證需要的 PyYAML 與執行測試的 pytest；Dockerfile 安裝同一份檔案。改動依賴後須重建 Docker 映像。
 - 本機首次建立環境：`python3 -m venv .venv`，再執行 `.venv/bin/python -m pip install -r requirements.txt`；已有 `.venv` 時直接重裝需求即可。
 - 本機測試、編譯與 Skill 驗證統一使用 `.venv/bin/python`；Docker 內使用 `python3`。若缺少模組，檢查目前使用的解譯器、`.venv/bin/python -m pip check` 或重建 Docker 映像，不跳過驗證。
 
@@ -88,8 +90,8 @@
 修改 Python、契約、CLI 或 Skill 後，至少執行：
 
 ```bash
-PYTHONPATH=src PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
-  .venv/bin/python -m unittest discover -s tests -v
+PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
+  .venv/bin/python -m pytest
 
 PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
   .venv/bin/python -m compileall -q src tradeagent tests
@@ -105,7 +107,7 @@ PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
   tradeagent/GROUP/SKILL_NAME
 ```
 
-測試應涵蓋正常流程及 fail-closed 分支，尤其是：
+測試以 pytest 執行（`pytest.ini` 已設定 `testpaths` 與 `pythonpath`），但測試碼維持 `unittest.TestCase` 風格：用 `setUp` 準備物件、`self.assertEqual`／`assertIsInstance`／`assertRaises` 等斷言，不改寫成純函式加 `assert`，新測試也照此寫。測試應涵蓋正常流程及 fail-closed 分支，尤其是：
 
 - cutoff 後資料與缺少時區。
 - 引用不存在、股票誤配與版本不一致。
@@ -115,7 +117,7 @@ PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache \
 
 ## Git commit 格式
 
-只有使用者要求時才建立 commit。沿用專案編號與以下格式：
+只有使用者明確說「commit」時才建立 commit：任務完成後不得自行 commit，也不要詢問是否要 commit，只回報修改內容並等使用者下令；使用者未要求時，即使在背景 job 或 worktree 中也不 commit、不 merge、不 push，修改保留為未提交狀態。沿用專案編號與以下格式：
 #是分支標號
 
 ````markdown
@@ -130,7 +132,8 @@ Notes:
 - 重要契約、限制或測試結果。
 ````
 
-- 使用下一個經使用者確認的編號，不自行跳號或重寫既有 commit。
-- `Date`、`Start`、`End` 使用 Asia/Taipei 時區。`Start` 使用使用者提出本次修改要求的時間，優先從本次對話時間戳核對；之後的 commit 都沿用此方式。無法核對時再詢問，不捏造。
+- commit 編號沿用開發分支的編號：分支 `63-` 的 commit 一律寫 `#63`，同一分支的多個 commit 共用此編號，不自行跳號、不再詢問；在臨時 worktree 分支提交時，編號仍取其預定合併的開發分支。不重寫既有 commit。
+- `Date`、`Start`、`End` 使用 Asia/Taipei 時區。`Start` 使用使用者提出本次修改要求的時間，`End` 使用 commit 當下的時間（`date`）；之後的 commit 都沿用此方式。
+- 不必詢問使用者 `Start`，先自行查證：讀 `~/.claude/projects/<專案目錄>/*.jsonl` 對話紀錄（背景 job 另有 `~/.claude/jobs/<job id>/timeline.jsonl`，其 `at` 欄位同為 UTC），找出本次任務第一則使用者訊息（`type=user`、非 meta）的 `timestamp`（UTC，需轉為 Asia/Taipei）；同一批未提交修改跨多個 session 時取最早的一則。可用修改檔的 mtime 交叉核對，`Start` 不得晚於最早被修改檔案的時間。只有真的查不到時才詢問，不捏造。
 - commit 前執行相關測試與 `git diff --check`，並確認只納入本次任務檔案。
 - amend、rebase、reset 或其他會改寫歷史的操作，只有在使用者明確要求時執行。

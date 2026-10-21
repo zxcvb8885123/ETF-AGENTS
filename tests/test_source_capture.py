@@ -53,7 +53,7 @@ class CandidateCaptureTests(unittest.TestCase):
             self.assertEqual(item["row_count"], 1)
             self.assertFalse(item["available_at_verified"])
             self.assertTrue(Path(item["raw_path"]).is_file())
-        self.assertTrue((self.root / manifest["run_id"] / "manifest.json").is_file())
+        self.assertEqual(len(list(self.root.glob("*/%s/manifest.json" % manifest["run_id"]))), 1)
 
     def test_invalid_csv_is_archived_and_run_fails_closed(self):
         manifest = capture_ogd_candidates(

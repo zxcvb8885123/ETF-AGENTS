@@ -11,6 +11,7 @@ Yahoo 等還原價格成交。
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256
+from etf_agent.core.run_layout import list_run_dirs
 from etf_agent.data.trading_calendar import CALENDAR_BASIS, TradingCalendar
 from etf_agent.decision.finalization import DecisionRepository
 
@@ -30,7 +32,7 @@ EXECUTION_PRICE_RULE = "official_average_price"
 OFFICIAL_SOURCES: Mapping[str, Tuple[str, ...]] = {
     # 同一市場依優先序取第一筆。
     "TWSE": ("TWSE_STOCK_DAY", "TWSE_STOCK_DAY_ALL"),
-    "TPEX": ("TPEX_TRADING_STOCK", "TPEX_MAINBOARD_QUOTES", "TPEX_DAILY_QUOTES_HISTORY"),
+    "TPEX": ("TPEX_TRADING_STOCK", "TPEX_DAILY_QUOTES_HISTORY", "TPEX_MAINBOARD_QUOTES"),
 }
 
 
@@ -64,8 +66,8 @@ def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, 
         return None
     repository = DecisionRepository(root)
     matches: List[str] = []
-    for run_dir in sorted(root.iterdir()):
-        if not run_dir.is_dir() or run_dir.name.startswith(".") or not (run_dir / "decision_input.json").exists():
+    for run_dir in list_run_dirs(root):
+        if not (run_dir / "decision_input.json").exists():
             continue
         try:
             bundle = json.loads((run_dir / "decision_input.json").read_text(encoding="utf-8"))
@@ -77,6 +79,30 @@ def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, 
     if len(matches) > 1:
         raise VirtualAccountError("多個 Decision run 使用同一 AccountSnapshot：%s" % "、".join(matches))
     return matches[0] if matches else None
+
+
+def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive_root: Path) -> List[str]:
+    """同一份 AccountSnapshot 重跑後，把較舊的 Decision run 整個搬到封存區，只留 keep_run_id；回傳被取代的 run。"""
+    root = Path(decision_repository)
+    kept_dir = DecisionRepository(root).run_dir(keep_run_id)
+    if kept_dir is None:
+        raise VirtualAccountError("找不到要保留的 Decision run：%s" % keep_run_id)
+    kept = kept_dir / "decision_input.json"
+    account_snapshot = json.loads(kept.read_text(encoding="utf-8")).get("account_snapshot")
+    superseded: List[str] = []
+    for run_dir in list_run_dirs(root):
+        if run_dir.name == keep_run_id or not (run_dir / "decision_input.json").exists():
+            continue
+        try:
+            bundle = json.loads((run_dir / "decision_input.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(bundle, Mapping) and bundle.get("account_snapshot") == account_snapshot:
+            target = Path(archive_root) / run_dir.parent.name
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(run_dir), str(target / run_dir.name))
+            superseded.append(run_dir.name)
+    return superseded
 
 
 class OfficialCloseMarket:
@@ -216,7 +242,7 @@ class DailyAccountRunner:
         decision_run_id = find_decision_run(self.decision_repository, provenance.get("account_snapshot"))
         if decision_run_id is None:
             return {"status": "no_decision", "run_id": current["run_id"]}
-        decision_path = self.decision_repository / decision_run_id
+        decision_path = DecisionRepository(self.decision_repository).verify(decision_run_id)
         bundle = json.loads((decision_path / "decision_input.json").read_text(encoding="utf-8"))
         target = (bundle.get("trading_status_bundle") or {}).get("target_session", {}).get("end")
         # 新決策必須在驗證過的目標時段成交，缺行情不得順延到下一個有資料的日子。
@@ -226,7 +252,7 @@ class DailyAccountRunner:
             return {"status": "waiting_for_close_data", "run_id": current["run_id"], "decision_run_id": decision_run_id}
         # 先確認成交日與交割日，日曆不足時在寫入任何輸入檔前停止。
         settlement, calendar_basis = self.settlement_date(trade_date)
-        decision = json.loads((self.decision_repository / decision_run_id / "decision.json").read_text(encoding="utf-8"))
+        decision = json.loads((decision_path / "decision.json").read_text(encoding="utf-8"))
         symbols = sorted({str(row["symbol"]).upper() for row in state.get("positions", [])}
                          | {str(row.get("symbol", "")).upper() for row in decision.get("orders", [])})
         markets = self.market.build(trade_date, symbols, observed_at)

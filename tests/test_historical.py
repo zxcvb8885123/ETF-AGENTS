@@ -256,6 +256,8 @@ class HistoricalProviderTests(unittest.TestCase):
 
         self.assertEqual(result.missing_symbols, ("2330.TW",))
         self.assertEqual(provider.calls[0][1]["end"], "2026-09-22")
+        for _symbols, kwargs in provider.calls:
+            self.assertIs(kwargs["auto_adjust"], False)
 
     def test_refresh_refetches_whole_series_when_yahoo_basis_changes(self):
         import pandas

@@ -11,7 +11,7 @@ from etf_agent.dashboard import build_performance_summary
 from etf_agent.data import TradingCalendar, TradingCalendarError
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
 from etf_agent.ledger import ExecutionSimulator, LedgerError
-from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price
+from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price, supersede_decision_runs
 from test_virtual_account import prepare_and_decide
 
 
@@ -34,6 +34,35 @@ def create_prices(path, rows):
     )
     connection.commit()
     connection.close()
+
+
+class SupersedeDecisionRunsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.decisions = self.root / "decisions"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def make_run(self, name, snapshot):
+        run = self.decisions / "2026-10-21" / name
+        run.mkdir(parents=True)
+        (run / "decision_input.json").write_text(json.dumps({"account_snapshot": snapshot}), encoding="utf-8")
+
+    def test_older_run_with_same_account_snapshot_is_archived(self):
+        self.make_run("decision-old", {"id": 1})
+        self.make_run("decision-new", {"id": 1})
+        self.make_run("decision-other", {"id": 2})
+        archive = self.root / "archive"
+        self.assertEqual(supersede_decision_runs(self.decisions, "decision-new", archive), ["decision-old"])
+        self.assertEqual(sorted(path.name for path in self.decisions.glob("*/*")), ["decision-new", "decision-other"])
+        self.assertTrue((archive / "2026-10-21" / "decision-old" / "decision_input.json").exists())
+
+    def test_without_duplicates_nothing_moves(self):
+        self.make_run("decision-new", {"id": 1})
+        self.assertEqual(supersede_decision_runs(self.decisions, "decision-new", self.root / "archive"), [])
+        self.assertFalse((self.root / "archive").exists())
 
 
 class DailyAccountRunnerTests(unittest.TestCase):
@@ -75,7 +104,7 @@ class DailyAccountRunnerTests(unittest.TestCase):
 
     def test_settles_at_next_trading_day_official_close(self):
         snapshot, decisions = prepare_and_decide(self.service, self.root)
-        decision = json.loads((decisions / "decision-1" / "decision.json").read_text(encoding="utf-8"))
+        decision = json.loads(next(decisions.glob("*/decision-1/decision.json")).read_text(encoding="utf-8"))
         order = decision["orders"][0]
         create_prices(self.database, [
             ("2317.TW", "2026-09-21", "120", 50_000_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
@@ -132,7 +161,7 @@ class DailyAccountRunnerTests(unittest.TestCase):
 
     def test_fills_in_full_at_official_average_price_and_values_at_close(self):
         snapshot, decisions = prepare_and_decide(self.service, self.root)
-        order = json.loads((decisions / "decision-1" / "decision.json").read_text(encoding="utf-8"))["orders"][0]
+        order = json.loads(next(decisions.glob("*/decision-1/decision.json")).read_text(encoding="utf-8"))["orders"][0]
         # 當日只成交 1 張，仍全部成交；成交均價 605,000 ÷ 5,000 = 121，收盤 120。
         create_prices(self.database, [
             ("2317.TW", "2026-09-21", "120", 5_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00", 605_000),

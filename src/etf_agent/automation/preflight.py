@@ -107,7 +107,8 @@ def check_opencode(runner: CommandRunner, which: Callable[[str], Optional[str]],
     except (OSError, subprocess.TimeoutExpired) as error:
         return PreflightCheck("opencode", False, "無法檢查 OpenCode 登入狀態：%s" % error)
     # 不保存憑證路徑、提供者帳戶或使用者識別；只保留 CLI 回報的數量狀態。
-    if completed.returncode != 0 or re.search(r"\b[1-9]\d* credentials\b", completed.stdout) is None:
+    output = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout)
+    if completed.returncode != 0 or re.search(r"\b[1-9]\d* credentials\b", output) is None:
         return PreflightCheck("opencode", False, "OpenCode 未找到可用憑證（請先執行 opencode auth login）")
     return PreflightCheck("opencode", True, "已設定憑證")
 

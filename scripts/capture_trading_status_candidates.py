@@ -15,7 +15,7 @@ from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, default=ROOT / "docs/source_audit/2026-09-25_ogd_crosscheck.json")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "artifacts/source-audit/captures")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "artifacts/source_audit/captures")
     args = parser.parse_args()
     try:
         report = json.loads(args.report.read_text(encoding="utf-8"))

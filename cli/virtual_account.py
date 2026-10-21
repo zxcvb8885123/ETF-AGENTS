@@ -66,7 +66,7 @@ def main(argv=None) -> int:
     attach.add_argument("--output", type=Path, required=True)
 
     apply = commands.add_parser("apply-decision", help="驗證正式 Decision run 後套用模擬成交並封存日終帳本")
-    apply.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts" / "portfolio_decisions")
+    apply.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts" / "decision_runs")
     apply.add_argument("--decision-run-id", required=True)
     apply.add_argument("--execution-market", type=Path, required=True)
     apply.add_argument("--close-market", type=Path, required=True)
@@ -79,10 +79,10 @@ def main(argv=None) -> int:
     ):
         daily = commands.add_parser(name, help=help_text)
         daily.add_argument("--database", type=Path, default=ROOT / "var" / "etf_agent.db")
-        daily.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts" / "portfolio_decisions")
+        daily.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts" / "decision_runs")
         daily.add_argument("--settlement-days", type=int, default=2)
         daily.add_argument(
-            "--captures-root", type=Path, default=ROOT / "artifacts" / "source-audit" / "captures",
+            "--captures-root", type=Path, default=ROOT / "artifacts" / "source_audit" / "captures",
             help="政府開放 CSV 封存根目錄；使用其中最新的開休市日期表計算交割日",
         )
         if name == "daily":

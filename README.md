@@ -26,7 +26,7 @@ python3 -m venv .venv
 | 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板；不更新資料 |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
-| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告 |
+| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；若已抓到應有的最新交易日資料（交易日 15:00 後算當日），會自動沿用、不重抓 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
 首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
@@ -56,9 +56,8 @@ python3 -m venv .venv
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--resume` | 關 | 沿用同一 run 目錄中已通過驗證的 Agent 輸出，例如撞到用量上限後續跑；建議搭配 `--skip-data`。 |
-| `--resume-run RUN_ID` | 無 | 指定要續跑的 run 目錄（如 `daily-20261020`）並隱含 `--resume`；跨午夜或額度重置後找不到前一天的 run 時使用。 |
-| `--skip-data` | 關 | 沿用既有 Snapshot 與帳戶快照，不重新執行資料更新。 |
+| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。 |
+| `--skip-data` | 關 | 一律沿用既有 Snapshot 與帳戶快照，不重新執行資料更新，不看更新時間。續跑、或 Snapshot 已含應有的最新交易日資料（150 檔齊全，且是該日 15:00 後建立）時會自動套用，通常不用手動加。 |
 | `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期已完成就不重跑。 |
 | `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
 
@@ -66,16 +65,17 @@ python3 -m venv .venv
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--preflight-only` | 關 | 只檢查 Docker、Agent CLI 登入、帳戶、必要檔案與磁碟，不耗用量。 |
+| `--preflight-only` | 未啟用 | 預檢（Docker、Agent CLI 登入、帳戶、必要檔案、磁碟）每次 `run` 都會先執行，失敗即停止；預檢通過後繼續跑決策。啟用此參數則檢查完就結束，不抓資料、不跑 Agent，不耗用量。 |
 | `--min-free-gb GiB` | 2.0 | 執行前要求的最低可用磁碟空間。 |
 | `--account-id ID` | `ai-cup-2026` | 指定帳戶。 |
-| `--perception-bundle` ／ `--perception` | 無 | 已核准授權、同 cutoff 且成對的情緒與共識資料包／結果；沒有則該通道為 unavailable。 |
+| `--perception BUNDLE RESULT` | 無 | 提供市場情緒與分析師共識資料：資料包與其驗證結果，兩個檔案必須同時給。不給時這類資訊標為「無資料」。目前尚未接入合法來源，平常不需要使用。 |
 
 ### 常見組合
 
 ```bash
 ./start.sh run --preflight-only --skip-data                  # 不耗用量，先確認環境
-./start.sh run --resume-run daily-20261020 --skip-data       # 撞到用量上限後續跑
+./start.sh run --resume                                      # 撞到用量上限後，續跑今天未完成的 run
+./start.sh run --resume daily-20261020                       # 跨午夜後，續跑指定的 run
 ./start.sh run --no-technical-gate --analyst-model inherit   # 回到最保守的完整輸入、單一模型
 ./start.sh run --delivery-only daily-20261020-213724         # 只重建報告
 ```
@@ -90,9 +90,100 @@ python3 -m venv .venv
 → 交易 Agent → 風險 Agent → Python 配置與風控 → 封存報告 → 人工檢視
 ```
 
-Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。資料不足或風控失敗時停止或明確降級。
+### 原則
 
-既有持股若因價格變動超出單股權重硬上限，配置程式會在 Guard 前按整張計算必要減碼，連同部分成交的壓力情境重算；原 Agent 意圖與程式風險減碼分開記錄。無法滿足所有硬性限制時仍會拒絕。
+- **分工**：Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。
+- **時間一致**：所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。
+- **失敗處理**：資料不足或風控失敗時停止或明確降級。
+
+### 單股超出權重上限時
+
+既有持股若因價格變動超出單股權重硬上限：
+
+1. 配置程式在 Guard 前，按整張計算必要減碼。
+2. 連同部分成交的壓力情境一併重算。
+3. 原 Agent 意圖與程式風險減碼分開記錄；減碼賣單由程式標為 `trim`（仍有持股）或 `exit`（減至零）。
+4. 無法滿足所有硬性限制時仍會拒絕。
+
+## 專案架構與資料夾
+
+```text
+ETF_AGENTS/
+├── start.sh                 # 日常入口：儀表板、auto、daily、run、status
+├── compose.yaml, Dockerfile # Docker 執行環境
+├── requirements.txt         # 本機 .venv 與 Docker 共用依賴（含 pytest）
+├── pytest.ini               # 測試設定
+├── AGENTS.md                # 開發規則、Agent 邊界、測試與 commit 格式
+│
+├── src/etf_agent/           # 核心程式：所有計算、驗證與資料邏輯都在這裡
+│   ├── data/                #   收集、驗證、版本化行情與公司事件，建立 ResearchSnapshot
+│   ├── automation/          #   每日管線：呼叫子 Agent、重試、Validator
+│   ├── decision/            #   配置、風控、CompetitionGuard、最終決策
+│   ├── ledger/              #   虛擬帳本、成交與費稅
+│   ├── virtual_account/     #   每日開帳、結算與官方價量
+│   ├── decision_delivery/   #   風控後中文 JSON／Markdown 報告
+│   ├── reporting/           #   Research Report
+│   ├── competition/         #   D-Plan 整理與匯出
+│   ├── perception/          #   市場新聞與情緒輸入
+│   ├── fundamentals/        #   財務比率計算
+│   ├── research/            #   事件研究（獨立流程與舊封存）
+│   ├── dashboard/           #   績效儀表板
+│   ├── runtime/, core/      #   管線串接，以及共用的雜湊、時間、數值工具
+│
+├── cli/                     # 單步命令入口：只解析參數並呼叫 src/，不放邏輯（見 cli/README.md）
+├── scripts/                 # 維運與補抓腳本：收集行情／財報／官方價量、check_setup、run_daily_pipeline
+│   └── launchd/             #   排程樣板
+├── tradeagent/              # 子 Agent 的 Skill：analysis、research、trading、risk、reporting、data
+│
+├── config/                  # 設定檔
+│   ├── competition_rules.json    # 競賽硬性規則（持股 20–30 檔、現金上限等）
+│   ├── decision_rules.json       # 決策規則（含 minimum_active_share）
+│   ├── decision_policy.json      # 權重、情境與滑價參數
+│   ├── data_sources.json         # 資料來源網址
+│   ├── trading_status_approvals.json  # 已核准的交易狀態來源
+│   └── competition_profile.json  # D-Plan 的隊伍設定
+├── data/                    # 靜態輸入
+│   ├── official_universe.csv     # 150 檔交易池
+│   ├── sector_classification.json # 產業分類
+│   ├── active_etf_list.csv       # 官方 30 檔主動型 ETF 名單
+│   └── active_etf_holdings.csv   # Active Share 用前 15 大持股（尚未填入）
+├── game_docs/               # 主辦方原始文件：標的清單、D-Plan 指南與 schema、DataPack 規格
+├── docs/                    # 設計與操作文件
+│   └── source_audit/        #   來源核對與核准證據，程式與核准設定會引用，不可刪
+├── tests/                   # pytest 測試
+│   └── fixtures/            #   測試用的小型資料
+│
+├── var/                     # 執行時資料，不進 git：etf_agent.db（行情、公司文件、來源原文）與快取
+└── artifacts/               # 執行時產物，不進 git
+    ├── daily_runs/          #   每日執行狀態
+    ├── decision_runs/       #   不可變決策封存與重建輸入
+    ├── decision_reports/    #   決策報告（依日期的閱讀副本與交付紀錄）
+    ├── virtual_accounts/    #   虛擬帳本
+    ├── latest_reports/      #   最新中文報告
+    ├── source_audit/        #   來源原始抓取與稽核
+    ├── source_probe_reports/#   資料來源可行性探測
+    ├── official_history/    #   官方歷史行情補抓覆蓋
+    ├── financial_statements/#   財報收集覆蓋
+    └── archive/             #   舊實驗、被取代的決策
+```
+
+### 分工
+
+| 誰 | 負責 |
+| --- | --- |
+| 子 Agent（`tradeagent/`） | 市場解讀、多空論點、買賣意圖、信心等級 |
+| 程式（`src/etf_agent/`） | 指標、權重、股數、費稅、現金、競賽限制；計算後重建驗證 |
+
+不自動下單或送件。
+
+### 執行時產生的資料夾
+
+- `var/`、`artifacts/` 不進 git，新環境是空的。
+- 由 `./start.sh` 與每日管線產生。
+- 決策封存（`artifacts/decision_runs/`）是下游重建驗證的依據，刪除前先確認不需要重建。
+- 每日輸出依台北日期分資料夾：`daily_runs`、`decision_runs`、`decision_reports`（`runs`／`views`／`dated`）、`source_audit/captures`、`source_audit/sector_classification` 與 `source_probe_reports` 都是 `<資料夾>/YYYY-MM-DD/<名稱>`。日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期；同一個 run ID 出現在兩個日期資料夾會被拒絕。
+- 帳本（`virtual_accounts/`）是雜湊鏈，不分日期資料夾；`archive/` 是手動整理的舊實驗，也不改。
+- `artifacts/portfolio_decisions` 是指向 `decision_runs` 的相容連結：舊的交付 `request.json` 已封存了這條絕對路徑，沒有它就無法重新驗證舊交付，請勿刪除。
 
 ## 目前狀態與限制
 
@@ -101,20 +192,44 @@ Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數�
 - **尚未接入**：正式全市場情緒與合法歷史分析師共識，維持 `unavailable`。FinMind 財報與新聞等候選資料，未通過授權、時間與覆蓋核對前不進正式決策。
 - **尚未完成**：D-Plan 候選可由 CLI 匯出，但每日流程尚未自動呼叫；主辦方伺服器驗證尚未完成；回測功能已移除。
 
-資料更新成功不代表當天可決策；行情覆蓋、官方價量、交易狀態與日曆仍須通過檢查。
-
-若 `run` 顯示「虛擬帳本未建立本次 prepare 狀態」，先檢查是否有舊決策等待指定成交日官方價量。缺歷史上櫃價量時，在專案根目錄執行 `.venv/bin/python scripts/repair_pending_tpex_close.py`；此指令只補目前待結算決策所需的 TPEx 官方價量，然後執行 `.venv/bin/python cli/virtual_account.py settle`，確認輸出 `status=settled` 後再跑 `./start.sh run`。若缺的是 TWSE 官方價量或來源未提供資料，會停止並顯示缺口，不會改用 Yahoo 價格。
-
 ## 資料與報告位置
 
 | 路徑 | 內容 |
 | --- | --- |
 | `data/official_universe.csv` | 150 檔交易池輸入 |
 | `var/etf_agent.db` | 行情、公司文件、來源原文、時間與版本 |
-| `artifacts/reports/latest.md` | 最新中文報告或失敗診斷 |
-| `artifacts/daily_runs/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
-| `artifacts/portfolio_decisions/` | 不可變決策封存與重建輸入 |
+| `artifacts/latest_reports/latest.md` | 最新中文報告或失敗診斷 |
+| `artifacts/daily_runs/<日期>/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
+| `artifacts/decision_runs/<日期>/<run_id>/` | 不可變決策封存與重建輸入 |
 | `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
+
+## 常見問題
+
+### 資料更新成功，但當天不能決策
+
+資料更新成功不代表當天可決策。行情覆蓋、官方價量、交易狀態與日曆都要通過檢查；沒通過時 `run` 會停止並顯示缺口。可先用 `./start.sh status` 查看資料狀態。
+
+### `run` 顯示「虛擬帳本未建立本次 prepare 狀態」
+
+原因是上一次決策還在等指定成交日的官方價量，帳本無法結算。依缺的資料處理：
+
+| 缺的資料 | 處理 |
+| --- | --- |
+| 歷史上櫃（TPEx）價量 | 依下方三個步驟補抓並結算 |
+| 上市（TWSE）價量，或來源未提供 | 無法補抓；`run` 會停止並顯示缺口，不會改用 Yahoo 價格 |
+
+補抓上櫃價量，在專案根目錄依序執行：
+
+```bash
+# 1. 只補目前待結算決策所需的 TPEx 官方價量
+.venv/bin/python scripts/repair_pending_tpex_close.py
+
+# 2. 結算帳本，確認輸出 status=settled
+.venv/bin/python cli/virtual_account.py settle
+
+# 3. 再跑完整每日決策
+./start.sh run
+```
 
 ## 詳細文件
 

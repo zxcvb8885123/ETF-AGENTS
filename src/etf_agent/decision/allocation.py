@@ -19,7 +19,7 @@ from .contracts import (
     required_string,
 )
 from .momentum import MomentumEngine
-from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, STOCK_WEIGHT_FIT, conviction_weights, validate_position_sizing
+from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, conviction_weights, validate_position_sizing
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -340,12 +340,10 @@ class AllocationOrderEngine:
             orders, starting_cash, starting_total_cash, marked_nav, effective
         )
         constraint_flags.extend(cash_flags)
-        # 舊 Decision run 的 position_sizing 沒有 stock_weight_fit，需維持原重建結果。
-        if "position_sizing" not in self.policy or self.policy["position_sizing"].get("stock_weight_fit") == STOCK_WEIGHT_FIT:
-            orders, projected_cash, weight_flags = self._fit_stock_weights(
-                current, orders, projected_cash, effective
-            )
-            constraint_flags.extend(weight_flags)
+        orders, projected_cash, weight_flags = self._fit_stock_weights(
+            current, orders, projected_cash, effective
+        )
+        constraint_flags.extend(weight_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1
@@ -604,7 +602,11 @@ class AllocationOrderEngine:
                         replacement = self._order(symbol, "buy", remaining, str(existing["intent"]), effective) if remaining else None
                     else:
                         remaining = int(existing["shares"]) + lot if existing is not None else lot
-                        replacement = self._order(symbol, "sell", remaining, str(existing["intent"]) if existing else "hold", effective)
+                        # 風控減碼的賣單不沿用 hold；依減碼後是否還有持股標為 trim 或 exit。
+                        sell_intent = str(existing["intent"]) if existing else "hold"
+                        if sell_intent == "hold":
+                            sell_intent = "trim" if shares[symbol] - lot > 0 else "exit"
+                        replacement = self._order(symbol, "sell", remaining, sell_intent, effective)
                     if existing is not None:
                         fitted.remove(existing)
                         cash -= decimal_value(existing["net_cash_impact"], "net_cash_impact")
@@ -621,7 +623,7 @@ class AllocationOrderEngine:
                 flags.append({
                     "symbol": symbol,
                     "code": "RISK_STOCK_WEIGHT",
-                    "detail": "單股硬性上限風險調整：預計股數由 %d 降為 %d（交易 Agent 原意圖未改）" % (original[symbol], shares[symbol]),
+                    "detail": "單股硬性上限風險調整：預計股數由 %d 降為 %d（訂單意圖由程式標為 trim／exit，交易 Agent 的意圖未被改寫）" % (original[symbol], shares[symbol]),
                 })
         fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
         return fitted, cash, flags

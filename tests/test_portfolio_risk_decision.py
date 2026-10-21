@@ -122,7 +122,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         proposal = AllocationOrderEngine(bundle, settings).run(intent)
         trims = [item for item in proposal["order_proposal"]["orders"] if item["symbol"] == "2330.TW"]
         self.assertEqual(len(trims), 1)
-        self.assertEqual((trims[0]["side"], trims[0]["intent"]), ("sell", "hold"))
+        self.assertEqual((trims[0]["side"], trims[0]["intent"]), ("sell", "trim"))
         self.assertTrue(any(item["code"] == "RISK_STOCK_WEIGHT" for item in proposal["constraint_flags"]))
         self.assertEqual(ProposalValidator(bundle, settings, intent).validate(proposal), [])
         scenario = ScenarioEngine(bundle, settings).run(proposal)
@@ -761,7 +761,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 "save-run", *risk_inputs, "--decision", str(paths["decision"]),
                 "--run-id", "cli-run", "--repository", str(root / "runs"),
             )
-            self.assertTrue((root / "runs" / "cli-run" / "manifest.json").exists())
+            self.assertEqual(len(list((root / "runs").glob("*/cli-run/manifest.json"))), 1)
 
 
 if __name__ == "__main__":

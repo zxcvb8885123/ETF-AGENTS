@@ -35,8 +35,8 @@
 ```bash
 docker compose run --rm agent python3 cli/dplan.py build \
   --trade-date YYYY-MM-DD \
-  --daily-run artifacts/daily_runs/DAILY_RUN_ID/pipeline.json \
-  --decision-repository artifacts/portfolio_decisions \
+  --daily-run artifacts/daily_runs/YYYY-MM-DD/DAILY_RUN_ID/pipeline.json \
+  --decision-repository artifacts/decision_runs \
   --decision-run-id DECISION_RUN_ID \
   --virtual-account-account-id ai-cup-2026 \
   --virtual-account-run-id PREPARE_RUN_ID

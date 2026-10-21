@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report",
         type=Path,
-        default=ROOT / "artifacts" / "official-history" / "latest.json",
+        default=ROOT / "artifacts" / "official_history" / "latest.json",
         help="覆蓋報告 JSON 路徑；標準輸出也會印出相同內容。",
     )
     return parser.parse_args()

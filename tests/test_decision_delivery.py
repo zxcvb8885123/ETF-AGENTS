@@ -128,20 +128,20 @@ class DeliveryTests(unittest.TestCase):
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            DecisionRepository(root / "artifacts/portfolio_decisions").save("example", world())
-            path = root / "artifacts/daily_runs/daily-20261011/pipeline.json"
+            DecisionRepository(root / "artifacts/decision_runs").save("example", world())
+            path = root / "artifacts/daily_runs/2026-10-11/daily-20261011/pipeline.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps({"status": "failed", "planned_decision_run_id": "example", "started_at": "2026-10-11T08:00:00+08:00"}), encoding="utf-8")
             result = module.deliver_saved_run(root, "daily-20261011")
             self.assertEqual(result["report_status"], "ready")
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "completed")
             # 已完成 run 的來源後來被竄改時，不保留 completed 假象。
-            source = root / "artifacts/portfolio_decisions/example/decision.json"
+            source = next((root / "artifacts/decision_runs").glob("*/example/decision.json"))
             source.write_text("{}", encoding="utf-8")
             blocked = module.deliver_saved_run(root, "daily-20261011")
             self.assertEqual(blocked["report_status"], "blocked")
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "failed")
-            self.assertIn("未產生已驗證", (root / "artifacts/reports/latest.md").read_text(encoding="utf-8"))
+            self.assertIn("未產生已驗證", (root / "artifacts/latest_reports/latest.md").read_text(encoding="utf-8"))
 
     def test_report_and_markdown_rebuild_and_tampering(self):
         a = world()

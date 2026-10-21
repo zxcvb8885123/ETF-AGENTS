@@ -12,6 +12,8 @@ from typing import Any, Callable, Dict, Mapping
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from etf_agent.core.run_layout import day_from_run_id
+
 
 OGD_SOURCE_IDS = frozenset({
     "TPEX_SPECIAL_OGD", "TPEX_ATTENTION_OGD", "TPEX_DISPOSAL_OGD",
@@ -45,8 +47,9 @@ def capture_ogd_candidates(
             raise ValueError("候選來源 URL 不在官方 HTTPS 主機清單")
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    run_dir = output_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir = output_dir / day_from_run_id(run_id) / run_id
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(exist_ok=False)
     results = []
     for source in sources:
         source_id = source["source_id"]

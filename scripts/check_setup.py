@@ -9,7 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RULES_PATH = ROOT / "config" / "competition_rules.json"
 UNIVERSE_PATH = ROOT / "data" / "official_universe.csv"
-ACTIVE_ETF_PATH = ROOT / "data" / "active_etf_top10.csv"
+ACTIVE_ETF_LIST_PATH = ROOT / "data" / "active_etf_list.csv"
+ACTIVE_ETF_PATH = ROOT / "data" / "active_etf_holdings.csv"
 
 
 def row_count(path: Path) -> int:
@@ -38,11 +39,17 @@ def main() -> int:
     else:
         pending.append("官方交易池目前 %d/150 檔；請從競賽平台匯入" % universe_count)
 
+    active_list_count = row_count(ACTIVE_ETF_LIST_PATH)
+    if active_list_count:
+        print("PASS  主動型 ETF 名單：%d 檔已載入" % active_list_count)
+    else:
+        pending.append("主動型 ETF 名單尚未載入；請依官方列表補齊")
+
     active_etf_count = row_count(ACTIVE_ETF_PATH)
     if active_etf_count:
         print("PASS  Active Share 基準：%d 筆已載入" % active_etf_count)
     else:
-        pending.append("主動式 ETF 前十大資料尚未載入；送件前必須補齊")
+        pending.append("主動型 ETF 前 15 大持股資料尚未載入；送件前必須補齊")
 
     for message in failures:
         print("FAIL  " + message)

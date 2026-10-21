@@ -16,7 +16,7 @@
 
 | Run | 執行器 | 結果 | 說明 |
 | --- | --- | --- | --- |
-| `daily-20261019-220447` | Codex，150 檔，每批 50 檔 | 基準（19 份 brief 共 8,882,656 bytes，存於 `artifacts/token_reduction/baseline-20261019.json`） | Codex runner 的 `estimated_usage_usd` 回報 0，不能當成沒有用量。 |
+| `daily-20261019-220447` | Codex，150 檔，每批 50 檔 | 基準（19 份 brief 共 8,882,656 bytes，存於 `artifacts/archive/experiments/token_reduction/baseline-20261019.json`） | Codex runner 的 `estimated_usage_usd` 回報 0，不能當成沒有用量。 |
 | `daily-20261020-213724` | Claude | `approved`，5 張單 | 續跑後 `pipeline.json.agent_calls` 只列當次新呼叫，估算用量 **10.36 美元**不等於整輪費用；續跑前的技術／基本面／事件 b0 不在內。 |
 
 ### 各類 brief 大小（bytes，三批 b0／b1／b2）
@@ -39,16 +39,53 @@
 
 ## 二、各項措施狀態
 
-| 措施 | 狀態 | 內容與下一步 |
+| # | 措施 | 狀態 |
 | --- | --- | --- |
-| **0. 用量量測** | bytes 基準已完成；token 未量得 | OpenCode runner 已對新呼叫記錄 JSONL `step_finish.tokens`（小型實機煙霧測試通過）。Codex 下一步評估 `codex exec --json` 的 `turn.completed.usage`（`input_tokens`、`cached_input_tokens`、`output_tokens`）。成功與失敗／重試分開記錄，不回填舊 run，也不從 `estimated_usage_usd=0` 猜 token。**優先 1**。 |
-| **1. 技術面閘門** `--technical-gate` | 已實作，**2026-10-21 起預設開啟**（`--no-technical-gate` 關閉）；品質僅有一天的對照 | 見下節。 |
-| **2. 分級模型** `--analyst-model` | 已實作，**2026-10-21 起 Claude CLI 預設 `sonnet`**（`inherit` 沿用 `--model`；Codex／OpenCode 未指定時沿用 `--model`）；sonnet 的品質尚無實跑對照 | 只套用於技術／基本面／事件分析師批次。多空、交易、現金姿態維持 `--model`。`pipeline.json.agent_calls` 記錄實際模型。品質差異未量得。 |
-| **3. 交易 brief 去重** | 已接入 | 完整帳戶持倉改為持股代號與檔數，各批少 3,176 bytes；逐股 `held_shares`、雙方 claims 與引用維持完整。多空 findings 與事件脈絡沒有安全的等價刪減，暫不裁剪。 |
-| **4. 減少無效重試** | 部分完成 | #59 單股硬上限已由程式處理；`liquidity_fill_rate` 改為 1，避免 Guard 全批拒絕。待補：送交易 Agent 前用程式預算「持股數貼近上限」等會使 Guard 失敗的狀況並提早警示。維持 `max_revisions=3`，不放寬 Guard。 |
-| **5. 增量執行** | 研究項目，不接入 | 以每檔輸入內容雜湊判斷，未變動的股票沿用前一日已驗證分析。**風險最高**：須標明來源 run 與 cutoff，Validator 要能證明雜湊相同，否則一律重跑；多空與交易仍對全池給當日判斷。有跨日資料後再評估。 |
-| **6. 無損表示再縮小** | 尚未開始 | 見〈三、後續方案〉。**優先 2**。 |
-| **7. 連續視窗與事件 parent 檢索** | 尚未開始，先做研究原型 | 見〈三、後續方案〉。**優先 3**。 |
+| 0 | 用量量測 | bytes 基準完成；**token 未量得**（優先 1） |
+| 1 | 技術面閘門 `--technical-gate` | 已實作，2026-10-21 起預設開啟；品質只有一天的對照 |
+| 2 | 分級模型 `--analyst-model` | 已實作，Claude CLI 預設 `sonnet`；品質無實跑對照 |
+| 3 | 交易 brief 去重 | 已接入 |
+| 4 | 減少無效重試 | 部分完成 |
+| 5 | 增量執行 | 研究項目，不接入 |
+| 6 | 無損表示再縮小 | 尚未開始（優先 2） |
+| 7 | 連續視窗與事件 parent 檢索 | 尚未開始，先做研究原型（優先 3） |
+
+### 措施 0：用量量測
+
+- OpenCode runner 已對新呼叫記錄 JSONL `step_finish.tokens`（小型實機煙霧測試通過）。
+- Codex 下一步：評估 `codex exec --json` 的 `turn.completed.usage`（`input_tokens`、`cached_input_tokens`、`output_tokens`）。
+- 成功與失敗／重試分開記錄。
+- 不回填舊 run，也不從 `estimated_usage_usd=0` 猜 token。
+
+### 措施 2：分級模型
+
+- 2026-10-21 起，Claude CLI 預設 `sonnet`。`inherit` 沿用 `--model`；Codex／OpenCode 未指定時沿用 `--model`。
+- 只套用於技術／基本面／事件分析師批次。多空、交易、現金姿態維持 `--model`。
+- `pipeline.json.agent_calls` 記錄實際使用的模型。
+- 品質差異未量得。
+
+### 措施 3：交易 brief 去重
+
+- 完整帳戶持倉改為持股代號與檔數，各批少 3,176 bytes。
+- 逐股 `held_shares`、雙方 claims 與引用維持完整。
+- 多空 findings 與事件脈絡，沒有安全的等價刪減，暫不裁剪。
+
+### 措施 4：減少無效重試
+
+- 已完成：#59 的單股硬上限改由程式處理；`liquidity_fill_rate` 改為 1，避免 Guard 全批拒絕。
+- 待補：送交易 Agent 前，用程式預算「持股數貼近上限」等會使 Guard 失敗的狀況，並提早警示。
+- `max_revisions` 維持 3，不放寬 Guard。
+
+### 措施 5：增量執行
+
+- 做法：以每檔輸入內容雜湊判斷，未變動的股票沿用前一日已驗證的分析。
+- **風險最高**：須標明來源 run 與 cutoff，Validator 要能證明雜湊相同，否則一律重跑。
+- 多空與交易仍對全池給當日判斷。
+- 有跨日資料後再評估。
+
+### 措施 6、7
+
+見〈三、後續方案〉。
 
 ### 技術面閘門（措施 1）細節
 
@@ -93,7 +130,7 @@
 
 - 做法：固定 12 錨點、收盤極值、最大量及近 5 筆，由原始歷史重建。三批各由約 1.9 MB 降至約 0.36 MB（輸入位元組約少 81%）。
 - 結果：`scripts/evaluate_technical_brief.py` 對 150 檔試跑，全部通過原始輸入 Validator，沒有新增 `unknown`，但 **12 檔 outlook 改變**。
-- 第二次獨立試跑（`artifacts/token_reduction/technical-repeat-20261019/`）：同樣通過 Validator、沒有新增 `unknown`，相對完整歷史版亦有 12 檔改變。兩次摘要共同改變 8 檔且新標籤一致；其餘各有 4 檔只在其中一次改變；兩次摘要彼此有 8 檔標籤不同。
+- 第二次獨立試跑（`artifacts/archive/experiments/token_reduction/technical-repeat-20261019/`）：同樣通過 Validator、沒有新增 `unknown`，相對完整歷史版亦有 12 檔改變。兩次摘要共同改變 8 檔且新標籤一致；其餘各有 4 檔只在其中一次改變；兩次摘要彼此有 8 檔標籤不同。
 - 判讀：模型輸出本身有變動，也不能排除抽樣改變了那 8 檔的判讀。完整歷史版只有一次輸出，無法判定哪版較好。**正式每日鏈繼續使用完整歷史，摘要不接入。**
 
 ### 事件 brief 首尾摘錄

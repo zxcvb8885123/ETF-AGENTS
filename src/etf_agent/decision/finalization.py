@@ -243,4 +243,4 @@ class DecisionRepository(ImmutableRunStore):
     """Atomically save one immutable decision run and reject conflicting reuse."""
 
     def __init__(self, root: Path):
-        super().__init__(root, schema_version=DECISION_SCHEMA_VERSION, error=DecisionToolError)
+        super().__init__(root, schema_version=DECISION_SCHEMA_VERSION, error=DecisionToolError, dated=True)

@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,9 +47,15 @@ from etf_agent.data import (  # noqa: E402
     load_not_applicable,
 )
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
+from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs  # noqa: E402
+from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
+from etf_agent.virtual_account.daily import supersede_decision_runs  # noqa: E402
 
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
+RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
+DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
+TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
 
 
 def log(message: str) -> None:
@@ -75,10 +81,69 @@ def run_data_stage(account_id: str, account_run_id: str) -> None:
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
 
 
+def expected_latest_trade_date(captures_root: Path, now: datetime):
+    """依官方開休市日曆，回傳此刻「應該已有行情」的最近交易日；日曆缺漏或判斷失敗回 None（不猜測）。
+
+    交易日要到 DATA_READY_TIME 之後才算當日行情齊全；之前、或非交易日，則取前一個交易日。
+    """
+    try:
+        capture = latest_calendar_capture_before(captures_root, now.isoformat())
+        if capture is None:
+            return None
+        calendar = calendar_from_capture(capture)
+        day = now.date()
+        for _ in range(TRADE_DATE_LOOKBACK_DAYS):
+            if calendar.is_trading_day(day) and (day < now.date() or now.time() >= DATA_READY_TIME):
+                return day
+            day -= timedelta(days=1)
+    except (TradingCalendarError, OSError, ValueError):
+        return None
+    return None
+
+
+def data_already_fetched(snapshot_path: Path, account_path: Path, expected_trade_date) -> bool:
+    """Snapshot 可用、150 檔都有最新價、最新交易日就是應有的那一天，且在該日 DATA_READY_TIME 之後建立，
+    帳戶快照也存在，才算「已抓到資料」。
+
+    Yahoo 盤中就會回傳當日那根日線，但數值尚未定案；所以光看日期不夠，還要確認快照是收盤資料齊全後才建立的。
+    任何讀取失敗、欄位缺漏或日期對不上都視為沒抓到，需重抓。
+    """
+    if expected_trade_date is None:
+        return False
+    try:
+        if not account_path.is_file():
+            return False
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        created_at = parse_aware_time(snapshot.get("created_at"), "snapshot.created_at")
+    except (OSError, ValueError):
+        return False
+    ready_at = datetime.combine(expected_trade_date, DATA_READY_TIME, tzinfo=TAIPEI_TIMEZONE)
+    return (
+        created_at >= ready_at
+        and snapshot.get("usable") is True
+        and snapshot.get("latest_trade_date") == expected_trade_date.isoformat()
+        and isinstance(snapshot.get("universe_size"), int)
+        and snapshot.get("latest_price_symbols") == snapshot.get("universe_size")
+    )
+
+
+def daily_run_path(runs_root: Path, run_id: str) -> Path:
+    """每日 run 放在 <runs_root>/<台北日期>/<run_id>；已存在則沿用其位置。"""
+    existing = find_run_dir(runs_root, run_id, RuntimeError)
+    if existing is not None:
+        return existing
+    day = day_from_run_id(run_id)
+    if day is None:
+        raise RuntimeError("每日 run 名稱沒有日期：%s" % run_id)
+    return runs_root / day / run_id
+
+
 def latest_resumable_run(runs_root: Path, run_id: str):
     """同一台北日期中，最近一個未完成且已保存 Agent 原始輸出的 run 目錄；沒有則回 None。"""
     candidates = []
-    for run_dir in runs_root.glob("%s*" % run_id):
+    for run_dir in list_run_dirs(runs_root):
+        if not run_dir.name.startswith(run_id):
+            continue
         summary_path = run_dir / "pipeline.json"
         if not run_dir.is_dir() or not summary_path.exists() or not any(run_dir.glob("*_raw_*.json")):
             continue
@@ -92,7 +157,7 @@ def latest_resumable_run(runs_root: Path, run_id: str):
 
 def named_resumable_run(runs_root: Path, name: str) -> Path:
     """指定續跑的 run 目錄（跨午夜或用量上限重置後，日期已變，不能靠今天的日期找）；必須未完成且已有 Agent 原始輸出。"""
-    run_dir = runs_root / name
+    run_dir = daily_run_path(runs_root, name) if re.fullmatch(r"daily-[0-9A-Za-z-]+", name) else runs_root / "invalid"
     summary_path = run_dir / "pipeline.json"
     if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name) or not run_dir.is_dir() or not summary_path.exists():
         raise RuntimeError("找不到可續跑的 run 目錄：%s" % name)
@@ -148,13 +213,13 @@ def deliver_saved_run(root: Path, name: str) -> dict:
 def _deliver_saved_run(root: Path, name: str) -> dict:
     if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name):
         raise ValueError("每日 run 名稱不符合白名單")
-    summary_path = root / "artifacts/daily_runs" / name / "pipeline.json"
+    summary_path = daily_run_path(root / "artifacts/daily_runs", name) / "pipeline.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     decision_id = summary.get("decision_run_id") or summary.get("planned_decision_run_id")
     if not decision_id:
         raise ValueError("此 run 沒有封存決策識別，不能只續跑交付")
-    delivery = build_delivery(root / "artifacts/portfolio_decisions", decision_id,
-        root / "artifacts/decision_deliveries", reports_root=root / "artifacts/reports",
+    delivery = build_delivery(root / "artifacts/decision_runs", decision_id,
+        root / "artifacts/decision_reports", reports_root=root / "artifacts/latest_reports",
         started_at=summary["started_at"])
     summary["delivery"] = delivery
     if delivery["report_status"] == "ready":
@@ -170,19 +235,18 @@ def _deliver_saved_run(root: Path, name: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--perception-bundle", type=Path, help="已核准授權且同 cutoff 的情緒與共識資料包")
-    parser.add_argument("--perception", type=Path, help="與資料包成對的已驗證情緒與共識結果")
+    parser.add_argument(
+        "--perception", nargs=2, type=Path, metavar=("BUNDLE", "RESULT"),
+        help="已核准授權且同 cutoff 的情緒與共識資料包，以及與其成對的已驗證結果；兩個檔案須同時提供",
+    )
     parser.add_argument("--account-id", default="ai-cup-2026")
     parser.add_argument("--delivery-only", metavar="DAILY_RUN_ID", help="只重建既有每日 run 的最終交付，不執行資料準備或 Agent")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="休市日（週末或官方開休市日期表列出者）或當日已完成仍執行")
     parser.add_argument(
-        "--resume", action="store_true",
-        help="沿用同一 run 目錄中先前已通過驗證的 Agent 輸出（例如中途撞到用量上限後續跑）；建議搭配 --skip-data",
-    )
-    parser.add_argument(
-        "--resume-run", metavar="RUN_ID",
-        help="指定要續跑的 run 目錄名稱（如 daily-20260929）並隱含 --resume；用量上限重置或跨午夜後，今天的日期已找不到前一天的 run",
+        "--resume", nargs="?", const=RESUME_LATEST, metavar="RUN_ID",
+        help="沿用先前已通過驗證的 Agent 輸出續跑（例如中途撞到用量上限）；找到可續跑的 run 時隱含 --skip-data。"
+             "不帶值時續跑今天最近一個未完成的 run；帶 RUN_ID（如 daily-20260929）則續跑指定 run，用量上限重置或跨午夜後使用",
     )
     parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
     parser.add_argument("--model", help="子 Agent 模型；預設沿用所選 CLI 設定")
@@ -214,8 +278,7 @@ def main() -> int:
         except (ValueError, OSError, KeyError) as error:
             log("交付續跑失敗：%s" % error)
             return 1
-    if args.perception is not None and args.perception_bundle is None:
-        parser.error("--perception 必須搭配 --perception-bundle")
+    perception_bundle, perception_result = args.perception if args.perception else (None, None)
 
     now = datetime.now(TAIPEI_TIMEZONE)
     runs_root = ROOT / "artifacts" / "daily_runs"
@@ -241,7 +304,7 @@ def main() -> int:
         for check in checks:
             log("%s %s：%s" % ("通過" if check.ok else "失敗", check.name, check.detail))
         return 0 if all(check.ok for check in checks) else 1
-    captures_root = ROOT / "artifacts" / "source-audit" / "captures"
+    captures_root = ROOT / "artifacts" / "source_audit" / "captures"
     if not args.force:
         try:
             if not trading_day_check(captures_root, now):
@@ -250,25 +313,24 @@ def main() -> int:
         except (TradingCalendarError, OSError, ValueError) as error:
             log("無法判定今天是否為交易日，停止：%s" % error)
             try:
-                save_failure(ROOT / "artifacts/decision_deliveries", str(error),
+                save_failure(ROOT / "artifacts/decision_reports", str(error),
                     "calendar-%s" % now.strftime("%Y%m%dT%H%M%S"),
-                    reports_root=ROOT / "artifacts/reports", started_at=now.isoformat())
+                    reports_root=ROOT / "artifacts/latest_reports", started_at=now.isoformat())
             except (ValueError, OSError) as publish_error:
                 log("交付診斷發布失敗：%s" % publish_error)
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
             return 1
     run_id = "daily-%s" % now.strftime("%Y%m%d")
-    run_dir = runs_root / run_id
+    run_dir = daily_run_path(runs_root, run_id)
     summary_path = run_dir / "pipeline.json"
     if summary_path.exists() and not args.force:
         previous = json.loads(summary_path.read_text(encoding="utf-8"))
         if previous.get("status") == "completed":
             log("%s 已完成（%s），不重跑。" % (run_id, previous.get("decision_status")))
             return 0
-    if args.resume_run:
-        args.resume = True
+    if args.resume not in (None, RESUME_LATEST):
         try:
-            resumable = named_resumable_run(runs_root, args.resume_run)
+            resumable = named_resumable_run(runs_root, args.resume)
         except RuntimeError as error:
             log("無法續跑：%s" % error)
             return 1
@@ -284,9 +346,11 @@ def main() -> int:
         run_dir = resumable
         summary_path = run_dir / "pipeline.json"
         log("續跑沿用 run 目錄：%s" % run_id)
+        # 可續跑的 run 已有 Agent 輸出，代表 Snapshot 與帳戶快照已建立；重抓資料會讓快照與已驗證輸出對不上。
+        args.skip_data = True
     elif args.force and run_dir.exists():
         run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
-        run_dir = runs_root / run_id
+        run_dir = daily_run_path(runs_root, run_id)
         summary_path = run_dir / "pipeline.json"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -298,6 +362,15 @@ def main() -> int:
     summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli}
     if resumable is not None:
         summary["resumed_at"] = now.isoformat()
+    if not args.skip_data:
+        trade_date = expected_latest_trade_date(captures_root, now)
+        if data_already_fetched(
+            ROOT / "artifacts" / "research_snapshot_latest.json",
+            ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json", trade_date,
+        ):
+            log("已有 %s 的行情資料（Snapshot 150 檔齊全），沿用既有 Snapshot 與帳戶快照，不重抓。" % trade_date.isoformat())
+            summary["data_reused_trade_date"] = trade_date.isoformat()
+            args.skip_data = True
     write_json(summary_path, summary)
 
     try:
@@ -354,9 +427,9 @@ def main() -> int:
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             agent_runner,
-            ROOT / "artifacts" / "portfolio_decisions",
+            ROOT / "artifacts" / "decision_runs",
             log=log,
-            resume=args.resume,
+            resume=args.resume is not None,
             analyst_runner=analyst_runner,
             technical_gate=args.technical_gate,
         )
@@ -365,7 +438,7 @@ def main() -> int:
             ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
             decision_run_id,
-            perception_bundle_path=args.perception_bundle, perception_result_path=args.perception,
+            perception_bundle_path=perception_bundle, perception_result_path=perception_result,
         )
         summary.update(
             {
@@ -381,10 +454,17 @@ def main() -> int:
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
         summary["event_analysis_mode"] = "integrated_analyst"
+        superseded = supersede_decision_runs(
+            ROOT / "artifacts" / "decision_runs", result.decision_run_id,
+            ROOT / "artifacts" / "archive" / "superseded_decisions",
+        )
+        if superseded:
+            summary["superseded_decision_runs"] = superseded
+            log("新決策取代同一份帳戶快照的舊決策，舊 run 已移到 artifacts/archive/superseded_decisions：%s" % "、".join(superseded))
         log("[交付] 重建風控後最終中文報告")
         summary["delivery"] = build_delivery(
-            ROOT / "artifacts/portfolio_decisions", result.decision_run_id,
-            ROOT / "artifacts/decision_deliveries", reports_root=ROOT / "artifacts/reports",
+            ROOT / "artifacts/decision_runs", result.decision_run_id,
+            ROOT / "artifacts/decision_reports", reports_root=ROOT / "artifacts/latest_reports",
             started_at=summary["started_at"],
         )
         if summary["delivery"]["report_status"] != "ready":
@@ -397,8 +477,8 @@ def main() -> int:
         if "delivery" not in summary:
             try:
                 summary["delivery"] = save_failure(
-                    ROOT / "artifacts/decision_deliveries", str(error), run_id,
-                    reports_root=ROOT / "artifacts/reports", started_at=summary["started_at"],
+                    ROOT / "artifacts/decision_reports", str(error), run_id,
+                    reports_root=ROOT / "artifacts/latest_reports", started_at=summary["started_at"],
                 )
             except (ValueError, OSError) as publish_error:
                 summary["delivery_publish_error"] = str(publish_error)

@@ -8,6 +8,7 @@ Validator 檢查，失敗時把錯誤回饋重試一次，仍失敗就停止，�
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence
@@ -248,8 +249,12 @@ class DailyDecisionPipeline:
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             runner = self.analyst_runner if task.name.split("_", 1)[0] in ANALYST_TASK_PREFIXES else self.runner
+            started = time.monotonic()
             call = runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
-            item = {"name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd}
+            item = {
+                "name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd,
+                "duration_seconds": round(time.monotonic() - started, 1),
+            }
             model = getattr(runner, "model", None)
             if model:
                 item["model"] = model
@@ -453,6 +458,13 @@ class DailyDecisionPipeline:
                     "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                     "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members],
                 }
+                if "technical_gate" in brief:
+                    gated = [symbol for symbol in brief["technical_gate"]["momentum_only_symbols"] if symbol in members]
+                    batch_brief["technical_gate"] = {
+                        **brief["technical_gate"],
+                        "momentum_only_symbols": gated,
+                        "full_history_symbols": len(members) - len(gated),
+                    }
                 name = "%s_b%d" % (analyst, batch["batch_index"])
                 brief_path = self.save_artifact("brief_%s" % name, batch_brief)
                 validator = AnalystReportValidator(bundle, analyst, symbols=batch["symbols"])
