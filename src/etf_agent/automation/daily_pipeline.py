@@ -183,6 +183,9 @@ class PipelineResult:
     errors: List[str] = field(default_factory=list)
 
 
+ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event"})
+
+
 class DailyDecisionPipeline:
     """由 Snapshot、帳戶快照與交易狀態包跑完一次可封存的 Portfolio Decision。"""
 
@@ -195,12 +198,17 @@ class DailyDecisionPipeline:
         max_attempts: int = 2,
         log: Callable[[str], None] = print,
         resume: bool = False,
+        analyst_runner: Optional[AgentRunner] = None,
+        technical_gate: bool = False,
     ):
-        """``resume=True`` 時，同一 run 目錄中先前已通過驗證的 Agent 輸出會以目前的
+        """``analyst_runner`` 只負責技術／基本面／事件分析師批次，未提供時全部沿用 ``runner``。
+        ``resume=True`` 時，同一 run 目錄中先前已通過驗證的 Agent 輸出會以目前的
         Validator 重驗後沿用，不再呼叫 Agent；輸入改變時 envelope 對不上，自然重跑。"""
         self.root = project_root
         self.run_dir = run_dir
         self.runner = runner
+        self.analyst_runner = analyst_runner or runner
+        self.technical_gate = technical_gate
         self.decision_repository = decision_repository
         self.max_attempts = max_attempts
         self.log = log
@@ -239,8 +247,12 @@ class DailyDecisionPipeline:
         offset = len(previous)
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
-            call = self.runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
+            runner = self.analyst_runner if task.name.split("_", 1)[0] in ANALYST_TASK_PREFIXES else self.runner
+            call = runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
             item = {"name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd}
+            model = getattr(runner, "model", None)
+            if model:
+                item["model"] = model
             if call.usage_tokens is not None:
                 item["usage_tokens"] = call.usage_tokens
             self.calls.append(item)
@@ -423,7 +435,13 @@ class DailyDecisionPipeline:
             availability = {row["symbol"]: [{key: value for key, value in channel.items() if key != "candidate_references"}
                                           for channel in row["channels"]] for row in inventory["symbols"]}
         for analyst in LLM_ANALYSTS:
-            brief = build_analyst_brief(bundle, momentum, analyst, metrics, event_market_scope=analyst == "event")
+            brief = build_analyst_brief(
+                bundle, momentum, analyst, metrics, event_market_scope=analyst == "event",
+                technical_gate=self.technical_gate and analyst == "technical",
+            )
+            if "technical_gate" in brief:
+                self.log("  [技術閘門] 趨勢一致 %d 檔只附 momentum，其餘 %d 檔附完整歷史" % (
+                    len(brief["technical_gate"]["momentum_only_symbols"]), brief["technical_gate"]["full_history_symbols"]))
             if analyst == "event":
                 for row in brief["symbols"]:
                     row["data_availability"] = availability.get(row["symbol"], [{"status": "本次未查資料庫候選狀態，不能宣稱來源沒有資料"}])

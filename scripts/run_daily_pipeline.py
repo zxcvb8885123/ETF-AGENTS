@@ -49,6 +49,8 @@ from etf_agent.data import (  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 
+DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
+
 
 def log(message: str) -> None:
     print("[%s] %s" % (datetime.now(TAIPEI_TIMEZONE).strftime("%H:%M:%S"), message), flush=True)
@@ -184,10 +186,22 @@ def main() -> int:
     )
     parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
     parser.add_argument("--model", help="子 Agent 模型；預設沿用所選 CLI 設定")
+    parser.add_argument(
+        "--analyst-model",
+        help="技術／基本面／事件分析師批次使用的模型；使用 Claude CLI 時預設 %s，傳 inherit 則沿用 --model；其他 CLI 未指定時沿用 --model。多空、交易與現金姿態不受影響" % DEFAULT_CLAUDE_ANALYST_MODEL,
+    )
+    parser.add_argument(
+        "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
+        help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
+    )
     parser.add_argument("--preflight-only", action="store_true", help="只檢查 Docker、所選 Agent CLI 登入、帳戶、必要檔案與磁碟")
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
     parser.add_argument("--max-budget-usd", type=float, help="Claude CLI 單次子 Agent 的估算用量上限；預設 3 美元")
     args = parser.parse_args()
+    if args.analyst_model == "inherit":
+        args.analyst_model = None
+    elif args.analyst_model is None and args.agent_cli == "claude":
+        args.analyst_model = DEFAULT_CLAUDE_ANALYST_MODEL
     if args.agent_cli != "claude" and args.max_budget_usd is not None:
         parser.error("--max-budget-usd 只適用 Claude CLI")
     if args.max_budget_usd is not None and (not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0):
@@ -329,16 +343,22 @@ def main() -> int:
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
 
         log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s）" % args.agent_cli)
-        agent_runner = (ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=args.max_budget_usd or 3.0)
-                        if args.agent_cli == "claude" else
-                        CodexAgentRunner(ROOT, model=args.model) if args.agent_cli == "codex" else
-                        OpenCodeAgentRunner(ROOT, model=args.model))
+        def make_runner(model):
+            return (ClaudeAgentRunner(ROOT, model=model, max_budget_usd=args.max_budget_usd or 3.0)
+                    if args.agent_cli == "claude" else
+                    CodexAgentRunner(ROOT, model=model) if args.agent_cli == "codex" else
+                    OpenCodeAgentRunner(ROOT, model=model))
+
+        agent_runner = make_runner(args.model)
+        analyst_runner = make_runner(args.analyst_model) if args.analyst_model else None
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             agent_runner,
             ROOT / "artifacts" / "portfolio_decisions",
             log=log,
             resume=args.resume,
+            analyst_runner=analyst_runner,
+            technical_gate=args.technical_gate,
         )
         result = pipeline.run(
             snapshot_path, account_path, trading_status_path,
