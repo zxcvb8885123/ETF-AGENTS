@@ -13,7 +13,15 @@ docker compose version
 
 ## 啟動與入口
 
-在專案根目錄執行 `./start.sh`。首次會建置映像（之後僅在映像不存在、`requirements.txt` 或 Dockerfile 變更時重建），驗證預設虛擬帳戶 `ai-cup-2026`；不存在時依 `config/competition_rules.json` 建立唯一 genesis，然後啟動唯讀儀表板 <http://127.0.0.1:8000>。已有帳戶只驗證並沿用，帳本不完整時停止，不重新注資。此模式不抓資料、不執行決策。
+在專案根目錄執行 `./start.sh`。它會依序：
+
+1. 首次建置映像。之後只在映像不存在，或 `requirements.txt`、Dockerfile 變更時重建。
+2. 驗證預設虛擬帳戶 `ai-cup-2026`。
+   - 帳戶不存在：依 `config/competition_rules.json` 建立唯一的 genesis。
+   - 帳戶已存在：只驗證並沿用。帳本不完整時停止，不重新注資。
+3. 啟動唯讀儀表板 <http://127.0.0.1:8000>。
+
+此模式不抓資料、不執行決策。
 
 `src/`、`cli/`、`scripts/`、`tradeagent/`、`tests/` 從工作區唯讀掛載，程式碼修改後可直接執行。
 
@@ -34,17 +42,72 @@ docker compose version
 
 ### 資料更新（auto／data）
 
-有官方交易池時抓 TWSE／TPEx 最新官方價量、150 檔 yfinance 日線、官方月營收／重大訊息／已到期季度財報、公司基本資料與產業分類，以及選配的 FinMind 財報候選；略過 Snapshot、帳本與決策。交易池空白時只抓 TWSE 全部可解析證券，研究資料不更新並以 exit 2 回報。Yahoo 當日缺檔不會跳過其他來源，最後以非零狀態回報；缺 FinMind 憑證或候選來源失敗也回報降級。
+**有官方交易池時**，會抓取：
 
-macOS 排程：`com.etf-agents.data` 於台北時間平日 20:00 執行 `data`，`com.etf-agents.finmind-news` 於 22:00 擷取個股新聞候選。樣板在 `scripts/launchd/`，日誌在 `artifacts/daily_runs/`。FinMind Token 依序讀取執行環境、專案根目錄 `.env`（`FINMIND_TOKEN=...`、權限 600、Git 忽略），財報流程還可回退至 macOS 鑰匙圈服務 `etf-agent-finmind`。
+- TWSE／TPEx 最新官方價量
+- 150 檔 yfinance 日線
+- 官方月營收、重大訊息、已到期的季度財報
+- 公司基本資料與產業分類
+- 選配的 FinMind 財報候選
+
+不建立 Snapshot，不動帳本，不跑決策。
+
+**交易池空白時**，只抓 TWSE 全部可解析的證券，研究資料不更新，並以 exit 2 回報。
+
+**失敗處理**
+
+- Yahoo 當日缺檔，不會跳過其他來源，最後以非零狀態回報。
+- 缺 FinMind 憑證，或候選來源失敗，也會回報「降級」。
+
+**macOS 排程**（樣板在 `scripts/launchd/`，日誌在 `artifacts/daily_runs/`）
+
+| 排程 | 時間（台北） | 作用 |
+| --- | --- | --- |
+| `com.etf-agents.data` | 平日 20:00 | 執行 `data` |
+| `com.etf-agents.finmind-news` | 22:00 | 擷取個股新聞候選 |
+
+**FinMind Token** 依序讀取：執行環境 → 專案根目錄 `.env`（`FINMIND_TOKEN=...`，權限 600，Git 忽略）。財報流程還可回退到 macOS 鑰匙圈服務 `etf-agent-finmind`。
 
 ### 每日流程（daily／run）
 
-`daily` 先驗證官方來源與交易池，再更新官方帳本價量、yfinance 日線、月營收／重大訊息與財報（yfinance 截止日未覆蓋 150 檔即停止），最後以 `DAILY_CUTOFF`（未設定時為 Asia/Taipei 現在時間）建立 Snapshot 並推進虛擬帳本；帳本推進失敗時以非零狀態結束。官方個股月行情由 `scripts/collect_official_history.py` 補上市（TWSE `STOCK_DAY`，來源 `TWSE_STOCK_DAY`）與上櫃（TPEx `tradingStock`，來源 `TPEX_TRADING_STOCK`），兩市場共用同一個節流器，全新環境首次回看兩年約需數十分鐘；資料專用排程（`data`）不補。個股新聞由 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。
+#### `daily`
 
-`run` 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py` 並原樣傳遞參數，以 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI，資料階段仍走 Docker 的 `daily`。缺少 `.venv` 時會停止並提示安裝方式。ChatGPT.app 內附 Codex CLI 的 macOS 路徑由 `start.sh` 在非互動 shell 自動加入 PATH（互動 zsh 亦已設定）；OpenCode 預檢只回報是否有憑證，不保存帳號。三種執行器都交給同一套 Python Validator；Codex 已完成真實資料端到端執行，OpenCode 目前只有小型唯讀煙霧測試與模擬 CLI 測試。OpenCode 執行時禁用插件，唯讀且不允許 .env／外部目錄；重試與續跑仍檢查 Snapshot、cutoff、執行器及來源。CLI 回報的用量不是訂閱帳單。`run` 另支援 `--analyst-model MODEL`（只用於技術／基本面／事件分析師批次；Claude CLI 預設 `sonnet`，傳 `inherit` 沿用 `--model`，其他 CLI 未指定時沿用 `--model`）與 `--technical-gate`／`--no-technical-gate`（預設開啟，見[降 token 計劃](token_reduction_plan.md)）。不會自動產生或送出訂單。
+依序執行：
 
-Windows PowerShell 可執行單步 Python CLI；`start.sh` 的 PowerShell 對應入口尚未實作。
+1. 驗證官方來源與交易池。
+2. 更新官方帳本價量、yfinance 日線、月營收、重大訊息與財報。yfinance 截止日沒有覆蓋 150 檔就停止。
+3. 以 `DAILY_CUTOFF`（未設定時為 Asia/Taipei 現在時間）建立 Snapshot，並推進虛擬帳本。帳本推進失敗時，以非零狀態結束。
+
+補充：
+
+- 官方個股月行情由 `scripts/collect_official_history.py` 補抓。上市用 TWSE `STOCK_DAY`（來源 `TWSE_STOCK_DAY`），上櫃用 TPEx `tradingStock`（來源 `TPEX_TRADING_STOCK`）。
+- 兩個市場共用同一個節流器。全新環境首次回看兩年，約需數十分鐘。
+- 資料專用排程（`data`）不補這部分。
+- 個股新聞由 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。
+
+#### `run`
+
+- 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py`，參數原樣傳遞。資料階段仍走 Docker 的 `daily`。
+- 缺少 `.venv` 時會停止，並提示安裝方式。
+- 用 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI。三種執行器都交給同一套 Python Validator。
+- 不會自動產生或送出訂單。
+
+**各執行器的注意事項**
+
+| 執行器 | 說明 |
+| --- | --- |
+| Codex | 已完成真實資料端到端執行。ChatGPT.app 內附 Codex CLI 的 macOS 路徑，`start.sh` 會在非互動 shell 自動加入 PATH（互動 zsh 亦已設定） |
+| OpenCode | 目前只有小型唯讀煙霧測試與模擬 CLI 測試。執行時禁用插件，唯讀，不允許 `.env` 與外部目錄。預檢只回報是否有憑證，不保存帳號 |
+| 共通 | 重試與續跑仍檢查 Snapshot、cutoff、執行器與來源。CLI 回報的用量不是訂閱帳單 |
+
+**`run` 的其他參數**
+
+| 參數 | 說明 |
+| --- | --- |
+| `--analyst-model MODEL` | 只用於技術／基本面／事件分析師批次。Claude CLI 預設 `sonnet`，傳 `inherit` 沿用 `--model`。其他 CLI 未指定時沿用 `--model` |
+| `--technical-gate`／`--no-technical-gate` | 預設開啟，見[降 token 計劃](token_reduction_plan.md) |
+
+Windows PowerShell 可執行單步 Python CLI。`start.sh` 的 PowerShell 對應入口尚未實作。
 
 ### 依賴與重建
 
