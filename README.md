@@ -56,9 +56,8 @@ python3 -m venv .venv
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--resume` | 關 | 沿用同一 run 目錄中已通過驗證的 Agent 輸出，例如撞到用量上限後續跑；建議搭配 `--skip-data`。 |
-| `--resume-run RUN_ID` | 無 | 指定要續跑的 run 目錄（如 `daily-20261020`）並隱含 `--resume`；跨午夜或額度重置後找不到前一天的 run 時使用。 |
-| `--skip-data` | 關 | 沿用既有 Snapshot 與帳戶快照，不重新執行資料更新。 |
+| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。 |
+| `--skip-data` | 關 | 沿用既有 Snapshot 與帳戶快照，不重新執行資料更新（續跑時已自動套用）。 |
 | `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期已完成就不重跑。 |
 | `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
 
@@ -66,16 +65,17 @@ python3 -m venv .venv
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--preflight-only` | 關 | 只檢查 Docker、Agent CLI 登入、帳戶、必要檔案與磁碟，不耗用量。 |
+| `--preflight-only` | 未啟用 | 預檢（Docker、Agent CLI 登入、帳戶、必要檔案、磁碟）每次 `run` 都會先執行，失敗即停止；預檢通過後繼續跑決策。啟用此參數則檢查完就結束，不抓資料、不跑 Agent，不耗用量。 |
 | `--min-free-gb GiB` | 2.0 | 執行前要求的最低可用磁碟空間。 |
 | `--account-id ID` | `ai-cup-2026` | 指定帳戶。 |
-| `--perception-bundle` ／ `--perception` | 無 | 已核准授權、同 cutoff 且成對的情緒與共識資料包／結果；沒有則該通道為 unavailable。 |
+| `--perception BUNDLE RESULT` | 無 | 提供市場情緒與分析師共識資料：資料包與其驗證結果，兩個檔案必須同時給。不給時這類資訊標為「無資料」。目前尚未接入合法來源，平常不需要使用。 |
 
 ### 常見組合
 
 ```bash
 ./start.sh run --preflight-only --skip-data                  # 不耗用量，先確認環境
-./start.sh run --resume-run daily-20261020 --skip-data       # 撞到用量上限後續跑
+./start.sh run --resume                                      # 撞到用量上限後，續跑今天未完成的 run
+./start.sh run --resume daily-20261020                       # 跨午夜後，續跑指定的 run
 ./start.sh run --no-technical-gate --analyst-model inherit   # 回到最保守的完整輸入、單一模型
 ./start.sh run --delivery-only daily-20261020-213724         # 只重建報告
 ```

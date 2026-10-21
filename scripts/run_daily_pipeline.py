@@ -50,6 +50,7 @@ from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
+RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
 
 
 def log(message: str) -> None:
@@ -170,19 +171,18 @@ def _deliver_saved_run(root: Path, name: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--perception-bundle", type=Path, help="已核准授權且同 cutoff 的情緒與共識資料包")
-    parser.add_argument("--perception", type=Path, help="與資料包成對的已驗證情緒與共識結果")
+    parser.add_argument(
+        "--perception", nargs=2, type=Path, metavar=("BUNDLE", "RESULT"),
+        help="已核准授權且同 cutoff 的情緒與共識資料包，以及與其成對的已驗證結果；兩個檔案須同時提供",
+    )
     parser.add_argument("--account-id", default="ai-cup-2026")
     parser.add_argument("--delivery-only", metavar="DAILY_RUN_ID", help="只重建既有每日 run 的最終交付，不執行資料準備或 Agent")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="休市日（週末或官方開休市日期表列出者）或當日已完成仍執行")
     parser.add_argument(
-        "--resume", action="store_true",
-        help="沿用同一 run 目錄中先前已通過驗證的 Agent 輸出（例如中途撞到用量上限後續跑）；建議搭配 --skip-data",
-    )
-    parser.add_argument(
-        "--resume-run", metavar="RUN_ID",
-        help="指定要續跑的 run 目錄名稱（如 daily-20260929）並隱含 --resume；用量上限重置或跨午夜後，今天的日期已找不到前一天的 run",
+        "--resume", nargs="?", const=RESUME_LATEST, metavar="RUN_ID",
+        help="沿用先前已通過驗證的 Agent 輸出續跑（例如中途撞到用量上限）；找到可續跑的 run 時隱含 --skip-data。"
+             "不帶值時續跑今天最近一個未完成的 run；帶 RUN_ID（如 daily-20260929）則續跑指定 run，用量上限重置或跨午夜後使用",
     )
     parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
     parser.add_argument("--model", help="子 Agent 模型；預設沿用所選 CLI 設定")
@@ -214,8 +214,7 @@ def main() -> int:
         except (ValueError, OSError, KeyError) as error:
             log("交付續跑失敗：%s" % error)
             return 1
-    if args.perception is not None and args.perception_bundle is None:
-        parser.error("--perception 必須搭配 --perception-bundle")
+    perception_bundle, perception_result = args.perception if args.perception else (None, None)
 
     now = datetime.now(TAIPEI_TIMEZONE)
     runs_root = ROOT / "artifacts" / "daily_runs"
@@ -265,10 +264,9 @@ def main() -> int:
         if previous.get("status") == "completed":
             log("%s 已完成（%s），不重跑。" % (run_id, previous.get("decision_status")))
             return 0
-    if args.resume_run:
-        args.resume = True
+    if args.resume not in (None, RESUME_LATEST):
         try:
-            resumable = named_resumable_run(runs_root, args.resume_run)
+            resumable = named_resumable_run(runs_root, args.resume)
         except RuntimeError as error:
             log("無法續跑：%s" % error)
             return 1
@@ -284,6 +282,8 @@ def main() -> int:
         run_dir = resumable
         summary_path = run_dir / "pipeline.json"
         log("續跑沿用 run 目錄：%s" % run_id)
+        # 可續跑的 run 已有 Agent 輸出，代表 Snapshot 與帳戶快照已建立；重抓資料會讓快照與已驗證輸出對不上。
+        args.skip_data = True
     elif args.force and run_dir.exists():
         run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
         run_dir = runs_root / run_id
@@ -356,7 +356,7 @@ def main() -> int:
             agent_runner,
             ROOT / "artifacts" / "portfolio_decisions",
             log=log,
-            resume=args.resume,
+            resume=args.resume is not None,
             analyst_runner=analyst_runner,
             technical_gate=args.technical_gate,
         )
@@ -365,7 +365,7 @@ def main() -> int:
             ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
             decision_run_id,
-            perception_bundle_path=args.perception_bundle, perception_result_path=args.perception,
+            perception_bundle_path=perception_bundle, perception_result_path=perception_result,
         )
         summary.update(
             {
