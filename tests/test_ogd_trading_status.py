@@ -34,7 +34,7 @@ SNAPSHOT = {
 
 
 def write_capture(root: Path, name: str = "capture-1", fetched: str = FETCHED) -> Path:
-    directory = root / name
+    directory = root / "2026-09-26" / name
     directory.mkdir(parents=True)
     sources = []
     for source_id, text in CSV.items():

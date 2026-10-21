@@ -90,4 +90,4 @@
 - cutoff 後資料、時區缺失
 - 來源版本衝突
 
-歷史模型試跑位於 `artifacts/_archive/experiments/technical_prompt_trials/full-path-20261002/`，與先前的「當日摘要版」分開封存。
+歷史模型試跑位於 `artifacts/archive/experiments/technical_prompt_trials/full-path-20261002/`，與先前的「當日摘要版」分開封存。

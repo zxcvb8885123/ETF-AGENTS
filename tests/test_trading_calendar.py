@@ -37,7 +37,7 @@ FETCHED = "2026-09-28T08:00:00+00:00"
 
 
 def write_calendar_capture(root: Path, name: str, fetched: str = FETCHED, text: str = CALENDAR_CSV, others_failed: bool = False) -> Path:
-    directory = root / name
+    directory = root / "2026-09-28" / name
     directory.mkdir(parents=True)
     raw = text.encode("utf-8")
     (directory / "TWSE_CALENDAR_OGD.csv").write_bytes(raw)

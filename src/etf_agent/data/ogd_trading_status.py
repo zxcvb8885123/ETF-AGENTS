@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from etf_agent.core import canonical_sha256, parse_aware_time
+from etf_agent.core.run_layout import list_run_dirs
 from .evidence import TAIPEI_TIMEZONE
 from .ogd_candidate_facts import extract_ogd_candidate_facts
 from .trading_calendar import TradingCalendar, TradingCalendarError
@@ -111,7 +112,7 @@ def latest_calendar_capture_before(captures_root: Path, limit_time: str) -> Opti
     """limit_time 前最近一次成功封存開休市日期表的目錄（其他來源失敗不影響）。"""
     limit = parse_aware_time(limit_time, "limit_time", error=TradingCalendarError)
     best: Optional[Tuple[datetime, Path]] = None
-    for manifest_path in sorted(Path(captures_root).glob("*/manifest.json")):
+    for manifest_path in (run / "manifest.json" for run in list_run_dirs(Path(captures_root))):
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -369,7 +370,7 @@ def latest_capture_before(captures_root: Path, cutoff: str) -> Optional[Path]:
     """找出 fetch 完成時間不晚於 cutoff 的最新成功封存目錄。"""
     limit = parse_aware_time(cutoff, "decision_cutoff", error=TradingStatusError)
     best: Optional[Tuple[datetime, Path]] = None
-    for manifest_path in sorted(captures_root.glob("*/manifest.json")):
+    for manifest_path in (run / "manifest.json" for run in list_run_dirs(Path(captures_root))):
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

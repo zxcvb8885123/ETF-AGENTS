@@ -761,7 +761,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 "save-run", *risk_inputs, "--decision", str(paths["decision"]),
                 "--run-id", "cli-run", "--repository", str(root / "runs"),
             )
-            self.assertTrue((root / "runs" / "cli-run" / "manifest.json").exists())
+            self.assertEqual(len(list((root / "runs").glob("*/cli-run/manifest.json"))), 1)
 
 
 if __name__ == "__main__":

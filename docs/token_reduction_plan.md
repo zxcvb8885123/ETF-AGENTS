@@ -16,7 +16,7 @@
 
 | Run | 執行器 | 結果 | 說明 |
 | --- | --- | --- | --- |
-| `daily-20261019-220447` | Codex，150 檔，每批 50 檔 | 基準（19 份 brief 共 8,882,656 bytes，存於 `artifacts/_archive/experiments/token_reduction/baseline-20261019.json`） | Codex runner 的 `estimated_usage_usd` 回報 0，不能當成沒有用量。 |
+| `daily-20261019-220447` | Codex，150 檔，每批 50 檔 | 基準（19 份 brief 共 8,882,656 bytes，存於 `artifacts/archive/experiments/token_reduction/baseline-20261019.json`） | Codex runner 的 `estimated_usage_usd` 回報 0，不能當成沒有用量。 |
 | `daily-20261020-213724` | Claude | `approved`，5 張單 | 續跑後 `pipeline.json.agent_calls` 只列當次新呼叫，估算用量 **10.36 美元**不等於整輪費用；續跑前的技術／基本面／事件 b0 不在內。 |
 
 ### 各類 brief 大小（bytes，三批 b0／b1／b2）
@@ -130,7 +130,7 @@
 
 - 做法：固定 12 錨點、收盤極值、最大量及近 5 筆，由原始歷史重建。三批各由約 1.9 MB 降至約 0.36 MB（輸入位元組約少 81%）。
 - 結果：`scripts/evaluate_technical_brief.py` 對 150 檔試跑，全部通過原始輸入 Validator，沒有新增 `unknown`，但 **12 檔 outlook 改變**。
-- 第二次獨立試跑（`artifacts/_archive/experiments/token_reduction/technical-repeat-20261019/`）：同樣通過 Validator、沒有新增 `unknown`，相對完整歷史版亦有 12 檔改變。兩次摘要共同改變 8 檔且新標籤一致；其餘各有 4 檔只在其中一次改變；兩次摘要彼此有 8 檔標籤不同。
+- 第二次獨立試跑（`artifacts/archive/experiments/token_reduction/technical-repeat-20261019/`）：同樣通過 Validator、沒有新增 `unknown`，相對完整歷史版亦有 12 檔改變。兩次摘要共同改變 8 檔且新標籤一致；其餘各有 4 檔只在其中一次改變；兩次摘要彼此有 8 檔標籤不同。
 - 判讀：模型輸出本身有變動，也不能排除抽樣改變了那 8 檔的判讀。完整歷史版只有一次輸出，無法判定哪版較好。**正式每日鏈繼續使用完整歷史，摘要不接入。**
 
 ### 事件 brief 首尾摘錄

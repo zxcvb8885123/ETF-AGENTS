@@ -47,6 +47,7 @@ from etf_agent.data import (  # noqa: E402
     load_not_applicable,
 )
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
+from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 from etf_agent.virtual_account.daily import supersede_decision_runs  # noqa: E402
@@ -126,10 +127,23 @@ def data_already_fetched(snapshot_path: Path, account_path: Path, expected_trade
     )
 
 
+def daily_run_path(runs_root: Path, run_id: str) -> Path:
+    """每日 run 放在 <runs_root>/<台北日期>/<run_id>；已存在則沿用其位置。"""
+    existing = find_run_dir(runs_root, run_id, RuntimeError)
+    if existing is not None:
+        return existing
+    day = day_from_run_id(run_id)
+    if day is None:
+        raise RuntimeError("每日 run 名稱沒有日期：%s" % run_id)
+    return runs_root / day / run_id
+
+
 def latest_resumable_run(runs_root: Path, run_id: str):
     """同一台北日期中，最近一個未完成且已保存 Agent 原始輸出的 run 目錄；沒有則回 None。"""
     candidates = []
-    for run_dir in runs_root.glob("%s*" % run_id):
+    for run_dir in list_run_dirs(runs_root):
+        if not run_dir.name.startswith(run_id):
+            continue
         summary_path = run_dir / "pipeline.json"
         if not run_dir.is_dir() or not summary_path.exists() or not any(run_dir.glob("*_raw_*.json")):
             continue
@@ -143,7 +157,7 @@ def latest_resumable_run(runs_root: Path, run_id: str):
 
 def named_resumable_run(runs_root: Path, name: str) -> Path:
     """指定續跑的 run 目錄（跨午夜或用量上限重置後，日期已變，不能靠今天的日期找）；必須未完成且已有 Agent 原始輸出。"""
-    run_dir = runs_root / name
+    run_dir = daily_run_path(runs_root, name) if re.fullmatch(r"daily-[0-9A-Za-z-]+", name) else runs_root / "invalid"
     summary_path = run_dir / "pipeline.json"
     if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name) or not run_dir.is_dir() or not summary_path.exists():
         raise RuntimeError("找不到可續跑的 run 目錄：%s" % name)
@@ -199,13 +213,13 @@ def deliver_saved_run(root: Path, name: str) -> dict:
 def _deliver_saved_run(root: Path, name: str) -> dict:
     if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name):
         raise ValueError("每日 run 名稱不符合白名單")
-    summary_path = root / "artifacts/daily_runs" / name / "pipeline.json"
+    summary_path = daily_run_path(root / "artifacts/daily_runs", name) / "pipeline.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     decision_id = summary.get("decision_run_id") or summary.get("planned_decision_run_id")
     if not decision_id:
         raise ValueError("此 run 沒有封存決策識別，不能只續跑交付")
-    delivery = build_delivery(root / "artifacts/portfolio_decisions", decision_id,
-        root / "artifacts/decision_deliveries", reports_root=root / "artifacts/reports",
+    delivery = build_delivery(root / "artifacts/decision_runs", decision_id,
+        root / "artifacts/decision_reports", reports_root=root / "artifacts/latest_reports",
         started_at=summary["started_at"])
     summary["delivery"] = delivery
     if delivery["report_status"] == "ready":
@@ -290,7 +304,7 @@ def main() -> int:
         for check in checks:
             log("%s %s：%s" % ("通過" if check.ok else "失敗", check.name, check.detail))
         return 0 if all(check.ok for check in checks) else 1
-    captures_root = ROOT / "artifacts" / "source-audit" / "captures"
+    captures_root = ROOT / "artifacts" / "source_audit" / "captures"
     if not args.force:
         try:
             if not trading_day_check(captures_root, now):
@@ -299,15 +313,15 @@ def main() -> int:
         except (TradingCalendarError, OSError, ValueError) as error:
             log("無法判定今天是否為交易日，停止：%s" % error)
             try:
-                save_failure(ROOT / "artifacts/decision_deliveries", str(error),
+                save_failure(ROOT / "artifacts/decision_reports", str(error),
                     "calendar-%s" % now.strftime("%Y%m%dT%H%M%S"),
-                    reports_root=ROOT / "artifacts/reports", started_at=now.isoformat())
+                    reports_root=ROOT / "artifacts/latest_reports", started_at=now.isoformat())
             except (ValueError, OSError) as publish_error:
                 log("交付診斷發布失敗：%s" % publish_error)
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
             return 1
     run_id = "daily-%s" % now.strftime("%Y%m%d")
-    run_dir = runs_root / run_id
+    run_dir = daily_run_path(runs_root, run_id)
     summary_path = run_dir / "pipeline.json"
     if summary_path.exists() and not args.force:
         previous = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -336,7 +350,7 @@ def main() -> int:
         args.skip_data = True
     elif args.force and run_dir.exists():
         run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
-        run_dir = runs_root / run_id
+        run_dir = daily_run_path(runs_root, run_id)
         summary_path = run_dir / "pipeline.json"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -413,7 +427,7 @@ def main() -> int:
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             agent_runner,
-            ROOT / "artifacts" / "portfolio_decisions",
+            ROOT / "artifacts" / "decision_runs",
             log=log,
             resume=args.resume is not None,
             analyst_runner=analyst_runner,
@@ -441,16 +455,16 @@ def main() -> int:
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
         summary["event_analysis_mode"] = "integrated_analyst"
         superseded = supersede_decision_runs(
-            ROOT / "artifacts" / "portfolio_decisions", result.decision_run_id,
-            ROOT / "artifacts" / "_archive" / "superseded_decisions",
+            ROOT / "artifacts" / "decision_runs", result.decision_run_id,
+            ROOT / "artifacts" / "archive" / "superseded_decisions",
         )
         if superseded:
             summary["superseded_decision_runs"] = superseded
-            log("新決策取代同一份帳戶快照的舊決策，舊 run 已移到 artifacts/_archive/superseded_decisions：%s" % "、".join(superseded))
+            log("新決策取代同一份帳戶快照的舊決策，舊 run 已移到 artifacts/archive/superseded_decisions：%s" % "、".join(superseded))
         log("[交付] 重建風控後最終中文報告")
         summary["delivery"] = build_delivery(
-            ROOT / "artifacts/portfolio_decisions", result.decision_run_id,
-            ROOT / "artifacts/decision_deliveries", reports_root=ROOT / "artifacts/reports",
+            ROOT / "artifacts/decision_runs", result.decision_run_id,
+            ROOT / "artifacts/decision_reports", reports_root=ROOT / "artifacts/latest_reports",
             started_at=summary["started_at"],
         )
         if summary["delivery"]["report_status"] != "ready":
@@ -463,8 +477,8 @@ def main() -> int:
         if "delivery" not in summary:
             try:
                 summary["delivery"] = save_failure(
-                    ROOT / "artifacts/decision_deliveries", str(error), run_id,
-                    reports_root=ROOT / "artifacts/reports", started_at=summary["started_at"],
+                    ROOT / "artifacts/decision_reports", str(error), run_id,
+                    reports_root=ROOT / "artifacts/latest_reports", started_at=summary["started_at"],
                 )
             except (ValueError, OSError) as publish_error:
                 summary["delivery_publish_error"] = str(publish_error)

@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from etf_agent.core.run_layout import day_from_run_id  # noqa: E402
 from etf_agent.data import (  # noqa: E402
     SectorClassificationBuilder,
     SectorClassificationError,
@@ -23,10 +24,11 @@ def main() -> int:
     parser.add_argument("--universe", type=Path, default=ROOT / "data" / "official_universe.csv")
     parser.add_argument("--output", type=Path, default=ROOT / "data" / "sector_classification.json")
     parser.add_argument(
-        "--raw-dir", type=Path, default=ROOT / "artifacts" / "source-audit" / "sector-classification"
+        "--raw-dir", type=Path, default=ROOT / "artifacts" / "source_audit" / "sector_classification"
     )
     args = parser.parse_args()
-    run_dir = args.raw_dir / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    run_dir = args.raw_dir / day_from_run_id(stamp) / stamp
     try:
         universe = UniverseLoader().load(args.universe)
         captures = capture_sector_sources(run_dir)

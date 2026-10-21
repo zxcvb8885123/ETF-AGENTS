@@ -145,7 +145,7 @@ MarketNewsRSSProvider
 
 ### 本次產出
 
-報告在 `artifacts/_archive/runs/market_news_20261005/report.md`。同源 JSON、完整標籤、原始 captures、資料包、輸入與稽核，都保存在不可變 run。
+報告在 `artifacts/archive/runs/market_news_20261005/report.md`。同源 JSON、完整標籤、原始 captures、資料包、輸入與稽核，都保存在不可變 run。
 
 | 狀態 | 項目 |
 | --- | --- |

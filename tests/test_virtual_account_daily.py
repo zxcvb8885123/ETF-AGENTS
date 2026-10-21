@@ -46,7 +46,7 @@ class SupersedeDecisionRunsTests(unittest.TestCase):
         self.temp.cleanup()
 
     def make_run(self, name, snapshot):
-        run = self.decisions / name
+        run = self.decisions / "2026-10-21" / name
         run.mkdir(parents=True)
         (run / "decision_input.json").write_text(json.dumps({"account_snapshot": snapshot}), encoding="utf-8")
 
@@ -56,8 +56,8 @@ class SupersedeDecisionRunsTests(unittest.TestCase):
         self.make_run("decision-other", {"id": 2})
         archive = self.root / "archive"
         self.assertEqual(supersede_decision_runs(self.decisions, "decision-new", archive), ["decision-old"])
-        self.assertEqual(sorted(path.name for path in self.decisions.iterdir()), ["decision-new", "decision-other"])
-        self.assertTrue((archive / "decision-old" / "decision_input.json").exists())
+        self.assertEqual(sorted(path.name for path in self.decisions.glob("*/*")), ["decision-new", "decision-other"])
+        self.assertTrue((archive / "2026-10-21" / "decision-old" / "decision_input.json").exists())
 
     def test_without_duplicates_nothing_moves(self):
         self.make_run("decision-new", {"id": 1})
@@ -104,7 +104,7 @@ class DailyAccountRunnerTests(unittest.TestCase):
 
     def test_settles_at_next_trading_day_official_close(self):
         snapshot, decisions = prepare_and_decide(self.service, self.root)
-        decision = json.loads((decisions / "decision-1" / "decision.json").read_text(encoding="utf-8"))
+        decision = json.loads(next(decisions.glob("*/decision-1/decision.json")).read_text(encoding="utf-8"))
         order = decision["orders"][0]
         create_prices(self.database, [
             ("2317.TW", "2026-09-21", "120", 50_000_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00"),
@@ -161,7 +161,7 @@ class DailyAccountRunnerTests(unittest.TestCase):
 
     def test_fills_in_full_at_official_average_price_and_values_at_close(self):
         snapshot, decisions = prepare_and_decide(self.service, self.root)
-        order = json.loads((decisions / "decision-1" / "decision.json").read_text(encoding="utf-8"))["orders"][0]
+        order = json.loads(next(decisions.glob("*/decision-1/decision.json")).read_text(encoding="utf-8"))["orders"][0]
         # 當日只成交 1 張，仍全部成交；成交均價 605,000 ÷ 5,000 = 121，收盤 120。
         create_prices(self.database, [
             ("2317.TW", "2026-09-21", "120", 5_000, "TWSE_STOCK_DAY_ALL", "2026-09-21T12:00:00+00:00", 605_000),

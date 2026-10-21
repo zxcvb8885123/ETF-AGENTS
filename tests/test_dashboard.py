@@ -90,7 +90,7 @@ class DashboardTests(unittest.TestCase):
         from etf_agent.dashboard.performance import _pending_orders
 
         decisions = self.root / "decisions"
-        run = decisions / "decision-1"
+        run = decisions / "2026-10-01" / "decision-1"
         run.mkdir(parents=True)
         (run / "decision_input.json").write_text(json.dumps({"account_snapshot": {"id": 1}}), encoding="utf-8")
         (run / "decision.json").write_text(json.dumps({"status": "approved", "orders": [

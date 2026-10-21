@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from etf_agent.core import parse_aware_time, canonical_sha256
 from etf_agent.core.artifact_store import ImmutableRunStore
+from etf_agent.core.run_layout import day_from_run_id, taipei_day
 from .contracts import DeliveryError, VERSION
 
 
@@ -58,12 +59,26 @@ def publication_lock(root, filename=".publish.lock"):
 class DeliveryRepository(ImmutableRunStore):
     def __init__(self, root):
         self.delivery_root = Path(root)
-        super().__init__(self.delivery_root / "runs", schema_version=VERSION, error=DeliveryError)
+        super().__init__(self.delivery_root / "runs", schema_version=VERSION, error=DeliveryError, dated=True)
+
+    @staticmethod
+    def _day_of(artifacts):
+        """交付放進哪個台北日期資料夾：決策日，其次本次執行開始日，最後才是今天。"""
+        request = artifacts["request"]
+        day = day_from_run_id(str(request.get("decision_run_id") or ""))
+        if day is None and request.get("started_at"):
+            day = taipei_day(parse_aware_time(request["started_at"], "started_at", error=DeliveryError))
+        return day or taipei_day(datetime.now(timezone.utc))
+
+    def _view_path(self, run_id):
+        located = self.run_dir(run_id)
+        day = located.parent.name if located is not None else "unknown"
+        return self.delivery_root / "views" / day / run_id / "report.md"
 
     def save_delivery(self, run_id, artifacts):
-        path = self.save(run_id, artifacts)
+        path = self.save(run_id, artifacts, day=self._day_of(artifacts))
         # Markdown 精確文字封存在 rendering.json；閱讀副本不混入 core 的 JSON-only run。
-        view = self.delivery_root / "views" / run_id / "report.md"
+        view = self._view_path(run_id)
         expected = artifacts["rendering"]["markdown"]
         with publication_lock(self.delivery_root):
             if view.exists() and view.read_text(encoding="utf-8") != expected:
@@ -83,7 +98,7 @@ class DeliveryRepository(ImmutableRunStore):
         if match is None:
             return None
         taipei = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc) + timedelta(hours=8)
-        target = self.delivery_root / "dated" / ("決策報告_%s_%s.md" % (taipei.strftime("%Y-%m-%d_%H%M"), artifacts["delivery_status"]["decision_status"]))
+        target = self.delivery_root / "dated" / taipei.strftime("%Y-%m-%d") / ("決策報告_%s_%s.md" % (taipei.strftime("%Y-%m-%d_%H%M"), artifacts["delivery_status"]["decision_status"]))
         with publication_lock(self.delivery_root):
             atomic_text(target, artifacts["rendering"]["markdown"])
         return target
@@ -93,7 +108,7 @@ class DeliveryRepository(ImmutableRunStore):
         artifacts = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in path.glob("*.json") if p.name != "manifest.json"}
         if run_id != "delivery-" + canonical_sha256(artifacts)[:32]:
             raise DeliveryError("交付識別與內容不一致")
-        view = self.delivery_root / "views" / run_id / "report.md"
+        view = self._view_path(run_id)
         if view.is_symlink() or view.parent.is_symlink():
             raise DeliveryError("交付閱讀副本不得是符號連結")
         if view.read_text(encoding="utf-8") != artifacts["rendering"]["markdown"]:
@@ -132,7 +147,7 @@ class DeliveryRepository(ImmutableRunStore):
             payload = {"delivery_id": run_id, "started_at": started_at,
                 "request": artifacts["request"],
                 "repository": str(self.delivery_root.resolve()), "status": artifacts["delivery_status"],
-                "report": str((self.delivery_root / "views" / run_id / "report.md").resolve())}
+                "report": str(self._view_path(run_id).resolve())}
             atomic_text(latest, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
             # latest.json 是權威；捷徑含 ID，消費端可偵測跨檔中斷。
             atomic_text(root / "latest.md", "<!-- delivery_id: %s -->\n%s" % (run_id, artifacts["rendering"]["markdown"]))

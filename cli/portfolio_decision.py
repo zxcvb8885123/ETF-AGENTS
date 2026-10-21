@@ -328,7 +328,7 @@ class PortfolioDecisionApplication:
             "--team-inputs", type=Path, required=True,
             help="三份分析報告（舊封存四份）、事件研究與現金姿態，供完整重建驗證",
         )
-        save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "portfolio_decisions")
+        save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "decision_runs")
         return parser
 
     @staticmethod

@@ -24,7 +24,7 @@ def main() -> int:
         state = account["state"]
         if state["provenance"]["type"] != "prepared":
             raise ValueError("帳本目前沒有待結算的 prepare 狀態")
-        decisions = ROOT / "artifacts/portfolio_decisions"
+        decisions = ROOT / "artifacts/decision_runs"
         run_id = find_decision_run(decisions, state["provenance"]["account_snapshot"])
         if run_id is None:
             raise ValueError("沒有與目前帳本對應的封存決策")

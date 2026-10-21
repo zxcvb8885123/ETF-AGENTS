@@ -87,6 +87,6 @@
 
 ## 本次產出
 
-- 研究報告：`artifacts/_archive/runs/market_news_history_20261005/report.md`
+- 研究報告：`artifacts/archive/runs/market_news_history_20261005/report.md`
 - 正式通道的同源呈現：`integrated_report.md`
 - 輸入、標籤、綜合判讀、原始內容、來源規範與稽核，都保存在不可變 run 內。

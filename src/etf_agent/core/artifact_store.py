@@ -12,10 +12,12 @@ import json
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Mapping, Type
+from typing import Dict, Mapping, Optional, Type
 
 from .canonical import canonical_sha256
+from .run_layout import day_from_run_id, find_run_dir, taipei_day
 
 
 RUN_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
@@ -30,12 +32,15 @@ class ImmutableRunStore:
     """Atomically save one immutable run and reject conflicting reuse.
 
     Subclasses bind ``schema_version`` and the Agent's own ``error`` type.
+    With ``dated=True`` runs live in ``<root>/<YYYY-MM-DD>/<run_id>``; the date
+    comes from ``save(day=...)`` or from the date inside ``run_id``.
     """
 
-    def __init__(self, root: Path, *, schema_version: str, error: Type[Exception] = ValueError):
+    def __init__(self, root: Path, *, schema_version: str, error: Type[Exception] = ValueError, dated: bool = False):
         self.root = root
         self.schema_version = schema_version
         self.error = error
+        self.dated = dated
 
     def build_manifest(self, run_id: str, artifacts: Mapping[str, Mapping[str, object]]) -> Dict[str, object]:
         manifest: Dict[str, object] = {
@@ -49,8 +54,8 @@ class ImmutableRunStore:
         manifest["manifest_sha256"] = canonical_sha256(manifest)
         return manifest
 
-    def save(self, run_id: str, artifacts: Mapping[str, Mapping[str, object]]) -> Path:
-        run_dir = self._run_dir(run_id)
+    def save(self, run_id: str, artifacts: Mapping[str, Mapping[str, object]], *, day: Optional[str] = None) -> Path:
+        run_dir = self._run_dir(run_id, day)
         for name in artifacts:
             if not re.fullmatch(ARTIFACT_NAME_PATTERN, str(name)):
                 raise self.error("artifact 名稱不符合安全白名單：%s" % name)
@@ -67,8 +72,8 @@ class ImmutableRunStore:
             if current != manifest:
                 raise self.error("相同 run_id 已存在不同內容，拒絕覆蓋")
             return run_dir
-        self.root.mkdir(parents=True, exist_ok=True)
-        temp_dir = Path(tempfile.mkdtemp(prefix=".%s-" % run_id, dir=str(self.root)))
+        run_dir.parent.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(tempfile.mkdtemp(prefix=".%s-" % run_id, dir=str(run_dir.parent)))
         try:
             for name, payload in sorted(artifacts.items()):
                 (temp_dir / ("%s.json" % name)).write_text(_dump(payload), encoding="utf-8")
@@ -78,6 +83,11 @@ class ImmutableRunStore:
             for child in temp_dir.iterdir():
                 child.unlink()
             temp_dir.rmdir()
+            if self.dated:
+                try:
+                    run_dir.parent.rmdir()  # 失敗時別留下空的日期資料夾；非空則 rmdir 會拒絕。
+                except OSError:
+                    pass
             raise
         return run_dir
 
@@ -119,10 +129,24 @@ class ImmutableRunStore:
             raise self.error("run 目錄檔案集合與 manifest 不一致")
         return run_dir
 
-    def _run_dir(self, run_id: str) -> Path:
+    def run_dir(self, run_id: str) -> Optional[Path]:
+        """既有 run 的目錄；找不到回傳 None。"""
+        path = self._run_dir(run_id)
+        return path if path.exists() else None
+
+    def _run_dir(self, run_id: str, day: Optional[str] = None) -> Path:
         if not isinstance(run_id, str) or not re.fullmatch(RUN_ID_PATTERN, run_id):
             raise self.error("run_id 只能包含英數、點、底線與連字號")
-        run_dir = self.root / run_id
+        if self.dated:
+            run_dir = find_run_dir(self.root, run_id, self.error)
+            if run_dir is None:
+                if day is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                    raise self.error("日期資料夾格式必須是 YYYY-MM-DD")
+                # run_id 沒有日期（例如測試或手動命名）時，放進儲存當天的資料夾；之後都靠全域搜尋找回。
+                day = day or day_from_run_id(run_id) or taipei_day(datetime.now(timezone.utc))
+                run_dir = self.root / day / run_id
+        else:
+            run_dir = self.root / run_id
         if run_dir.is_symlink():
             raise self.error("run 目錄不得是符號連結")
         return run_dir

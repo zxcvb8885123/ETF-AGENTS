@@ -138,7 +138,8 @@ def capture_sector_sources(
     now: Callable[[], str] = lambda: datetime.now(timezone.utc).isoformat(),
 ) -> Dict[str, Dict[str, object]]:
     """抓取兩份官方公司基本資料並先保存原始位元組，再交給 Builder 解析。"""
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(exist_ok=False)
     captures: Dict[str, Dict[str, object]] = {}
     for source in SECTOR_SOURCES:
         request = Request(source.url, headers={"User-Agent": "ETF-Agent-AICUP-2026/0.1"})

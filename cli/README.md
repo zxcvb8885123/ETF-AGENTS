@@ -26,14 +26,14 @@ PYTHONPATH=src python3 cli/trading_status.py validate --input artifacts/trading-
 # 從封存 Decision run 自動整理 context 並匯出 D-Plan；帳本 run 必須是決策使用、且仍為 latest 的 prepare-day 封存。
 # competition_profile.json 的策略與模型資訊必須先由人工確認，否則命令 fail-closed。
 .venv/bin/python cli/dplan.py build --trade-date YYYY-MM-DD \
-  --daily-run artifacts/daily_runs/DAILY_RUN_ID/pipeline.json \
-  --decision-repository artifacts/portfolio_decisions --decision-run-id DECISION_RUN_ID \
+  --daily-run artifacts/daily_runs/YYYY-MM-DD/DAILY_RUN_ID/pipeline.json \
+  --decision-repository artifacts/decision_runs --decision-run-id DECISION_RUN_ID \
   --virtual-account-account-id ai-cup-2026 --virtual-account-run-id PREPARE_RUN_ID
 
 # 只測試自動 context 整理，不建立正式 D-Plan
 .venv/bin/python cli/dplan.py build-context \
-  --decision-repository artifacts/portfolio_decisions --decision-run-id DECISION_RUN_ID \
-  --daily-run artifacts/daily_runs/DAILY_RUN_ID/pipeline.json \
+  --decision-repository artifacts/decision_runs --decision-run-id DECISION_RUN_ID \
+  --daily-run artifacts/daily_runs/YYYY-MM-DD/DAILY_RUN_ID/pipeline.json \
   --output artifacts/competition/contexts/context_DECISION_RUN_ID.json
 ```
 

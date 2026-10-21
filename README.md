@@ -156,9 +156,15 @@ ETF_AGENTS/
 ├── var/                     # 執行時資料，不進 git：etf_agent.db（行情、公司文件、來源原文）與快取
 └── artifacts/               # 執行時產物，不進 git
     ├── daily_runs/          #   每日執行狀態
-    ├── portfolio_decisions/ #   不可變決策封存與重建輸入
+    ├── decision_runs/       #   不可變決策封存與重建輸入
+    ├── decision_reports/    #   決策報告（依日期的閱讀副本與交付紀錄）
     ├── virtual_accounts/    #   虛擬帳本
-    └── reports/             #   中文報告
+    ├── latest_reports/      #   最新中文報告
+    ├── source_audit/        #   來源原始抓取與稽核
+    ├── source_probe_reports/#   資料來源可行性探測
+    ├── official_history/    #   官方歷史行情補抓覆蓋
+    ├── financial_statements/#   財報收集覆蓋
+    └── archive/             #   舊實驗、被取代的決策
 ```
 
 ### 分工
@@ -174,7 +180,10 @@ ETF_AGENTS/
 
 - `var/`、`artifacts/` 不進 git，新環境是空的。
 - 由 `./start.sh` 與每日管線產生。
-- 決策封存（`artifacts/portfolio_decisions/`）是下游重建驗證的依據，刪除前先確認不需要重建。
+- 決策封存（`artifacts/decision_runs/`）是下游重建驗證的依據，刪除前先確認不需要重建。
+- 每日輸出依台北日期分資料夾：`daily_runs`、`decision_runs`、`decision_reports`（`runs`／`views`／`dated`）、`source_audit/captures`、`source_audit/sector_classification` 與 `source_probe_reports` 都是 `<資料夾>/YYYY-MM-DD/<名稱>`。日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期；同一個 run ID 出現在兩個日期資料夾會被拒絕。
+- 帳本（`virtual_accounts/`）是雜湊鏈，不分日期資料夾；`archive/` 是手動整理的舊實驗，也不改。
+- `artifacts/portfolio_decisions` 是指向 `decision_runs` 的相容連結：舊的交付 `request.json` 已封存了這條絕對路徑，沒有它就無法重新驗證舊交付，請勿刪除。
 
 ## 目前狀態與限制
 
@@ -189,9 +198,9 @@ ETF_AGENTS/
 | --- | --- |
 | `data/official_universe.csv` | 150 檔交易池輸入 |
 | `var/etf_agent.db` | 行情、公司文件、來源原文、時間與版本 |
-| `artifacts/reports/latest.md` | 最新中文報告或失敗診斷 |
-| `artifacts/daily_runs/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
-| `artifacts/portfolio_decisions/` | 不可變決策封存與重建輸入 |
+| `artifacts/latest_reports/latest.md` | 最新中文報告或失敗診斷 |
+| `artifacts/daily_runs/<日期>/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
+| `artifacts/decision_runs/<日期>/<run_id>/` | 不可變決策封存與重建輸入 |
 | `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
 
 ## 常見問題

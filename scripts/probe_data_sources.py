@@ -4,7 +4,9 @@
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,13 @@ from etf_agent.data import (  # noqa: E402
     load_probe_definitions,
     write_json_artifact,
 )
+
+
+def report_file_name(kind: str, generated_at: str, report_id: str) -> str:
+    """相對路徑：台北日期資料夾／種類_台北時間_識別碼前八碼，例如 2026-09-29/source_probe_163216_078ba66f.json。"""
+    moment = datetime.fromisoformat(generated_at).astimezone(ZoneInfo("Asia/Taipei"))
+    short_id = report_id.split("-")[0][:8]
+    return "%s/%s_%s_%s.json" % (moment.strftime("%Y-%m-%d"), kind, moment.strftime("%H%M%S"), short_id)
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=ROOT / "artifacts" / "source-feasibility",
+        default=ROOT / "artifacts" / "source_probe_reports",
     )
     parser.add_argument("--json", action="store_true", help="將完整結果輸出為 JSON")
     return parser.parse_args()
@@ -69,9 +78,11 @@ def main() -> int:
         database.save_source_feasibility_report(report)
         database.save_universe_validation(validation)
 
-        report_path = args.output_dir / ("source-report-%s.json" % report.report_id)
-        validation_path = args.output_dir / (
-            "universe-validation-%s.json" % validation.validation_id
+        report_path = args.output_dir / report_file_name(
+            "source_probe", report.generated_at, report.report_id
+        )
+        validation_path = args.output_dir / report_file_name(
+            "universe_check", validation.generated_at, validation.validation_id
         )
         write_json_artifact(report_path, report.as_dict())
         write_json_artifact(validation_path, validation.as_dict())

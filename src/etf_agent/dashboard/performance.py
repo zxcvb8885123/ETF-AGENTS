@@ -115,14 +115,16 @@ def _pending_orders(decision_repository: Optional[Path], latest: Mapping[str, ob
     provenance = latest.get("provenance") or {}
     if decision_repository is None or provenance.get("type") != "prepared":
         return None
+    from etf_agent.decision.finalization import DecisionRepository
     from etf_agent.virtual_account.daily import find_decision_run  # 延後匯入避免循環相依
 
     try:
         run_id = find_decision_run(decision_repository, provenance.get("account_snapshot"))
         if run_id is None:
             return None
-        decision = _read_json(Path(decision_repository) / run_id / "decision.json")
-        bundle = _read_json(Path(decision_repository) / run_id / "decision_input.json")
+        run_dir = DecisionRepository(Path(decision_repository)).run_dir(run_id)
+        decision = _read_json(run_dir / "decision.json")
+        bundle = _read_json(run_dir / "decision_input.json")
         end = ((bundle.get("trading_status_bundle") or {}).get("target_session") or {}).get("end")
         execution_date = str(end)[:10] if end else None
     except (VirtualAccountError, OSError, json.JSONDecodeError):

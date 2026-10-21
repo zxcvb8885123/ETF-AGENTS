@@ -18,8 +18,8 @@ class NamedResumeTests(unittest.TestCase):
         spec.loader.exec_module(cls.module)
 
     def make_run(self, root, name, status, raw=True, decision_status=None, agent_cli=None):
-        run_dir = root / name
-        run_dir.mkdir()
+        run_dir = root / ("%s-%s-%s" % (name[6:10], name[10:12], name[12:14])) / name
+        run_dir.mkdir(parents=True)
         summary = {"run_id": name, "status": status}
         if decision_status:
             summary["decision_status"] = decision_status
@@ -100,7 +100,7 @@ class ArgumentTests(unittest.TestCase):
     def test_resume_with_run_id_implies_skip_data(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            run_dir = root / "artifacts" / "daily_runs" / "daily-20260929"
+            run_dir = root / "artifacts" / "daily_runs" / "2026-09-29" / "daily-20260929"
             run_dir.mkdir(parents=True)
             (run_dir / "pipeline.json").write_text(json.dumps({"run_id": "daily-20260929", "status": "failed", "started_at": "2026-09-29T18:00:00+08:00"}), encoding="utf-8")
             (run_dir / "bull_b0_raw_1.json").write_text("{}", encoding="utf-8")
