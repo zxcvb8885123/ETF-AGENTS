@@ -10,7 +10,7 @@
   "max_turnover_rate": "1",
   "stress_price_decline_rate": "0.10",
   "stress_slippage_multiplier": "2",
-  "liquidity_fill_rate": "0.5",
+  "liquidity_fill_rate": "1",
   "max_revisions": 3,
   "position_sizing": {
     "method": "conviction_volatility_v1",
@@ -20,6 +20,7 @@
       "low": "0.5"
     },
     "volatility_floor": "0.01",
+    "stock_weight_fit": "v1",
     "cash_buffer_by_stance": {
       "aggressive": "0.03",
       "neutral": "0.10",

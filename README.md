@@ -29,13 +29,59 @@ python3 -m venv .venv
 | 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
-首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；改用 Codex：
+首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
 
 ```bash
 ./start.sh run --agent-cli codex
+./start.sh run --agent-cli opencode
 ```
 
-參數會原樣傳給 `run`／`status`，用 `./start.sh run --help` 查看（如 `--preflight-only`、`--resume`）。環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。
+環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。
+
+## `./start.sh run` 可調整的參數
+
+參數會原樣傳給 `scripts/run_daily_pipeline.py`，完整說明用 `./start.sh run --help` 查看。不帶任何參數即使用下表「預設」欄。
+
+### 控制用量與模型
+
+| 參數 | 預設 | 作用 |
+| --- | --- | --- |
+| `--agent-cli claude\|codex\|opencode` | `claude` | 子 Agent 使用的 CLI。換執行器時不可續用其他執行器的 run。 |
+| `--model 模型` | 所選 CLI 的設定 | 多空研究、交易與現金姿態使用的模型。 |
+| `--analyst-model 模型` | Claude CLI 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於技術／基本面／事件三位分析師的批次，量最大。傳 `inherit` 則沿用 `--model`。 |
+| `--technical-gate` ／ `--no-technical-gate` | 開啟 | 趨勢一致的股票技術 brief 只附 `momentum`、不附逐日歷史，約少一半輸入；資料不足或訊號衝突者仍附完整歷史。同 Snapshot 對照結果見[降 token 計劃](docs/token_reduction_plan.md)，樣本只有一天。 |
+| `--max-budget-usd 金額` | 3 | 單次子 Agent 呼叫的估算用量上限，只適用 Claude CLI。 |
+
+### 續跑與重跑
+
+| 參數 | 預設 | 作用 |
+| --- | --- | --- |
+| `--resume` | 關 | 沿用同一 run 目錄中已通過驗證的 Agent 輸出，例如撞到用量上限後續跑；建議搭配 `--skip-data`。 |
+| `--resume-run RUN_ID` | 無 | 指定要續跑的 run 目錄（如 `daily-20261020`）並隱含 `--resume`；跨午夜或額度重置後找不到前一天的 run 時使用。 |
+| `--skip-data` | 關 | 沿用既有 Snapshot 與帳戶快照，不重新執行資料更新。 |
+| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期已完成就不重跑。 |
+| `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
+
+### 檢查與輸入
+
+| 參數 | 預設 | 作用 |
+| --- | --- | --- |
+| `--preflight-only` | 關 | 只檢查 Docker、Agent CLI 登入、帳戶、必要檔案與磁碟，不耗用量。 |
+| `--min-free-gb GiB` | 2.0 | 執行前要求的最低可用磁碟空間。 |
+| `--account-id ID` | `ai-cup-2026` | 指定帳戶。 |
+| `--perception-bundle` ／ `--perception` | 無 | 已核准授權、同 cutoff 且成對的情緒與共識資料包／結果；沒有則該通道為 unavailable。 |
+
+### 常見組合
+
+```bash
+./start.sh run --preflight-only --skip-data                  # 不耗用量，先確認環境
+./start.sh run --resume-run daily-20261020 --skip-data       # 撞到用量上限後續跑
+./start.sh run --no-technical-gate --analyst-model inherit   # 回到最保守的完整輸入、單一模型
+./start.sh run --delivery-only daily-20261020-213724         # 只重建報告
+```
+
+不在表中的設定（Policy 乘數、現金姿態對應、`max_revisions` 等）在 `config/decision_policy.json`，不是命令列參數，修改須符合[架構文件](docs/architecture.md)的契約。`./start.sh status` 另可用 `--database 路徑` 指定資料庫。
+
 
 ## 決策流程
 
@@ -46,6 +92,8 @@ python3 -m venv .venv
 
 Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。資料不足或風控失敗時停止或明確降級。
 
+既有持股若因價格變動超出單股權重硬上限，配置程式會在 Guard 前按整張計算必要減碼，連同部分成交的壓力情境重算；原 Agent 意圖與程式風險減碼分開記錄。無法滿足所有硬性限制時仍會拒絕。
+
 ## 目前狀態與限制
 
 - **已接入**：150 檔交易池、yfinance 研究日線、官方月營收／重大訊息／財報、虛擬帳本、每日決策鏈與可重建的中文報告。帳本使用 TWSE／TPEx 官方價量。
@@ -54,6 +102,8 @@ Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數�
 - **尚未完成**：D-Plan 候選可由 CLI 匯出，但每日流程尚未自動呼叫；主辦方伺服器驗證尚未完成；回測功能已移除。
 
 資料更新成功不代表當天可決策；行情覆蓋、官方價量、交易狀態與日曆仍須通過檢查。
+
+若 `run` 顯示「虛擬帳本未建立本次 prepare 狀態」，先檢查是否有舊決策等待指定成交日官方價量。缺歷史上櫃價量時，在專案根目錄執行 `.venv/bin/python scripts/repair_pending_tpex_close.py`；此指令只補目前待結算決策所需的 TPEx 官方價量，然後執行 `.venv/bin/python cli/virtual_account.py settle`，確認輸出 `status=settled` 後再跑 `./start.sh run`。若缺的是 TWSE 官方價量或來源未提供資料，會停止並顯示缺口，不會改用 Yahoo 價格。
 
 ## 資料與報告位置
 
@@ -65,8 +115,6 @@ Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數�
 | `artifacts/daily_runs/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
 | `artifacts/portfolio_decisions/` | 不可變決策封存與重建輸入 |
 | `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
-
-`var/` 與 `artifacts/` 不納入 Git。
 
 ## 詳細文件
 

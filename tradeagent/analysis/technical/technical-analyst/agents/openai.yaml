@@ -1,4 +1,4 @@
 interface:
   display_name: "技術分析師"
-  short_description: "閱讀整段歷史價格與逐日均線，判斷上升、下跌或盤整並附證據"
-  default_prompt: "使用 $technical-analyst 閱讀整段歷史走勢，每檔給出上升、盤整或下跌，並用簡短中文說明理由與缺少資料。"
+  short_description: "閱讀完整歷史或抽樣摘要，判斷上升、下跌或盤整並附證據"
+  default_prompt: "使用 $technical-analyst 閱讀已驗證的歷史資料；若是抽樣摘要，不把錨點當成連續日線。每檔給出上升、盤整或下跌，並用簡短中文說明理由與缺少資料。"

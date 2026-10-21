@@ -12,7 +12,7 @@ import json
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnapshotTools
-from etf_agent.core import parse_decimal, decimal_string, parse_aware_time
+from etf_agent.core import canonical_sha256, parse_decimal, decimal_string, parse_aware_time
 from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIRED_STATEMENT_TYPES
 from .trend_history import TechnicalTrendHistoryTools
 from .fundamental_language import chinese_gap_explanations
@@ -39,9 +39,16 @@ OUTLOOKS = ("positive", "negative", "neutral", "unknown")
 MATERIALITY = ("high", "medium", "low", "unknown")
 NO_SENTIMENT_SOURCE = "NO_LICENSED_SENTIMENT_SOURCE"
 _EVENT_BODY_LIMIT = 1500
+_EVENT_EXCERPT_HEAD = 500
+_EVENT_EXCERPT_TAIL = 160
 _MOMENTUM_FIELDS = (
     "close", "return_5d", "return_20d", "return_60d", "above_ma20", "above_ma60",
     "atr_14_pct", "downside_volatility_20d", "average_traded_value_20d",
+)
+TECHNICAL_GATE_VERSION = "1.0"
+TECHNICAL_GATE_RULE = (
+    "momentum 狀態為 available，且收盤同時在 MA20 與 MA60 之上、5／20／60 日報酬皆為正，"
+    "或同時在兩條均線之下、三段報酬皆為負；其餘（含資料不足、訊號互相衝突）一律附完整歷史。"
 )
 _REVENUE_FIELDS = ("revenue_period", "yoy_pct", "mom_pct", "cumulative_yoy_pct")
 
@@ -53,6 +60,23 @@ def _short_number(value: object) -> object:
     except (InvalidOperation, ValueError):
         return value
     return str(number.quantize(Decimal("0.01"))) if number.is_finite() else value
+
+
+def technical_trend_gate(item: Mapping[str, object]) -> str:
+    """只用 momentum 已算好的欄位判斷趨勢是否一致；回傳 clear_up／clear_down／mixed。"""
+    if item.get("status") != "available":
+        return "mixed"
+    flags = (item.get("above_ma20"), item.get("above_ma60"))
+    returns = [item.get(field) for field in ("return_5d", "return_20d", "return_60d")]
+    if any(isinstance(flag, bool) is False for flag in flags) or any(
+        isinstance(value, bool) or not isinstance(value, (int, float)) for value in returns
+    ):
+        return "mixed"
+    if all(flags) and all(value > 0 for value in returns):
+        return "clear_up"
+    if not any(flags) and all(value < 0 for value in returns):
+        return "clear_down"
+    return "mixed"
 
 
 def _symbols(bundle: Mapping[str, object]) -> List[str]:
@@ -109,7 +133,8 @@ def build_analyst_brief(
     momentum: Mapping[str, object],
     analyst: str,
     fundamental_metrics: Optional[Mapping[str, object]] = None,
-    *, event_market_scope: bool = False,
+    *, event_market_scope: bool = False, compact_technical: bool = False,
+    technical_gate: bool = False,
 ) -> Dict[str, object]:
     """只重排共同輸入中已存在的事實與程式計算結果，供分析師閱讀。"""
     if analyst not in LLM_ANALYSTS:
@@ -140,7 +165,17 @@ def build_analyst_brief(
                 **{field: _short_number(item[field]) if not isinstance(item.get(field), bool) else item[field]
                    for field in _MOMENTUM_FIELDS if field in item},
             }
-            entry["trend_history"] = trend_tools.for_symbol(symbol)
+            gate = technical_trend_gate(item) if technical_gate else "mixed"
+            if gate != "mixed":
+                # 趨勢一致時不附逐日歷史；完整序列仍在 DecisionInput，Validator 以原始資料驗證引用。
+                entry["trend_history"] = {
+                    "mode": "momentum_only", "gate": gate, "gate_version": TECHNICAL_GATE_VERSION,
+                    "evidence_ids": item.get("evidence_ids", []),
+                    "note": "趨勢一致，未附逐日歷史；判斷請依 momentum 欄位，不要引用未提供的歷史走勢。",
+                }
+            else:
+                entry["trend_history"] = (trend_tools.summary_for_symbol(symbol) if compact_technical
+                                          else trend_tools.for_symbol(symbol))
         elif analyst == "fundamental":
             metrics = metrics_by_symbol.get(symbol, {})
             entry["metrics"] = [
@@ -240,6 +275,12 @@ def build_analyst_brief(
         "regime_assessment": momentum.get("regime_assessment") if analyst == "technical" else None,
         "symbols": symbols,
     }
+    if analyst == "technical" and technical_gate:
+        gated = [row["symbol"] for row in symbols if row["trend_history"].get("mode") == "momentum_only"]
+        brief["technical_gate"] = {
+            "version": TECHNICAL_GATE_VERSION, "rule": TECHNICAL_GATE_RULE,
+            "momentum_only_symbols": gated, "full_history_symbols": len(symbols) - len(gated),
+        }
     if analyst == "event" and event_market_scope:
         from .market_scope import market_sentiment_channel
         brief["market_sentiment"] = market_sentiment_channel(bundle)
@@ -248,6 +289,35 @@ def build_analyst_brief(
             pack = bundle["market_news_input"]["bundle"]
             brief["market_news"] = prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"])
     return brief
+
+
+def compact_event_batch(brief: Mapping[str, object], bundle: Mapping[str, object]) -> tuple[dict, dict]:
+    """事件逐筆全覆蓋；摘要保留首尾，完整原文另以同 Snapshot 證據索引供查閱。"""
+    if brief.get("analyst") != "event":
+        raise DecisionToolError("只有事件分析師輸入可以壓縮事件原文")
+    members = {row["symbol"] for row in brief["symbols"]}
+    source = {
+        "snapshot_id": bundle["snapshot_id"],
+        "decision_cutoff": bundle["decision_cutoff"],
+        "events": [
+            {key: document.get(key) for key in ("symbol", "source_evidence_id", "title", "published_at", "available_at", "body")}
+            for document in bundle["snapshot"]["documents"]
+            if document.get("document_type") == "material_event" and document.get("symbol") in members
+        ],
+    }
+    source["content_sha256"] = canonical_sha256(source)
+    output = {**brief, "symbols": []}
+    for row in brief["symbols"]:
+        compact = {**row, "events": []}
+        for event in row["events"]:
+            item = dict(event)
+            body = str(item["body"])
+            if len(body) > _EVENT_EXCERPT_HEAD + _EVENT_EXCERPT_TAIL:
+                item["body"] = body[:_EVENT_EXCERPT_HEAD] + " …［中段請依 evidence_id 查完整來源］… " + body[-_EVENT_EXCERPT_TAIL:]
+                item["brief_excerpt_truncated"] = True
+            compact["events"].append(item)
+        output["symbols"].append(compact)
+    return output, source
 
 
 def seal_report(envelope: Mapping[str, object], items: Sequence[Mapping[str, object]], status: str = "completed") -> Dict[str, object]:

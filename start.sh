@@ -4,6 +4,16 @@ set -eu
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$PROJECT_DIR"
 
+# macOS ChatGPT.app 內附的 Codex CLI；非互動 shell／launchd 不會載入 ~/.zshrc。
+if [ -x "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex" ]; then
+  PATH="/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin:$PATH"
+  export PATH
+fi
+if [ -x "$HOME/.opencode/bin/opencode" ]; then
+  PATH="$HOME/.opencode/bin:$PATH"
+  export PATH
+fi
+
 MODE=${1:-dashboard}
 if [ "$#" -gt 0 ]; then
   shift

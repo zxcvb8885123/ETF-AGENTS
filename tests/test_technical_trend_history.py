@@ -41,6 +41,22 @@ class TechnicalTrendHistoryTests(unittest.TestCase):
         for role in ("fundamental", "event"):
             self.assertTrue(all("trend_history" not in r for r in build_analyst_brief(bundle, momentum, role)["symbols"]))
 
+    def test_summary_keeps_endpoints_extrema_recent_and_rebuilds(self):
+        bundle = decision_bundle()
+        tools = TechnicalTrendHistoryTools(bundle)
+        full = tools.for_symbol("2330.TW")
+        summary = tools.summary_for_symbol("2330.TW")
+        self.assertEqual(summary["observation_count"], len(full["rows"]))
+        self.assertLess(len(summary["rows"]), len(full["rows"]))
+        self.assertEqual(summary["rows"][0], full["rows"][0])
+        self.assertEqual(summary["rows"][-5:], full["rows"][-5:])
+        self.assertEqual(summary["source_series_sha256"], full["source_series_sha256"])
+        self.assertEqual(TechnicalTrendHistoryValidator(bundle).validate_summary(summary, "2330.TW"), [])
+        tampered = copy.deepcopy(summary)
+        tampered["rows"][0]["close"] = "999"
+        tampered["content_sha256"] = canonical_sha256({key: value for key, value in tampered.items() if key != "content_sha256"})
+        self.assertTrue(TechnicalTrendHistoryValidator(bundle).validate_summary(tampered, "2330.TW"))
+
     def test_rejects_modified_paths_even_with_resealed_hash_and_foreign_symbol(self):
         bundle = decision_bundle()
         history = TechnicalTrendHistoryTools(bundle).for_symbol("2330.TW")
@@ -63,3 +79,52 @@ class TechnicalTrendHistoryTests(unittest.TestCase):
         bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
         with self.assertRaises(DecisionToolError):
             TechnicalTrendHistoryTools(bundle)
+
+
+class TechnicalGateTests(unittest.TestCase):
+    UP = {"status": "available", "above_ma20": True, "above_ma60": True,
+          "return_5d": 0.01, "return_20d": 0.05, "return_60d": 0.1}
+
+    def test_clear_trends_are_gated_and_everything_else_stays_mixed(self):
+        from etf_agent.decision.analysts import technical_trend_gate
+        self.assertEqual(technical_trend_gate(self.UP), "clear_up")
+        down = {**self.UP, "above_ma20": False, "above_ma60": False,
+                "return_5d": -0.01, "return_20d": -0.05, "return_60d": -0.1}
+        self.assertEqual(technical_trend_gate(down), "clear_down")
+        for change in (
+            {"status": "insufficient"}, {"above_ma60": False}, {"return_5d": -0.01},
+            {"return_60d": 0}, {"return_20d": None}, {"above_ma20": None}, {"return_5d": True},
+        ):
+            self.assertEqual(technical_trend_gate({**self.UP, **change}), "mixed", change)
+        self.assertEqual(technical_trend_gate({}), "mixed")
+
+    def test_gate_is_off_by_default_and_never_gates_without_clear_trend(self):
+        bundle = decision_bundle()
+        momentum = MomentumEngine(bundle).run()
+        plain = build_analyst_brief(bundle, momentum, "technical")
+        self.assertNotIn("technical_gate", plain)
+        self.assertTrue(all("rows" in row["trend_history"] for row in plain["symbols"]))
+
+    def test_gated_brief_keeps_evidence_and_full_history_for_mixed_symbols(self):
+        bundle = decision_bundle()
+        momentum = MomentumEngine(bundle).run()
+        for item in momentum["items"]:
+            if item["symbol"] == "2330.TW":
+                item.update(self.UP)
+            else:
+                item["status"] = "insufficient"
+        brief = build_analyst_brief(bundle, momentum, "technical", technical_gate=True)
+        rows = {row["symbol"]: row for row in brief["symbols"]}
+        gated = rows["2330.TW"]["trend_history"]
+        self.assertEqual(gated["mode"], "momentum_only")
+        self.assertEqual(gated["evidence_ids"], rows["2330.TW"]["momentum"]["evidence_ids"])
+        self.assertNotIn("rows", gated)
+        self.assertEqual(brief["technical_gate"]["momentum_only_symbols"], ["2330.TW"])
+        self.assertEqual(
+            brief["technical_gate"]["full_history_symbols"], len(rows) - 1,
+        )
+        for symbol, row in rows.items():
+            if symbol != "2330.TW":
+                self.assertIn("rows", row["trend_history"])
+        # 其他分析師不受影響
+        self.assertNotIn("technical_gate", build_analyst_brief(bundle, momentum, "fundamental", technical_gate=True))

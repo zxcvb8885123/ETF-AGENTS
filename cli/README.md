@@ -2,7 +2,7 @@
 
 這個目錄提供人工操作、排程器與 Skill 共用的單步命令入口，只解析參數並呼叫 `src/etf_agent/` 的核心服務，不複製資料蒐集、投資判斷或數值計算邏輯。
 
-日常操作請用專案根目錄的 `./start.sh`（`auto` 更新資料、`daily` 準備帳本、`run` 完整每日決策、`status` 查資料狀態，無參數開儀表板；`./start.sh --help` 查看全部），見 [Docker 使用說明](../docs/docker.md)。`run` 會呼叫 `scripts/run_daily_pipeline.py`，以 `--agent-cli claude|codex` 選擇子 Agent CLI。下列單步入口供進階操作使用。
+日常操作請用專案根目錄的 `./start.sh`（`auto` 更新資料、`daily` 準備帳本、`run` 完整每日決策、`status` 查資料狀態，無參數開儀表板；`./start.sh --help` 查看全部），見 [Docker 使用說明](../docs/docker.md)。`run` 會呼叫 `scripts/run_daily_pipeline.py`，以 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI；可先執行 `./start.sh run --agent-cli opencode --preflight-only --skip-data` 驗證 OpenCode 已登入與必要檔案。下列單步入口供進階操作使用。
 
 | 入口 | 核心領域 |
 | --- | --- |
@@ -37,6 +37,6 @@ PYTHONPATH=src python3 cli/trading_status.py validate --input artifacts/trading-
   --output artifacts/competition/contexts/context_DECISION_RUN_ID.json
 ```
 
-`tradeagent/` 只定義 Codex／Claude 的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。
+`tradeagent/` 定義 Codex／Claude／OpenCode 共用的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。
 
 單步 CLI 的部分功能供離線驗證或 fixture 研究使用；不能因命令可執行就視為已接入每日正式決策。各來源的核准與限制見 [資料來源清單](../docs/data_sources_inventory.md)。

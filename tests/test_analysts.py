@@ -15,7 +15,7 @@ from etf_agent.decision import (
     seal_report,
     sentiment_unavailable_report,
 )
-from etf_agent.decision.analysts import report_envelope
+from etf_agent.decision.analysts import compact_event_batch, report_envelope
 
 from test_daily_pipeline import FakeRunner
 from test_portfolio_decision_agent import decision_bundle
@@ -125,6 +125,20 @@ class AnalystReportValidatorTests(unittest.TestCase):
 
 
 class AnalystBriefTests(unittest.TestCase):
+    def test_event_excerpt_keeps_every_id_and_full_source(self):
+        bundle = bundle_with_event()
+        original = "董事會決議" + "投資計畫與產能評估。" * 150
+        bundle["snapshot"]["documents"][0]["body"] = original
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        brief = build_analyst_brief(bundle, MomentumEngine(bundle).run(), "event", event_market_scope=True)
+        compact, source = compact_event_batch(brief, bundle)
+        event = next(item for item in compact["symbols"] if item["symbol"] == "2330.TW")["events"][0]
+        self.assertEqual(event["evidence_id"], EVENT_ID)
+        self.assertTrue(event["brief_excerpt_truncated"])
+        self.assertEqual(source["events"][0]["body"], original)
+        self.assertEqual(source["content_sha256"], canonical_sha256({key: value for key, value in source.items() if key != "content_sha256"}))
+
     def test_briefs_only_rearrange_existing_inputs(self):
         bundle = bundle_with_event()
         momentum = MomentumEngine(bundle).run()

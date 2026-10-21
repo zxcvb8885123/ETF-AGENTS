@@ -90,9 +90,16 @@ class DeliveryRepository(ImmutableRunStore):
             latest = root / "latest.json"
             if latest.exists():
                 old = json.loads(latest.read_text(encoding="utf-8"))
-                if parse_aware_time(old["started_at"], "started_at", error=DeliveryError) > started:
+                # 舊版報告索引只有 generated_at；允許依其發布時間遷移，但不接受未知格式。
+                old_time = old.get("started_at")
+                if old_time is None and old.get("schema_version") == "1.0" and old.get("workflow_run_id"):
+                    old_time = old.get("generated_at")
+                previous = parse_aware_time(old_time, "舊報告時間", error=DeliveryError)
+                if previous > started:
                     return False
-                if parse_aware_time(old["started_at"], "started_at", error=DeliveryError) == started and old["delivery_id"] != run_id:
+                if previous == started and old.get("delivery_id") != run_id:
+                    if "delivery_id" not in old:
+                        raise DeliveryError("舊報告與本次發布同一時間，拒絕覆寫")
                     old_ready = old["status"]["report_status"] == "ready"
                     new_ready = artifacts["delivery_status"]["report_status"] == "ready"
                     invalidated_source = (

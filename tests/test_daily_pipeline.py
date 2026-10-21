@@ -129,8 +129,10 @@ class PipelineWorld:
         self.run_dir.mkdir()
         self.repository = directory / "decisions"
 
-    def run(self, runner):
-        pipeline = DailyDecisionPipeline(ROOT, self.run_dir, runner, self.repository, log=lambda _: None)
+    def run(self, runner, analyst_runner=None):
+        pipeline = DailyDecisionPipeline(
+            ROOT, self.run_dir, runner, self.repository, log=lambda _: None, analyst_runner=analyst_runner,
+        )
         return pipeline.run(
             self.paths["snapshot"], self.paths["account"], self.paths["trading_status"],
             self.paths["rules"], self.paths["database"],
@@ -168,6 +170,43 @@ class DailyPipelineTests(unittest.TestCase):
             policy = json.loads((world.run_dir / "policy.json").read_text(encoding="utf-8"))
             self.assertEqual(policy["cash_buffer_rate"], "0.10")
             self.assertEqual(policy["position_sizing"]["conviction_by_symbol"], {"2317.TW": "medium"})
+            trader_brief = json.loads((world.run_dir / "brief_trader_b0.json").read_text(encoding="utf-8"))
+            self.assertEqual(trader_brief["account"]["position_count"], 1)
+            self.assertEqual(trader_brief["account"]["held_symbols"], ["2330.TW"])
+            self.assertNotIn("positions", trader_brief["account"])
+            held = next(row for row in trader_brief["symbols"] if row["symbol"] == "2330.TW")
+            self.assertGreater(held["held_shares"], 0)
+            self.assertTrue(held["bull"]["claims"])
+
+    def test_analyst_runner_only_handles_analyst_batches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            outputs = team_outputs()
+            analyst = FakeRunner({name: outputs[name] for name in ("technical_b0", "fundamental_b0", "event_b0")})
+            analyst.model = "cheap-model"
+            main = FakeRunner({name: items for name, items in outputs.items() if name not in analyst.outputs})
+            main.model = "strong-model"
+            result = world.run(main, analyst_runner=analyst)
+
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertEqual([name for name, _ in analyst.prompts], ["technical_b0", "fundamental_b0", "event_b0"])
+            self.assertEqual(
+                [name for name, _ in main.prompts],
+                ["bull_b0", "bear_b0", "trader_b0", "cash_stance", "review_r0"],
+            )
+            models = {call["name"]: call["model"] for call in result.agent_calls}
+            self.assertEqual(models["technical_b0"], "cheap-model")
+            self.assertEqual(models["event_b0"], "cheap-model")
+            self.assertEqual(models["bull_b0"], "strong-model")
+            self.assertEqual(models["trader_b0"], "strong-model")
+
+    def test_without_analyst_runner_one_runner_handles_everything(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertTrue(all("model" not in call for call in result.agent_calls))
 
     def test_high_event_goes_directly_to_stock_research_and_risk(self):
         from test_analysts import bundle_with_event, EVENT_ID

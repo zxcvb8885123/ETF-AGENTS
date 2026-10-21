@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -43,6 +45,7 @@ class AgentCall:
     output: Dict[str, object]
     # claude -p 回報的 total_cost_usd：以 API 價格估算的用量；claude.ai 訂閱登入時不另計費。
     estimated_usage_usd: float = 0.0
+    usage_tokens: Optional[Dict[str, int]] = None
 
 
 class AgentRunner(Protocol):
@@ -149,3 +152,99 @@ class CodexAgentRunner:
             if not isinstance(output, dict):
                 raise DailyPipelineError("%s Codex Agent 輸出不是物件" % task.name)
             return AgentCall(task.name, 0, output)
+
+
+class OpenCodeAgentRunner:
+    """隔離的 OpenCode 非互動工作階段；只准讀檔，JSONL 最後一則訊息須是 JSON。"""
+
+    def __init__(
+        self,
+        project_root: Path,
+        executable: str = "opencode",
+        model: Optional[str] = None,
+        timeout_seconds: int = 1800,
+    ):
+        self.project_root = project_root
+        self.executable = executable
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
+        # 不沿用使用者／專案的寫入工具設定或外部插件；每次任務都是獨立會話。
+        config = {
+            "agent": {
+                "etf-read-only": {
+                    "mode": "primary",
+                    "permission": {
+                        "*": "deny",
+                        "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny"},
+                        "external_directory": "deny",
+                    },
+                }
+            }
+        }
+        env = dict(os.environ, OPENCODE_DISABLE_PROJECT_CONFIG="1",
+                   OPENCODE_CONFIG_CONTENT=json.dumps(config, ensure_ascii=False))
+        command = [self.executable, "run", "--pure", "--agent", "etf-read-only", "--format", "json"]
+        if self.model:
+            command += ["--model", self.model]
+        command += [
+            "只讀本次提供的 Skill 與 brief；不得修改檔案、執行命令、讀取 .env 或自行新增來源。"
+            "只輸出符合下列 JSON Schema 的單一 JSON 物件，不加 Markdown 或前後說明。\n"
+            + json.dumps(task.schema, ensure_ascii=False)
+            + "\n\n" + task.prompt
+        ]
+        try:
+            completed = subprocess.run(command, cwd=self.project_root, env=env,
+                                       capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise DailyPipelineError("%s OpenCode Agent 執行失敗：%s" % (task.name, error)) from error
+        if completed.returncode != 0:
+            raise DailyPipelineError("%s OpenCode Agent 失敗（exit %d）：%s" %
+                                     (task.name, completed.returncode, completed.stderr[-500:]))
+        messages: Dict[str, list[str]] = {}
+        final_message = None
+        usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0}
+        cost = 0.0
+        try:
+            for line in completed.stdout.splitlines():
+                event = json.loads(line)
+                kind = event.get("type")
+                part = event.get("part", {})
+                if not isinstance(part, dict):
+                    raise ValueError("事件 part 格式錯誤")
+                if kind == "error":
+                    raise ValueError("Agent 回報錯誤")
+                if kind == "tool_use" and (part.get("tool") != "read" or part.get("state", {}).get("status") != "completed"):
+                    raise ValueError("Agent 使用未核准工具或讀取失敗")
+                if kind == "text":
+                    message_id = part.get("messageID")
+                    if not isinstance(message_id, str) or not isinstance(part.get("text"), str):
+                        raise ValueError("文字事件缺少訊息識別或內容")
+                    messages.setdefault(message_id, []).append(part["text"])
+                if kind == "step_finish":
+                    tokens = part.get("tokens")
+                    if not isinstance(tokens, dict) or not isinstance(tokens.get("cache"), dict):
+                        raise ValueError("缺少可核對的 token 用量")
+                    fields = {"input_tokens": tokens.get("input"), "cached_input_tokens": tokens["cache"].get("read"),
+                              "output_tokens": tokens.get("output"), "reasoning_output_tokens": tokens.get("reasoning")}
+                    for field, value in fields.items():
+                        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                            raise ValueError("token 用量欄位無效：%s" % field)
+                        usage[field] += value
+                    amount = float(part.get("cost", 0))
+                    if not math.isfinite(amount) or amount < 0:
+                        raise ValueError("估算費用無效")
+                    cost += amount
+                    final_message = part.get("messageID") if part.get("reason") == "stop" else None
+        except (ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError) as error:
+            raise DailyPipelineError("%s OpenCode Agent JSONL 無效：%s" % (task.name, error)) from error
+        if not isinstance(final_message, str) or final_message not in messages:
+            raise DailyPipelineError("%s OpenCode Agent 未完成最終 JSON 回答" % task.name)
+        try:
+            output = json.loads("".join(messages[final_message]))
+        except json.JSONDecodeError as error:
+            raise DailyPipelineError("%s OpenCode Agent 最終輸出不是 JSON" % task.name) from error
+        if not isinstance(output, dict):
+            raise DailyPipelineError("%s OpenCode Agent 輸出不是物件" % task.name)
+        return AgentCall(task.name, 0, output, cost, usage)

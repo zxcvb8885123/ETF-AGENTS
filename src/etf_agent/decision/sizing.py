@@ -21,6 +21,8 @@ from .contracts import (
 
 
 SIZING_METHOD = "conviction_volatility_v1"
+# 2026-10-19 後新增的單股硬上限整張減碼；省略此欄位的舊 Decision run 維持原重建行為。
+STOCK_WEIGHT_FIT = "v1"
 CONVICTION_LEVELS = ("high", "medium", "low")
 # 現金姿態由積極到防守；對應的現金緩衝由 Policy 設定，必須低於競賽現金上限。
 CASH_STANCES = ("aggressive", "neutral", "defensive")
@@ -62,12 +64,15 @@ def validate_position_sizing(
         {
             "method", "conviction_multipliers", "volatility_floor", "cash_buffer_by_stance",
             "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
+            "stock_weight_fit",
         },
         "DecisionPolicy.position_sizing",
         errors,
     )
     if sizing.get("method") != SIZING_METHOD:
         errors.append("position_sizing.method 必須為 %s" % SIZING_METHOD)
+    if "stock_weight_fit" in sizing and sizing["stock_weight_fit"] != STOCK_WEIGHT_FIT:
+        errors.append("position_sizing.stock_weight_fit 只允許 %s；舊 Decision run 省略此欄位" % STOCK_WEIGHT_FIT)
     multipliers = sizing.get("conviction_multipliers")
     if not isinstance(multipliers, Mapping) or set(multipliers) != set(CONVICTION_LEVELS):
         errors.append("position_sizing.conviction_multipliers 必須剛好包含 high／medium／low")

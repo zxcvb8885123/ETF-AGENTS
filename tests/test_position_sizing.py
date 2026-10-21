@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from etf_agent.decision import (
     AllocationOrderEngine,
@@ -177,6 +178,33 @@ class ConvictionAllocationTests(unittest.TestCase):
         self.assertTrue(any("high ≥ medium ≥ low" in error for error in errors))
         with self.assertRaisesRegex(DecisionToolError, "尚未綁定的基礎 policy"):
             apply_trade_decision(sized_policy(sized_inputs()[3], intent, stance, bundle), intent, stance, bundle)
+
+    def test_stock_weight_fit_version_gates_replay_of_legacy_decisions(self):
+        bundle, intent, stance, policy = sized_inputs()
+        legacy = sized_policy(policy, intent, stance, bundle)
+        self.assertNotIn("stock_weight_fit", legacy["position_sizing"])
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(legacy), [])
+        fit = AllocationOrderEngine._fit_stock_weights
+
+        with patch.object(AllocationOrderEngine, "_fit_stock_weights", autospec=True, side_effect=fit) as spy:
+            AllocationOrderEngine(bundle, legacy).run(intent)
+        spy.assert_not_called()  # 舊 Decision run 必須維持 #59 之前的重建結果
+
+        current = copy.deepcopy(policy)
+        current["position_sizing"]["stock_weight_fit"] = "v1"
+        current["content_sha256"] = decision_policy_sha256(current)
+        current = sized_policy(current, intent, stance, bundle)
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(current), [])
+        with patch.object(AllocationOrderEngine, "_fit_stock_weights", autospec=True, side_effect=fit) as spy:
+            AllocationOrderEngine(bundle, current).run(intent)
+        spy.assert_called_once()
+
+    def test_policy_rejects_unknown_stock_weight_fit_version(self):
+        bundle, _, _, policy = sized_inputs()
+        policy["position_sizing"]["stock_weight_fit"] = "v0"
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        errors = DecisionPolicyValidator(bundle).validate(policy)
+        self.assertTrue(any("stock_weight_fit" in error for error in errors))
 
 
 class DecisionPolicyBuilderTests(unittest.TestCase):

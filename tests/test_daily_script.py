@@ -56,8 +56,10 @@ class NamedResumeTests(unittest.TestCase):
             root = Path(directory)
             legacy = self.make_run(root, "daily-20260928", "failed")
             codex = self.make_run(root, "daily-20260929", "failed", agent_cli="codex")
+            opencode = self.make_run(root, "daily-20260930", "failed", agent_cli="opencode")
             self.assertEqual(self.module.resumable_agent_cli(legacy), "claude")
             self.assertEqual(self.module.resumable_agent_cli(codex), "codex")
+            self.assertEqual(self.module.resumable_agent_cli(opencode), "opencode")
 
 
 if __name__ == "__main__":

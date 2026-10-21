@@ -15,7 +15,7 @@
 | momentum_status | 程式計算的動能資料是否可用。available 表示通過資料可用性檢查。 | available 不是買進訊號，只是 buy／add 的必要資料條件。 |
 | tradability_state | 官方交易狀態的核對結果。 | 判斷行動是否受限制；最終由 Guard 檢查，不能自行忽略限制。 |
 
-整體背景包括 regime_assessment（程式判定的市場狀態）、account（帳戶現金、淨值與持倉）及 rules（競賽限制）。它們幫助你理解交易條件，不替你決定哪方論點成立。
+整體背景包括 regime_assessment（程式判定的市場狀態）、account（現金、淨值、持股代號與檔數）及 rules（競賽限制）；本批各股票的 `held_shares` 另列於逐股輸入。完整帳戶與每檔股數仍在同 Snapshot 的原始決策輸入供 Validator 重建，不需在每批 brief 重貼。這些欄位幫助你理解交易條件，不替你決定哪方論點成立。
 
 公司事件與全市場情緒是不同範圍。analyst_outlooks 裡的 event 表示該公司事件，不表示整體台股情緒；不能用公司結果補出全市場看法。目前事件已由第三位分析師整合，不另跑事件四子 Agent。
 

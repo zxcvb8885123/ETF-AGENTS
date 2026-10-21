@@ -30,7 +30,7 @@ EXECUTION_PRICE_RULE = "official_average_price"
 OFFICIAL_SOURCES: Mapping[str, Tuple[str, ...]] = {
     # 同一市場依優先序取第一筆。
     "TWSE": ("TWSE_STOCK_DAY", "TWSE_STOCK_DAY_ALL"),
-    "TPEX": ("TPEX_TRADING_STOCK", "TPEX_MAINBOARD_QUOTES"),
+    "TPEX": ("TPEX_TRADING_STOCK", "TPEX_MAINBOARD_QUOTES", "TPEX_DAILY_QUOTES_HISTORY"),
 }
 
 
