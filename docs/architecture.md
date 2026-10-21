@@ -21,7 +21,7 @@
 
 決策與帳本用價是 Snapshot `latest_prices` 的 `execution_close_price`（同日官方原價，附 `execution_price_source` 與 `execution_source_evidence_id`）；`analysis_close_price` 是調整價，只供研究與技術指標。同日沒有官方價時 `execution_*` 為空，配置、風控與 D-Plan 退回 `analysis_close_price`，重放過去日期時該價含事後除權息調整，屬已知限制。舊封存沒有此欄位仍可重建驗證。
 
-目前每日技術分析仍讀完整 `trend_history`；固定錨點摘要與事件首尾摘錄只在另存的研究試驗中使用，未替換每日決策輸入。交易 brief 已將重複的完整帳戶持倉改成帳戶現金／NAV、持股代號及檔數，本批逐股 `held_shares` 仍保留；完整 AccountSnapshot 和分析師原始報告繼續供 Validator 重建。試驗差異與後續門檻見[降 token 計劃](token_reduction_plan.md)。
+每日技術分析預設開啟 `--technical-gate`（`--no-technical-gate` 可改回全部附完整 `trend_history`）：趨勢一致（收盤同在 MA20／MA60 之上且 5／20／60 日報酬皆正，或皆在之下且皆負）的股票只附 `momentum` 與證據 ID，其餘及資料不足者仍附完整歷史；分析師仍對全部股票給 outlook，Validator 與引用檢查不變；10/20 同 Snapshot 的有／無閘門對照見[降 token 計劃](token_reduction_plan.md)，樣本僅一天。`--analyst-model` 在 Claude CLI 預設為 `sonnet`（`inherit` 沿用 `--model`），技術／基本面／事件批次使用它，多空、交易與現金姿態維持 `--model`，`agent_calls` 會記錄實際模型。固定錨點摘要與事件首尾摘錄只在另存的研究試驗中使用，未替換每日決策輸入。交易 brief 已將重複的完整帳戶持倉改成帳戶現金／NAV、持股代號及檔數，本批逐股 `held_shares` 仍保留；完整 AccountSnapshot 和分析師原始報告繼續供 Validator 重建。試驗差異與後續門檻見[降 token 計劃](token_reduction_plan.md)。
 
 配置程式在產生提案時就以 Policy 的單股上限（含特殊上限）檢查既有持股與候選，按整張降低預計超重部位，並用同一情境引擎檢查部分成交後的曝險；`constraint_flags.RISK_STOCK_WEIGHT` 記錄程式必要的硬規則減碼，原交易 Agent 的 `hold` 等意圖不被偽改。風險 Agent 不手寫股數或權重；交易受限、整張／現金／換手等限制無法同時滿足時，CompetitionGuard 仍須拒絕。
 

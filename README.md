@@ -36,9 +36,52 @@ python3 -m venv .venv
 ./start.sh run --agent-cli opencode
 ```
 
-參數會原樣傳給 `run`／`status`，用 `./start.sh run --help` 查看（如 `--preflight-only`、`--resume`）。環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。
+環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。
 
-ChatGPT.app 內附的 Codex CLI 路徑已加入本機 zsh 的 PATH；`start.sh` 也會在 macOS 非互動環境偵測該路徑。OpenCode 以隔離唯讀 Agent 執行，禁用外部插件及寫入／命令工具；其 JSONL 用量只記錄 CLI 回報數值，並不等於實際訂閱費用。兩者的輸出均由同一套 Python Validator 重建；換執行器時不可續用其他執行器的 run。
+## `./start.sh run` 可調整的參數
+
+參數會原樣傳給 `scripts/run_daily_pipeline.py`，完整說明用 `./start.sh run --help` 查看。不帶任何參數即使用下表「預設」欄。
+
+### 控制用量與模型
+
+| 參數 | 預設 | 作用 |
+| --- | --- | --- |
+| `--agent-cli claude\|codex\|opencode` | `claude` | 子 Agent 使用的 CLI。換執行器時不可續用其他執行器的 run。 |
+| `--model 模型` | 所選 CLI 的設定 | 多空研究、交易與現金姿態使用的模型。 |
+| `--analyst-model 模型` | Claude CLI 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於技術／基本面／事件三位分析師的批次，量最大。傳 `inherit` 則沿用 `--model`。 |
+| `--technical-gate` ／ `--no-technical-gate` | 開啟 | 趨勢一致的股票技術 brief 只附 `momentum`、不附逐日歷史，約少一半輸入；資料不足或訊號衝突者仍附完整歷史。同 Snapshot 對照結果見[降 token 計劃](docs/token_reduction_plan.md)，樣本只有一天。 |
+| `--max-budget-usd 金額` | 3 | 單次子 Agent 呼叫的估算用量上限，只適用 Claude CLI。 |
+
+### 續跑與重跑
+
+| 參數 | 預設 | 作用 |
+| --- | --- | --- |
+| `--resume` | 關 | 沿用同一 run 目錄中已通過驗證的 Agent 輸出，例如撞到用量上限後續跑；建議搭配 `--skip-data`。 |
+| `--resume-run RUN_ID` | 無 | 指定要續跑的 run 目錄（如 `daily-20261020`）並隱含 `--resume`；跨午夜或額度重置後找不到前一天的 run 時使用。 |
+| `--skip-data` | 關 | 沿用既有 Snapshot 與帳戶快照，不重新執行資料更新。 |
+| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期已完成就不重跑。 |
+| `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
+
+### 檢查與輸入
+
+| 參數 | 預設 | 作用 |
+| --- | --- | --- |
+| `--preflight-only` | 關 | 只檢查 Docker、Agent CLI 登入、帳戶、必要檔案與磁碟，不耗用量。 |
+| `--min-free-gb GiB` | 2.0 | 執行前要求的最低可用磁碟空間。 |
+| `--account-id ID` | `ai-cup-2026` | 指定帳戶。 |
+| `--perception-bundle` ／ `--perception` | 無 | 已核准授權、同 cutoff 且成對的情緒與共識資料包／結果；沒有則該通道為 unavailable。 |
+
+### 常見組合
+
+```bash
+./start.sh run --preflight-only --skip-data                  # 不耗用量，先確認環境
+./start.sh run --resume-run daily-20261020 --skip-data       # 撞到用量上限後續跑
+./start.sh run --no-technical-gate --analyst-model inherit   # 回到最保守的完整輸入、單一模型
+./start.sh run --delivery-only daily-20261020-213724         # 只重建報告
+```
+
+不在表中的設定（Policy 乘數、現金姿態對應、`max_revisions` 等）在 `config/decision_policy.json`，不是命令列參數，修改須符合[架構文件](docs/architecture.md)的契約。`./start.sh status` 另可用 `--database 路徑` 指定資料庫。
+
 
 ## 決策流程
 
@@ -72,8 +115,6 @@ Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數�
 | `artifacts/daily_runs/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
 | `artifacts/portfolio_decisions/` | 不可變決策封存與重建輸入 |
 | `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
-
-`var/` 與 `artifacts/` 不納入 Git。
 
 ## 詳細文件
 

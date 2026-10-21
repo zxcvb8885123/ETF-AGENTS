@@ -42,7 +42,7 @@ macOS 排程：`com.etf-agents.data` 於台北時間平日 20:00 執行 `data`�
 
 `daily` 先驗證官方來源與交易池，再更新官方帳本價量、yfinance 日線、月營收／重大訊息與財報（yfinance 截止日未覆蓋 150 檔即停止），最後以 `DAILY_CUTOFF`（未設定時為 Asia/Taipei 現在時間）建立 Snapshot 並推進虛擬帳本；帳本推進失敗時以非零狀態結束。官方個股月行情由 `scripts/collect_official_history.py` 補上市（TWSE `STOCK_DAY`，來源 `TWSE_STOCK_DAY`）與上櫃（TPEx `tradingStock`，來源 `TPEX_TRADING_STOCK`），兩市場共用同一個節流器，全新環境首次回看兩年約需數十分鐘；資料專用排程（`data`）不補。個股新聞由 22:00 的 FinMind 排程擷取，來源授權與時間尚未核准。
 
-`run` 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py` 並原樣傳遞參數，以 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI，資料階段仍走 Docker 的 `daily`。缺少 `.venv` 時會停止並提示安裝方式。ChatGPT.app 內附 Codex CLI 的 macOS 路徑由 `start.sh` 在非互動 shell 自動加入 PATH（互動 zsh 亦已設定）；OpenCode 預檢只回報是否有憑證，不保存帳號。三種執行器都交給同一套 Python Validator；Codex 已完成真實資料端到端執行，OpenCode 目前只有小型唯讀煙霧測試與模擬 CLI 測試。OpenCode 執行時禁用插件，唯讀且不允許 .env／外部目錄；重試與續跑仍檢查 Snapshot、cutoff、執行器及來源。CLI 回報的用量不是訂閱帳單。不會自動產生或送出訂單。
+`run` 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py` 並原樣傳遞參數，以 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI，資料階段仍走 Docker 的 `daily`。缺少 `.venv` 時會停止並提示安裝方式。ChatGPT.app 內附 Codex CLI 的 macOS 路徑由 `start.sh` 在非互動 shell 自動加入 PATH（互動 zsh 亦已設定）；OpenCode 預檢只回報是否有憑證，不保存帳號。三種執行器都交給同一套 Python Validator；Codex 已完成真實資料端到端執行，OpenCode 目前只有小型唯讀煙霧測試與模擬 CLI 測試。OpenCode 執行時禁用插件，唯讀且不允許 .env／外部目錄；重試與續跑仍檢查 Snapshot、cutoff、執行器及來源。CLI 回報的用量不是訂閱帳單。`run` 另支援 `--analyst-model MODEL`（只用於技術／基本面／事件分析師批次；Claude CLI 預設 `sonnet`，傳 `inherit` 沿用 `--model`，其他 CLI 未指定時沿用 `--model`）與 `--technical-gate`／`--no-technical-gate`（預設開啟，見[降 token 計劃](token_reduction_plan.md)）。不會自動產生或送出訂單。
 
 Windows PowerShell 可執行單步 Python CLI；`start.sh` 的 PowerShell 對應入口尚未實作。
 
