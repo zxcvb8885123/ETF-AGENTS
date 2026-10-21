@@ -11,7 +11,7 @@ from etf_agent.dashboard import build_performance_summary
 from etf_agent.data import TradingCalendar, TradingCalendarError
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
 from etf_agent.ledger import ExecutionSimulator, LedgerError
-from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price
+from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price, supersede_decision_runs
 from test_virtual_account import prepare_and_decide
 
 
@@ -34,6 +34,35 @@ def create_prices(path, rows):
     )
     connection.commit()
     connection.close()
+
+
+class SupersedeDecisionRunsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.decisions = self.root / "decisions"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def make_run(self, name, snapshot):
+        run = self.decisions / name
+        run.mkdir(parents=True)
+        (run / "decision_input.json").write_text(json.dumps({"account_snapshot": snapshot}), encoding="utf-8")
+
+    def test_older_run_with_same_account_snapshot_is_archived(self):
+        self.make_run("decision-old", {"id": 1})
+        self.make_run("decision-new", {"id": 1})
+        self.make_run("decision-other", {"id": 2})
+        archive = self.root / "archive"
+        self.assertEqual(supersede_decision_runs(self.decisions, "decision-new", archive), ["decision-old"])
+        self.assertEqual(sorted(path.name for path in self.decisions.iterdir()), ["decision-new", "decision-other"])
+        self.assertTrue((archive / "decision-old" / "decision_input.json").exists())
+
+    def test_without_duplicates_nothing_moves(self):
+        self.make_run("decision-new", {"id": 1})
+        self.assertEqual(supersede_decision_runs(self.decisions, "decision-new", self.root / "archive"), [])
+        self.assertFalse((self.root / "archive").exists())
 
 
 class DailyAccountRunnerTests(unittest.TestCase):

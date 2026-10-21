@@ -11,6 +11,7 @@ Yahoo 等還原價格成交。
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -77,6 +78,26 @@ def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, 
     if len(matches) > 1:
         raise VirtualAccountError("多個 Decision run 使用同一 AccountSnapshot：%s" % "、".join(matches))
     return matches[0] if matches else None
+
+
+def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive_root: Path) -> List[str]:
+    """同一份 AccountSnapshot 重跑後，把較舊的 Decision run 整個搬到封存區，只留 keep_run_id；回傳被取代的 run。"""
+    root = Path(decision_repository)
+    kept = root / keep_run_id / "decision_input.json"
+    account_snapshot = json.loads(kept.read_text(encoding="utf-8")).get("account_snapshot")
+    superseded: List[str] = []
+    for run_dir in sorted(root.iterdir()):
+        if run_dir.name == keep_run_id or not run_dir.is_dir() or not (run_dir / "decision_input.json").exists():
+            continue
+        try:
+            bundle = json.loads((run_dir / "decision_input.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(bundle, Mapping) and bundle.get("account_snapshot") == account_snapshot:
+            Path(archive_root).mkdir(parents=True, exist_ok=True)
+            shutil.move(str(run_dir), str(Path(archive_root) / run_dir.name))
+            superseded.append(run_dir.name)
+    return superseded
 
 
 class OfficialCloseMarket:

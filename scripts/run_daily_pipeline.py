@@ -49,6 +49,7 @@ from etf_agent.data import (  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
+from etf_agent.virtual_account.daily import supersede_decision_runs  # noqa: E402
 
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
 RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
@@ -439,6 +440,13 @@ def main() -> int:
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
         summary["event_analysis_mode"] = "integrated_analyst"
+        superseded = supersede_decision_runs(
+            ROOT / "artifacts" / "portfolio_decisions", result.decision_run_id,
+            ROOT / "artifacts" / "_archive" / "superseded_decisions",
+        )
+        if superseded:
+            summary["superseded_decision_runs"] = superseded
+            log("新決策取代同一份帳戶快照的舊決策，舊 run 已移到 artifacts/_archive/superseded_decisions：%s" % "、".join(superseded))
         log("[交付] 重建風控後最終中文報告")
         summary["delivery"] = build_delivery(
             ROOT / "artifacts/portfolio_decisions", result.decision_run_id,
