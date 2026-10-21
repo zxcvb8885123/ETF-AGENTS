@@ -176,7 +176,10 @@ class DataReuseTests(unittest.TestCase):
         self.assertIsNone(self.expected(now, Broken()))
 
     def write_data(self, root, **overrides):
-        snapshot = {"usable": True, "latest_trade_date": "2026-10-21", "universe_size": 150, "latest_price_symbols": 150}
+        snapshot = {
+            "usable": True, "latest_trade_date": "2026-10-21", "universe_size": 150, "latest_price_symbols": 150,
+            "created_at": "2026-10-21T16:00:00+08:00",
+        }
         snapshot.update(overrides)
         account_dir = root / "artifacts" / "virtual_accounts" / "ai-cup-2026"
         account_dir.mkdir(parents=True, exist_ok=True)
@@ -199,6 +202,18 @@ class DataReuseTests(unittest.TestCase):
         self.assertFalse(self.fetched(expected=None))
         self.assertFalse(self.fetched(latest_trade_date="2026-10-20"))
         self.assertFalse(self.fetched(expected=date(2026, 10, 22)))
+
+    def test_snapshot_made_before_data_was_final_is_refetched(self):
+        # Yahoo 盤中就回傳當日那根日線但尚未定案；15:00 前建立的快照不能當作當日資料。
+        self.assertFalse(self.fetched(created_at="2026-10-21T13:04:00+08:00"))
+        self.assertFalse(self.fetched(created_at="2026-10-21T14:59:59+08:00"))
+        self.assertTrue(self.fetched(created_at="2026-10-21T15:00:00+08:00"))
+        self.assertTrue(self.fetched(created_at="2026-10-21T08:30:00+00:00"))
+        self.assertTrue(self.fetched(created_at="2026-10-22T07:00:00+08:00"))
+
+    def test_missing_or_naive_created_at_is_refetched(self):
+        for value in (None, "", "昨天", "2026-10-21T16:00:00"):
+            self.assertFalse(self.fetched(created_at=value), value)
 
     def test_incomplete_unusable_or_missing_data_is_refetched(self):
         self.assertFalse(self.fetched(usable=False))

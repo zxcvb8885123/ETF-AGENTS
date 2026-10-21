@@ -47,6 +47,7 @@ from etf_agent.data import (  # noqa: E402
     load_not_applicable,
 )
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
+from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
@@ -99,8 +100,10 @@ def expected_latest_trade_date(captures_root: Path, now: datetime):
 
 
 def data_already_fetched(snapshot_path: Path, account_path: Path, expected_trade_date) -> bool:
-    """Snapshot 可用、150 檔都有最新價、最新交易日就是應有的那一天，且帳戶快照存在，才算「已抓到資料」。
+    """Snapshot 可用、150 檔都有最新價、最新交易日就是應有的那一天，且在該日 DATA_READY_TIME 之後建立，
+    帳戶快照也存在，才算「已抓到資料」。
 
+    Yahoo 盤中就會回傳當日那根日線，但數值尚未定案；所以光看日期不夠，還要確認快照是收盤資料齊全後才建立的。
     任何讀取失敗、欄位缺漏或日期對不上都視為沒抓到，需重抓。
     """
     if expected_trade_date is None:
@@ -109,10 +112,13 @@ def data_already_fetched(snapshot_path: Path, account_path: Path, expected_trade
         if not account_path.is_file():
             return False
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        created_at = parse_aware_time(snapshot.get("created_at"), "snapshot.created_at")
     except (OSError, ValueError):
         return False
+    ready_at = datetime.combine(expected_trade_date, DATA_READY_TIME, tzinfo=TAIPEI_TIMEZONE)
     return (
-        snapshot.get("usable") is True
+        created_at >= ready_at
+        and snapshot.get("usable") is True
         and snapshot.get("latest_trade_date") == expected_trade_date.isoformat()
         and isinstance(snapshot.get("universe_size"), int)
         and snapshot.get("latest_price_symbols") == snapshot.get("universe_size")
