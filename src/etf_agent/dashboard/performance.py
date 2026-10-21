@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository
@@ -88,7 +89,52 @@ def _positions(state: Mapping[str, object]) -> List[Dict[str, object]]:
     return rows
 
 
-def build_performance_summary(repository: VirtualAccountRepository) -> Dict[str, object]:
+def _fill_rows(fills: List[Mapping[str, object]], before: Mapping[str, object]) -> List[Dict[str, object]]:
+    """成交明細；賣單以成交前持倉均價算已實現損益（賣價 × 股數 − 費稅 − 成本），缺價格欄位則留空。"""
+    cost_basis = {str(row["symbol"]).upper(): _dec(row["cost_basis"], "cost_basis") for row in before.get("positions", [])}
+    rows = []
+    for fill in fills:
+        symbol, shares = str(fill["symbol"]), int(fill["shares"])
+        commission, tax = _dec(fill.get("commission", 0), "commission"), _dec(fill.get("tax", 0), "tax")
+        price = fill.get("execution_price")
+        realized = None
+        if fill.get("side") == "sell" and price is not None and symbol.upper() in cost_basis:
+            realized = _dec(price, "execution_price") * shares - commission - tax - cost_basis[symbol.upper()] * shares
+        rows.append({
+            "symbol": symbol, "side": fill.get("side"), "lots": shares // 1000, "shares": shares,
+            "price": _money(_dec(price, "execution_price")) if price is not None else None,
+            "gross_amount": _money(_dec(fill["gross_amount"], "gross_amount")) if fill.get("gross_amount") is not None else None,
+            "commission": _money(commission), "tax": _money(tax),
+            "realized_pnl": _money(realized) if realized is not None else None,
+        })
+    return rows
+
+
+def _pending_orders(decision_repository: Optional[Path], latest: Mapping[str, object]) -> Optional[Dict[str, object]]:
+    """最新帳本狀態是尚未結算的 prepare 時，列出對應 Decision run 的委託（尚未成交）；找不到則回 None。"""
+    provenance = latest.get("provenance") or {}
+    if decision_repository is None or provenance.get("type") != "prepared":
+        return None
+    from etf_agent.virtual_account.daily import find_decision_run  # 延後匯入避免循環相依
+
+    try:
+        run_id = find_decision_run(decision_repository, provenance.get("account_snapshot"))
+        if run_id is None:
+            return None
+        decision = _read_json(Path(decision_repository) / run_id / "decision.json")
+        bundle = _read_json(Path(decision_repository) / run_id / "decision_input.json")
+        end = ((bundle.get("trading_status_bundle") or {}).get("target_session") or {}).get("end")
+        execution_date = str(end)[:10] if end else None
+    except (VirtualAccountError, OSError, json.JSONDecodeError):
+        return None
+    orders = [{
+        "symbol": order.get("symbol"), "side": order.get("side"), "intent": order.get("intent"),
+        "lots": order.get("lots"), "shares": order.get("shares"),
+    } for order in decision.get("orders", [])]
+    return {"decision_run_id": run_id, "status": decision.get("status"), "execution_date": execution_date, "orders": orders}
+
+
+def build_performance_summary(repository: VirtualAccountRepository, decision_repository: Optional[Path] = None) -> Dict[str, object]:
     """彙整本金、目前 NAV、今日／累積報酬、費稅與持倉。"""
     try:
         if repository.latest(optional=True) is None:
@@ -105,7 +151,9 @@ def build_performance_summary(repository: VirtualAccountRepository) -> Dict[str,
     commission = Decimal(0)
     tax = Decimal(0)
     trade_count = 0
-    for item in runs:
+    trades: List[Dict[str, object]] = []
+    realized_total = Decimal(0)
+    for index, item in enumerate(runs):
         state = item["state"]
         provenance = state["provenance"]
         kind = provenance["type"]
@@ -123,7 +171,16 @@ def build_performance_summary(repository: VirtualAccountRepository) -> Dict[str,
             points[-1] = point
         transition = item["transition"]
         if transition:
-            for fill in transition.get("execution", {}).get("fills", []):
+            fills = transition.get("execution", {}).get("fills", [])
+            if fills:
+                rows = _fill_rows(fills, runs[index - 1]["state"])
+                realized = sum((_dec(row["realized_pnl"], "realized_pnl") for row in rows if row["realized_pnl"] is not None), Decimal(0))
+                realized_total += realized
+                trades.append({
+                    "trade_date": valuation_date, "decision_run_id": transition.get("decision_run_id"),
+                    "fills": rows, "realized_pnl": _money(realized),
+                })
+            for fill in fills:
                 commission += _dec(fill.get("commission", 0), "commission")
                 tax += _dec(fill.get("tax", 0), "tax")
                 trade_count += 1
@@ -170,6 +227,9 @@ def build_performance_summary(repository: VirtualAccountRepository) -> Dict[str,
             "as_of": today["as_of"], "trade_date": today["trade_date"],
             "pnl": today["daily_pnl"], "return": today["daily_return"],
         } if today else None,
+        "realized_pnl": _money(realized_total),
+        "trades": trades,
+        "pending_orders": _pending_orders(decision_repository, latest),
         "fees": {"commission": _money(commission), "tax": _money(tax), "fill_count": trade_count},
         "positions": positions,
         "history": history,

@@ -38,6 +38,11 @@
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+  button, select { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+  button:disabled { color: var(--muted); }
+  .tag { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+  .buy { color: var(--up); } .sell { color: var(--down); }
   .empty { color: var(--muted); padding: 12px 0; }
   .error { border-color: var(--up); color: var(--up); }
   svg text { fill: var(--muted); font-size: 11px; }
@@ -55,6 +60,15 @@
   <section class="card">
     <h2>總資產（NAV）走勢</h2>
     <div id="chart"></div>
+  </section>
+  <section class="card">
+    <h2>買賣紀錄</h2>
+    <div class="toolbar" id="trade-bar"></div>
+    <div class="scroll" id="trades"></div>
+  </section>
+  <section class="card" id="pending-card" hidden>
+    <h2 id="pending-title">預定買賣</h2>
+    <div class="scroll" id="pending"></div>
   </section>
   <section class="card">
     <h2>目前持倉</h2>
@@ -110,19 +124,54 @@ function renderChart(history) {
     ${labels}</svg>`;
 }
 
+let selectedDate = null;
+const SIDE = { buy: "買進", sell: "賣出" };
+
+function renderTrades(d) {
+  const days = d.history.map(h => h.trade_date).filter((v, i, a) => a.indexOf(v) === i).filter(v => v).reverse();
+  if (!selectedDate || !days.includes(selectedDate)) selectedDate = (d.trades.length ? d.trades[d.trades.length - 1].trade_date : days[0]);
+  const i = days.indexOf(selectedDate);
+  const bar = document.getElementById("trade-bar");
+  bar.innerHTML = `<button id="newer" ${i <= 0 ? "disabled" : ""}>◀ 較新</button>
+    <select id="day">${days.map(v => `<option value="${esc(v)}" ${v === selectedDate ? "selected" : ""}>${esc(v)}${d.trades.some(t => t.trade_date === v) ? "" : "（無成交）"}</option>`).join("")}</select>
+    <button id="older" ${i >= days.length - 1 ? "disabled" : ""}>較舊 ▶</button>`;
+  const go = v => { selectedDate = v; renderTrades(d); };
+  document.getElementById("day").onchange = e => go(e.target.value);
+  document.getElementById("newer").onclick = () => go(days[i - 1]);
+  document.getElementById("older").onclick = () => go(days[i + 1]);
+  const day = d.trades.find(t => t.trade_date === selectedDate);
+  document.getElementById("trades").innerHTML = day ? `<table>
+    <tr><th>方向</th><th>代號</th><th>張數</th><th>成交價</th><th>成交金額</th><th>手續費</th><th>證交稅</th><th>已實現損益</th></tr>
+    ${day.fills.map(f => `<tr><td><span class="tag ${f.side}">${SIDE[f.side] || esc(f.side)}</span></td><td>${esc(f.symbol)}</td><td>${nf.format(f.lots)}</td>
+      <td>${f.price == null ? "—" : Number(f.price).toFixed(2)}</td><td>${money(f.gross_amount)}</td><td>${money(f.commission)}</td><td>${money(f.tax)}</td>
+      <td class="${tone(f.realized_pnl)}">${f.side === "sell" ? signed(f.realized_pnl) : "—"}</td></tr>`).join("")}
+  </table><div class="sub">這天已實現損益合計 <span class="${tone(day.realized_pnl)}">${signed(day.realized_pnl)}</span> 元</div>`
+    : `<div class="empty">${esc(selectedDate)} 沒有買賣成交。</div>`;
+  const pend = d.pending_orders, card = document.getElementById("pending-card");
+  card.hidden = !pend;
+  if (pend) document.getElementById("pending-title").textContent = pend.execution_date ? `預定買賣（${pend.execution_date} 收盤成交）` : "預定買賣（下一個交易日收盤成交）";
+  if (pend) document.getElementById("pending").innerHTML = pend.orders.length ? `<table>
+    <tr><th>方向</th><th>代號</th><th>意圖</th><th>張數</th></tr>
+    ${pend.orders.map(o => `<tr><td><span class="tag ${o.side}">${SIDE[o.side] || esc(o.side)}</span></td><td>${esc(o.symbol)}</td><td>${esc(o.intent || "—")}</td><td>${nf.format(o.lots)}</td></tr>`).join("")}
+  </table><div class="sub">已決定，以收盤價成交，成交後會移到上面的買賣紀錄；決策 ${esc(pend.decision_run_id)}（${esc(pend.status)}）。</div>`
+    : '<div class="empty">最新決策沒有委託。</div>';
+}
+
 function render(d) {
   document.getElementById("meta").textContent =
     `帳戶 ${d.account_id}・資料時間 ${time(d.as_of)}・狀態 ${d.latest_state_type}・${new Date().toLocaleTimeString("zh-TW", { hour12: false })} 更新`;
   const t = d.today;
   document.getElementById("kpis").innerHTML = [
-    tile(t ? `今日報酬率（${t.trade_date}）` : "今日報酬率", t ? pct(t.return) : "—", t ? `今日損益 ${signed(t.pnl)} 元` : "開帳後尚無收盤估值", "hero", t ? tone(t.return) : ""),
-    tile("累積報酬率", pct(d.total_return), `累積損益 ${signed(d.total_pnl)} 元`, "hero", tone(d.total_return)),
+    tile(t ? `今日報酬率・帳面（${t.trade_date}）` : "今日報酬率・帳面", t ? pct(t.return) : "—", t ? `帳面損益 ${signed(t.pnl)} 元（持股漲跌，尚未賣出）` : "開帳後尚無收盤估值", "hero", t ? tone(t.return) : ""),
+    tile("累積已實現損益（已賣出）", signed(d.realized_pnl), "只算已賣出的部分，已扣手續費與證交稅", "hero", tone(d.realized_pnl)),
+    tile("累積報酬率（含帳面）", pct(d.total_return), `累積損益 ${signed(d.total_pnl)} 元＝已實現＋持股未實現`, "", tone(d.total_return)),
     tile("目前總資產（NAV）", money(d.nav), `起始本金 ${money(d.initial_capital)} 元`),
     tile("現金", money(d.cash), `現金比 ${plain(d.cash_weight)}・未交割 ${money(d.unsettled_cash)}`),
     tile("持股市值", money(d.market_value), `${d.positions.length} 檔持股`),
     tile("累計費稅", money(Number(d.fees.commission) + Number(d.fees.tax)), `手續費 ${money(d.fees.commission)}・證交稅 ${money(d.fees.tax)}・${d.fees.fill_count} 筆成交`),
   ].join("");
   renderChart(d.history);
+  renderTrades(d);
   document.getElementById("positions").innerHTML = d.positions.length ? `<table>
     <tr><th>代號</th><th>張數</th><th>均價</th><th>現價</th><th>成本</th><th>市值</th><th>未實現損益</th><th>報酬率</th></tr>
     ${d.positions.map(p => `<tr><td>${esc(p.symbol)}</td><td>${nf.format(p.lots)}</td>
@@ -132,7 +181,7 @@ function render(d) {
       <td class="${tone(p.unrealized_return)}">${pct(p.unrealized_return)}</td></tr>`).join("")}
   </table>` : '<div class="empty">目前空倉。</div>';
   document.getElementById("history").innerHTML = `<table>
-    <tr><th>交易日</th><th>類型</th><th>NAV</th><th>當日損益</th><th>當日報酬率</th><th>累積報酬率</th></tr>
+    <tr><th>交易日</th><th>類型</th><th>NAV</th><th>當日帳面損益</th><th>當日報酬率（帳面）</th><th>累積報酬率</th></tr>
     ${d.history.slice().reverse().map(h => `<tr><td>${esc(h.trade_date)}</td><td>${TYPE[h.type] || esc(h.type)}</td>
       <td>${money(h.nav)}</td><td class="${tone(h.daily_pnl)}">${signed(h.daily_pnl)}</td>
       <td class="${tone(h.daily_return)}">${pct(h.daily_return)}</td>

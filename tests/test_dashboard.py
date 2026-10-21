@@ -23,7 +23,7 @@ class DashboardTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def _close(self, run_id, as_of, settled, price, commission):
+    def _close(self, run_id, as_of, settled, price, commission, fills=None):
         parent = self.repository.latest()
         shares = 10_000
         cost = Decimal("100.1425")
@@ -36,7 +36,8 @@ class DashboardTests(unittest.TestCase):
             nav=Decimal(settled) + value,
             provenance={"type": "close", "parent_run_id": parent["run_id"], "trade_date": as_of[:10]},
         )
-        fills = [{"symbol": "2330.TW", "side": "buy", "shares": shares, "commission": commission, "tax": "0"}] if commission else []
+        if fills is None:
+            fills = [{"symbol": "2330.TW", "side": "buy", "shares": shares, "commission": commission, "tax": "0"}] if commission else []
         transition = {"execution": {"fills": fills}}
         self.repository.save(run_id, {"state": state, "transition": transition}, state)
 
@@ -69,6 +70,39 @@ class DashboardTests(unittest.TestCase):
         position = summary["positions"][0]
         self.assertEqual(position["lots"], 10)
         self.assertEqual(position["unrealized_pnl"], "48575.00")
+
+    def test_trades_are_grouped_by_day_and_sells_carry_realized_pnl(self):
+        self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        self._close("close-1", "2026-09-21T16:00:00+08:00", "998998575", "110", "1425")
+        sell = {"symbol": "2330.TW", "side": "sell", "shares": 10_000, "execution_price": "110.00",
+                "gross_amount": "1100000", "commission": "1568", "tax": "3300"}
+        self._close("close-2", "2026-09-22T16:00:00+08:00", "998998575", "105", None, fills=[sell])
+        summary = build_performance_summary(self.repository)
+        self.assertEqual([day["trade_date"] for day in summary["trades"]], ["2026-09-21", "2026-09-22"])
+        self.assertEqual(summary["trades"][0]["fills"][0]["side"], "buy")
+        self.assertIsNone(summary["trades"][0]["fills"][0]["realized_pnl"])
+        # 1,100,000 − 1,568 − 3,300 − 10,000 × 100.1425
+        self.assertEqual(summary["trades"][1]["fills"][0]["realized_pnl"], "93707.00")
+        self.assertEqual(summary["realized_pnl"], "93707.00")
+        self.assertIsNone(summary["pending_orders"])
+
+    def test_pending_orders_come_from_the_decision_of_the_prepared_snapshot(self):
+        from etf_agent.dashboard.performance import _pending_orders
+
+        decisions = self.root / "decisions"
+        run = decisions / "decision-1"
+        run.mkdir(parents=True)
+        (run / "decision_input.json").write_text(json.dumps({"account_snapshot": {"id": 1}}), encoding="utf-8")
+        (run / "decision.json").write_text(json.dumps({"status": "approved", "orders": [
+            {"symbol": "2412.TW", "side": "sell", "intent": "trim", "lots": 30, "shares": 30000}]}), encoding="utf-8")
+        latest = {"provenance": {"type": "prepared", "account_snapshot": {"id": 1}}}
+        from unittest import mock
+        with mock.patch("etf_agent.virtual_account.daily.DecisionRepository"):
+            pending = _pending_orders(decisions, latest)
+        self.assertEqual(pending["orders"][0]["symbol"], "2412.TW")
+        self.assertEqual(pending["decision_run_id"], "decision-1")
+        self.assertIsNone(_pending_orders(decisions, {"provenance": {"type": "close"}}))
+        self.assertIsNone(_pending_orders(None, latest))
 
     def test_tampered_ledger_fails_closed(self):
         self.service.initialize(self.rules, "cup-test", "2026-09-18T17:00:00+08:00")
