@@ -19,7 +19,7 @@ from .contracts import (
     required_string,
 )
 from .momentum import MomentumEngine
-from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, conviction_weights, validate_position_sizing
+from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, STOCK_WEIGHT_FIT, conviction_weights, validate_position_sizing
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -340,10 +340,12 @@ class AllocationOrderEngine:
             orders, starting_cash, starting_total_cash, marked_nav, effective
         )
         constraint_flags.extend(cash_flags)
-        orders, projected_cash, weight_flags = self._fit_stock_weights(
-            current, orders, projected_cash, effective
-        )
-        constraint_flags.extend(weight_flags)
+        # 舊 Decision run 的 position_sizing 沒有 stock_weight_fit，需維持原重建結果。
+        if "position_sizing" not in self.policy or self.policy["position_sizing"].get("stock_weight_fit") == STOCK_WEIGHT_FIT:
+            orders, projected_cash, weight_flags = self._fit_stock_weights(
+                current, orders, projected_cash, effective
+            )
+            constraint_flags.extend(weight_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1

@@ -82,7 +82,7 @@ Decision run 的 artifact 為 `momentum`、`debate`（`ResearchDebateBundle` 2.0
   "minimum_active_share": "0",
   "stress_price_decline_rate": "0.10",
   "stress_slippage_multiplier": "2",
-  "liquidity_fill_rate": "0.50",
+  "liquidity_fill_rate": "1",
   "reuse_sell_proceeds": false,
   "max_revisions": 3,
   "content_sha256": "canonical SHA-256"
