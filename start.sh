@@ -115,7 +115,7 @@ docker compose run --rm agent
 
 if [ "$MODE" = "check" ]; then
   echo "[3/4] 執行測試"
-  docker compose run --rm agent python3 -m unittest discover -s tests -v
+  docker compose run --rm agent python3 -m pytest
   echo "[4/4] 檢查完成"
   exit 0
 fi

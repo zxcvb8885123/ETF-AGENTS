@@ -82,7 +82,7 @@ docker compose run --rm agent python3 scripts/collect_history.py
 執行測試：
 
 ```bash
-docker compose run --rm agent python3 -m unittest discover -s tests -v
+docker compose run --rm agent python3 -m pytest
 ```
 
 ## 掛載資料夾
