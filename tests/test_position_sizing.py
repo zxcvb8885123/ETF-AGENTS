@@ -179,7 +179,7 @@ class ConvictionAllocationTests(unittest.TestCase):
         with self.assertRaisesRegex(DecisionToolError, "尚未綁定的基礎 policy"):
             apply_trade_decision(sized_policy(sized_inputs()[3], intent, stance, bundle), intent, stance, bundle)
 
-    def test_stock_weight_fit_version_gates_replay_of_legacy_decisions(self):
+    def test_stock_weight_fit_always_runs_regardless_of_policy_version_field(self):
         bundle, intent, stance, policy = sized_inputs()
         legacy = sized_policy(policy, intent, stance, bundle)
         self.assertNotIn("stock_weight_fit", legacy["position_sizing"])
@@ -188,7 +188,7 @@ class ConvictionAllocationTests(unittest.TestCase):
 
         with patch.object(AllocationOrderEngine, "_fit_stock_weights", autospec=True, side_effect=fit) as spy:
             AllocationOrderEngine(bundle, legacy).run(intent)
-        spy.assert_not_called()  # 舊 Decision run 必須維持 #59 之前的重建結果
+        spy.assert_called_once()  # 單股減碼不再依 Policy 版本欄位開關
 
         current = copy.deepcopy(policy)
         current["position_sizing"]["stock_weight_fit"] = "v1"

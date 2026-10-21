@@ -122,6 +122,10 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(self.run_checks(runner=fallback, agent_cli="opencode")["opencode"].ok)
         self.assertFalse(self.run_checks(agent_cli="opencode", which=lambda name: None if name == "opencode" else which_all(name))["opencode"].ok)
 
+    def test_opencode_credentials_with_ansi_colour_codes_are_recognised(self):
+        runner = FakeRunner(auth_stdout="\x1b[0m\x1b[32m1 credentials\x1b[0m")
+        self.assertTrue(self.run_checks(runner=runner, agent_cli="opencode")["opencode"].ok)
+
     def test_uninitialized_account_fails_without_creating_directory(self):
         checks = self.run_checks(account_id="missing")
         self.assertIn("尚未開帳", checks["account"].detail)

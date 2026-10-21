@@ -177,7 +177,10 @@ class OpenCodeAgentRunner:
                     "mode": "primary",
                     "permission": {
                         "*": "deny",
-                        "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny"},
+                        "read": {
+                            "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.envrc": "deny",
+                            "*.pem": "deny", "*.key": "deny", "*credential*": "deny", "*secret*": "deny",
+                        },
                         "external_directory": "deny",
                     },
                 }

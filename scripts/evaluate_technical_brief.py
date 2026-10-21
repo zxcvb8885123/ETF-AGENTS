@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.automation.agent_runner import AgentTask, CodexAgentRunner  # noqa: E402
-from etf_agent.automation.daily_pipeline import ANALYST_SCHEMA, _SHARED_RULES  # noqa: E402
+from etf_agent.automation.daily_pipeline import ANALYST_SCHEMA, _SHARED_RULES, universe_batches  # noqa: E402
 from etf_agent.decision import AnalystReportValidator, build_analyst_brief, seal_report  # noqa: E402
 
 
@@ -27,10 +27,12 @@ def main() -> int:
     runner = CodexAgentRunner(ROOT)
     previous = {item["symbol"]: item for item in original["items"]}
     comparisons = []
-    for index in range(3):
-        symbols = [row["symbol"] for row in brief["symbols"][index * 50:(index + 1) * 50]]
-        batch = {**brief, "batch": {"batch_index": index, "batch_count": 3, "symbols": symbols},
-                 "symbols": brief["symbols"][index * 50:(index + 1) * 50]}
+    for group in universe_batches([row["symbol"] for row in brief["symbols"]]):
+        index = group["batch_index"]
+        symbols = group["symbols"]
+        members = set(symbols)
+        batch = {**brief, "batch": {key: group[key] for key in ("batch_index", "batch_count", "symbols")},
+                 "symbols": [row for row in brief["symbols"] if row["symbol"] in members]}
         path = args.output_dir / ("brief_technical_b%d.json" % index)
         path.write_text(json.dumps(batch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         prompt = (

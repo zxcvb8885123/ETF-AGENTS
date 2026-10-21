@@ -46,6 +46,8 @@
 - 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
 - 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
+- 單股硬性權重上限的減碼一律由程式執行（不依 Policy 的 `stock_weight_fit` 版本欄位開關）；因風控減碼產生的賣單，意圖由程式標為 `trim`（仍有持股）或 `exit`（減至零），不改寫交易 Agent 的原意圖，並留下 `RISK_STOCK_WEIGHT` 旗標。
+- 技術分析師啟用 `technical_gate` 時，分批 brief 只記錄該批股票的 `momentum_only_symbols` 與 `full_history_symbols`；每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。OpenCode 的 read 權限須拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 
 ### Research Report V0
@@ -131,6 +133,7 @@ Notes:
 ````
 
 - 使用下一個經使用者確認的編號，不自行跳號或重寫既有 commit。
-- `Date`、`Start`、`End` 使用 Asia/Taipei 時區。`Start` 使用使用者提出本次修改要求的時間，優先從本次對話時間戳核對；之後的 commit 都沿用此方式。無法核對時再詢問，不捏造。
+- `Date`、`Start`、`End` 使用 Asia/Taipei 時區。`Start` 使用使用者提出本次修改要求的時間，`End` 使用 commit 當下的時間（`date`）；之後的 commit 都沿用此方式。
+- 不必詢問使用者 `Start`，先自行查證：讀 `~/.claude/projects/<專案目錄>/*.jsonl` 對話紀錄，找出本次任務第一則使用者訊息（`type=user`、非 meta）的 `timestamp`（UTC，需轉為 Asia/Taipei）；同一批未提交修改跨多個 session 時取最早的一則。可用修改檔的 mtime 交叉核對，`Start` 不得晚於最早被修改檔案的時間。只有真的查不到時才詢問，不捏造。
 - commit 前執行相關測試與 `git diff --check`，並確認只納入本次任務檔案。
 - amend、rebase、reset 或其他會改寫歷史的操作，只有在使用者明確要求時執行。
