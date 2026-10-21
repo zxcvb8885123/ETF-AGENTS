@@ -2,6 +2,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,6 +123,114 @@ class ArgumentTests(unittest.TestCase):
             code, seen = self.run_main("--resume", "daily-20200101", "--force", root=root)
         self.assertEqual(code, 1)
         self.assertEqual(seen, [])
+
+
+class FakeCalendar:
+    """週一到週五開市，另可指定額外休市日。"""
+
+    def __init__(self, holidays=()):
+        self.holidays = set(holidays)
+
+    def is_trading_day(self, day):
+        return day.weekday() < 5 and day not in self.holidays
+
+
+class DataReuseTests(unittest.TestCase):
+    TZ = timezone(timedelta(hours=8))
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_reuse", ROOT / "scripts" / "run_daily_pipeline.py")
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def expected(self, now, calendar=None, capture=object()):
+        with patch.object(self.module, "latest_calendar_capture_before", lambda *_a: capture), \
+                patch.object(self.module, "calendar_from_capture", lambda _c: calendar or FakeCalendar()):
+            return self.module.expected_latest_trade_date(Path("unused"), now)
+
+    def test_trade_day_data_counts_only_after_three_pm(self):
+        wednesday = date(2026, 10, 21)
+        self.assertEqual(self.expected(datetime(2026, 10, 21, 14, 59, tzinfo=self.TZ)), date(2026, 10, 20))
+        self.assertEqual(self.expected(datetime(2026, 10, 21, 15, 0, tzinfo=self.TZ)), wednesday)
+        self.assertEqual(self.expected(datetime(2026, 10, 21, 23, 0, tzinfo=self.TZ)), wednesday)
+        self.assertEqual(self.expected(datetime(2026, 10, 22, 8, 0, tzinfo=self.TZ)), wednesday)
+
+    def test_weekend_and_holiday_use_previous_trading_day(self):
+        friday = date(2026, 10, 23)
+        self.assertEqual(self.expected(datetime(2026, 10, 24, 20, 0, tzinfo=self.TZ)), friday)
+        self.assertEqual(self.expected(datetime(2026, 10, 26, 10, 0, tzinfo=self.TZ)), friday)
+        holiday = FakeCalendar(holidays=[date(2026, 10, 21)])
+        self.assertEqual(self.expected(datetime(2026, 10, 21, 20, 0, tzinfo=self.TZ), holiday), date(2026, 10, 20))
+
+    def test_missing_or_broken_calendar_returns_none(self):
+        now = datetime(2026, 10, 21, 20, 0, tzinfo=self.TZ)
+        self.assertIsNone(self.expected(now, capture=None))
+        self.assertIsNone(self.expected(now, FakeCalendar(holidays=[now.date() - timedelta(days=n) for n in range(30)])))
+
+        class Broken:
+            def is_trading_day(self, _day):
+                raise self.module.TradingCalendarError("超出日曆範圍")
+
+        Broken.module = self.module
+        self.assertIsNone(self.expected(now, Broken()))
+
+    def write_data(self, root, **overrides):
+        snapshot = {"usable": True, "latest_trade_date": "2026-10-21", "universe_size": 150, "latest_price_symbols": 150}
+        snapshot.update(overrides)
+        account_dir = root / "artifacts" / "virtual_accounts" / "ai-cup-2026"
+        account_dir.mkdir(parents=True, exist_ok=True)
+        (root / "artifacts" / "research_snapshot_latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+        account = account_dir / "account_snapshot_latest.json"
+        account.write_text("{}", encoding="utf-8")
+        return root / "artifacts" / "research_snapshot_latest.json", account
+
+    def fetched(self, expected=date(2026, 10, 21), drop_account=False, **overrides):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot, account = self.write_data(Path(directory), **overrides)
+            if drop_account:
+                account.unlink()
+            return self.module.data_already_fetched(snapshot, account, expected)
+
+    def test_snapshot_with_expected_trade_date_counts_as_fetched(self):
+        self.assertTrue(self.fetched())
+
+    def test_missing_expected_date_or_old_trade_date_is_refetched(self):
+        self.assertFalse(self.fetched(expected=None))
+        self.assertFalse(self.fetched(latest_trade_date="2026-10-20"))
+        self.assertFalse(self.fetched(expected=date(2026, 10, 22)))
+
+    def test_incomplete_unusable_or_missing_data_is_refetched(self):
+        self.assertFalse(self.fetched(usable=False))
+        self.assertFalse(self.fetched(latest_price_symbols=149))
+        self.assertFalse(self.fetched(universe_size="150"))
+        self.assertFalse(self.fetched(drop_account=True))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertFalse(self.module.data_already_fetched(root / "none.json", root / "none2.json", date(2026, 10, 21)))
+
+    def run_main(self, root, *argv, expected=date(2026, 10, 21)):
+        seen = []
+
+        def fake_preflight(_root, _account_id, skip_data, **_kwargs):
+            seen.append(skip_data)
+            return [self.module.PreflightCheck("fake", False, "測試用預檢失敗")]
+
+        with patch.object(self.module, "run_preflight", fake_preflight), \
+                patch.object(self.module, "notify", lambda *_a, **_k: None), \
+                patch.object(self.module, "expected_latest_trade_date", lambda *_a: expected), \
+                patch.object(self.module, "ROOT", root), \
+                patch("sys.argv", ["run_daily_pipeline.py", *argv]):
+            self.assertEqual(self.module.main(), 1)
+        return seen
+
+    def test_run_skips_data_stage_only_when_data_already_fetched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_data(root)
+            self.assertEqual(self.run_main(root, "--force"), [True])
+            self.assertEqual(self.run_main(root, "--force", expected=date(2026, 10, 22)), [False])
+            self.assertEqual(self.run_main(root, "--force", expected=None), [False])
 
 
 if __name__ == "__main__":

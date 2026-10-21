@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +51,8 @@ from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
 RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
+DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
+TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
 
 
 def log(message: str) -> None:
@@ -74,6 +76,47 @@ def run_data_stage(account_id: str, account_run_id: str) -> None:
     completed = subprocess.run([str(ROOT / "start.sh"), "daily"], cwd=ROOT, env=env, check=False)
     if completed.returncode != 0:
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
+
+
+def expected_latest_trade_date(captures_root: Path, now: datetime):
+    """依官方開休市日曆，回傳此刻「應該已有行情」的最近交易日；日曆缺漏或判斷失敗回 None（不猜測）。
+
+    交易日要到 DATA_READY_TIME 之後才算當日行情齊全；之前、或非交易日，則取前一個交易日。
+    """
+    try:
+        capture = latest_calendar_capture_before(captures_root, now.isoformat())
+        if capture is None:
+            return None
+        calendar = calendar_from_capture(capture)
+        day = now.date()
+        for _ in range(TRADE_DATE_LOOKBACK_DAYS):
+            if calendar.is_trading_day(day) and (day < now.date() or now.time() >= DATA_READY_TIME):
+                return day
+            day -= timedelta(days=1)
+    except (TradingCalendarError, OSError, ValueError):
+        return None
+    return None
+
+
+def data_already_fetched(snapshot_path: Path, account_path: Path, expected_trade_date) -> bool:
+    """Snapshot 可用、150 檔都有最新價、最新交易日就是應有的那一天，且帳戶快照存在，才算「已抓到資料」。
+
+    任何讀取失敗、欄位缺漏或日期對不上都視為沒抓到，需重抓。
+    """
+    if expected_trade_date is None:
+        return False
+    try:
+        if not account_path.is_file():
+            return False
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        snapshot.get("usable") is True
+        and snapshot.get("latest_trade_date") == expected_trade_date.isoformat()
+        and isinstance(snapshot.get("universe_size"), int)
+        and snapshot.get("latest_price_symbols") == snapshot.get("universe_size")
+    )
 
 
 def latest_resumable_run(runs_root: Path, run_id: str):
@@ -298,6 +341,15 @@ def main() -> int:
     summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli}
     if resumable is not None:
         summary["resumed_at"] = now.isoformat()
+    if not args.skip_data:
+        trade_date = expected_latest_trade_date(captures_root, now)
+        if data_already_fetched(
+            ROOT / "artifacts" / "research_snapshot_latest.json",
+            ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json", trade_date,
+        ):
+            log("已有 %s 的行情資料（Snapshot 150 檔齊全），沿用既有 Snapshot 與帳戶快照，不重抓。" % trade_date.isoformat())
+            summary["data_reused_trade_date"] = trade_date.isoformat()
+            args.skip_data = True
     write_json(summary_path, summary)
 
     try:
