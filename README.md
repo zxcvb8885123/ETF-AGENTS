@@ -90,9 +90,91 @@ python3 -m venv .venv
 → 交易 Agent → 風險 Agent → Python 配置與風控 → 封存報告 → 人工檢視
 ```
 
-Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。資料不足或風控失敗時停止或明確降級。
+### 原則
 
-既有持股若因價格變動超出單股權重硬上限，配置程式會在 Guard 前按整張計算必要減碼，連同部分成交的壓力情境重算；原 Agent 意圖與程式風險減碼分開記錄。無法滿足所有硬性限制時仍會拒絕。
+- **分工**：Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。
+- **時間一致**：所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。
+- **失敗處理**：資料不足或風控失敗時停止或明確降級。
+
+### 單股超出權重上限時
+
+既有持股若因價格變動超出單股權重硬上限：
+
+1. 配置程式在 Guard 前，按整張計算必要減碼。
+2. 連同部分成交的壓力情境一併重算。
+3. 原 Agent 意圖與程式風險減碼分開記錄；減碼賣單由程式標為 `trim`（仍有持股）或 `exit`（減至零）。
+4. 無法滿足所有硬性限制時仍會拒絕。
+
+## 專案架構與資料夾
+
+```text
+ETF_AGENTS/
+├── start.sh                 # 日常入口：儀表板、auto、daily、run、status
+├── compose.yaml, Dockerfile # Docker 執行環境
+├── requirements.txt         # 本機 .venv 與 Docker 共用依賴（含 pytest）
+├── pytest.ini               # 測試設定
+├── AGENTS.md                # 開發規則、Agent 邊界、測試與 commit 格式
+│
+├── src/etf_agent/           # 核心程式：所有計算、驗證與資料邏輯都在這裡
+│   ├── data/                #   收集、驗證、版本化行情與公司事件，建立 ResearchSnapshot
+│   ├── automation/          #   每日管線：呼叫子 Agent、重試、Validator
+│   ├── decision/            #   配置、風控、CompetitionGuard、最終決策
+│   ├── ledger/              #   虛擬帳本、成交與費稅
+│   ├── virtual_account/     #   每日開帳、結算與官方價量
+│   ├── decision_delivery/   #   風控後中文 JSON／Markdown 報告
+│   ├── reporting/           #   Research Report
+│   ├── competition/         #   D-Plan 整理與匯出
+│   ├── perception/          #   市場新聞與情緒輸入
+│   ├── fundamentals/        #   財務比率計算
+│   ├── research/            #   事件研究（獨立流程與舊封存）
+│   ├── dashboard/           #   績效儀表板
+│   ├── runtime/, core/      #   管線串接，以及共用的雜湊、時間、數值工具
+│
+├── cli/                     # 單步命令入口：只解析參數並呼叫 src/，不放邏輯（見 cli/README.md）
+├── scripts/                 # 維運與補抓腳本：收集行情／財報／官方價量、check_setup、run_daily_pipeline
+│   └── launchd/             #   排程樣板
+├── tradeagent/              # 子 Agent 的 Skill：analysis、research、trading、risk、reporting、data
+│
+├── config/                  # 設定檔
+│   ├── competition_rules.json    # 競賽硬性規則（持股 20–30 檔、現金上限等）
+│   ├── decision_rules.json       # 決策規則（含 minimum_active_share）
+│   ├── decision_policy.json      # 權重、情境與滑價參數
+│   ├── data_sources.json         # 資料來源網址
+│   ├── trading_status_approvals.json  # 已核准的交易狀態來源
+│   └── competition_profile.json  # D-Plan 的隊伍設定
+├── data/                    # 靜態輸入
+│   ├── official_universe.csv     # 150 檔交易池
+│   ├── sector_classification.json # 產業分類
+│   ├── active_etf_list.csv       # 官方 30 檔主動型 ETF 名單
+│   └── active_etf_holdings.csv   # Active Share 用前 15 大持股（尚未填入）
+├── game_docs/               # 主辦方原始文件：標的清單、D-Plan 指南與 schema、DataPack 規格
+├── docs/                    # 設計與操作文件
+│   └── source_audit/        #   來源核對與核准證據，程式與核准設定會引用，不可刪
+├── tests/                   # pytest 測試
+│   └── fixtures/            #   測試用的小型資料
+│
+├── var/                     # 執行時資料，不進 git：etf_agent.db（行情、公司文件、來源原文）與快取
+└── artifacts/               # 執行時產物，不進 git
+    ├── daily_runs/          #   每日執行狀態
+    ├── portfolio_decisions/ #   不可變決策封存與重建輸入
+    ├── virtual_accounts/    #   虛擬帳本
+    └── reports/             #   中文報告
+```
+
+### 分工
+
+| 誰 | 負責 |
+| --- | --- |
+| 子 Agent（`tradeagent/`） | 市場解讀、多空論點、買賣意圖、信心等級 |
+| 程式（`src/etf_agent/`） | 指標、權重、股數、費稅、現金、競賽限制；計算後重建驗證 |
+
+不自動下單或送件。
+
+### 執行時產生的資料夾
+
+- `var/`、`artifacts/` 不進 git，新環境是空的。
+- 由 `./start.sh` 與每日管線產生。
+- 決策封存（`artifacts/portfolio_decisions/`）是下游重建驗證的依據，刪除前先確認不需要重建。
 
 ## 目前狀態與限制
 
@@ -100,10 +182,6 @@ Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數�
 - **價格口徑**：Snapshot 的決策與帳本用價是同日官方原價（`execution_close_price`），研究指標用調整價；上市與上櫃官方歷史月行情皆可補抓。缺官方價時退回調整價，重放過去日期時含事後除權息調整，見[架構](docs/architecture.md)。
 - **尚未接入**：正式全市場情緒與合法歷史分析師共識，維持 `unavailable`。FinMind 財報與新聞等候選資料，未通過授權、時間與覆蓋核對前不進正式決策。
 - **尚未完成**：D-Plan 候選可由 CLI 匯出，但每日流程尚未自動呼叫；主辦方伺服器驗證尚未完成；回測功能已移除。
-
-資料更新成功不代表當天可決策；行情覆蓋、官方價量、交易狀態與日曆仍須通過檢查。
-
-若 `run` 顯示「虛擬帳本未建立本次 prepare 狀態」，先檢查是否有舊決策等待指定成交日官方價量。缺歷史上櫃價量時，在專案根目錄執行 `.venv/bin/python scripts/repair_pending_tpex_close.py`；此指令只補目前待結算決策所需的 TPEx 官方價量，然後執行 `.venv/bin/python cli/virtual_account.py settle`，確認輸出 `status=settled` 後再跑 `./start.sh run`。若缺的是 TWSE 官方價量或來源未提供資料，會停止並顯示缺口，不會改用 Yahoo 價格。
 
 ## 資料與報告位置
 
@@ -115,6 +193,34 @@ Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數�
 | `artifacts/daily_runs/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
 | `artifacts/portfolio_decisions/` | 不可變決策封存與重建輸入 |
 | `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
+
+## 常見問題
+
+### 資料更新成功，但當天不能決策
+
+資料更新成功不代表當天可決策。行情覆蓋、官方價量、交易狀態與日曆都要通過檢查；沒通過時 `run` 會停止並顯示缺口。可先用 `./start.sh status` 查看資料狀態。
+
+### `run` 顯示「虛擬帳本未建立本次 prepare 狀態」
+
+原因是上一次決策還在等指定成交日的官方價量，帳本無法結算。依缺的資料處理：
+
+| 缺的資料 | 處理 |
+| --- | --- |
+| 歷史上櫃（TPEx）價量 | 依下方三個步驟補抓並結算 |
+| 上市（TWSE）價量，或來源未提供 | 無法補抓；`run` 會停止並顯示缺口，不會改用 Yahoo 價格 |
+
+補抓上櫃價量，在專案根目錄依序執行：
+
+```bash
+# 1. 只補目前待結算決策所需的 TPEx 官方價量
+.venv/bin/python scripts/repair_pending_tpex_close.py
+
+# 2. 結算帳本，確認輸出 status=settled
+.venv/bin/python cli/virtual_account.py settle
+
+# 3. 再跑完整每日決策
+./start.sh run
+```
 
 ## 詳細文件
 
