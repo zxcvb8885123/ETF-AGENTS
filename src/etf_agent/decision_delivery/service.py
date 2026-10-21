@@ -19,13 +19,12 @@ def diagnostic_markdown(status):
 
 
 def status_footer(status):
-    return "\n## 交付狀態\n\nD-Plan：%s。平台驗證：未執行。\n\n%s\n" % (
-        {"blocked": "資料未齊，未產生候選", "not_requested": "未要求匯出"}[status["dplan_status"]],
+    return "\n## 交付狀態\n\nD-Plan 自動匯出結果另見本次每日流程的 `pipeline.json`；本報告不代表主辦方平台已驗證。\n\n%s\n" % (
         "\n".join("- " + cell(b["message"]) for b in status["blockers"]))
 
 
 def report_status(report):
-    blockers = [{"code": "DPLAN_CONTEXT_REQUIRED", "stage": "dplan", "message": "D-Plan 尚需有來源映射的 context、真實隊伍與核准策略，以及目前 prepare-day 帳本核對；本次只交付內部最終報告。"}]
+    blockers = [{"code": "DPLAN_SEPARATE_PIPELINE", "stage": "dplan", "message": "D-Plan 是獨立候選交件 artifact；是否產生及阻擋原因以本次每日流程的 pipeline.json 為準。"}]
     if report["decision_status"] == "rejected":
         blockers = [{"code": "DECISION_REJECTED", "stage": "dplan", "message": "決策被風控拒絕，不產生 D-Plan 候選。"}]
     return {"report_status": "ready", "decision_status": report["decision_status"],

@@ -26,7 +26,7 @@ python3 -m venv .venv
 | 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板；不更新資料 |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
-| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；若已抓到應有的最新交易日資料（交易日 15:00 後算當日），會自動沿用、不重抓 |
+| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日），會自動沿用、不重抓 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
 首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
@@ -158,6 +158,7 @@ ETF_AGENTS/
     ├── daily_runs/          #   每日執行狀態
     ├── decision_runs/       #   不可變決策封存與重建輸入
     ├── decision_reports/    #   決策報告（依日期的閱讀副本與交付紀錄）
+    ├── competition_d_plan/  #   D-Plan v4.3 候選與內部 context
     ├── virtual_accounts/    #   虛擬帳本
     ├── latest_reports/      #   最新中文報告
     ├── source_audit/        #   來源原始抓取與稽核
@@ -190,7 +191,19 @@ ETF_AGENTS/
 - **已接入**：150 檔交易池、yfinance 研究日線、官方月營收／重大訊息／財報、虛擬帳本、每日決策鏈與可重建的中文報告。帳本使用 TWSE／TPEx 官方價量。
 - **價格口徑**：Snapshot 的決策與帳本用價是同日官方原價（`execution_close_price`），研究指標用調整價；上市與上櫃官方歷史月行情皆可補抓。缺官方價時退回調整價，重放過去日期時含事後除權息調整，見[架構](docs/architecture.md)。
 - **尚未接入**：正式全市場情緒與合法歷史分析師共識，維持 `unavailable`。FinMind 財報與新聞等候選資料，未通過授權、時間與覆蓋核對前不進正式決策。
-- **尚未完成**：D-Plan 候選可由 CLI 匯出，但每日流程尚未自動呼叫；主辦方伺服器驗證尚未完成；回測功能已移除。
+- **已接入但仍需人工上傳**：每日流程在決策為 `approved`／`no_trade`、競賽設定已確認且帳本綁定通過時，自動建立 D-Plan v4.3 候選。主辦方伺服器驗證與上傳仍由人工執行；回測功能已移除。
+
+### D-Plan 候選
+
+正式產生前，請人工確認 `config/competition_profile.json` 的隊伍、策略與實際模型資訊，並將 `strategy_status` 設為 `approved`。完整 `run` 會自動嘗試匯出；D-Plan 失敗不會否定已封存決策或阻止中文報告，原因會寫入同一次 `pipeline.json`。
+
+若決策與報告已完成，只想重試最新候選，不需重跑 Agent：
+
+```bash
+docker compose run --rm agent python3 cli/dplan.py build-latest
+```
+
+輸出只是供人工檢查的候選檔，不會自動送件，也不代表已通過主辦方平台驗證。
 
 ## 資料與報告位置
 
@@ -202,6 +215,8 @@ ETF_AGENTS/
 | `artifacts/daily_runs/<日期>/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
 | `artifacts/decision_runs/<日期>/<run_id>/` | 不可變決策封存與重建輸入 |
 | `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
+| `artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` | 可人工上傳的 D-Plan v4.3 候選 |
+| `artifacts/competition_d_plan/contexts/` | D-Plan 內部 context 稽核檔；不是主辦方繳交檔 |
 
 ## 常見問題
 

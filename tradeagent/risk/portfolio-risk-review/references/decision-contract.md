@@ -99,7 +99,7 @@ Decision run 的 artifact 為 `momentum`、`debate`（`ResearchDebateBundle` 2.0
 
 - `decision` 限定 `approve`、`revise`、`reject`。
 - Guard 失敗是硬性失敗，RiskReview 只能 `reject`，不得 `approve` 或用修正繞過。
-- `revise` 只允許 `remove_candidate`、`increase_cash_buffer`、`reduce_max_stock_weight`、`reduce_turnover_limit`，且不能提高風險。
+- `revise` 只允許 `remove_candidate`、`increase_cash_buffer`、`reduce_max_stock_weight`、`reduce_turnover_limit`，且不能提高風險。每項 action 一律包含 `type`、`symbol`、`value`、`reason` 四個字串；不適用的 `symbol` 或 `value` 使用空字串，以符合 Codex strict JSON Schema。
 - 修正序號必須連續且最多三次；每次重新建立 Proposal、Scenario、Guard 與 RiskReview。
 - `evidence_ids` 必須來自共同輸入；未知欄位或權重／股數等手寫結果一律拒絕。
 

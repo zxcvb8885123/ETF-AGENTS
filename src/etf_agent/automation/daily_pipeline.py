@@ -145,7 +145,9 @@ REVIEW_SCHEMA = _object(
                     "value": _TEXT,
                     "reason": _TEXT,
                 },
-                ("type", "reason"),
+                # Codex strict JSON Schema 要求 properties 內宣告的欄位全部列入 required；
+                # 不適用欄位以空字串表示，Validator 仍只讀取該 action 所需欄位。
+                ("type", "symbol", "value", "reason"),
             ),
         },
     },
@@ -768,7 +770,8 @@ class DailyDecisionPipeline:
         task = AgentTask(
             "review_r%d" % revision,
             "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s，再讀提案 %s、情境 %s、Guard %s 與程式計算的產業實際權重 %s；可引用的 evidence ID 清單在 %s。"
-            "輸出 approve、revise 或 reject。revise 只能使用 remove_candidate（symbol 為本提案買進股票）、"
+            "輸出 approve、revise 或 reject。revision_actions 每一項都必須含 type、symbol、value、reason 四個字串欄位；"
+            "remove_candidate 的 symbol 為本提案買進股票且 value 為空字串；其他類型的 symbol 為空字串。revise 只能使用 remove_candidate、"
             "increase_cash_buffer（value 不得低於目前現金緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
             "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
             % (
