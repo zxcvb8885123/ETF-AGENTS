@@ -5,8 +5,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from etf_agent.automation.agent_runner import AgentCall, AgentTask, CodexAgentRunner, DailyPipelineError, OpenCodeAgentRunner
+from etf_agent.automation.agent_runner import AgentCall, AgentTask, CodexAgentRunner, DailyPipelineError, OpenCodeAgentRunner, _claude_usage_tokens
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
+
+
+class ClaudeUsageTokensTests(unittest.TestCase):
+    def test_usage_is_mapped_to_token_fields(self):
+        payload = {"usage": {"input_tokens": 12, "cache_read_input_tokens": 3000, "cache_creation_input_tokens": 400, "output_tokens": 55}}
+        self.assertEqual(_claude_usage_tokens(payload), {
+            "input_tokens": 12, "cached_input_tokens": 3000, "cache_creation_input_tokens": 400, "output_tokens": 55})
+
+    def test_missing_or_invalid_usage_is_not_guessed(self):
+        self.assertIsNone(_claude_usage_tokens({}))
+        self.assertIsNone(_claude_usage_tokens({"usage": []}))
+        self.assertIsNone(_claude_usage_tokens({"usage": {"input_tokens": "12", "output_tokens": 1}}))
+        self.assertIsNone(_claude_usage_tokens({"usage": {"input_tokens": -1}}))
+        self.assertIsNone(_claude_usage_tokens({"usage": {}}))
 
 
 class CodexAgentRunnerTests(unittest.TestCase):

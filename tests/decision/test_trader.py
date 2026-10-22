@@ -24,7 +24,7 @@ from test_portfolio_risk_decision import policy as base_policy
 from test_stance import packets
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 STANCE = {"level": "neutral", "rationale": "市場中性。", "evidence_ids": ["price-2330"]}
 
 
@@ -116,6 +116,24 @@ class TradeDecisionAllocationTests(unittest.TestCase):
         self.assertEqual(list(proposal["position_sizing"]["target_weights"]), ["2317.TW"])
         self.assertGreater(Decimal(proposal["position_sizing"]["target_weights"]["2317.TW"]), 0)
         self.assertEqual(ProposalValidator(bundle, policy, trade).validate(proposal), [])
+
+    def test_support_breaks_ties_within_same_conviction(self):
+        bundle, _, _, debate = world()
+        trade = decision(bundle, debate, items())
+        base = base_policy()
+        base["position_sizing"] = copy.deepcopy(SIZING)
+        base["content_sha256"] = decision_policy_sha256(base)
+        policy = apply_trade_decision(base, trade, STANCE, bundle, debate)
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        self.assertEqual(policy["position_sizing"]["support_by_symbol"], {"2317.TW": 1})
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(policy), [])
+        engine = AllocationOrderEngine(bundle, policy)
+        engine.policy["position_sizing"].update(
+            conviction_by_symbol={"2317.TW": "medium", "1101.TW": "medium"},
+            support_by_symbol={"2317.TW": 2, "1101.TW": 0},
+        )
+        ordered, _ = engine._conviction_targets(["1101.TW", "2317.TW"], set(), {}, Decimal("1000000"), 0, {"cash_buffer_rate": Decimal("0.1")})
+        self.assertEqual(ordered, ["2317.TW", "1101.TW"])
 
     def test_invalid_cash_stance_is_rejected(self):
         bundle, _, _, debate = world()

@@ -726,7 +726,7 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 ("intent", intent), ("policy", settings), ("team_inputs", team),
             ):
                 paths[name].write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            script = Path(__file__).parents[1] / "cli" / "portfolio_decision.py"
+            script = Path(__file__).parents[2] / "cli" / "portfolio_decision.py"
             base = [sys.executable, str(script), "--bundle", str(paths["bundle"])]
 
             def run(*arguments):

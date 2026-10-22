@@ -50,7 +50,7 @@ class PreflightTests(unittest.TestCase):
             target.write_text("{}", encoding="utf-8")
         rules = self.root / "rules.json"
         rules.write_text(json.dumps({"initial_capital_twd": 1_000_000_000, "version": "fixture-v1"}), encoding="utf-8")
-        repository = VirtualAccountRepository(self.root / "artifacts" / "virtual_accounts", "cup-test")
+        repository = VirtualAccountRepository(self.root / "artifacts" / "ledger", "cup-test")
         VirtualAccountService(repository).initialize(rules, "cup-test", "2026-09-18T17:00:00+08:00")
 
     def tearDown(self):
@@ -79,7 +79,7 @@ class PreflightTests(unittest.TestCase):
         self.assertNotIn("docker", checks)
         self.assertTrue(all(check.ok for check in checks.values()))
         self.assertFalse(any(command[0] == "docker" for command in runner.commands))
-        (self.root / "artifacts" / "research_snapshot_latest.json").unlink()
+        (self.root / "artifacts" / "data" / "research_snapshot_latest.json").unlink()
         checks = self.run_checks(skip_data=True)
         self.assertFalse(checks["files"].ok)
         self.assertIn("research_snapshot_latest.json", checks["files"].detail)
@@ -129,10 +129,10 @@ class PreflightTests(unittest.TestCase):
     def test_uninitialized_account_fails_without_creating_directory(self):
         checks = self.run_checks(account_id="missing")
         self.assertIn("尚未開帳", checks["account"].detail)
-        self.assertFalse((self.root / "artifacts" / "virtual_accounts" / "missing").exists())
+        self.assertFalse((self.root / "artifacts" / "ledger" / "missing").exists())
 
     def test_tampered_account_state_fails(self):
-        index = self.root / "artifacts" / "virtual_accounts" / "cup-test" / "latest.json"
+        index = self.root / "artifacts" / "ledger" / "cup-test" / "latest.json"
         payload = json.loads(index.read_text(encoding="utf-8"))
         payload["state_sha256"] = "0" * 64
         index.write_text(json.dumps(payload), encoding="utf-8")

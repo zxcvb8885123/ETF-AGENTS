@@ -18,7 +18,7 @@ from test_analysts import EVENT_ID, bundle_with_event, event_items, report, tech
 from test_daily_pipeline import FakeRunner
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def inputs():

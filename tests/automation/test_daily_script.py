@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class NamedResumeTests(unittest.TestCase):
@@ -100,7 +100,7 @@ class ArgumentTests(unittest.TestCase):
     def test_resume_with_run_id_implies_skip_data(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            run_dir = root / "artifacts" / "daily_runs" / "2026-09-29" / "daily-20260929"
+            run_dir = root / "artifacts" / "daily" / "2026-09-29" / "daily-20260929"
             run_dir.mkdir(parents=True)
             (run_dir / "pipeline.json").write_text(json.dumps({"run_id": "daily-20260929", "status": "failed", "started_at": "2026-09-29T18:00:00+08:00"}), encoding="utf-8")
             (run_dir / "bull_b0_raw_1.json").write_text("{}", encoding="utf-8")
@@ -111,7 +111,7 @@ class ArgumentTests(unittest.TestCase):
     def test_resume_without_resumable_run_still_fetches_data(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "artifacts" / "daily_runs").mkdir(parents=True)
+            (root / "artifacts" / "daily").mkdir(parents=True)
             code, seen = self.run_main("--resume", "--force", root=root)
         self.assertEqual(code, 1)
         self.assertEqual(seen, [False])
@@ -119,7 +119,7 @@ class ArgumentTests(unittest.TestCase):
     def test_resume_with_unknown_run_id_stops(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "artifacts" / "daily_runs").mkdir(parents=True)
+            (root / "artifacts" / "daily").mkdir(parents=True)
             code, seen = self.run_main("--resume", "daily-20200101", "--force", root=root)
         self.assertEqual(code, 1)
         self.assertEqual(seen, [])
@@ -133,6 +133,62 @@ class FakeCalendar:
 
     def is_trading_day(self, day):
         return day.weekday() < 5 and day not in self.holidays
+
+
+class DataStageHistoryEndTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_end", ROOT / "scripts" / "run_daily_pipeline.py")
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def run_stage(self, history_end):
+        completed = type("Completed", (), {"returncode": 0})()
+        with patch.object(self.module.subprocess, "run", return_value=completed) as run:
+            self.module.run_data_stage("acct", "prepare-1", history_end)
+        return run.call_args.kwargs["env"]
+
+    def test_history_end_is_passed_to_start_script(self):
+        self.assertEqual(self.run_stage(date(2026, 10, 21))["HISTORY_END"], "2026-10-21")
+
+    def test_unknown_history_end_is_not_guessed(self):
+        with patch.dict(self.module.os.environ, {}, clear=False):
+            self.module.os.environ.pop("HISTORY_END", None)
+            self.assertNotIn("HISTORY_END", self.run_stage(None))
+
+    def test_failed_data_stage_raises(self):
+        completed = type("Completed", (), {"returncode": 2})()
+        with patch.object(self.module.subprocess, "run", return_value=completed):
+            with self.assertRaises(RuntimeError):
+                self.module.run_data_stage("acct", "prepare-1", date(2026, 10, 21))
+
+
+class CalendarCaptureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline", ROOT / "scripts" / "run_daily_pipeline.py")
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def test_missing_calendar_is_fetched_first_and_existing_one_is_not(self):
+        now = datetime(2026, 10, 23, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(self.module, "capture_trading_sources") as capture:
+                self.module.ensure_calendar_capture(root, now)
+                capture.assert_called_once_with(root)
+            with patch.object(self.module, "latest_calendar_capture_before", return_value=root), \
+                    patch.object(self.module, "capture_trading_sources") as capture:
+                self.module.ensure_calendar_capture(root, now)
+                capture.assert_not_called()
+
+    def test_fetch_failure_does_not_hide_the_original_calendar_error(self):
+        now = datetime(2026, 10, 23, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(self.module, "capture_trading_sources", side_effect=OSError("離線")):
+                self.module.ensure_calendar_capture(Path(directory), now)
+                with self.assertRaises(self.module.TradingCalendarError):
+                    self.module.trading_day_check(Path(directory), now)
 
 
 class DataReuseTests(unittest.TestCase):
@@ -181,12 +237,13 @@ class DataReuseTests(unittest.TestCase):
             "created_at": "2026-10-21T16:00:00+08:00",
         }
         snapshot.update(overrides)
-        account_dir = root / "artifacts" / "virtual_accounts" / "ai-cup-2026"
+        account_dir = root / "artifacts" / "ledger" / "ai-cup-2026"
         account_dir.mkdir(parents=True, exist_ok=True)
-        (root / "artifacts" / "research_snapshot_latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
+        (root / "artifacts" / "data").mkdir(parents=True, exist_ok=True)
+        (root / "artifacts" / "data" / "research_snapshot_latest.json").write_text(json.dumps(snapshot), encoding="utf-8")
         account = account_dir / "account_snapshot_latest.json"
         account.write_text("{}", encoding="utf-8")
-        return root / "artifacts" / "research_snapshot_latest.json", account
+        return root / "artifacts" / "data" / "research_snapshot_latest.json", account
 
     def fetched(self, expected=date(2026, 10, 21), drop_account=False, **overrides):
         with tempfile.TemporaryDirectory() as directory:

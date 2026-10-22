@@ -55,6 +55,18 @@ class CandidateCaptureTests(unittest.TestCase):
             self.assertTrue(Path(item["raw_path"]).is_file())
         self.assertEqual(len(list(self.root.glob("*/%s/manifest.json" % manifest["run_id"]))), 1)
 
+    def test_keep_latest_only_prunes_after_full_success_only(self):
+        ok = lambda request, timeout: _Response(b"Date,Code\n1150929,2330\n")
+        first = capture_ogd_candidates(self.report, self.root, fetch=ok, keep_latest_only=True)
+        bad = lambda request, timeout: _Response(b"A,A\n1,2\n")
+        failed = capture_ogd_candidates(self.report, self.root, fetch=bad, keep_latest_only=True)
+        self.assertEqual(failed["status"], "partial_failure")
+        self.assertEqual(len(list(self.root.glob("*/*/manifest.json"))), 2)  # 失敗時舊封存保留。
+        third = capture_ogd_candidates(self.report, self.root, fetch=ok, keep_latest_only=True)
+        remaining = list(self.root.glob("*/*/manifest.json"))
+        self.assertEqual([path.parent.name for path in remaining], [third["run_id"]])
+        self.assertNotEqual(first["run_id"], third["run_id"])
+
     def test_invalid_csv_is_archived_and_run_fails_closed(self):
         manifest = capture_ogd_candidates(
             self.report,

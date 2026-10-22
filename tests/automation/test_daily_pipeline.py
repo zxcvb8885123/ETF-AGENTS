@@ -18,7 +18,7 @@ from etf_agent.decision import DecisionRepository, DecisionFinalizer
 from test_decision_input_builder import builder_inputs, seed_history
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class FakeRunner:

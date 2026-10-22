@@ -21,7 +21,7 @@ from test_daily_pipeline import FakeRunner
 from test_portfolio_decision_agent import decision_bundle
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EVENT_ID = "document:event-2330"
 
 

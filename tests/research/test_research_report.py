@@ -12,8 +12,8 @@ from etf_agent.reporting import (
     ResearchReportMarkdownRenderer,
     ResearchReportValidator,
 )
-from tests.test_event_research_agent import snapshot_fixture, valid_result
-from tests.test_sentiment_analyst_agent import (
+from test_event_research_agent import snapshot_fixture, valid_result
+from test_sentiment_analyst_agent import (
     perception_bundle,
     valid_result as valid_perception_result,
 )

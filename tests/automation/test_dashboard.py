@@ -93,13 +93,18 @@ class DashboardTests(unittest.TestCase):
         run = decisions / "2026-10-01" / "decision-1"
         run.mkdir(parents=True)
         (run / "decision_input.json").write_text(json.dumps({"account_snapshot": {"id": 1}}), encoding="utf-8")
-        (run / "decision.json").write_text(json.dumps({"status": "approved", "orders": [
-            {"symbol": "2412.TW", "side": "sell", "intent": "trim", "lots": 30, "shares": 30000}]}), encoding="utf-8")
+        (run / "decision.json").write_text(json.dumps({"status": "approved", "portfolio": {"positions": [{"symbol": "2412.TW", "weight": "0.0798"}]}, "orders": [
+            {"symbol": "2412.TW", "side": "sell", "intent": "trim", "lots": 30, "shares": 30000},
+            {"symbol": "2330.TW", "side": "sell", "intent": "exit", "lots": 5, "shares": 5000}]}), encoding="utf-8")
         latest = {"provenance": {"type": "prepared", "account_snapshot": {"id": 1}}}
         from unittest import mock
         with mock.patch("etf_agent.virtual_account.daily.DecisionRepository"):
             pending = _pending_orders(decisions, latest)
         self.assertEqual(pending["orders"][0]["symbol"], "2412.TW")
+        self.assertEqual(pending["orders"][0]["weight"], "0.0798")
+        self.assertIsNone(pending["orders"][1]["weight"])
+        weights = [item["weight"] for item in pending["orders"]]
+        self.assertEqual(weights, ["0.0798", None])
         self.assertEqual(pending["decision_run_id"], "decision-1")
         self.assertIsNone(_pending_orders(decisions, {"provenance": {"type": "close"}}))
         self.assertIsNone(_pending_orders(None, latest))
