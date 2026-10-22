@@ -151,8 +151,8 @@ function renderTrades(d) {
   card.hidden = !pend;
   if (pend) document.getElementById("pending-title").textContent = pend.execution_date ? `預定買賣（${pend.execution_date} 收盤成交）` : "預定買賣（下一個交易日收盤成交）";
   if (pend) document.getElementById("pending").innerHTML = pend.orders.length ? `<table>
-    <tr><th>方向</th><th>代號</th><th>意圖</th><th>張數</th></tr>
-    ${pend.orders.map(o => `<tr><td><span class="tag ${o.side}">${SIDE[o.side] || esc(o.side)}</span></td><td>${esc(o.symbol)}</td><td>${esc(o.intent || "—")}</td><td>${nf.format(o.lots)}</td></tr>`).join("")}
+    <tr><th>方向</th><th>代號</th><th>意圖</th><th>張數</th><th>占資金</th></tr>
+    ${pend.orders.map(o => `<tr><td><span class="tag ${o.side}">${SIDE[o.side] || esc(o.side)}</span></td><td>${esc(o.symbol)}</td><td>${esc(o.intent || "—")}</td><td>${nf.format(o.lots)}</td><td>${o.weight == null ? "—" : (Number(o.weight) * 100).toFixed(2) + "%"}</td></tr>`).join("")}
   </table><div class="sub">已決定，以收盤價成交，成交後會移到上面的買賣紀錄；決策 ${esc(pend.decision_run_id)}（${esc(pend.status)}）。</div>`
     : '<div class="empty">最新決策沒有委託。</div>';
 }

@@ -24,7 +24,7 @@ def main() -> int:
     parser.add_argument("--universe", type=Path, default=ROOT / "data" / "official_universe.csv")
     parser.add_argument("--output", type=Path, default=ROOT / "data" / "sector_classification.json")
     parser.add_argument(
-        "--raw-dir", type=Path, default=ROOT / "artifacts" / "source_audit" / "sector_classification"
+        "--raw-dir", type=Path, default=ROOT / "artifacts" / "debug" / "source_audit" / "sector_classification"
     )
     args = parser.parse_args()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

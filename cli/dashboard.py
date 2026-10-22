@@ -15,8 +15,8 @@ from etf_agent.dashboard.app import create_app  # noqa: E402
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repository", type=Path, default=ROOT / "artifacts" / "virtual_accounts")
-    parser.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decision_runs", help="Decision run 目錄；用來顯示尚未成交的委託")
+    parser.add_argument("--repository", type=Path, default=ROOT / "artifacts" / "ledger")
+    parser.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decisions", help="Decision run 目錄；用來顯示尚未成交的委託")
     parser.add_argument("--account-id", default="ai-cup-2026")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)

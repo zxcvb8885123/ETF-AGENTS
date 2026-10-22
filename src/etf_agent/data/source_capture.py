@@ -6,13 +6,14 @@ import csv
 import hashlib
 import io
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from etf_agent.core.run_layout import day_from_run_id
+from etf_agent.core.run_layout import day_dirs, day_from_run_id, list_run_dirs
 
 
 OGD_SOURCE_IDS = frozenset({
@@ -33,8 +34,11 @@ def capture_ogd_candidates(
     *,
     fetch: Callable[..., Any] = urlopen,
     now: Callable[[], str] = _utc_now,
+    keep_latest_only: bool = False,
 ) -> Dict[str, object]:
-    """每次建立獨立封存目錄；任何失敗都不宣稱來源可用。"""
+    """每次建立獨立封存目錄；任何失敗都不宣稱來源可用。
+
+    keep_latest_only：八份全部抓成功後才刪除較舊的封存；有任何失敗就全數保留，舊封存仍可當後備。"""
 
     sources = report.get("sources")
     if not isinstance(sources, list) or {item.get("source_id") for item in sources if isinstance(item, dict)} != OGD_SOURCE_IDS or len(sources) != len(OGD_SOURCE_IDS):
@@ -109,4 +113,11 @@ def capture_ogd_candidates(
         "sources": results,
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if keep_latest_only and manifest["status"] == "captured_candidate_only":
+        for old in list_run_dirs(output_dir):
+            if old != run_dir:
+                shutil.rmtree(old)
+        for day in day_dirs(output_dir):
+            if not any(day.iterdir()):
+                day.rmdir()
     return manifest

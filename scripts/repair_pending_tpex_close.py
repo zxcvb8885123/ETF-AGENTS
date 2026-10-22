@@ -20,11 +20,11 @@ def main() -> int:
     parser.add_argument("--account-id", default="ai-cup-2026")
     args = parser.parse_args()
     try:
-        account = VirtualAccountRepository(ROOT / "artifacts/virtual_accounts", args.account_id).latest()
+        account = VirtualAccountRepository(ROOT / "artifacts/ledger", args.account_id).latest()
         state = account["state"]
         if state["provenance"]["type"] != "prepared":
             raise ValueError("帳本目前沒有待結算的 prepare 狀態")
-        decisions = ROOT / "artifacts/decision_runs"
+        decisions = ROOT / "artifacts/decisions"
         run_id = find_decision_run(decisions, state["provenance"]["account_snapshot"])
         if run_id is None:
             raise ValueError("沒有與目前帳本對應的封存決策")
