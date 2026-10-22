@@ -281,6 +281,10 @@ def main() -> int:
         "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
         help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
     )
+    parser.add_argument(
+        "--max-workers", type=int, default=6, choices=range(1, 9), metavar="N",
+        help="分析師、多空研究與交易階段同時執行的子 Agent 數（1～8，預設 6；1 為串行）。同時呼叫越多越容易撞到用量上限",
+    )
     parser.add_argument("--preflight-only", action="store_true", help="只檢查 Docker、所選 Agent CLI 登入、帳戶、必要檔案與磁碟")
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
     parser.add_argument("--max-budget-usd", type=float, help="Claude CLI 單次子 Agent 的估算用量上限；預設 3 美元")
@@ -462,6 +466,7 @@ def main() -> int:
             resume=args.resume is not None,
             analyst_runner=analyst_runner,
             technical_gate=args.technical_gate,
+            max_workers=args.max_workers,
         )
         result = pipeline.run(
             snapshot_path, account_path, trading_status_path,
@@ -477,6 +482,8 @@ def main() -> int:
                 "cash_stance": result.cash_stance,
                 "order_count": len(result.orders),
                 "agent_calls": result.agent_calls,
+                "max_workers": args.max_workers,
+                "stage_durations": result.stage_durations,
                 "agent_estimated_usage_usd": round(sum(call["estimated_usage_usd"] for call in result.agent_calls), 4),
                 "target_session": session,
             }

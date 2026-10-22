@@ -8,10 +8,13 @@ Validator 檢查，失敗時把錯誤回饋重試一次，仍失敗就停止，�
 from __future__ import annotations
 
 import json
+import threading
 import time
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
 from etf_agent.decision import (
     AllocationOrderEngine,
@@ -211,9 +214,12 @@ class PipelineResult:
     research_result_path: Optional[Path] = None
     agent_calls: List[Dict[str, object]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    stage_durations: Dict[str, float] = field(default_factory=dict)
 
 
 ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event"})
+MAX_PARALLEL_WORKERS = 8
+_Job = TypeVar("_Job")
 
 
 class DailyDecisionPipeline:
@@ -230,10 +236,14 @@ class DailyDecisionPipeline:
         resume: bool = False,
         analyst_runner: Optional[AgentRunner] = None,
         technical_gate: bool = False,
+        max_workers: int = 1,
     ):
         """``analyst_runner`` 只負責技術／基本面／事件分析師批次，未提供時全部沿用 ``runner``。
         ``resume=True`` 時，同一 run 目錄中先前已通過驗證的 Agent 輸出會以目前的
-        Validator 重驗後沿用，不再呼叫 Agent；輸入改變時 envelope 對不上，自然重跑。"""
+        Validator 重驗後沿用，不再呼叫 Agent；輸入改變時 envelope 對不上，自然重跑。
+        ``max_workers`` 是分析師與多空研究階段同時執行的 Agent 呼叫數上限；預設 1 為串行。"""
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= MAX_PARALLEL_WORKERS:
+            raise ValueError("max_workers 必須介於 1 與 %d" % MAX_PARALLEL_WORKERS)
         self.root = project_root
         self.run_dir = run_dir
         self.runner = runner
@@ -243,9 +253,39 @@ class DailyDecisionPipeline:
         self.max_attempts = max_attempts
         self.log = log
         self.resume = resume
+        self.max_workers = max_workers
         self.calls: List[Dict[str, object]] = []
+        self.stage_durations: Dict[str, float] = {}
+        self._calls_lock = threading.Lock()
 
     # ------------------------------------------------------------------ helpers
+    @contextmanager
+    def _timed(self, stage: str) -> Iterator[None]:
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.stage_durations[stage] = round(time.monotonic() - started, 1)
+
+    def _run_jobs(self, jobs: Sequence[Tuple[str, Callable[[], _Job]]]) -> List[_Job]:
+        """依序回傳各任務結果。``max_workers`` 大於 1 時同時執行，任一失敗即取消尚未開始的任務並拋出錯誤；
+        ``self.calls`` 依提交順序整理，結果不受完成先後影響。"""
+        if self.max_workers == 1 or len(jobs) <= 1:
+            return [job() for _, job in jobs]
+        first_call = len(self.calls)
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(jobs))) as pool:
+            futures = [pool.submit(job) for _, job in jobs]
+            wait(futures, return_when=FIRST_EXCEPTION)
+            for future in futures:
+                future.cancel()
+        position = {name: index for index, (name, _) in enumerate(jobs)}
+        with self._calls_lock:
+            self.calls[first_call:] = sorted(self.calls[first_call:], key=lambda call: position.get(str(call["name"]), len(jobs)))
+        for future in futures:
+            if not future.cancelled() and future.exception() is not None:
+                raise future.exception()
+        return [future.result() for future in futures]
+
     def _path(self, name: str) -> Path:
         return self.run_dir / ("%s.json" % name)
 
@@ -295,7 +335,8 @@ class DailyDecisionPipeline:
                 item["model"] = model
             if call.usage_tokens is not None:
                 item["usage_tokens"] = call.usage_tokens
-            self.calls.append(item)
+            with self._calls_lock:
+                self.calls.append(item)
             self.save_artifact("%s_raw_%d" % (task.name, offset + attempt), call.output)
             artifact = build(call.output)
             errors = validate(artifact)
@@ -333,6 +374,7 @@ class DailyDecisionPipeline:
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
             result.errors.append(str(error))
         result.agent_calls = self.calls
+        result.stage_durations = dict(self.stage_durations)
         return result
 
     def _run(
@@ -374,16 +416,19 @@ class DailyDecisionPipeline:
         self.save_artifact("momentum", momentum)
 
         self.log("[decision 3] 分析團隊：技術／基本面／事件（逐批），情緒無核准來源時 unavailable")
-        analysts = self.run_analyst_team(bundle, momentum, database_path)
+        with self._timed("analysts"):
+            analysts = self.run_analyst_team(bundle, momentum, database_path)
 
         # 空物件表示新鏈沒有獨立事件研究輸入，不是假造 completed／空事件結果。
         research: Dict[str, object] = {}
 
         self.log("[decision 4] 多頭／空頭研究員（互相隔離、逐批）")
-        debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
+        with self._timed("research"):
+            debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
 
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究")
-        trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id)
+        with self._timed("trader"):
+            trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id)
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         base_policy = build_decision_policy(
@@ -392,7 +437,8 @@ class DailyDecisionPipeline:
             service.read_json(sector_path, " 產業分類"),
         )
         self.save_artifact("policy_base", base_policy)
-        stance = self.run_cash_stance(bundle, momentum, analysts, trade)
+        with self._timed("cash_stance"):
+            stance = self.run_cash_stance(bundle, momentum, analysts, trade)
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy)
@@ -402,6 +448,7 @@ class DailyDecisionPipeline:
         result.cash_stance = str(stance["level"])
 
         self.log("[decision 7] 配置、情境、Guard 與風險審查（最多 %d 次修正）" % int(policy["max_revisions"]))
+        review_started = time.monotonic()
         engine = AllocationOrderEngine(bundle, policy)
         proposal = engine.run(trade)
         history: Optional[Dict[str, object]] = None
@@ -428,6 +475,7 @@ class DailyDecisionPipeline:
                 revision_count=revision + 1,
                 parent_proposal_id=str(proposal["proposal_id"]),
             )
+        self.stage_durations["allocation_review"] = round(time.monotonic() - review_started, 1)
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
         team = build_team_inputs(analysts, None, stance)
@@ -474,6 +522,8 @@ class DailyDecisionPipeline:
             self.save_artifact("analyst_data_availability", inventory)
             availability = {row["symbol"]: [{key: value for key, value in channel.items() if key != "candidate_references"}
                                           for channel in row["channels"]] for row in inventory["symbols"]}
+        plans: Dict[str, Tuple[Dict[str, object], List[Dict[str, object]], List[Dict[str, object]]]] = {}
+        jobs: List[Tuple[str, Callable[[], Dict[str, object]]]] = []
         for analyst in LLM_ANALYSTS:
             brief = build_analyst_brief(
                 bundle, momentum, analyst, metrics, event_market_scope=analyst == "event",
@@ -486,7 +536,6 @@ class DailyDecisionPipeline:
             if analyst == "event":
                 for row in brief["symbols"]:
                     row["data_availability"] = availability.get(row["symbol"], [{"status": "本次未查資料庫候選狀態，不能宣稱來源沒有資料"}])
-            outputs: List[List[Dict[str, object]]] = []
             analyst_batches = batches
             program_items: List[Dict[str, object]] = []
             if analyst == "event":
@@ -498,40 +547,14 @@ class DailyDecisionPipeline:
                     len(skipped), len(brief["symbols"]) - len(skipped)))
                 analyst_batches = universe_batches(
                     [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped], EVENT_BATCH_SIZE)
-            for batch in analyst_batches:
-                members = set(batch["symbols"])
-                batch_brief = {
-                    **brief,
-                    "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
-                    "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members],
-                }
-                if "technical_gate" in brief:
-                    gated = [symbol for symbol in brief["technical_gate"]["momentum_only_symbols"] if symbol in members]
-                    batch_brief["technical_gate"] = {
-                        **brief["technical_gate"],
-                        "momentum_only_symbols": gated,
-                        "full_history_symbols": len(members) - len(gated),
-                    }
-                name = "%s_b%d" % (analyst, batch["batch_index"])
-                brief_path = self.save_brief("brief_%s" % name, batch_brief)
-                validator = AnalystReportValidator(bundle, analyst, symbols=batch["symbols"])
-                task = AgentTask(
-                    name,
-                    "你是 $%s-analyst。先讀 %s，再讀本批輸入摘要 %s。只輸出本批 %d 檔股票（%s），每一檔都必須出現一次。%s"
-                    % (
-                        analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
-                        len(batch["symbols"]), "、".join(batch["symbols"]),
-                        _SHARED_RULES + (_EVENT_RULES if analyst == "event" else ""),
-                    ),
-                    EVENT_ANALYST_SCHEMA if analyst == "event" else ANALYST_SCHEMA,
-                )
-                partial = self.agent_step(
-                    task,
-                    lambda output: seal_event_market_report(bundle, brief["report_envelope"], output["items"])
-                    if analyst == "event" else seal_report(brief["report_envelope"], output["items"]),
-                    validator.validate,
-                )
-                outputs.append(partial["items"])
+            plans[analyst] = (brief, analyst_batches, program_items)
+            jobs.extend(self._analyst_batch_jobs(bundle, analyst, brief, analyst_batches))
+        partials = self._run_jobs(jobs)
+        cursor = 0
+        for analyst in LLM_ANALYSTS:
+            brief, analyst_batches, program_items = plans[analyst]
+            outputs = [partial["items"] for partial in partials[cursor:cursor + len(analyst_batches)]]
+            cursor += len(analyst_batches)
             if program_items:
                 analyst_batches = [*analyst_batches, {"batch_index": len(analyst_batches),
                                                       "symbols": [item["symbol"] for item in program_items]}]
@@ -546,6 +569,48 @@ class DailyDecisionPipeline:
             self.save_artifact("analyst_%s" % analyst, report)
         return reports
 
+    def _analyst_batch_jobs(
+        self, bundle: Mapping[str, object], analyst: str, brief: Dict[str, object],
+        analyst_batches: Sequence[Mapping[str, object]],
+    ) -> List[Tuple[str, Callable[[], Dict[str, object]]]]:
+        """每批一個任務；任務各自綁定本批的 brief、Validator 與提示，可安全同時執行。"""
+
+        def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
+            members = set(batch["symbols"])
+            batch_brief = {
+                **brief,
+                "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
+                "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members],
+            }
+            if "technical_gate" in brief:
+                gated = [symbol for symbol in brief["technical_gate"]["momentum_only_symbols"] if symbol in members]
+                batch_brief["technical_gate"] = {
+                    **brief["technical_gate"],
+                    "momentum_only_symbols": gated,
+                    "full_history_symbols": len(members) - len(gated),
+                }
+            name = "%s_b%d" % (analyst, batch["batch_index"])
+            brief_path = self.save_brief("brief_%s" % name, batch_brief)
+            validator = AnalystReportValidator(bundle, analyst, symbols=batch["symbols"])
+            task = AgentTask(
+                name,
+                "你是 $%s-analyst。先讀 %s，再讀本批輸入摘要 %s。只輸出本批 %d 檔股票（%s），每一檔都必須出現一次。%s"
+                % (
+                    analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
+                    len(batch["symbols"]), "、".join(batch["symbols"]),
+                    _SHARED_RULES + (_EVENT_RULES if analyst == "event" else ""),
+                ),
+                EVENT_ANALYST_SCHEMA if analyst == "event" else ANALYST_SCHEMA,
+            )
+            return name, lambda: self.agent_step(
+                task,
+                lambda output: seal_event_market_report(bundle, brief["report_envelope"], output["items"])
+                if analyst == "event" else seal_report(brief["report_envelope"], output["items"]),
+                validator.validate,
+            )
+
+        return [make_job(batch) for batch in analyst_batches]
+
     # ------------------------------------------------------------------ research team
     def run_research_team(
         self,
@@ -557,41 +622,15 @@ class DailyDecisionPipeline:
     ) -> Dict[str, object]:
         """多頭與空頭研究員各自逐批對全部股票表態；兩方讀同一輸入、互相隔離。"""
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
-        packets: Dict[str, Dict[str, object]] = {}
+        briefs = {role: build_stance_brief(bundle, momentum, analyst_reports, research_result, role) for role in STANCE_ROLES}
+        jobs: List[Tuple[str, Callable[[], Dict[str, object]]]] = []
         for role in STANCE_ROLES:
-            brief = build_stance_brief(bundle, momentum, analyst_reports, research_result, role)
-            outputs: List[List[Dict[str, object]]] = []
-            for batch in batches:
-                members = set(batch["symbols"])
-                name = "%s_b%d" % (role, batch["batch_index"])
-                brief_path = self.save_brief(
-                    "brief_%s" % name,
-                    {**brief, "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
-                     "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members]},
-                )
-                validator = StancePacketValidator(
-                    bundle, momentum, analyst_reports, research_result, role, symbols=batch["symbols"]
-                )
-                task = AgentTask(
-                    name,
-                    "你是 $%s-researcher。先讀 %s 及其中連結的 references/data-rules.md，再讀本批輸入摘要 %s。"
-                    "公司事件在逐檔資料中，全市場情緒在摘要頂層只提供一次；不能用市場氣氛替代個股依據。"
-                    "對本批 %d 檔股票（%s）逐檔提出%s，說明支持依據、論點強度與需要重新評估的情況。"
-                    "每一檔剛好交付一次，找不到充分理由時明示沒有充分論點；交付欄位與引用依參考文件。"
-                    "不得讀取或推測另一方研究員的輸出。%s"
-                    % (
-                        role, self.root / ("tradeagent/research/stock-research/%s-researcher/SKILL.md" % role), brief_path,
-                        len(batch["symbols"]), "、".join(batch["symbols"]),
-                        "最強的做多（值得持有或買進）論點" if role == "bull" else "最強的反對（不宜持有或應避開）論點",
-                        _SHARED_RULES,
-                    ),
-                    STANCE_SCHEMA,
-                )
-                partial = self.agent_step(
-                    task, lambda output: seal_stance_packet(brief["packet_envelope"], output["items"]), validator.validate
-                )
-                outputs.append(partial["items"])
-            packet = seal_stance_packet(brief["packet_envelope"], merge_batch_items(batches, outputs, role))
+            jobs.extend(self._stance_batch_jobs(bundle, momentum, analyst_reports, research_result, role, briefs[role], batches))
+        partials = self._run_jobs(jobs)
+        packets: Dict[str, Dict[str, object]] = {}
+        for index, role in enumerate(STANCE_ROLES):
+            outputs = [partial["items"] for partial in partials[index * len(batches):(index + 1) * len(batches)]]
+            packet = seal_stance_packet(briefs[role]["packet_envelope"], merge_batch_items(batches, outputs, role))
             packets[role] = packet
             self.save_artifact("%s_stance" % role, packet)
         debate = build_research_debate(bundle, packets["bull"], packets["bear"], "research-debate:%s" % run_id)
@@ -600,6 +639,45 @@ class DailyDecisionPipeline:
             raise DailyPipelineError("ResearchDebateBundle 驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("research_debate", debate)
         return debate
+
+    def _stance_batch_jobs(
+        self, bundle: Mapping[str, object], momentum: Mapping[str, object],
+        analyst_reports: Mapping[str, Mapping[str, object]], research_result: Mapping[str, object],
+        role: str, brief: Dict[str, object], batches: Sequence[Mapping[str, object]],
+    ) -> List[Tuple[str, Callable[[], Dict[str, object]]]]:
+        """多頭或空頭每批一個任務；兩方只讀同一份共同輸入，任務之間不共享輸出。"""
+
+        def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
+            members = set(batch["symbols"])
+            name = "%s_b%d" % (role, batch["batch_index"])
+            brief_path = self.save_brief(
+                "brief_%s" % name,
+                {**brief, "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
+                 "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members]},
+            )
+            validator = StancePacketValidator(
+                bundle, momentum, analyst_reports, research_result, role, symbols=batch["symbols"]
+            )
+            task = AgentTask(
+                name,
+                "你是 $%s-researcher。先讀 %s 及其中連結的 references/data-rules.md，再讀本批輸入摘要 %s。"
+                "公司事件在逐檔資料中，全市場情緒在摘要頂層只提供一次；不能用市場氣氛替代個股依據。"
+                "對本批 %d 檔股票（%s）逐檔提出%s，說明支持依據、論點強度與需要重新評估的情況。"
+                "每一檔剛好交付一次，找不到充分理由時明示沒有充分論點；交付欄位與引用依參考文件。"
+                "不得讀取或推測另一方研究員的輸出。%s"
+                % (
+                    role, self.root / ("tradeagent/research/stock-research/%s-researcher/SKILL.md" % role), brief_path,
+                    len(batch["symbols"]), "、".join(batch["symbols"]),
+                    "最強的做多（值得持有或買進）論點" if role == "bull" else "最強的反對（不宜持有或應避開）論點",
+                    _SHARED_RULES,
+                ),
+                STANCE_SCHEMA,
+            )
+            return name, lambda: self.agent_step(
+                task, lambda output: seal_stance_packet(brief["packet_envelope"], output["items"]), validator.validate
+            )
+
+        return [make_job(batch) for batch in batches]
 
     # ------------------------------------------------------------------ trader
     def run_trader(
@@ -627,8 +705,7 @@ class DailyDecisionPipeline:
             for name, report in analyst_reports.items()
         }
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
-        outputs: List[List[Dict[str, object]]] = []
-        for batch in batches:
+        def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]
             brief_path = self.save_brief(
                 "brief_%s" % name,
@@ -672,10 +749,13 @@ class DailyDecisionPipeline:
                 ),
                 TRADE_SCHEMA,
             )
-            partial = self.agent_step(
+            return name, lambda: self.agent_step(
                 task, lambda output: seal_trade_decision(envelope, output["items"]), validator.validate
             )
-            outputs.append(partial["items"])
+
+        # 各批只讀共同的帳戶、多空與動能輸入，不讀其他批的輸出，可同時執行。
+        partials = self._run_jobs([make_job(batch) for batch in batches])
+        outputs: List[List[Dict[str, object]]] = [partial["items"] for partial in partials]
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
         errors = TradeDecisionValidator(bundle, momentum, debate).validate(decision)
         if errors:
