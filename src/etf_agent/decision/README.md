@@ -7,7 +7,7 @@
 ```mermaid
 flowchart TD
     SNAP[(ResearchSnapshot<br/>+ 帳戶快照 + 交易狀態)] --> IB[input_builder.py<br/>DecisionInputBuilder]
-    IB --> BUNDLE[DecisionInputBundle<br/>contracts.py 驗證]
+    IB --> BUNDLE[DecisionInputBundle<br/>input_validator.py 驗證]
     BUNDLE --> MOM[momentum.py<br/>MomentumEngine]
     BUNDLE --> TH[trend_history.py<br/>技術歷史與均線]
     MOM --> AN
@@ -30,13 +30,16 @@ flowchart TD
 | 檔案 | 職責 | 主要公開項目 |
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | 見下方「對外介面」 |
-| `contracts.py` | 時間點一致的共用契約、欄位解析、雜湊、禁用欄位與未知欄位檢查 | `DecisionToolError`、`DecisionInputValidator`、`DecisionContext`、`decision_bundle_sha256`、`decision_rules_sha256`、`artifact_content_sha256`、`validate_forbidden_keys`、`reject_unknown_fields`、`snapshot_execution_price`、`intent_artifact_id` |
+| `contracts.py` | 相容轉出層，維持 `etf_agent.decision.contracts` 既有匯入路徑 | 轉出下列三檔的全部公開名稱 |
+| `fields.py` | 時間點一致的共用基礎：列舉、錯誤型別、欄位解析、雜湊、禁用欄位與未知欄位檢查 | `DecisionToolError`、`decision_bundle_sha256`、`decision_rules_sha256`、`artifact_content_sha256`、`validate_forbidden_keys`、`reject_unknown_fields`、`snapshot_execution_price`、`intent_artifact_id` |
+| `input_validator.py` | DecisionInputBundle 重建驗證 | `DecisionInputValidator` |
+| `input_context.py` | 已驗證的 bundle 查詢視圖與證據對應 | `DecisionContext` |
 | `input_builder.py` | 由 `ResearchSnapshot` 組裝時間點一致的 `DecisionInputBundle` | `DecisionInputBuilder` |
 | `momentum.py` | 確定性動能與市場狀態計算與驗證 | `MomentumEngine`、`MomentumResultValidator` |
 | `trend_history.py` | 技術分析用整段歷史價格與逐日均線；不產生趨勢標籤 | `TechnicalTrendHistoryTools`、`TechnicalTrendHistoryValidator` |
 | `analysts.py` | 分析團隊：確定性輸入摘要、`AnalystReport` 契約與 Validator、技術 gate、基本面指標、事件 high 重大性挑出 | `build_analyst_brief`、`seal_report`、`AnalystReportValidator`、`technical_trend_gate`、`compute_fundamental_metrics`、`high_materiality_events`、`sentiment_unavailable_report`、`sentiment_report`、`seal_event_sentiment_report`、`seal_event_market_report`、`compact_event_batch`、`analyst_report_names`、`report_envelope` |
 | `event_financial_context.py` | 將同一快照財報接到事件解讀，保留原值、單位、期間與引用 | `event_financial_context` |
-| `market_scope.py` | 全市場情緒通道狀態；個股情緒與交易行情不能代替 | `market_sentiment_channel` |
+| `market_scope.py` | 全市場情緒通道狀態：新聞優先，否則用恐懼貪婪指標；個股情緒與交易行情不能代替 | `market_sentiment_channel` |
 | `fundamental_language.py` | 把指標缺口轉為有期間、報表與欄位的中文說明；不改寫數值或分類 | `explain_metric_gap`、`chinese_gap_explanations`、`period_label`、`render_fundamental_report` |
 | `event_sentiment_report.py` | 將已驗證的合併分析報告呈現為繁體中文，不新增結論 | `render_event_sentiment_report` |
 | `stance.py` | 研究團隊：多頭／空頭研究員的隔離輸入、`StancePacket`、`ResearchDebateBundle` | `shared_input_sha256`、`stance_role_input_sha256`、`build_stance_brief`、`seal_stance_packet`、`StancePacketValidator`、`build_research_debate`、`ResearchDebateBundleValidator`、`stance_envelope` |
@@ -56,7 +59,7 @@ flowchart TD
 
 ## 上下游
 
-- 上游（依 import）：`core`、`data`（`contracts.py`、`service.py`）、`perception`（`analysts.py`、`contracts.py`、`market_scope.py`）、`fundamentals`（`analysts.py`、`event_financial_context.py`）、`research`（`contracts.py`、`finalization.py`，用來驗證舊的 `ResearchResult`）。
+- 上游（依 import）：`core`、`data`（`input_validator.py`、`service.py`）、`perception`（`analysts.py`、`input_validator.py`、`market_scope.py`）、`fundamentals`（`analysts.py`、`event_financial_context.py`）、`research`（`input_validator.py`、`finalization.py`，用來驗證舊的 `ResearchResult`）。
 - 下游：`automation.daily_pipeline`（編排整條鏈）、`virtual_account`（`DecisionInputValidator`、`DecisionRepository`、`DecisionResultValidator`）、`competition`、`decision_delivery`、`dashboard`、`perception.market_news.service`（用 `decision_bundle_sha256`）、`cli/portfolio_decision.py`、`cli/virtual_account.py`、`cli/market_news.py`、`scripts/evaluate_*_brief.py`。
 - 循環依賴：`decision` 與 `perception` 互相 import，改動時需檢查循環 import。
 - 讀：`ResearchSnapshot`、帳戶快照、交易狀態、`config/decision_rules.json`、`config/decision_policy.json`、產業分類、資料庫。寫：決策封存 `artifacts/decisions/<日期>/<run_id>/`（含 `team_inputs`、`policy`、`proposal`、`scenario`、`guard`、`risk_review`、`revision_history`、`decision`）。

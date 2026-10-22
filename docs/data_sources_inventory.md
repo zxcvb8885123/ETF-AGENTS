@@ -20,6 +20,7 @@
 | [正式帳本價量](#正式帳本價量) | TWSE／TPEx 官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
 | [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV × 7、TWSE 開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
 | [交易池](#交易池) | 主辦方名單 | `data/universe.py` | 可，一次性版本化輸入 |
+| [台股恐懼貪婪指標](market_fear_greed.md) | 期交所 VIX 月檔、期交所 Put/Call 開放資料、FinMind `TaiwanStockTotalMarginPurchaseShortSale` | `cli/market_fear_greed.py capture` | 可，作全市場情緒；核准見[來源核對](source_audit/2026-10-23_market_fear_greed_sources.md)（VIX 為使用者決定） |
 
 ## 150 檔研究日線
 

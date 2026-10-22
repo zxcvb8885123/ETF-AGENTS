@@ -271,6 +271,17 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     echo "未設定 FINMIND_TOKEN；略過 FinMind 候選擷取。" >&2
     DATA_STATUS=2
   fi
+  # 必須在 cutoff 之前抓，決策才看得到；失敗只讓市場情緒降級，不中止每日流程。
+  echo "[3b+/4] 抓取台股恐懼貪婪指標來源（VIX、Put/Call 比、融資）"
+  set +e
+  docker compose run --rm -e FINMIND_TOKEN agent python3 cli/market_fear_greed.py capture >/dev/null
+  FEAR_GREED_EXIT=$?
+  set -e
+  if [ "$FEAR_GREED_EXIT" -ne 0 ]; then
+    echo "恐懼貪婪指標來源未完整（exit ${FEAR_GREED_EXIT}）；市場情緒可能維持資料不足。" >&2
+    DATA_STATUS=2
+  fi
+  stage_time "恐懼貪婪指標"
   if [ "$DATA_ONLY" -eq 1 ]; then
     echo "[4/4] 顯示資料狀態"
     docker compose run --rm agent python3 scripts/data_status.py

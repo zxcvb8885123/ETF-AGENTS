@@ -52,20 +52,26 @@ flowchart LR
 - 搜尋摘要
 - 市場成交數字
 
+### 恐懼貪婪指標
+
+新聞不可用時，市場通道改用程式計算的[台股恐懼貪婪指標](market_fear_greed.md)（期交所 VIX、Put/Call 比與融資變化率）。指標另存於 `market_sentiment.fear_greed`，不與新聞結論合成分數；模型不能改寫分數或方向。
+
 ## 使用方式
 
 `cli/market_context_probe.py --trade-date <日期>` 補抓交易所成交、指數與法人買賣資料，輸出至 `artifacts/market_context_probes`（`--output-root` 可改）。只作交易背景與來源查核，不參與正式情緒計算。
 
 ## 限制與注意事項
 
-- 全市場新聞來源的比賽使用授權尚未確認，因此正式市場情緒輸出 `unavailable`／`unknown`，不可解讀為中性。
+- 全市場新聞來源的比賽使用授權尚未確認，新聞部分仍輸出 `unavailable`／`unknown`，不可解讀為中性。
+- 恐懼貪婪指標只有選擇權與融資兩類訊號；指標也不可用時，市場情緒維持 `unavailable`。
 
 ## 尚未實作
 
-- 具核准授權的全市場情緒 Provider：目前市場通道維持 unavailable。
+- 具核准授權的全市場新聞 Provider。
 
 ## 延伸閱讀
 
+- [台股恐懼貪婪指標](market_fear_greed.md)
 - [全市場新聞接入](market_news_integration.md)
 - [歷史新聞](market_news_history.md)
 - [事件研究整合](integrated_event_analysis.md)

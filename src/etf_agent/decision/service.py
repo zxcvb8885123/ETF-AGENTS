@@ -73,8 +73,13 @@ class PortfolioDecisionApplicationService:
         lookback_bars: int = DEFAULT_LOOKBACK_BARS,
         perception_bundle_path: Optional[Path] = None,
         perception_result_path: Optional[Path] = None,
+        fear_greed_root: Optional[Path] = None,
+        fear_greed_approvals_path: Optional[Path] = None,
     ) -> Dict[str, object]:
-        """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。"""
+        """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。
+
+        指定 ``fear_greed_root`` 時，附上截止前最後一次保存的恐懼貪婪抓取；沒有任何抓取則不附。
+        """
         if lookback_bars < 1:
             raise DecisionToolError("lookback_bars 必須至少為 1")
         snapshot = cls.read_json(snapshot_path, " ResearchSnapshot")
@@ -95,6 +100,12 @@ class PortfolioDecisionApplicationService:
             ]
         if (perception_bundle_path is None) != (perception_result_path is None):
             raise DecisionToolError("情緒資料包與研究結果必須成對提供")
+        if (fear_greed_root is None) != (fear_greed_approvals_path is None):
+            raise DecisionToolError("恐懼貪婪抓取目錄與來源核准檔必須成對提供")
+        fear_greed = None
+        if fear_greed_root is not None:
+            from etf_agent.perception.market_fear_greed import build_fear_greed_input
+            fear_greed = build_fear_greed_input(fear_greed_root, fear_greed_approvals_path, snapshot.get("snapshot_id"), cutoff)
         builder = DecisionInputBuilder(
             snapshot,
             cls.read_json(rules_path, " DecisionRules"),
@@ -113,6 +124,7 @@ class PortfolioDecisionApplicationService:
                 if account_path is not None
                 else None
             ),
+            market_fear_greed_input=fear_greed,
         )
         bundle = builder.build()
         errors = builder.validate(bundle)

@@ -1,6 +1,7 @@
 """追加保存全市場 RSS 版本；不覆寫個股新聞及原始時間。"""
 import json
 import sqlite3
+from contextlib import closing, contextmanager
 from etf_agent.core import canonical_sha256, canonical_json, parse_aware_time
 from .contracts import NEWS_SOURCES, MarketNewsError, check_fields
 
@@ -8,15 +9,22 @@ class MarketNewsRepository:
     def __init__(self, database_path):
         self.database_path = str(database_path)
 
+    @contextmanager
+    def _connect(self):
+        """提交後關閉連線；sqlite3 內建的 with 只提交、不關閉。"""
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            with connection:
+                yield connection
+
     def save_captures(self, captures):
-        with sqlite3.connect(self.database_path) as connection:
+        with self._connect() as connection:
             connection.execute('''CREATE TABLE IF NOT EXISTS market_news_captures (
                 capture_id TEXT PRIMARY KEY, source TEXT NOT NULL, scope TEXT NOT NULL,
                 available_at TEXT NOT NULL, raw_sha256 TEXT NOT NULL, payload_json TEXT NOT NULL)''')
             for row in captures:
                 connection.execute('INSERT OR IGNORE INTO market_news_captures VALUES (?,?,?,?,?,?)',
                     (canonical_sha256(row),row['source'],'TW_STOCK_MARKET',row['available_at'],row['raw_sha256'],
-                     json.dumps(row,ensure_ascii=False,sort_keys=True)))
+                     canonical_json(row)))
 
     def save_source_reviews(self, reviews, terms_captures, available_at):
         """追加真實核對紀錄與原始依據；不推定或提升使用狀態。"""
@@ -44,7 +52,7 @@ class MarketNewsRepository:
                     raise MarketNewsError('來源規範取得時間晚於核對時間')
             payload = {'review':dict(review),'terms_captures':captures,'available_at':available.isoformat()}
             entries.append((canonical_sha256(payload),source,available.isoformat(),canonical_json(payload)))
-        with sqlite3.connect(self.database_path) as connection:
+        with self._connect() as connection:
             connection.execute('''CREATE TABLE IF NOT EXISTS market_news_source_reviews (
                 review_id TEXT PRIMARY KEY, source TEXT NOT NULL,
                 available_at TEXT NOT NULL, payload_json TEXT NOT NULL)''')
@@ -53,7 +61,7 @@ class MarketNewsRepository:
     def load_source_reviews(self, decision_cutoff):
         """只讀截止時間前已保存的版本，較晚的限制可取代較早核准。"""
         cutoff = parse_aware_time(decision_cutoff, 'decision_cutoff', error=MarketNewsError)
-        with sqlite3.connect(self.database_path) as connection:
+        with self._connect() as connection:
             if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_news_source_reviews'").fetchone():
                 return []
             rows = connection.execute('SELECT review_id,source,available_at,payload_json FROM market_news_source_reviews').fetchall()

@@ -33,6 +33,7 @@
 
 - [data_sources_inventory.md](data_sources_inventory.md)：資料來源與授權限制。
 - [market_news_history.md](market_news_history.md)、[market_news_integration.md](market_news_integration.md)：全市場新聞歷史與接入。
+- [market_fear_greed.md](market_fear_greed.md)：台股恐懼貪婪指標（VIX、Put/Call 比、融資）。
 - [technical_trend_history.md](technical_trend_history.md)：技術分析歷史輸入。
 - [fundamental_data_repair.md](fundamental_data_repair.md)：財報資料修復。
 - `source_audit/`：來源核對與核准證據。程式與核准設定會引用，不可刪。

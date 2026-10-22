@@ -161,6 +161,39 @@ class DPlanExportServiceTests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), plan)
             self.assertEqual(json.loads(context_output.read_text(encoding="utf-8")), context)
 
+    def test_export_replaces_existing_plan_for_same_trade_date(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "profile.json"
+            profile.write_text(json.dumps(approved_profile()), encoding="utf-8")
+            daily = {
+                "run_id": "daily-20261020",
+                "started_at": "2026-10-19T18:00:00+08:00",
+                "finished_at": "2026-10-19T18:30:00+08:00",
+                "target_session": {"start": "2026-10-20T09:00:00+08:00", "end": "2026-10-20T13:30:00+08:00"},
+            }
+            service = DPlanExportService(root)
+            results = []
+            for decision_id, plan in (("decision-1", {"fixture": "old"}), ("decision-2", {"fixture": "new"})):
+                with patch("etf_agent.competition.service.load_decision_run", return_value={}), \
+                        patch("etf_agent.competition.service.DPlanContextBuilder.build", return_value={"id": decision_id}), \
+                        patch("etf_agent.competition.service.verify_account_binding", return_value={"run_id": "prepare-1"}), \
+                        patch("etf_agent.competition.service.DPlanExporter.build", return_value=plan), \
+                        patch.object(service, "code_version", return_value="git:test"):
+                    results.append(service.export(
+                        decision_repository=root / "decisions",
+                        decision_run_id=decision_id,
+                        daily_run=daily,
+                        profile_path=profile,
+                        account_id="ai-cup-2026",
+                        account_run_id="prepare-1",
+                    ))
+            output = Path(results[1]["output"])
+            self.assertFalse(results[0]["replaced_existing_output"])
+            self.assertTrue(results[1]["replaced_existing_output"])
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"fixture": "new"})
+            self.assertEqual(sorted(path.name for path in output.parent.glob("*.json")), [output.name])
+
     def test_trade_date_requires_a_timed_target_session(self):
         with self.assertRaisesRegex(DPlanError, "target_session"):
             DPlanExportService.trade_date({})

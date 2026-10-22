@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
-from etf_agent.core import canonical_sha256, parse_aware_time
+from etf_agent.core import canonical_json, canonical_sha256, parse_aware_time
 from .database import MarketDataDatabase
 from .universe import normalize_symbol
 
@@ -799,7 +799,7 @@ class TradingStatusRepository:
                     bundle["bundle_id"], bundle["snapshot_id"], bundle["decision_cutoff"],
                     bundle["target_session"]["start"], bundle["target_session"]["end"],
                     bundle["status"], bundle["bundle_sha256"],
-                    json.dumps(bundle, ensure_ascii=False, sort_keys=True),
+                    canonical_json(bundle),
                 ),
             )
             row = connection.execute(

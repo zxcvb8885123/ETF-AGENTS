@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from etf_agent.automation.agent_runner import AgentCall
-from etf_agent.automation import daily_pipeline
+from etf_agent.automation import daily_pipeline, team_stages
 from etf_agent.automation.batching import universe_batches
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
 
@@ -143,7 +143,7 @@ class ParallelPipelineTests(unittest.TestCase):
         self.assertFalse(decision_saved)
 
     def test_trader_batches_run_in_parallel_and_match_serial(self):
-        with mock.patch.object(daily_pipeline, "universe_batches", one_symbol_batches), \
+        with mock.patch.object(team_stages, "universe_batches", one_symbol_batches), \
                 tempfile.TemporaryDirectory() as serial_dir, tempfile.TemporaryDirectory() as parallel_dir:
             serial_world = PipelineWorld(Path(serial_dir), approved_status=True)
             parallel_world = PipelineWorld(Path(parallel_dir), approved_status=True)
@@ -162,7 +162,7 @@ class ParallelPipelineTests(unittest.TestCase):
         self.assertEqual(runner.max_trader_active, 2)
 
     def test_trader_stage_is_serial_when_workers_is_one(self):
-        with mock.patch.object(daily_pipeline, "universe_batches", one_symbol_batches), \
+        with mock.patch.object(team_stages, "universe_batches", one_symbol_batches), \
                 tempfile.TemporaryDirectory() as directory:
             world = PipelineWorld(Path(directory), approved_status=True)
             runner = SlowRunner(per_symbol_outputs(), delay=0.01)

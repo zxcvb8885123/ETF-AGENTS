@@ -512,6 +512,8 @@ def main() -> int:
             ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
             decision_run_id,
             perception_bundle_path=perception_bundle, perception_result_path=perception_result,
+            fear_greed_root=ROOT / "artifacts" / "data" / "market_fear_greed",
+            fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
         )
         summary.update(
             {
