@@ -35,6 +35,14 @@
 
 舊 Decision run 沒有 `support_by_symbol`，仍只依等級與代號。
 
+## 主辦方資料包對帳
+
+- 每日 `run` 在建立帳戶快照與交易狀態之後、呼叫任何子 Agent 之前，讀取本隊、本目標交易日的主辦方 DataPack，與帳本快照比對持股股數（必須完全相同）與現金（容忍比率可調）。
+- DataPack 是不受信任的外部檔：欄位嚴格白名單，`null` 與空陣列不互相代替；結算未產生、身分或日期不符、對不上時一律停止。
+- 結果寫入 `pipeline.json` 的 `datapack`；D-Plan 只接受 `matched` 或明確 `skipped`，並檢查每檔賣出不超過 DataPack 的 `shares`（應收配股不可賣）。
+- 不一致時預設停止；明確加 `--rebase-to-datapack` 才以 DataPack 重建帳本（新增 `datapack_rebase` 狀態，舊狀態保留），並強制建立新 Snapshot，使資料包產生時間早於決策截止時間，避免回填未來資訊。
+- 實作：`src/etf_agent/competition/datapack.py`；比賽第一天開新帳戶與重建帳本：`src/etf_agent/competition/account_opening.py`。
+
 ## 帳本結算
 
 帳本若有前次已封存的決策，必須先用該決策指定成交日的 TWSE／TPEx 官方價量結算，才能建立新的「決策前帳戶快照」。
@@ -170,4 +178,4 @@ OpenCode 的限制：
 - 只准讀檔（`.env` 與外部目錄禁止），不准執行命令或修改檔案。
 - OpenCode CLI 沒有本流程可直接用的 `--output-schema`。提示會帶 JSON Schema，但仍要靠確定性 Validator 與有限重試，拒絕不合格的結果。
 
-全市場情緒在新聞不可用時改用[台股恐懼貪婪指標](market_fear_greed.md)（程式計算，cutoff 前抓取）；兩者都不可用時維持 `unavailable`。沒有合法、歷史化的分析師共識 Provider 時，共識維持 `unavailable`。不得用公司新聞或交易背景補值。
+全市場情緒優先使用全市場新聞（`automation/market_news_stage.py`：截止前 RSS 抓取、子 Agent 逐則標註、程式重建，失敗時降級）；新聞不可用時改用[台股恐懼貪婪指標](market_fear_greed.md)（程式計算，cutoff 前抓取）；兩者都不可用時維持 `unavailable`。沒有合法、歷史化的分析師共識 Provider 時，共識維持 `unavailable`。不得用公司新聞或交易背景補值。

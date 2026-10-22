@@ -304,6 +304,169 @@ class DataReuseTests(unittest.TestCase):
             self.assertEqual(self.run_main(root, "--force", expected=date(2026, 10, 22)), [False])
             self.assertEqual(self.run_main(root, "--force", expected=None), [False])
 
+    def refresh(self, snapshot_cutoff, now, calendar=True):
+        from etf_agent.data import TradingCalendar
+
+        real = TradingCalendar.from_ogd_facts(
+            [{"kind": "calendar_event", "event_date": "2026-10-10", "name": "國慶日"}], "fixture-sha")
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot, _ = self.write_data(Path(directory), decision_cutoff=snapshot_cutoff)
+            with patch.object(self.module, "latest_calendar_capture_before", lambda *_a: object() if calendar else None), \
+                    patch.object(self.module, "calendar_from_capture", lambda _capture: real):
+                return self.module.refresh_before_deadline(Path(directory), snapshot,
+                                                           datetime.fromisoformat(now))
+
+    def test_refreshes_snapshot_until_submission_deadline(self):
+        # 10/21 晚上建立的 Snapshot 排到 10/22 時段；10/22 08:55 前重跑仍是同一時段，應重抓事件資料。
+        evening = "2026-10-21T18:00:00+08:00"
+        self.assertTrue(self.refresh(evening, "2026-10-21T20:00:00+08:00"))
+        self.assertTrue(self.refresh(evening, "2026-10-22T07:30:00+08:00"))
+        self.assertTrue(self.refresh(evening, "2026-10-22T08:54:59+08:00"))
+
+    def test_keeps_snapshot_after_deadline_or_without_calendar(self):
+        evening = "2026-10-21T18:00:00+08:00"
+        self.assertFalse(self.refresh(evening, "2026-10-22T08:55:00+08:00"))
+        self.assertFalse(self.refresh(evening, "2026-10-22T10:00:00+08:00"))
+        self.assertFalse(self.refresh(evening, "2026-10-22T07:30:00+08:00", calendar=False))
+        self.assertFalse(self.refresh(None, "2026-10-22T07:30:00+08:00"))
+
+    def write_run(self, runs_root, name, status, session_start=None):
+        run_dir = runs_root / "2026-10-22" / name
+        run_dir.mkdir(parents=True)
+        summary = {"run_id": name, "status": status}
+        if session_start:
+            summary["target_session"] = {"start": session_start}
+        (run_dir / "pipeline.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    def test_same_day_run_for_another_session_is_not_a_duplicate(self):
+        # 早上的 run 為 10/22 時段；晚上的 run 為 10/23 時段，不能被當成「當日已完成」。
+        morning, tomorrow = "2026-10-22T09:00:00+08:00", "2026-10-23T09:00:00+08:00"
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            self.write_run(runs, "daily-20261022", "completed", morning)
+            find = self.module.completed_run_for_session
+            self.assertIsNone(find(runs, "daily-20261022", tomorrow))
+            self.assertEqual(find(runs, "daily-20261022", morning)[0], "daily-20261022")
+            # 晚上的 run 完成後，再次觸發同一時段就略過。
+            self.write_run(runs, "daily-20261022-180000", "completed", tomorrow)
+            self.assertEqual(find(runs, "daily-20261022", tomorrow)[0], "daily-20261022-180000")
+
+    def test_unknown_session_or_legacy_run_keeps_skip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            self.write_run(runs, "daily-20261022", "completed")
+            find = self.module.completed_run_for_session
+            self.assertIsNotNone(find(runs, "daily-20261022", "2026-10-23T09:00:00+08:00"))
+            self.assertIsNotNone(find(runs, "daily-20261022", None))
+            self.assertIsNone(find(runs, "daily-20261021", None))
+
+    def test_failed_run_is_not_counted_as_completed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            self.write_run(runs, "daily-20261022", "failed", "2026-10-23T09:00:00+08:00")
+            self.assertIsNone(self.module.completed_run_for_session(runs, "daily-20261022", None))
+
+    def test_run_rebuilds_snapshot_before_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_data(root)
+            with patch.object(self.module, "refresh_before_deadline", lambda *_a: True):
+                self.assertEqual(self.run_main(root, "--force"), [False])
+            with patch.object(self.module, "refresh_before_deadline", lambda *_a: False):
+                self.assertEqual(self.run_main(root, "--force"), [True])
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DataPackGateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_datapack", ROOT / "scripts" / "run_daily_pipeline.py")
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "config").mkdir()
+        (self.root / "data").mkdir()
+        (self.root / "run").mkdir()
+        (self.root / "var/datapack").mkdir(parents=True)
+        (self.root / "config/competition_profile.json").write_text(json.dumps({"team_id": "TEAM_11067"}), encoding="utf-8")
+        (self.root / "data/official_universe.csv").write_text("symbol,name,market,source_date\n2330,台積電,TWSE,2026-09-14\n", encoding="utf-8")
+        self.account = self.root / "account.json"
+        self.account.write_text(json.dumps({"cash": "1000000000", "positions": []}), encoding="utf-8")
+        self.session = {"start": "2026-10-26T09:00:00+08:00"}
+        self.pack = {
+            "schema_version": "3.0", "doc_type": "DataPack", "team_id": "TEAM_11067", "trade_date": "2026-10-26",
+            "as_of_date": None, "generated_at": "2026-10-20T05:12:08+08:00", "missing": [],
+            "prev_day_orders": {"outcome": "none", "void_reasons": [], "excluded_codes": []},
+            "account": {"cash": 1000000000.0, "cash_ratio_tradable": 1.0, "nav_tradable": 1000000000.0,
+                        "aum": 1000000000.0, "receivable_cash": 0.0, "holdings_count": 0},
+            "holdings": [], "compliance": {"violations": 0, "notices": 0, "incidents": []},
+        }
+
+    def gate(self, previous=None, **overrides):
+        from decimal import Decimal
+        from types import SimpleNamespace
+        args = SimpleNamespace(skip_datapack=False, datapack=None, datapack_dir=self.root / "var/datapack", account_id="acct",
+                               datapack_cash_tolerance=Decimal("0.0005"))
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        with patch.object(self.module, "ROOT", self.root), patch.object(self.module, "log", lambda *_a: None):
+            return self.module.datapack_gate(args, self.root / "run", self.account, self.session, previous)
+
+    def write_pack(self, name="pack.json"):
+        (self.root / "var/datapack" / name).write_text(json.dumps(self.pack), encoding="utf-8")
+
+    def test_matching_datapack_is_recorded_and_copied(self):
+        self.write_pack()
+        result = self.gate()
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["trade_date"], "2026-10-26")
+        self.assertTrue((self.root / "run/datapack.json").is_file())
+
+    def test_missing_mismatched_or_changed_datapack_stops_before_agents(self):
+        from etf_agent.competition import DataPackError
+        with self.assertRaisesRegex(DataPackError, "找不到"):
+            self.gate()
+        self.write_pack()
+        self.account.write_text(json.dumps({"cash": "1000000000", "positions": [{"symbol": "2330.TW", "shares": 1000}]}), encoding="utf-8")
+        with self.assertRaisesRegex(DataPackError, "不一致"):
+            self.gate()
+        with self.assertRaisesRegex(DataPackError, "續跑"):
+            self.gate(previous={"datapack_sha256": "0" * 64})
+
+    def test_explicit_skip_is_recorded(self):
+        self.assertEqual(self.gate(skip_datapack=True), {"status": "skipped"})
+
+    def test_rebase_flag_rebuilds_then_rechecks(self):
+        self.write_pack()
+        self.account.write_text(json.dumps({"cash": "1000000000", "positions": [{"symbol": "2330.TW", "shares": 1000}]}), encoding="utf-8")
+        rebuilt = {"rebase_run_id": "rebase-x", "prepare_run_id": "prepare-x-datapack",
+                   "account_snapshot": {"cash": "1000000000", "positions": []}}
+        with patch.object(self.module, "rebase_account_to_datapack", return_value=rebuilt) as rebase:
+            result = self.gate(rebase_to_datapack=True)
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["rebased"]["prepare_run_id"], "prepare-x-datapack")
+        rebase.assert_called_once()
+        with patch.object(self.module, "rebase_account_to_datapack", return_value=dict(rebuilt, account_snapshot={"cash": "1", "positions": []})):
+            with self.assertRaisesRegex(Exception, "不一致"):
+                self.gate(rebase_to_datapack=True)
+
+
+class MarketNewsSwitchTests(unittest.TestCase):
+    def test_no_market_news_flag_is_parsed_and_rejects_nothing_else(self):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_news", ROOT / "scripts" / "run_daily_pipeline.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (ROOT / "scripts" / "run_daily_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn('market_news_root=None if args.no_market_news else', source)
+        self.assertIn('"market_news": "disabled" if args.no_market_news else "enabled"', source)
+        with patch("sys.argv", ["run_daily_pipeline.py", "--no-market-news", "--help"]):
+            with self.assertRaises(SystemExit) as caught:
+                module.main()
+        self.assertEqual(caught.exception.code, 0)

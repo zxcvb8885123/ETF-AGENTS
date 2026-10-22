@@ -20,14 +20,14 @@
 
 | 檔案 | 職責 | 主要公開項目 |
 | --- | --- | --- |
-| `__init__.py` | 匯出公開介面 | `MarketNewsError`、`seal`、`MarketNewsRSSProvider`、`prepare`、`evaluate`、`validate_pair`、`capture_market_news`、`attach_market_news`、`save_market_news_result`、`backfill_market_news`、`apply_database_source_reviews` |
+| `__init__.py` | 匯出公開介面 | `MarketNewsError`、`seal`、`MarketNewsRSSProvider`、`prepare`、`evaluate`、`validate_pair`、`capture_market_news`、`attach_market_news`、`save_market_news_result`、`backfill_market_news`、`apply_database_source_reviews`、`record_source_reviews` |
 | `contracts.py` | 全市場 RSS 研究契約；使用權未確認的內容只供診斷 | `MarketNewsError`、`seal`、`check_fields` |
-| `provider.py` | 只讀官方提供的 RSS，不擷取或轉載全文 | `MarketNewsRSSProvider` |
+| `provider.py` | 只讀官方提供的 RSS，不擷取或轉載全文；另抓已登錄來源的使用規範原文作核對依據 | `MarketNewsRSSProvider`（`capture`、`capture_terms`） |
 | `history.py` | 依明確日期與公開目錄補抓歷史新聞，保留實際取得時間 | `MarketNewsHistoryProvider` |
 | `repository.py` | 追加保存全市場 RSS 版本；不覆寫個股新聞及原始時間 | `MarketNewsRepository` |
 | `tools.py` | 重建 RSS 全量輸入與整合結論，無新聞篇數投票 | `prepare`、`evaluate` |
 | `validator.py` | 以原始 RSS 與全量標籤重建成對研究輸入 | `validate_pair` |
-| `service.py` | 補抓、保存及接入市場新聞，不呼叫模型、不建立交易決策 | `capture_market_news`、`attach_market_news`、`save_market_news_result`、`apply_database_source_reviews`、`backfill_market_news` |
+| `service.py` | 補抓、保存及接入市場新聞，不呼叫模型、不建立交易決策 | `capture_market_news`、`attach_market_news`、`save_market_news_result`、`apply_database_source_reviews`、`backfill_market_news`、`record_source_reviews` |
 
 ## 對外介面
 

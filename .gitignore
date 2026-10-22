@@ -14,3 +14,4 @@ var/logs/
 var/*.json
 !var/.gitkeep
 .claude
+var/datapack/

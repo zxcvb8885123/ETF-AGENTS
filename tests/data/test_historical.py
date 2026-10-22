@@ -603,6 +603,13 @@ class HistoricalProviderTests(unittest.TestCase):
             ],
         )
 
+    def test_refresh_after_long_gap_refetches_whole_history(self):
+        universe = [Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14")]
+        batches = plan_history_refresh(universe, {"2330.TW": date(2026, 9, 10)}, date(2026, 9, 18),
+                                       lookback_years=2, overlap_days=7)
+        self.assertEqual([(batch.start_date, [item.symbol for item in batch.instruments]) for batch in batches],
+                         [(date(2024, 9, 18), ["2330.TW"])])
+
     def test_official_refresh_requires_safe_end_and_reports_coverage(self):
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),

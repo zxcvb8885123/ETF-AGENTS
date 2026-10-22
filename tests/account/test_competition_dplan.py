@@ -135,6 +135,7 @@ class DPlanExportServiceTests(unittest.TestCase):
                 "started_at": "2026-10-19T18:00:00+08:00",
                 "finished_at": "2026-10-19T18:30:00+08:00",
                 "target_session": {"start": "2026-10-20T09:00:00+08:00", "end": "2026-10-20T13:30:00+08:00"},
+                "datapack": {"status": "skipped"},
             }
             context = {"fixture": "context"}
             plan = {"fixture": "dplan"}
@@ -171,6 +172,7 @@ class DPlanExportServiceTests(unittest.TestCase):
                 "started_at": "2026-10-19T18:00:00+08:00",
                 "finished_at": "2026-10-19T18:30:00+08:00",
                 "target_session": {"start": "2026-10-20T09:00:00+08:00", "end": "2026-10-20T13:30:00+08:00"},
+                "datapack": {"status": "skipped"},
             }
             service = DPlanExportService(root)
             results = []
@@ -193,6 +195,37 @@ class DPlanExportServiceTests(unittest.TestCase):
             self.assertTrue(results[1]["replaced_existing_output"])
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"fixture": "new"})
             self.assertEqual(sorted(path.name for path in output.parent.glob("*.json")), [output.name])
+
+    def _export(self, root, daily, plan):
+        profile = root / "profile.json"
+        profile.write_text(json.dumps(approved_profile()), encoding="utf-8")
+        service = DPlanExportService(root)
+        with patch("etf_agent.competition.service.load_decision_run", return_value={}), \
+                patch("etf_agent.competition.service.DPlanContextBuilder.build", return_value={}), \
+                patch("etf_agent.competition.service.verify_account_binding", return_value={"run_id": "prepare-1"}), \
+                patch("etf_agent.competition.service.DPlanExporter.build", return_value=plan), \
+                patch.object(service, "code_version", return_value="git:test"):
+            return service.export(decision_repository=root / "decisions", decision_run_id="decision-1", daily_run=daily,
+                                  profile_path=profile, account_id="ai-cup-2026", account_run_id="prepare-1")
+
+    def test_export_requires_datapack_reconciliation_and_caps_sells(self):
+        base = {"run_id": "daily-20261020", "started_at": "2026-10-19T18:00:00+08:00",
+                "target_session": {"start": "2026-10-20T09:00:00+08:00"}}
+        matched = {"status": "matched", "team_id": "TEAM_11067", "trade_date": "2026-10-20",
+                   "datapack_sha256": "abc", "sellable_shares": {"2330": 3000}}
+        plan = {"orders": [{"ticker": "2330", "side": "SELL", "shares": 3000}]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for datapack in (None, {"status": "mismatch"}, {"status": "not_ready"}):
+                daily = dict(base, **({"datapack": datapack} if datapack else {}))
+                with self.assertRaisesRegex(DPlanError, "DataPack 對帳"):
+                    self._export(root, daily, plan)
+            result = self._export(root, dict(base, datapack=matched), plan)
+            self.assertEqual(result["datapack"]["status"], "matched")
+            with self.assertRaisesRegex(DPlanError, "賣出超過 DataPack"):
+                self._export(root, dict(base, datapack=matched), {"orders": [{"ticker": "2330", "side": "SELL", "shares": 4000}]})
+            with self.assertRaisesRegex(DPlanError, "交易日"):
+                self._export(root, dict(base, datapack=dict(matched, trade_date="2026-10-21")), plan)
 
     def test_trade_date_requires_a_timed_target_session(self):
         with self.assertRaisesRegex(DPlanError, "target_session"):

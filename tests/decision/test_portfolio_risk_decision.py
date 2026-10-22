@@ -129,6 +129,32 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
         self.assertTrue(guard["passed"], [(item["rule_id"], item["details"]) for item in guard["checks"] if not item["passed"]])
 
+    def test_sector_over_limit_is_trimmed_before_guard(self):
+        bundle, _, _, _ = valid_inputs()
+        account = bundle["account_snapshot"]
+        account["positions"][0]["shares"] = 5000
+        price = Decimal(bundle["snapshot"]["latest_prices"][0]["analysis_close_price"])
+        account["nav"] = str(Decimal(account["cash"]) + 5000 * price)
+        bundle["rules"]["max_sector_weight"] = "0.30"
+        bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        settings = policy()
+        settings["max_sector_weight"] = "0.30"
+        settings["liquidity_fill_rate"] = "1"
+        settings["max_turnover_rate"] = "1"
+        settings["content_sha256"] = decision_policy_sha256(settings)
+        bundle, _, _, intent, _, _, _, _ = chain_inputs(bundle, settings=copy.deepcopy(settings))
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        flags = [item for item in proposal["constraint_flags"] if item["code"] == "RISK_SECTOR_WEIGHT"]
+        self.assertTrue(flags)
+        self.assertIn("半導體", flags[0]["detail"])
+        sells = [item for item in proposal["order_proposal"]["orders"] if item["symbol"] == "2330.TW"]
+        self.assertEqual((sells[0]["side"], sells[0]["intent"]), ("sell", "trim"))
+        self.assertEqual(ProposalValidator(bundle, settings, intent).validate(proposal), [])
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        self.assertTrue(guard["passed"], [(item["rule_id"], item["details"]) for item in guard["checks"] if not item["passed"]])
+
     def test_zero_liquidity_cannot_claim_overweight_was_repaired(self):
         bundle, _, _, _ = valid_inputs()
         account = bundle["account_snapshot"]

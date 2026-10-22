@@ -94,6 +94,7 @@ flowchart LR
 | `MarketNewsRepository.save_source_reviews` | 保存核對依據與時間 |
 | `MarketNewsRepository.load_source_reviews` | 只讀 cutoff 前已保存的版本 |
 | `apply_database_source_reviews` | 把最新且當時可得的核對套進 market-pack |
+| `record_source_reviews` | 抓取規範頁原文並寫入一次核對（`cli/market_news.py review`），`reviewed_at` 為寫入時間，不回溯 |
 
 - 不修改新聞、標籤或結論，也不會把 `unverified` 自動升為 `approved`。
 - 核准狀態只能來自外部來源的真實授權核對；測試 fixture 的核准與真實授權無關。
@@ -113,6 +114,19 @@ flowchart LR
 | 同時缺樣本、來源或完整輸入 | 「資料不足」 |
 
 ## 使用方式
+
+### 0. 寫入來源使用核對（只需在核准或撤回時執行）
+
+```bash
+.venv/bin/python cli/market_news.py review \
+  --database var/etf_agent.db \
+  --source CNA_FINANCE --source LTN_BUSINESS \
+  --status approved \
+  --evidence "稽核紀錄路徑與判斷"
+```
+
+- 省略 `--source` 時為全部四個來源；撤回用 `--status restricted`。
+- 2026-10-23 已核准四個來源，依據見 [source_audit/2026-10-23_market_news_sources.md](source_audit/2026-10-23_market_news_sources.md)。
 
 ### 1. 補抓並保存
 
@@ -144,16 +158,15 @@ flowchart LR
 ## 限制與注意事項
 
 - RSS 只保留最近項目，不能單靠 RSS 宣稱涵蓋整段歷史；歷史補抓見[缺日補抓](market_news_history.md)。
-- 中央社與自由時報的官方 RSS 條款限制非商業用途，本專案的比賽使用權尚未確認，因此真實資料的正式輸出為 `unavailable`，診斷結果不交給交易。
-- 資料庫中標示 `approved` 的紀錄不涵蓋中央社、自由時報或 FinMind 的比賽研究核准，不能代表整體台股。
+- 中央社與自由時報的 RSS 條款同意個人、非商業用途並須標示出處；2026-10-23 起由使用者核准四個來源（歷史原頁屬使用者自行判斷），只對之後的 cutoff 生效，見[稽核紀錄](source_audit/2026-10-23_market_news_sources.md)。
+- 每日接入：`./start.sh daily` 在 cutoff 前抓 RSS 存到 `artifacts/data/market_news/`；`./start.sh run` 取截止前最後一份、查詢視窗為 cutoff 前 3 天，由子 Agent 逐則標註並給一個綜合看法，程式重建結果後接入事件分析師。新聞步驟失敗時記錄 `market_news_error` 並改用恐懼貪婪指標。
+- FinMind 個股新聞未核准，也不能代表整體台股。
 - 診斷看法是新聞材料的研究推論，不是投資人民調，也不驗證投資效果。
-- 沒有排程，不會每日自動補抓與標籤。
 - 原有個股 PerceptionDataBundle 路徑維持兼容。
 
 來源規範：[中央通訊社 RSS](https://www.cna.com.tw/about/rss.aspx)、[自由時報 RSS](https://service.ltn.com.tw/RSS)
 
 ## 尚未實作
 
-- 中央社、自由時報與 FinMind 新聞的比賽研究使用權核准。
+- FinMind 個股新聞的使用核准與發布時間證據。
 - 完整歷史新聞庫（含當時內容版本與可得時間證據）。
-- 每日自動補抓與標籤的排程。

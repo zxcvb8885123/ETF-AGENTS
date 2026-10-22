@@ -104,7 +104,7 @@ flowchart LR
 | `artifacts/ledger/` | 虛擬帳本（雜湊鏈）與帳戶快照 | `src/etf_agent/virtual_account/service.py` 的 `VirtualAccountRepository`，入口 `cli/virtual_account.py`（`start.sh` 呼叫） | 否 | 不要刪。這是帳戶唯一狀態來源，刪了帳戶歷史與績效消失，只能重建新帳戶 |
 | `artifacts/data/` | 最新資料快照與資料收集狀態 | `start.sh` 各階段與 `scripts/`（見 2.5） | 否 | 多數可刪，下次收集重建；`trading_status/` 刪了需重新抓才能判定交易日 |
 | `artifacts/debug/` | 來源原始抓取與探測報告 | `scripts/probe_data_sources.py`、`scripts/collect_sector_classification.py` | 否 | 可刪。平常不用看，只在稽核來源時用 |
-| `artifacts/archive/` | 被取代的決策 | `supersede_decision_runs`（`src/etf_agent/virtual_account/daily.py`），由 `run_daily_pipeline.py` 呼叫 | 否 | 可刪；這些決策已被新決策取代，不再參與帳本 |
+| `artifacts/archive/` | 被取代的決策 | `supersede_decision_runs`（`src/etf_agent/virtual_account/daily.py`，由 `run_daily_pipeline.py` 呼叫）與 `DailyAccountRunner.supersede_unstarted_decision`（交件期限前重建 Snapshot 時） | 否 | 可刪；這些決策已被新決策取代，不再參與帳本 |
 
 ### 2.2 `artifacts/latest/` 與 `artifacts/reports/`
 
@@ -146,7 +146,7 @@ flowchart LR
 | `ledger/<account_id>/.write.lock` | 寫入時暫時建立、結束即刪除的鎖 | `VirtualAccountRepository.save` | 若殘留代表上次寫入中斷，確認沒有程式在跑才可刪 |
 | `competition_d_plan/D-Plan_<team_id>_<交易日>.json` | D-Plan v4.3 候選，待人工驗證與上傳 | `DPlanExportService.export`；也可由 `cli/dplan.py build` 指定 `--output` | 不自動送件；同交易日重跑直接取代舊檔，結果帶 `replaced_existing_output` |
 | `competition_d_plan/contexts/context_<decision_run_id>.json` | 內部 context（綁定決策與帳本） | 同上 | |
-| `archive/superseded_decisions/<日期>/<decision-run-id>/` | 同一份帳戶快照重跑後被取代的舊決策整個搬到這裡 | `supersede_decision_runs`（`shutil.move`） | 只保留不再使用的 run |
+| `archive/superseded_decisions/<日期>/<decision-run-id>/` | 同一份帳戶快照重跑、或交件期限前用新 Snapshot 重跑後被取代的舊決策整個搬到這裡 | `supersede_decision_runs`、`supersede_unstarted_decision`（`shutil.move`） | 只保留不再使用的 run |
 
 ### 2.5 `artifacts/data/` 與 `artifacts/debug/`
 
@@ -158,6 +158,7 @@ flowchart LR
 | `data/finmind_schedule.json` | FinMind 財報補抓狀態（`backfilled_from`、`last_done`） | `scripts/finmind_schedule.py done` | 可刪；刪了會視為首次補抓，重新消耗 FinMind 額度 |
 | `data/official_history/latest.json` | 帳本官方個股價量補抓報告 | `scripts/collect_official_history.py --report`（預設路徑） | 可刪，只是報告；實際行情在 `etf_agent.db` |
 | `data/trading_status/<日期>/<UTC時間>Z/` | 八份政府開放 CSV（`TWSE_CALENDAR_OGD.csv`、`*_HALTS_*`、`*_DISPOSAL_*`、`*_ATTENTION_*`、`*_SPECIAL_*` 等）與 `manifest.json` | `scripts/capture_trading_status_candidates.py`、`run_daily_pipeline.py` 的 `capture_trading_sources` | 刪了則虛擬帳本算不出交割日、也無法判定開休市；`--only-if-missing` 與 `ensure_calendar_capture` 會嘗試重抓，但必須在固定 cutoff 之前。八份全部成功才刪舊封存，只留最新一份。同層的 `inferred_closed_days.json` 是推斷的臨時休市日（颱風假）稽核紀錄，不會被清掉 |
+| `data/market_news/market-news-<雜湊>/` | 全市場新聞 RSS 原始回應（`captures.json`）與整理項目，每次 `start.sh daily` 在 cutoff 前抓一次 | `start.sh`：`cli/market_news.py capture` | 可刪舊的；每日決策只取截止前最後一份，刪了當天新聞改用恐懼貪婪指標 |
 | `data/decision_input_latest.json`、`data/perception_data_latest.json` | 手動 CLI 的預設路徑（`cli/portfolio_decision.py`、`cli/sentiment_research.py`），每日流程不寫 | 該些 CLI | 目前實際目錄沒有 |
 | `debug/source_probe/<日期>/source_probe_<日期>_<時間>.json`、`universe_check_*.json` | 來源可行性探測與交易池核對報告（檔名另有短雜湊形式） | `scripts/probe_data_sources.py`（`write_json_artifact`），同時寫入資料庫 | 可刪；資料庫另存一份 |
 | `debug/source_audit/sector_classification/<日期>/<UTC時間>Z/{TWSE,TPEX}_COMPANY_PROFILE.json` | 官方公司基本資料原始回應 | `scripts/collect_sector_classification.py`（`--raw-dir`） | 可刪；只為稽核來源 |
@@ -180,6 +181,7 @@ flowchart LR
 | `var/.gitkeep` | 讓空資料夾存在於 git | 手動維護 | 是 | 不要刪 |
 | `var/etf_agent.db` | SQLite：行情、公司文件、財報事實、來源原文、快照與時間／版本。目前實際約 1.4 GB。資料表包含 `daily_prices`、`source_documents`、`raw_payloads`、`financial_statements`、`research_snapshots`、`snapshot_documents`、`snapshot_prices`、`finmind_news_candidates`、`market_news_captures`、`collection_runs`、`quality_issues` 等 | `scripts/init_db.py` 建表；`scripts/collect_*.py`、`collect_latest_prices.py`、`collect_official_history.py`、`collect_supplemental_sources.py`、`probe_data_sources.py`、`repair_pending_tpex_close.py`、`cli/data_agent.py`、`cli/news_sentiment.py` 等寫入 | 否 | 不要隨意刪。所有資料版本、來源原文與 `available_at` 都在這裡；刪了 Snapshot 與決策輸入無法依原時間點重建，歷史來源原文也不可能完全重抓還原 |
 | `var/etf_agent.db-wal`、`-shm` | SQLite 的寫前日誌（`.gitignore` 已列入）；目前不存在 | SQLite 自動 | 否 | 資料庫使用中不要手動刪 |
+| `var/datapack/` | 人工從參賽者後台下載的主辦方資料包（`.gitignore` 已列入）；每日 `run` 依隊伍與交易日自動尋找，對帳副本存入該次 `artifacts/daily/<日期>/<run_id>/datapack.json` | 人工放入 | 否 | 可刪舊檔；當天的不要刪，續跑時會比對同一份 |
 | `var/logs/` | `.gitignore` 預留；`src/`、`scripts/`、`cli/` 沒有寫入它的程式 | 無 | 否 | 目前不存在 |
 | `var/yahoo_industries.json`、`var/current_price_snapshot.json`、`var/current_strategy_proposal.json` | 2026-09-13 的舊版遺留檔；`src/`、`scripts/`、`cli/`、`config/`、`docs/`、`tests/` 沒有引用 | 無 | 否（被 `var/*.json` 忽略） | 沒有程式使用，確認不需要後可刪 |
 

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from etf_agent.core import canonical_sha256
-from etf_agent.perception.market_news import apply_database_source_reviews, evaluate, seal
+from etf_agent.perception.market_news import MarketNewsRSSProvider, apply_database_source_reviews, evaluate, record_source_reviews, seal
 from etf_agent.perception.market_news.repository import MarketNewsRepository
 from etf_agent.perception.market_news.contracts import MarketNewsError
 from etf_agent.decision.event_sentiment_report import _render_market_scoped
@@ -67,3 +67,55 @@ class SourceReviewTests(unittest.TestCase):
         self.assertEqual(evaluate(apply_database_source_reviews(self.pack,self.path))['outlook'],'positive')
         bad=copy.deepcopy(approvals);bad[0]['evidence']=''
         with self.assertRaises(MarketNewsError):self.repo.save_source_reviews(bad,self.terms,self.pack['decision_cutoff'])
+
+
+class _Response:
+    def __init__(self, url, body):
+        self.url, self.body = url, body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def geturl(self):
+        return self.url
+
+    def read(self, limit):
+        return self.body[:limit]
+
+
+class RecordSourceReviewTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name)/'news.db'
+        self.body = '使用規範原文'.encode('utf-8')
+        self.redirect = None
+        self.provider = MarketNewsRSSProvider(opener=lambda request, timeout: _Response(self.redirect or request.full_url, self.body))
+
+    def test_records_approval_effective_only_after_save(self):
+        output = record_source_reviews(self.path,['CNA_FINANCE','LTN_BUSINESS'],'approved','稽核紀錄：使用者決定',provider=self.provider)
+        self.assertEqual(output['sources'],['CNA_FINANCE','LTN_BUSINESS'])
+        repo = MarketNewsRepository(self.path)
+        rows = repo.load_source_reviews(output['reviewed_at'])
+        self.assertEqual({r['source']:r['license_status'] for r in rows},{'CNA_FINANCE':'approved','LTN_BUSINESS':'approved'})
+        self.assertEqual(repo.load_source_reviews('2026-01-01T00:00:00+00:00'),[])  # 不回溯到較早的截止時間。
+
+    def test_fail_closed_on_bad_source_terms_or_evidence(self):
+        with self.assertRaises(MarketNewsError):
+            record_source_reviews(self.path,['UNKNOWN'],'approved','依據',provider=self.provider)
+        with self.assertRaises(MarketNewsError):
+            record_source_reviews(self.path,[],'approved','依據',provider=self.provider)
+        with self.assertRaises(MarketNewsError):
+            record_source_reviews(self.path,['CNA_FINANCE'],'approved','  ',provider=self.provider)
+        with self.assertRaises(MarketNewsError):
+            self.provider.capture_terms('https://example.com/terms')
+        self.redirect = 'https://evil.example.com/terms'
+        with self.assertRaises(MarketNewsError):
+            record_source_reviews(self.path,['CNA_FINANCE'],'approved','依據',provider=self.provider)
+        self.redirect, self.body = None, b'   '
+        with self.assertRaises(MarketNewsError):
+            record_source_reviews(self.path,['CNA_FINANCE'],'approved','依據',provider=self.provider)
+        self.assertEqual(MarketNewsRepository(self.path).load_source_reviews('2100-01-01T00:00:00+00:00'),[])

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from etf_agent.decision import DecisionRepository, DecisionFinalizer, RevisionHistoryBuilder, decision_policy_sha256, decision_rules_sha256, decision_bundle_sha256
 from etf_agent.decision_delivery import build_delivery, validate_delivery, save_failure, DeliveryError
 from etf_agent.decision_delivery.builder import build_report
-from etf_agent.decision_delivery.renderer import render_report, renderer_for
+from etf_agent.decision_delivery.renderer import render_report, render_report_v2, renderer_for
 from etf_agent.decision_delivery.renderer_v1 import render_report_v1
 from etf_agent.decision_delivery.validator import validate_report
 from test_team_chain import team_world, finalize
@@ -179,6 +179,21 @@ class DeliveryTests(unittest.TestCase):
         legacy = render_report_v1(report)
         self.assertIs(renderer_for(legacy), render_report_v1)
         self.assertNotEqual(legacy, render_report(report))
+        v2 = render_report_v2(report)
+        self.assertIs(renderer_for(v2), render_report_v2)
+        self.assertIn("金額單位：未提供", v2)
+        self.assertIn("估值時間：2026-09-20T00:55:00+00:00。", v2)
+
+    def test_account_currency_and_valuation_time_are_shown_in_taipei(self):
+        report = build_report(world(), "display")
+        text = render_report(report)
+        self.assertIn("金額單位：TWD（新台幣元）", text)
+        self.assertIn("估值時間：2026-09-20T08:55:00+08:00（台北時間）。", text)
+        self.assertEqual(report["account_before"]["valuation_at"], "2026-09-20T00:55:00+00:00")  # 封存值不改寫。
+        broken = copy.deepcopy(report)
+        broken["account_before"]["valuation_at"] = "2026-09-20T00:55:00"
+        with self.assertRaises(ValueError):
+            render_report(broken)
 
     def test_rejected_never_presents_proposal_orders(self):
         report = build_report(world(True), "reject")

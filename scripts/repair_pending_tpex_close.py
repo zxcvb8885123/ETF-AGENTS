@@ -12,14 +12,16 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.data.tpex_history import collect_quotes  # noqa: E402
 from etf_agent.virtual_account.daily import OfficialCloseMarket, find_decision_run  # noqa: E402
+from etf_agent.virtual_account import active_account_id  # noqa: E402
 from etf_agent.virtual_account.service import VirtualAccountRepository  # noqa: E402
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--account-id", default="ai-cup-2026")
+    parser.add_argument("--account-id", help="預設讀取 config/active_account.json")
     args = parser.parse_args()
     try:
+        args.account_id = args.account_id or active_account_id(ROOT)
         account = VirtualAccountRepository(ROOT / "artifacts/ledger", args.account_id).latest()
         state = account["state"]
         if state["provenance"]["type"] != "prepared":

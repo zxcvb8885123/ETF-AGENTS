@@ -22,7 +22,7 @@
 ## 上下游
 
 - 不依賴本專案其他子套件（以 import 檢查為準），是依賴圖的最底層。
-- 被 `automation`、`competition`、`data`、`decision`、`decision_delivery`、`fundamentals`、`ledger`、`perception`、`reporting`、`research`、`runtime`、`virtual_account` 引用。
+- 被 `automation`、`competition`、`data`、`decision`、`decision_delivery`、`fundamentals`、`ledger`、`perception`、`reporting`、`research`、`virtual_account` 引用。
 - `ImmutableRunStore` 的繼承者：`decision.finalization`、`decision_delivery.repository`、`perception.news_service`、`perception.market_news.service`、`data.market_probe.service`。
 
 ## 對應的 CLI／scripts／測試

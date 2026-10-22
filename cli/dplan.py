@@ -19,6 +19,9 @@ from etf_agent.competition import (  # noqa: E402
     DPlanExportService,
     DPlanExporter,
     DPlanValidator,
+    check_dplan_against_datapack,
+    find_datapack,
+    load_datapack,
     load_decision_run,
     verify_account_binding,
 )
@@ -29,7 +32,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     latest = commands.add_parser("build-latest", help="匯出最新可用每日決策；不需輸入 run ID 或路徑")
-    latest.add_argument("--account-id", default="ai-cup-2026")
+    latest.add_argument("--account-id", help="預設讀取 config/active_account.json")
     latest.add_argument("--profile", type=Path, default=ROOT / "config" / "competition_profile.json")
 
     build = commands.add_parser("build", help="進階入口：由指定封存決策匯出 D-Plan 候選")
@@ -48,6 +51,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     validate = commands.add_parser("validate", help="執行本地結構及引用鏈檢查")
     validate.add_argument("--input", type=Path, required=True)
+    check = commands.add_parser("check-datapack", help="上傳前用主辦方 DataPack 檢查 D-Plan：同隊同日、賣出不超過持股、每檔持股都有交代；不需跑 Agent")
+    check.add_argument("--input", type=Path, required=True, help="要上傳的 D-Plan JSON")
+    check.add_argument("--datapack", type=Path, help="DataPack 檔；省略時在 --datapack-dir 找同隊同交易日最新的一份")
+    check.add_argument("--datapack-dir", type=Path, default=ROOT / "var" / "datapack")
     context = commands.add_parser("build-context", help="進階入口：由指定 Decision run 自動整理 D-Plan context")
     context.add_argument("--decision-repository", type=Path, required=True)
     context.add_argument("--decision-run-id", required=True)
@@ -60,6 +67,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "validate":
             errors = DPlanValidator().validate(read_object(args.input, "D-Plan"))
             print(json.dumps({"valid": not errors, "validator": "local-v4.3-subset-not-organizer-server", "errors": errors}, ensure_ascii=False, indent=2))
+            return 0 if not errors else 2
+        if args.command == "check-datapack":
+            plan = read_object(args.input, "D-Plan")
+            loaded = load_datapack(args.datapack) if args.datapack else find_datapack(args.datapack_dir, str(plan.get("team_id")), str(plan.get("trade_date")))
+            errors = check_dplan_against_datapack(plan, loaded["pack"])
+            print(json.dumps({"valid": not errors, "datapack": loaded["path"], "datapack_sha256": loaded["raw_sha256"],
+                              "generated_at": loaded["pack"]["generated_at"], "errors": errors}, ensure_ascii=False, indent=2))
             return 0 if not errors else 2
         if args.command == "build-latest":
             print(json.dumps(service.export_latest(account_id=args.account_id, profile_path=args.profile), ensure_ascii=False, indent=2))

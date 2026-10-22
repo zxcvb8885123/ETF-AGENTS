@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional
 
 from etf_agent.core.run_layout import list_run_dirs
+from etf_agent.virtual_account import active_account_id
 
 from .context import DPlanContextBuilder
+from .datapack import check_sells
 from .dplan import DPlanError, DPlanExporter, load_decision_run, verify_account_binding
 
 
@@ -168,6 +170,7 @@ class DPlanExportService:
         if not isinstance(team_id, str) or not team_id:
             raise DPlanError("competition_profile.team_id 不得為空")
         effective_trade_date = trade_date or self.trade_date(daily_run)
+        datapack = self.datapack_gate(daily_run, team_id, effective_trade_date)
         plan_output, generated_context_output = self.output_paths(team_id, effective_trade_date, decision_run_id)
         plan_output = Path(output) if output is not None else plan_output
         context_output = Path(context_output) if context_output is not None else generated_context_output
@@ -182,6 +185,10 @@ class DPlanExportService:
             account_run_id,
         )
         plan = DPlanExporter().build(team_id, effective_trade_date, context, artifacts)
+        if datapack["status"] == "matched":
+            oversell = check_sells(plan["orders"], datapack["sellable_shares"])
+            if oversell:
+                raise DPlanError("D-Plan 賣出超過 DataPack 持股：" + "；".join(oversell))
         if context_output.exists():
             raise DPlanError("context 輸出檔已存在，拒絕覆寫：%s" % context_output)
         write_new_json(context_output, context)
@@ -195,13 +202,28 @@ class DPlanExportService:
             "decision_run_id": decision_run_id,
             "replaced_existing_output": replaced_existing,
             "account_binding": account,
+            "datapack": {k: datapack.get(k) for k in ("status", "datapack_sha256", "as_of_date", "generated_at")},
             "local_validation": "passed",
             "organizer_server_validation": "not_run",
             "requires_human_review": True,
         }
 
-    def export_latest(self, *, account_id: str = "ai-cup-2026", profile_path: Optional[Path] = None) -> Dict[str, object]:
+    @staticmethod
+    def datapack_gate(daily_run: Mapping[str, object], team_id: str, trade_date: str) -> Mapping[str, object]:
+        """D-Plan 只接受本次每日流程已與 DataPack 對帳一致，或明確記錄略過對帳的 run。"""
+        datapack = daily_run.get("datapack")
+        if not isinstance(datapack, Mapping) or datapack.get("status") not in {"matched", "skipped"}:
+            raise DPlanError("本次每日流程沒有通過 DataPack 對帳，拒絕產生 D-Plan")
+        if datapack["status"] == "matched":
+            if datapack.get("team_id") != team_id or datapack.get("trade_date") != trade_date:
+                raise DPlanError("DataPack 對帳結果的隊伍或交易日與 D-Plan 不一致")
+            if not isinstance(datapack.get("sellable_shares"), Mapping):
+                raise DPlanError("DataPack 對帳結果缺少可賣股數")
+        return datapack
+
+    def export_latest(self, *, account_id: Optional[str] = None, profile_path: Optional[Path] = None) -> Dict[str, object]:
         """Manually retry the newest completed daily run without copying run IDs."""
+        account_id = account_id or active_account_id(self.root)
         candidates = []
         daily_root = self.root / "artifacts" / "daily"
         for run_dir in list_run_dirs(daily_root):

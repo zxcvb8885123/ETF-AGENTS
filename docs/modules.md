@@ -39,17 +39,15 @@ flowchart TD
 
     core["core（被除 dashboard 外的所有套件引用）"]
     reporting["reporting（只依賴 core）"]
-    runtime["runtime（無人引用）"]
 ```
 
 說明：
 
 - `decision` 與 `perception` 互相 import：`decision`（`analysts.py`、`input_validator.py`、`market_scope.py`）用 `perception`。
 - `perception.market_news.service` 與 `perception.market_fear_greed.service` 用 `decision.contracts.decision_bundle_sha256`；改動這兩個套件時需檢查循環 import。
-- `data`、`fundamentals`、`ledger`、`reporting`、`runtime` 只依賴 `core`。
-- `reporting`、`runtime` 沒有其他子套件 import，圖中以獨立節點表示。
+- `data`、`fundamentals`、`ledger`、`reporting` 只依賴 `core`。
+- `reporting` 沒有其他子套件 import，圖中以獨立節點表示。
 - `reporting` 的輸入 artifact 由 CLI 以檔案傳入。
-- `runtime` 在 `src/`、`cli/`、`scripts/`、`tests/` 都沒有使用者，尚未接入每日流程。
 
 ## 各套件 README
 
@@ -68,7 +66,6 @@ flowchart TD
 | `ledger` | 整張成交模擬與交易日現金帳務 | [ledger/README.md](../src/etf_agent/ledger/README.md) | 由 `virtual_account` 使用 |
 | `virtual_account` | 虛擬帳戶初始化、每日快照、結算與決策套用 | [virtual_account/README.md](../src/etf_agent/virtual_account/README.md) | `cli/virtual_account.py` |
 | `dashboard` | 唯讀績效儀表板（FastAPI） | [dashboard/README.md](../src/etf_agent/dashboard/README.md) | `cli/dashboard.py`（`./start.sh`） |
-| `runtime` | 帶內容雜湊的管線 run 紀錄積木（尚未被其他模組使用） | [runtime/README.md](../src/etf_agent/runtime/README.md) | 無 |
 
 ## 每日資料與決策流向
 
@@ -93,7 +90,7 @@ flowchart LR
 
 ## 分層與邊界
 
-- `core`、`runtime`：與市場無關的基礎。
+- `core`：與市場無關的基礎。
 - `data`、`fundamentals`、`perception`、`research`、`reporting`：資料與研究輸入，只提供事實、來源證據與驗證，不產生權重或訂單。
 - `decision`、`automation`：決策與編排；確定性程式負責數字，子 Agent 只輸出解讀、論點、意圖與信心等級。
 - `decision_delivery`、`competition`、`virtual_account`、`ledger`、`dashboard`：決策之後的交付、模擬帳務與呈現；不自動下單或送件。

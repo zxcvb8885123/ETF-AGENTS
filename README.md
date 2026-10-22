@@ -26,7 +26,7 @@ python3 -m venv .venv
 | 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板；不更新資料 |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
-| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日），會自動沿用、不重抓；資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
+| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日）且已過下一時段的交件期限（08:55），會自動沿用 Snapshot、不重抓；仍在期限前（例如前一晚已跑、早上再跑）則重建 Snapshot，cutoff 改為此刻，帳本把同時段尚未執行的舊決策移到 `artifacts/archive/superseded_decisions/`。資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
 首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
@@ -59,7 +59,7 @@ python3 -m venv .venv
 | --- | --- | --- |
 | `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。 |
 | `--skip-data` | 關 | 一律沿用既有 Snapshot 與帳戶快照，不重新執行資料更新，不看更新時間。續跑、或 Snapshot 已含應有的最新交易日資料（150 檔齊全，且是該日 15:00 後建立）時會自動套用，通常不用手動加。 |
-| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期已完成就不重跑。 |
+| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期、同一目標時段已完成就不重跑（早上為當天時段、晚上為隔天時段，兩者不算重複）。 |
 | `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
 
 ### 檢查與輸入
@@ -68,7 +68,12 @@ python3 -m venv .venv
 | --- | --- | --- |
 | `--preflight-only` | 未啟用 | 預檢（Docker、Agent CLI 登入、帳戶、必要檔案、磁碟）每次 `run` 都會先執行，失敗即停止；預檢通過後繼續跑決策。啟用此參數則檢查完就結束，不抓資料、不跑 Agent，不耗用量。 |
 | `--min-free-gb GiB` | 2.0 | 執行前要求的最低可用磁碟空間。 |
-| `--account-id ID` | `ai-cup-2026` | 指定帳戶。 |
+| `--account-id ID` | `config/active_account.json` 的帳戶 | 指定帳戶。所有入口預設讀同一個設定檔，比賽第一天開新帳戶時會自動切換。 |
+| `--datapack PATH` | 自動尋找 | 指定要對帳的主辦方資料包。省略時在 `var/datapack/` 找本隊、本交易日 `generated_at` 最新的一份。 |
+| `--no-market-news` | 關 | 不接入全市場新聞，市場情緒改用恐懼貪婪指標。新聞或事件分析步驟出問題時的緊急開關，`pipeline.json` 記為 `market_news: disabled`。 |
+| `--rebase-to-datapack` | 關 | 帳本與資料包不一致時（例如前日整批作廢、被剔除），以資料包重建帳本，再重抓資料建立新 Snapshot 與決策前快照，對帳一致才跑 Agent。舊帳本狀態保留在雜湊鏈。不能和 `--skip-datapack`、`--resume` 同用。 |
+| `--skip-datapack` | 關 | 明確略過資料包對帳，`pipeline.json` 會記為 `skipped`。比賽期間不要用。 |
+| `--datapack-cash-tolerance 比率` | 0.0005 | 帳本與資料包現金差的容忍比率（分母 `nav_tradable`）。實際差額寫在 `pipeline.json` 的 `datapack.cash`，可依真實資料包校準。 |
 | `--perception BUNDLE RESULT` | 無 | 提供市場情緒與分析師共識資料：資料包與其驗證結果，兩個檔案必須同時給。不給時這類資訊標為「無資料」。目前尚未接入合法來源，平常不需要使用。 |
 
 ### 常見組合
@@ -105,6 +110,14 @@ python3 -m venv .venv
 2. 連同部分成交的壓力情境一併重算。
 3. 原 Agent 意圖與程式風險減碼分開記錄；減碼賣單由程式標為 `trim`（仍有持股）或 `exit`（減至零）。
 4. 無法滿足所有硬性限制時仍會拒絕。
+
+### 單一產業超過 35% 時
+
+`config/decision_rules.json` 的 `max_sector_weight` 為 0.35。配置程式在 Guard 前檢查各壓力情境下的產業權重：
+
+1. 超標時按整張減碼：先減當日買進，再賣既有持股；同產業內先減信心等級低、市值大的股票。
+2. 減碼紀錄為 `RISK_SECTOR_WEIGHT` 旗標，賣單意圖由程式標為 `trim`／`exit`，不改寫交易 Agent 的原意圖。
+3. 減碼釋出的資金不再加碼其他股票；現金因此超過上限、或部分成交情境仍超標時，Guard 仍會拒絕。
 
 ## 專案架構與資料夾
 
@@ -145,7 +158,7 @@ ETF_AGENTS/
 │   ├── research/            #   事件研究（獨立流程與舊封存）
 │   ├── dashboard/           #   績效儀表板
 │   ├── calibration/         #   校準旁觀者：信心等級事後對答案、決策價與成交均價偏離（不入決策鏈）
-│   ├── runtime/, core/      #   管線串接，以及共用的雜湊、時間、數值工具
+│   └── core/                #   共用的雜湊、時間、數值工具
 │
 ├── cli/                     # 單步命令入口：只解析參數並呼叫 src/，不放邏輯（見 cli/README.md）
 ├── scripts/                 # 維運與補抓腳本：收集行情／財報／官方價量、check_setup、run_daily_pipeline
@@ -220,8 +233,10 @@ ETF_AGENTS/
 - **已接入**：150 檔交易池、yfinance 研究日線、官方月營收／重大訊息／財報、虛擬帳本、每日決策鏈與可重建的中文報告。帳本使用 TWSE／TPEx 官方價量。
 - **價格口徑**：Snapshot 的決策與帳本用價是同日官方原價（`execution_close_price`），研究指標用調整價；上市與上櫃官方歷史月行情皆可補抓。缺官方價時退回調整價，重放過去日期時含事後除權息調整，見[架構](docs/architecture.md)。
 - **已接入**：[台股恐懼貪婪指標](docs/market_fear_greed.md)（期交所 VIX、Put/Call 比、FinMind 融資），`./start.sh daily` 在 cutoff 前抓取，由程式算出整體台股情緒；VIX 依使用者決定以非商業比賽研究用途核准，見[來源核對](docs/source_audit/2026-10-23_market_fear_greed_sources.md)。
-- **尚未接入**：正式全市場新聞情緒與合法歷史分析師共識，維持 `unavailable`。FinMind 財報與新聞等候選資料，未通過授權、時間與覆蓋核對前不進正式決策。
-- **已接入但仍需人工上傳**：每日流程在決策為 `approved`／`no_trade`、競賽設定已確認且帳本綁定通過時，自動建立 D-Plan v4.3 候選。主辦方伺服器驗證與上傳仍由人工執行；回測功能已移除。
+- **已接入**：全市場新聞（中央社、自由時報 RSS，2026-10-23 核准）。`./start.sh daily` 在 cutoff 前抓取，每日決策由子 Agent 逐則標註後程式重建；至少 5 則獨立市場新聞、2 家媒體才算可用，否則改用恐懼貪婪指標。新聞步驟失敗不會讓整天失敗。
+- **尚未接入**：合法歷史分析師共識，維持 `unavailable`。FinMind 財報與新聞等候選資料，未通過授權、時間與覆蓋核對前不進正式決策。
+- **已接入**：主辦方資料包（DataPack）對帳。每日 `run` 在呼叫任何 Agent 前，把帳本持股與現金和資料包比對，對不上就停止；D-Plan 只在對帳一致（或明確略過）時產生，賣出不得超過資料包持股。見下方「主辦方資料包」。
+- **已接入但仍需人工上傳**：每日流程在決策為 `approved`／`no_trade`、競賽設定已確認、帳本綁定與資料包對帳都通過時，自動建立 D-Plan v4.3 候選。主辦方伺服器驗證與上傳仍由人工執行；回測功能已移除。
 
 ### D-Plan 候選
 
@@ -235,6 +250,32 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 輸出只是供人工檢查的候選檔，不會自動送件，也不代表已通過主辦方平台驗證。
 
+### 主辦方資料包（DataPack）
+
+資料包是主辦方每天提供的結算結果（現金、持股、前日委託結果、違規紀錄），比賽以它為準。每天跑 `run` 前，到參賽者後台「文件繳交」頁下載資料包，放進 `var/datapack/`（不進 git，檔名不限）。
+
+- 找不到本交易日的資料包、主辦方結算尚未產生（`missing` 含 `prev_settlement`）、持股股數不同或現金差超過容忍值時，流程在呼叫 Agent 前停止，並列出逐檔差異與可能原因（前日整批作廢、被排除代號、違規天數）。
+- 不跑 Agent、只想確認帳本和資料包是否一致：`.venv/bin/python cli/virtual_account.py reconcile --datapack var/datapack/<檔名>.json`（一致回傳 0，不一致回傳 2，並印出現金差，可用來校準容忍值）。
+- 對不上時，先確認資料包是最新的，再執行 `./start.sh run --rebase-to-datapack`：以資料包重建帳本（成本以結算收盤價代替），重建決策前快照，再對帳一次才跑 Agent。資料包須早於新 Snapshot 的截止時間、結算日須等於行情日；目前快照已有待成交決策時拒絕。
+- 上傳前可再用最新資料包檢查 D-Plan（同隊同日、賣出不超過持股、每檔持股都有交代），不跑 Agent：
+
+```bash
+.venv/bin/python cli/dplan.py check-datapack --input artifacts/competition_d_plan/D-Plan_TEAM_11067_<交易日>.json
+```
+
+### 比賽第一天開新帳戶
+
+測試期帳本會帶著測試持股，比賽第一天要開全新帳戶，舊帳戶保留不刪：
+
+```bash
+.venv/bin/python cli/virtual_account.py open-competition --new-account-id ai-cup-2026-final \
+  --datapack var/datapack/<第一天的資料包>.json
+```
+
+- 會核對資料包是第一個交易日（全現金、0 檔、金額等於規則本金 10 億）才開帳，並把 `config/active_account.json` 改成新帳戶；之後 `start.sh`、每日流程、儀表板與 D-Plan 預設都用新帳戶。
+- 第一天資料包還拿不到時，可先省略 `--datapack` 開帳（直接用規則本金），跑 `run` 時加 `--skip-datapack`，上傳前再用 `check-datapack` 以真正的資料包檢查。
+- 要開在產生當天 Snapshot 之前；新帳戶的開帳時間必須早於決策截止時間。
+
 ## 資料與報告位置
 
 | 路徑 | 內容 |
@@ -245,6 +286,8 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 | `artifacts/daily/<日期>/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
 | `artifacts/decisions/<日期>/<run_id>/` | 不可變決策封存與重建輸入 |
 | `artifacts/ledger/` | 虛擬帳本與帳戶快照 |
+| `var/datapack/` | 人工下載的主辦方資料包（不進 git）；每次 run 的對帳副本在 `artifacts/daily/<日期>/<run_id>/datapack.json` |
+| `config/active_account.json` | 使用中的帳戶 ID |
 | `artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` | 可人工上傳的 D-Plan v4.3 候選 |
 | `artifacts/competition_d_plan/contexts/` | D-Plan 內部 context 稽核檔；不是主辦方繳交檔 |
 
