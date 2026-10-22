@@ -262,6 +262,10 @@ if [ "$DAILY_RUN" -eq 1 ]; then
         DATA_STATUS=2
       fi
       stage_time "FinMind ${DATASET}"
+      if [ "$FINMIND_EXIT" -eq 1 ]; then
+        echo "FinMind 發生錯誤（例如 HTTP 402 額度用完），其餘資料集本次不再嘗試；下次執行會接續補抓。" >&2
+        break
+      fi
     done
   else
     echo "未設定 FINMIND_TOKEN；略過 FinMind 候選擷取。" >&2
@@ -275,6 +279,18 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     fi
     exit "$DATA_STATUS"
   fi
+  # 虛擬帳本要用 cutoff 前封存的官方開休市日期表算交割日；沒有就先抓，且必須在固定 cutoff 之前。
+  echo "[3b++/4] 確認官方開休市日期表（缺少才抓）"
+  set +e
+  docker compose run --rm agent python3 scripts/capture_trading_status_candidates.py --only-if-missing >/dev/null
+  CALENDAR_EXIT=$?
+  set -e
+  if [ "$CALENDAR_EXIT" -ne 0 ]; then
+    echo "開休市日期表抓取失敗（exit ${CALENDAR_EXIT}）；虛擬帳本將無法計算交割日。" >&2
+    DATA_STATUS=2
+  fi
+  # cutoff 只記到整秒，剛抓完的資料若在同一秒內完成，會被判成晚於 cutoff 而排除；多等一秒避免。
+  sleep 1
   # 未指定歷史 cutoff 時，必須在所有資料收集完成後才固定現在時間；
   # 否則本次抓到的文件會因 available_at 晚於 cutoff 而被正確排除。
   DAILY_CUTOFF=${DAILY_CUTOFF:-$(TZ=Asia/Taipei date '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')}
