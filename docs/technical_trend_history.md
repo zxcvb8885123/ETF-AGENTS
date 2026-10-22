@@ -1,93 +1,82 @@
 # 技術分析的整段歷史輸入
 
-## 現況
+## 用途與範圍
 
-2026-10-02 起，`build_analyst_brief(..., "technical")` 已接入整段歷史。
+`build_analyst_brief(..., "technical")` 提供整段封存行情，讓技術分析師沿時間判讀價格與均線結構。
 
-- 技術分析師閱讀完整的封存行情視窗，沿時間判讀價格與均線結構。
-- 再用當期 `momentum` 核對目前位置。
-- 只提供「上升／下跌／盤整」的市場狀態解讀，不執行買賣、排名或配置。
+- 只輸出「上升／下跌／盤整」的市場狀態解讀，不執行買賣、排名或配置。
+- 以當期 `momentum` 核對目前位置。
+- 只有技術分析師收到 `trend_history`；其他三位分析師不會。
+- 既有 MomentumResult、AnalystReport 契約與舊封存均不變。
 
-### 摘要版（研究試驗，未接入）
+## 運作方式
 
-`TechnicalTrendHistoryTools.summary_for_symbol()` 的 `1.1-summary` 從完整、同 Snapshot 的 `1.0` 歷史重建：
+```mermaid
+flowchart LR
+  A[DecisionInputBundle.price_series<br/>已驗證] --> B[TechnicalTrendHistoryTools]
+  B --> C[trend_history 1.0]
+  C --> D[技術分析師 brief]
+  A --> E[TechnicalTrendHistoryValidator<br/>以原始 bundle 重建]
+  C --> E
+```
 
-- 固定 12 個錨點
-- 收盤極值
-- 最大量
-- 最後 5 筆
+- 由程式直接建立，不經模型補值。
+- Validator 重建全部內容；重簽 hash 後的改值、改日期、股票錯配、少列資料仍不通過。
+- cutoff 後行情、缺時區、原始序列 hash 不一致，由 DecisionContext 拒絕。
 
-去重後依日期排序。
+## 契約與規則
 
-- `observation_count` 仍是完整歷史的筆數，`rows` 只代表抽樣。
-- `TechnicalTrendHistoryValidator.validate_summary` 可從原始行情重算摘要。
-- 正式每日 brief 仍用 `for_symbol()` 的完整序列。
-- 在同一個 Snapshot 的 150 檔中，有 12 檔的方向因摘要而改變，要等審查證據後才決定是否接入。
-- 舊封存不改寫。
-
-## 確定性資料契約
-
-每檔技術輸入新增 `trend_history`。它由 `TechnicalTrendHistoryTools` 直接從已驗證的 `DecisionInputBundle.price_series` 建立，不經模型補值。
-
-- 既有的 MomentumResult 與 AnalystReport 契約不變。
-- 其他三位分析師不會收到這個欄位。
-- 既有的封存行情與報告不改寫。
+### `trend_history` 欄位
 
 | 欄位 | 意義 |
 | --- | --- |
 | `schema_version` | 歷史輸入版本 `1.0` |
-| `symbol`、`snapshot_id`、`decision_cutoff`、`bundle_hash` | 股票、快照、含時區的截止時間、輸入版本 |
-| `source_series_sha256`、`evidence_ids` | 原始行情序列雜湊，以及該股票已驗證的來源證據 |
-| `start_date`、`end_date`、`observation_count` | 此封存視窗的首末日期與筆數 |
-| `rows` | 全部已提供的觀測，不另外截斷或選樣 |
+| `symbol`、`snapshot_id`、`decision_cutoff`、`bundle_hash` | 股票、快照、含時區截止時間、輸入版本 |
+| `source_series_sha256`、`evidence_ids` | 原始行情序列雜湊與已驗證來源證據 |
+| `start_date`、`end_date`、`observation_count` | 視窗首末日期與筆數 |
+| `rows` | 全部已提供的觀測，不截斷、不選樣 |
 | `rows[].trade_date`、`available_at` | 行情日期與當時可得時間 |
 | `rows[].close`、`high`、`low`、`volume` | 來源價格與成交量 |
-| `rows[].ma20`、`ma60` | Python 只用該日及之前的觀測計算均線，保留六位小數；暖機不足時為 `null` |
-| `content_sha256` | 整份歷史輸入的 canonical hash |
+| `rows[].ma20`、`ma60` | 只用該日及之前的觀測計算，六位小數；暖機不足為 `null` |
+| `content_sha256` | 整份輸入的 canonical hash |
 
-### 「完整」的意思
+### 「完整」的定義
 
-- 指當前 bundle 收錄的整段歷史視窗，不是股票的全部上市歷史。
-- 均線窗口以已收錄的行情觀測數計算，不合成缺漏的交易日。
-- 價格沿用 DecisionInputBuilder 已選定的分析價格版本，不另外混入未調整價格。
-- 歷史 `available_at` 若來自重建，仍須揭露重建的限制。
+- 指 bundle 收錄的整段視窗，不是股票全部上市歷史。
+- 均線以已收錄的觀測數計算，不合成缺漏交易日。
+- 價格沿用 DecisionInputBuilder 選定的分析價格版本，不混入未調整價格。
+- 歷史 `available_at` 若來自重建，須揭露重建限制。
 
-### Validator
+### 模型分工
 
-`TechnicalTrendHistoryValidator` 以原始 bundle 重建全部內容。
+| 模型負責 | 模型不做 |
+| --- | --- |
+| 沿時間解讀主趨勢、回檔或反彈是否破壞結構 | 自行產生均線斜率、持續天數、報酬率等數字 |
+| 主要尺度無方向時判為盤整；資料不足標 `unknown` | 強制保持昨日標籤 |
 
-- 就算自行重簽 hash，改值、改日期、股票錯配、少列資料，仍然過不了。
-- cutoff 後的行情、缺時區、原始序列 hash 不一致，由 DecisionContext 拒絕。
+- 單日動能或一次穿越均線，不能取代歷史判讀。
+- 歷史路徑是事實；趨勢分類與延續性是推論，不保證未來方向或績效。
 
-## 模型分工與限制
+## 使用方式
 
-**模型負責**
+- 每日流程使用正式 builder，自動帶入 `trend_history`。
+- 驗證：`TechnicalTrendHistoryValidator` 以原始 bundle 重算。
+- 測試涵蓋：逐日均線暖機與邊界、完整行情覆蓋與短視窗、技術獨有輸入、重簽 hash 竄改、股票錯配、cutoff 後資料與缺時區、來源版本衝突。
+- 歷史模型試跑封存於 `artifacts/archive/experiments/technical_prompt_trials/full-path-20261002/`，與先前「當日摘要版」分開。
 
-- 沿時間解讀：主趨勢如何形成，回檔或反彈有沒有破壞結構。
-- 單日動能，或一次穿越均線，不能取代歷史判讀。
-- 主要尺度沒有方向時，可判為盤整；資料不足時標 `unknown`。
+## 限制與注意事項
 
-**模型不做**
+- 加入歷史輸入不代表分類有客觀真值。
+- 模型試跑只執行技術分析，不含後續交易與風險 Agent。
 
-- 不自行產生均線斜率、持續天數、報酬率等數字。
-- 不強制保持昨日的模型標籤。
+## 尚未實作
 
-**要記得的界線**
+### 摘要版 `1.1-summary`（研究試驗，未接入）
 
-- 歷史路徑是事實；趨勢分類，以及趨勢是否延續，是推論。
-- 加入歷史輸入，不代表分類已有客觀真值，也不保證未來股價方向或交易績效。
-- 每日流程使用正式 builder。測試只執行技術分析，後續的交易與風險 Agent 不在這次測試範圍。
+`TechnicalTrendHistoryTools.summary_for_symbol()` 從完整、同 Snapshot 的 `1.0` 歷史重建：
 
-## 驗證
-
-新增的單元測試涵蓋：
-
-- 逐日均線的暖機與歷史邊界
-- 完整行情覆蓋、短視窗
-- 技術獨有輸入
-- 重新簽 hash 後的竄改
-- 股票錯配
-- cutoff 後資料、時區缺失
-- 來源版本衝突
-
-歷史模型試跑位於 `artifacts/archive/experiments/technical_prompt_trials/full-path-20261002/`，與先前的「當日摘要版」分開封存。
+- 固定 12 個錨點、收盤極值、最大量、最後 5 筆；去重後依日期排序。
+- `observation_count` 仍為完整歷史筆數，`rows` 只是抽樣。
+- `TechnicalTrendHistoryValidator.validate_summary` 可從原始行情重算。
+- 同一 Snapshot 的 150 檔中有 12 檔方向因摘要而改變，待審查證據後再決定是否接入。
+- 正式每日 brief 仍用 `for_symbol()` 的完整序列。

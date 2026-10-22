@@ -1,113 +1,118 @@
 # 全市場新聞收集與接入
 
-2026-10-05 完成：
+## 用途與範圍
 
-- 全市場 RSS Provider
-- 版本保存
-- 全項目標籤核對
-- 研究結論重建
-- 第三位分析師接線
+為第三位分析師（事件與市場情緒）提供「一次整體台股情緒」的全市場新聞輸入。
 
-公司事件維持逐公司輸出，全市場情緒只輸出一次。本次不執行多空、交易或風險流程。
+- 收集財經 RSS、保存原始回應、對查詢視窗內全部項目逐則標籤、重建研究結論、接入決策輸入。
+- 公司事件維持逐公司輸出；全市場情緒只輸出一次。
+- 不執行多空、交易或風險流程，不產生配置、權重或訂單。
+- 歷史原頁補抓與資料包 1.1 見[市場新聞缺日補抓](market_news_history.md)。
 
-## 本次真實取得的結果
+## 運作方式
 
-| 項目 | 內容 |
-| --- | --- |
-| 來源 | 中央通訊社財經 RSS 20 則、自由時報財經 RSS 40 則，共 60 則 |
-| 保存 | 原始回應、內容雜湊、實際取得時間 |
-| 資料截止 | 2026-10-05 15:17:17（台北時間） |
-| 實際涵蓋 | RSS 只保留 10/4～10/5 的最近項目。查詢從 10/1 起，不代表 10/1 起的歷史都已補齊 |
-
-### 標籤與看法
-
-- Codex 讀了全部標題與前言，逐項標籤。
-- 11 則直接涉及整體市場，49 則是單一公司、產業／海外背景或無關內容。
-- 這不是關鍵字分類器，也不是新聞篇數投票。
-- 診斷看法為正面，並保留市場分化的反向材料。
-- 這是新聞材料的研究推論，不是代表全市場投資人的民調。
-
-### 使用權與正式輸出
-
-- RSS 只有標題與前言，沒有把前言當成全文。
-- 中央社與自由時報的官方使用說明都限制非商業用途。本專案的比賽使用權尚未確認。
-- 因此真實資料的**正式輸出是 `unavailable`**，診斷結果另存，不交給交易。
-- 沒有自動核准來源。
-
-### 其他限制
-
-- 公司事件識別與上次一致，沿用先前已讀材料的判讀。全市場新聞分析則重新執行。
-- 研究 Snapshot 的個股行情仍截至 10/2，不能宣稱是 10/5 收盤行情。
-- 舊帳戶只重估供輸入驗證，不寫入真實帳戶。
-
-來源規範：[中央通訊社 RSS](https://www.cna.com.tw/about/rss.aspx)、[自由時報 RSS](https://service.ltn.com.tw/RSS)
-
-## 資料流
-
-```text
-MarketNewsRSSProvider
-  → market_news_captures / ImmutableRunStore
-  → prepare
-  → 完整 labels + synthesis + source_approvals
-  → evaluate
-  → market_news_input
-  → 第三位分析師
+```mermaid
+flowchart LR
+  A[MarketNewsRSSProvider] --> B[market_news_captures]
+  B --> C[prepare]
+  C --> D[labels + synthesis + source_approvals]
+  D --> E[evaluate]
+  E --> F[market_news_input]
+  F --> G[第三位分析師]
 ```
 
-程式放在 `src/etf_agent/perception/market_news/`，依契約、Provider、repository、tools、validator、service 分檔。
+程式在 `src/etf_agent/perception/market_news/`，依 `contracts`、`provider`、`history`、`repository`、`tools`、`validator`、`service` 分檔。
 
-## 契約規則
+| 階段 | 執行者 | 說明 |
+| --- | --- | --- |
+| 收集與保存 | 程式 | 取得 RSS，保存原始回應、內容雜湊與實際取得時間 |
+| 標籤與綜合判讀 | 分析師（Codex，依 Skill） | 讀全部標題與前言；CLI 不呼叫模型、不自動推算標籤 |
+| 核對與重建 | 程式 | 檢查覆蓋、引用、時鐘與門檻，輸出 result |
+| 接入 | 程式 | 產生 `market_news_input={bundle,result}` 並重跑輸入驗證 |
+
+## 契約與規則
+
+### 來源
+
+| 來源代碼 | 媒體 | 類型 |
+| --- | --- | --- |
+| `CNA_FINANCE` | 中央通訊社財經 | RSS |
+| `LTN_BUSINESS` | 自由時報財經 | RSS |
+
+來源與原文主機採白名單；回應上限 2,000,000 位元組；轉向到未允許主機即視為失敗。RSS 只有標題與前言，不當作全文。
 
 ### 資料保存
 
-- 資料庫新增 `market_news_captures`。全市場 scope 為 `TW_STOCK_MARKET`，只追加版本，不覆寫個股新聞。
-- `market-news-1.0` 保留：`snapshot_id`、cutoff、`window_start`、所有 captures、所有 labels、synthesis、`source_approvals`、內容雜湊。
-- 新聞來源與原文主機採白名單。禁止 XML entity、超大回應與任意重新導向。
+| 項目 | 規則 |
+| --- | --- |
+| `market_news_captures` | 全市場 scope 為 `TW_STOCK_MARKET`，只追加，不覆寫個股新聞 |
+| `market-news-1.0` | 保留 `snapshot_id`、cutoff、`window_start`、captures、labels、synthesis、`source_approvals`、內容雜湊 |
+| `market_news_source_reviews` | 只追加；保存來源、核對結果、用途、核對時間、保存時間、原始規範、內容雜湊 |
 
 ### 標籤
 
-每則標籤包含 `item_id`、`canonical_content_id`、`relevance`、`stance` 與中文理由。
+每則含 `item_id`、`canonical_content_id`、`relevance`、`stance`、`reason`（中文理由）。
 
-- 不得少標、重標，也不得改內容識別。
-- 相關性分四類：市場、公司、無關、不明。
-- 只有「市場」項目能支持全市場發現。
+| 欄位 | 允許值 |
+| --- | --- |
+| `relevance` | `market`、`company`、`unrelated`、`ambiguous` |
+| `stance` | `positive`、`negative`、`neutral`、`mixed` |
+
+- 必須覆蓋查詢視窗內全部項目，不得少標、重標或改內容識別；同一內容的重複標籤須一致。
+- 只有 `market` 項目能支持全市場發現。
 
 ### 綜合判讀
 
-- 模型綜合決定 `positive`／`neutral`／`negative`／`unknown`，附 findings 與 `evidence_ids`。
-- 不以篇數、固定權重或股價漲跌公式決定方向。
-- 程式核對引用與時鐘。文字推論仍是研究判斷，不宣稱驗證了投資效果。
+- `synthesis` 含 `outlook`（`positive`／`neutral`／`negative`／`unknown`）與 `findings`（`text`、`evidence_ids`）。
+- 不以篇數、固定權重或股價漲跌公式決定方向；程式只核對引用與時鐘。
+- 非 `unknown` 的結論必須有 `market` 項目與 findings。
 
 ### 去重
 
-- 聚合先依 canonical content ID 去重。
-- 內容識別由「正規化標題＋發布日」建立。
-- 不同標題描述同一事件時，可能仍有多列。分析師要辨認同一事件，不能用列數加強結論。
-- 摘要會截斷，不能靠全文雜湊辨識跨站轉載。
+- 聚合前依 canonical content ID 去重，由「正規化標題＋發布日」建立。
+- 不同標題描述同一事件時仍可能有多列，不能用列數加強結論。
 
-### 正式輸出的門檻
+### 正式輸出門檻
 
-正式輸出必須同時滿足：
+全部成立才輸出 `status=available`：
 
-1. 至少 5 個市場獨立內容。
-2. 至少 2 個來源。
-3. 查詢範圍內的全部項目都有標籤。
-4. 沒有來源取得失敗。
-5. 相關來源都有 `approved` 的 `competition_research` 核准紀錄與授權依據。
+| 條件 | 要求 |
+| --- | --- |
+| 樣本 | 至少 5 個市場獨立內容 |
+| 來源 | 至少 2 個獨立媒體 |
+| 覆蓋 | 查詢範圍內全部項目都有標籤 |
+| 取得 | 沒有來源取得失敗 |
+| 授權 | 相關來源皆為 `approved`、`usage_scope=competition_research` 且有授權依據 |
+| 方向 | 綜合判讀 `outlook` 不是 `unknown` |
 
-這些門檻只檢查樣本是否足夠，不決定情緒方向。人工測試中的核准紀錄只是 fixture，與真實授權無關。
+未達門檻時 `status=unavailable`、`outlook=unknown`、`findings=[]`；原判讀只存於 `diagnostic_outlook`／`diagnostic_findings`，不得複製成正式結論。
 
-未核准的內容只保留 `diagnostic_outlook`。此時正式 `outlook=unknown`、`findings=[]`，不能把診斷複製成正式結論。
+### 來源使用核對
+
+| 函式 | 作用 |
+| --- | --- |
+| `MarketNewsRepository.save_source_reviews` | 保存核對依據與時間 |
+| `MarketNewsRepository.load_source_reviews` | 只讀 cutoff 前已保存的版本 |
+| `apply_database_source_reviews` | 把最新且當時可得的核對套進 market-pack |
+
+- 不修改新聞、標籤或結論，也不會把 `unverified` 自動升為 `approved`。
+- 核准狀態只能來自外部來源的真實授權核對；測試 fixture 的核准與真實授權無關。
 
 ### 接入第三位分析師
 
-- `DecisionInputBuilder` 支援選配的 `market_news_input={bundle,result}`。
-- 輸入驗證與報告驗證，都從 captures + labels 重建 result，並驗證相同 Snapshot／cutoff。
-- 缺少接入時才使用原本的降級通道，不再永久固定為 `unknown`。
-- 第三位分析師的 brief 已包含全量 market_news，正式 `market_sentiment` 只出現一次。
-- 既有 daily pipeline 收到這個版本化的 DecisionInputBundle，就能沿用新通道，不需要第四位分析師。
+- `DecisionInputBuilder` 支援選配 `market_news_input={bundle,result}`。
+- 輸入驗證與報告驗證都從 captures + labels 重建 result，並驗證相同 Snapshot／cutoff。
+- 缺少接入時使用原降級通道。
+- brief 含全量 market_news，正式 `market_sentiment` 只出現一次；每日 pipeline 不需第四位分析師。
 
-## 執行方式
+### 報告用語
+
+| 情況 | 中文寫法 |
+| --- | --- |
+| 只有使用範圍未確認 | 「來源使用範圍尚未確認，正式結果暫不提供」 |
+| 同時缺樣本、來源或完整輸入 | 「資料不足」 |
+
+## 使用方式
 
 ### 1. 補抓並保存
 
@@ -118,15 +123,9 @@ MarketNewsRSSProvider
   --output-root artifacts/market_news_captures
 ```
 
-### 2. 分析師產生判讀
+### 2. 產生判讀
 
-分析師讀取 prepared 的全量項目，交付：
-
-- 完整 labels
-- 綜合 synthesis
-- 真實的 `source_approvals`
-
-再與 captures 組成有內容雜湊的 market-pack。只有外部來源的真實授權核對，才能建立 `approved`。不能為了得到方向而修改狀態。
+分析師讀取 prepared 全量項目，交付完整 labels、synthesis 與真實 `source_approvals`，與 captures 組成有內容雜湊的 market-pack。
 
 ### 3. 接入同 Snapshot／cutoff 的資料包
 
@@ -134,68 +133,27 @@ MarketNewsRSSProvider
 .venv/bin/python cli/market_news.py integrate \
   --decision-input PATH_TO_DECISION_INPUT \
   --market-pack PATH_TO_MARKET_PACK \
-  --output-root artifacts/market_news_research
+  --output-root artifacts/market_news_research \
+  --database var/etf_agent.db
 ```
 
-### 注意
+- `--database` 選配，用於讀取 cutoff 前已保存的來源使用核對。
+- 結果另存於 `--output-root` 下 `decision_inputs/` 的不可變 run，不覆蓋既有決策輸入。
+- 驗證失敗會以 `接入驗證失敗` 中止。
 
-- CLI 不呼叫模型，也不自動推算情緒標籤。缺少判讀時，需由 Codex 依 Skill 執行。
-- 沒有新增排程，也不宣稱每日會自動補抓與標籤。
-- 原本的個股 PerceptionDataBundle 路徑維持兼容。
+## 限制與注意事項
 
-### 本次產出
+- RSS 只保留最近項目，不能單靠 RSS 宣稱涵蓋整段歷史；歷史補抓見[缺日補抓](market_news_history.md)。
+- 中央社與自由時報的官方 RSS 條款限制非商業用途，本專案的比賽使用權尚未確認，因此真實資料的正式輸出為 `unavailable`，診斷結果不交給交易。
+- 資料庫中標示 `approved` 的紀錄不涵蓋中央社、自由時報或 FinMind 的比賽研究核准，不能代表整體台股。
+- 診斷看法是新聞材料的研究推論，不是投資人民調，也不驗證投資效果。
+- 沒有排程，不會每日自動補抓與標籤。
+- 原有個股 PerceptionDataBundle 路徑維持兼容。
 
-報告在 `artifacts/archive/runs/market_news_20261005/report.md`。同源 JSON、完整標籤、原始 captures、資料包、輸入與稽核，都保存在不可變 run。
+來源規範：[中央通訊社 RSS](https://www.cna.com.tw/about/rss.aspx)、[自由時報 RSS](https://service.ltn.com.tw/RSS)
 
-| 狀態 | 項目 |
-| --- | --- |
-| 已完成 | 全市場來源接線 |
-| 尚未完成 | 比賽使用權、完整歷史新聞庫 |
+## 尚未實作
 
-## 歷史來源更新
-
-已新增資料包 1.1 與日期補抓入口，補入缺日資料。上文的 1.0 與缺口，是第一批 RSS 測試當時的狀態。最新數量、來源範圍與使用規範，見[市場新聞缺日補抓](market_news_history.md)。
-
-## 來源使用紀錄的資料庫接入（2026-10-05）
-
-### 問題
-
-新聞存進資料庫，不代表使用範圍已核准。
-
-原本 `market_news_captures` 只保存新聞回應。`source_approvals` 與規範原始頁只存在研究 artifact，所以資料庫無法重建「來源使用核對」。
-
-### 做法
-
-新增只追加的 `market_news_source_reviews`，保存：來源、核對結果、用途、核對時間、實際保存時間、原始規範、內容雜湊。
-
-| 函式 | 作用 |
-| --- | --- |
-| `MarketNewsRepository.save_source_reviews` | 核對原始依據與時間 |
-| `load_source_reviews` | 只讀 cutoff 前已保存的版本 |
-| `apply_database_source_reviews` | 接入最新的、當時可得的核對 |
-
-這條接線**不會**修改新聞、標籤或情緒結論，也不會把「未確認」自動升為「核准」。
-
-CLI 可用 `integrate --database var/etf_agent.db` 使用它。
-
-### 報告用語
-
-| 情況 | 中文報告寫法 |
-| --- | --- |
-| 只有使用範圍未確認 | 「來源使用範圍尚未確認，正式結果暫不提供」 |
-| 同時缺樣本、來源或完整輸入 | 維持「資料不足」 |
-
-結構化的正式輸出維持 fail-closed。
-
-### 本次查到的現況
-
-| 項目 | 數量 |
-| --- | --- |
-| FinMind 新聞候選 | 3,664 筆 |
-| 全市場來源回應 | 94 份 |
-| 新聞原頁回應 | 40 份 |
-| 標示 `approved` | 67 筆（皆為台糖公司新聞，不能代表整體台股，也不在本次十月查詢視窗內） |
-
-- 沒有查到中央社、自由時報或 FinMind 的比賽研究核准紀錄。
-- 已把既有官方規範原始頁，以及四個來源的「未確認」核對紀錄補存進資料庫，並重跑接入驗證。
-- 這不等於取得新的外部授權。
+- 中央社、自由時報與 FinMind 新聞的比賽研究使用權核准。
+- 完整歷史新聞庫（含當時內容版本與可得時間證據）。
+- 每日自動補抓與標籤的排程。

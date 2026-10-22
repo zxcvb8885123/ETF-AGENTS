@@ -390,6 +390,19 @@ def seal_event_sentiment_report(bundle: Mapping[str, object], envelope: Mapping[
     return seal_report({**envelope, "schema_version": EVENT_SENTIMENT_VERSION}, merged)
 
 
+def no_event_item(symbol: str, availability: Sequence[Mapping[str, object]]) -> Dict[str, object]:
+    """查詢視窗內沒有重大訊息的股票：事件看法必為 unknown、無發現，資料缺口由程式照資料庫狀態列出。"""
+    gaps = ["查詢視窗內沒有重大訊息事件，無法判斷公司事件方向。"]
+    for channel in availability:
+        name, status = channel.get("name"), channel.get("status")
+        if isinstance(name, str) and isinstance(status, str):
+            gaps.append("%s：%s" % (name, status))
+        elif isinstance(status, str):
+            gaps.append(status)
+    return {"symbol": symbol, "outlook": "unknown", "event_outlook": "unknown",
+            "findings": [], "data_gaps": gaps, "events": []}
+
+
 def seal_event_market_report(bundle, envelope, items):
     """公司事件逐檔交付，全市場情緒只附入一次；不沿用個股情緒。"""
     from .market_scope import market_sentiment_channel

@@ -80,6 +80,7 @@ class ClaudeAgentRunner:
             "--output-format", "json",
             "--json-schema", json.dumps(task.schema, ensure_ascii=False),
             "--tools", "Read",
+            "--strict-mcp-config",  # 不載入使用者的 MCP 外掛；每次呼叫約少 4 萬 token 的固定開銷
             "--add-dir", str(run_dir),
             "--max-budget-usd", str(self.max_budget_usd),
         ]
