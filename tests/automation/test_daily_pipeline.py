@@ -137,7 +137,7 @@ class PipelineWorld:
         self.run_dir.mkdir()
         self.repository = directory / "decisions"
 
-    def run(self, runner, analyst_runner=None):
+    def run(self, runner, analyst_runner=None, fear_greed=None):
         pipeline = DailyDecisionPipeline(
             ROOT, self.run_dir, runner, self.repository, log=lambda _: None, analyst_runner=analyst_runner,
         )
@@ -145,6 +145,7 @@ class PipelineWorld:
             self.paths["snapshot"], self.paths["account"], self.paths["trading_status"],
             self.paths["rules"], self.paths["database"],
             self.paths["template"], self.paths["sectors"], "decision-fixture",
+            **({"fear_greed_root": fear_greed[0], "fear_greed_approvals_path": fear_greed[1]} if fear_greed else {}),
         )
 
 
@@ -189,6 +190,27 @@ class DailyPipelineTests(unittest.TestCase):
             held = next(row for row in trader_brief["symbols"] if row["symbol"] == "2330.TW")
             self.assertGreater(held["held_shares"], 0)
             self.assertTrue(held["bull"]["claims"])
+
+    def test_fear_greed_index_flows_through_whole_chain(self):
+        from etf_agent.perception.market_fear_greed.service import _store
+        from test_market_fear_greed import approvals, captures
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            root, approval_path = Path(directory) / "fear_greed", Path(directory) / "fear_greed_sources.json"
+            _store(root).save("fear-greed-20260919T120000Z-fixture", {"captures": {"items": captures()}})
+            approval_path.write_text(json.dumps({"sources": approvals()}), encoding="utf-8")
+            result = world.run(FakeRunner(team_outputs()), fear_greed=(root, approval_path))
+
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertEqual(result.decision_status, "approved")
+            bundle = json.loads((world.run_dir / "decision_input.json").read_text(encoding="utf-8"))
+            self.assertIn("market_fear_greed_input", bundle)
+            event_report = json.loads((world.run_dir / "analyst_event.json").read_text(encoding="utf-8"))
+            self.assertEqual(event_report["market_sentiment"]["status"], "available")
+            self.assertEqual(event_report["market_sentiment"]["fear_greed"]["score"], "34.2")
+            bull = json.loads((world.run_dir / "brief_bull_b0.json").read_text(encoding="utf-8"))
+            self.assertEqual(bull["market_sentiment"], event_report["market_sentiment"])
+            DecisionRepository(world.repository).verify("decision-fixture")
 
     def test_analyst_runner_only_handles_analyst_batches(self):
         with tempfile.TemporaryDirectory() as directory:

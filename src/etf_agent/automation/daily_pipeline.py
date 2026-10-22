@@ -91,6 +91,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         decision_run_id: str,
         perception_bundle_path: Optional[Path] = None,
         perception_result_path: Optional[Path] = None,
+        fear_greed_root: Optional[Path] = None,
+        fear_greed_approvals_path: Optional[Path] = None,
     ) -> PipelineResult:
         result = PipelineResult(status="failed")
         try:
@@ -98,6 +100,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 result, snapshot_path, account_snapshot_path, trading_status_path,
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
                 perception_bundle_path, perception_result_path,
+                fear_greed_root, fear_greed_approvals_path,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -111,6 +114,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         trading_status_path: Path, rules_path: Path, database_path: Path,
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
         perception_bundle_path: Optional[Path], perception_result_path: Optional[Path],
+        fear_greed_root: Optional[Path] = None, fear_greed_approvals_path: Optional[Path] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -130,6 +134,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             snapshot_path, database_path, rules_path, self._path("decision_input"),
             trading_status_path=trading_status_path, account_path=account_snapshot_path,
             perception_bundle_path=perception_bundle_path, perception_result_path=perception_result_path,
+            fear_greed_root=fear_greed_root, fear_greed_approvals_path=fear_greed_approvals_path,
         )
         if not built["valid"]:
             raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(built["errors"]))

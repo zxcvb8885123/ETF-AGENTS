@@ -1,0 +1,9 @@
+{
+  "version": "market-fear-greed-sources-2026-10-23",
+  "note": "台股恐懼貪婪指標的來源使用核准。只有 license_status=approved 的來源計入正式分數；未列入或非 approved 者只作診斷。reviewed_at 晚於決策截止時間的核准不適用於該次決策。依據見 evidence 指向的稽核紀錄。",
+  "sources": [
+    {"source": "TAIFEX_PCR", "license_status": "approved", "terms_url": "https://data.gov.tw/dataset/11322", "usage_scope": "competition_research", "reviewed_at": "2026-10-23T00:56:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-10-23_market_fear_greed_sources.md：政府資料開放平臺資料集 11322，授權為政府資料開放授權條款-第1版。"},
+    {"source": "FINMIND_MARGIN", "license_status": "approved", "terms_url": "https://finmind.github.io/en/Disclaimer/", "usage_scope": "competition_research", "reviewed_at": "2026-10-23T00:56:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-10-23_market_fear_greed_sources.md：原始資料為證交所集中市場融資融券餘額，政府資料開放平臺資料集 11680，授權為政府資料開放授權條款-第1版；經 FinMind 取得。"},
+    {"source": "TAIFEX_VIX", "license_status": "approved", "terms_url": "https://www.taifex.com.tw/cht/edu/userTerms", "usage_scope": "competition_research", "reviewed_at": "2026-10-23T00:56:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-10-23_market_fear_greed_sources.md：使用者決定以非商業比賽研究用途使用；期交所網站使用條款未列非商業例外，且 VIX 未見於政府資料開放平臺，屬使用者自行承擔的判斷。"}
+  ]
+}

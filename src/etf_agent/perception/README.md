@@ -1,6 +1,6 @@
 # perception｜市場情緒、分析師共識與全市場新聞
 
-處理市場情緒與分析師共識的輸入與驗證：`PerceptionDataBundle`／`MarketPerceptionResult` 的工具與 Validator、新聞候選的內容與時間核對、全量標題診斷，以及子套件 `market_news/`（全市場 RSS／歷史新聞補抓與接入）。沒有合法、歷史化的真實 Provider 時輸出 `unavailable`，不以搜尋摘要、模型記憶或公司財測冒充分析師共識。
+處理市場情緒與分析師共識的輸入與驗證：`PerceptionDataBundle`／`MarketPerceptionResult` 的工具與 Validator、新聞候選的內容與時間核對、全量標題診斷，子套件 `market_news/`（全市場 RSS／歷史新聞補抓與接入），以及 `market_fear_greed/`（台股恐懼貪婪指標，見 [docs/market_fear_greed.md](../../../docs/market_fear_greed.md)）。沒有合法、歷史化的真實 Provider 時輸出 `unavailable`，不以搜尋摘要、模型記憶或公司財測冒充分析師共識。
 
 ## 檔案清單
 

@@ -60,6 +60,7 @@ class DecisionInputValidator:
                 "research_results",
                 "perception_inputs",
                 "market_news_input",
+                "market_fear_greed_input",
                 "trading_status_bundle",
                 "tradability_assessment",
             },
@@ -101,6 +102,12 @@ class DecisionInputValidator:
                 validate_pair(self.bundle["market_news_input"], self.bundle.get("snapshot_id"), self.bundle.get("decision_cutoff"))
             except (MarketNewsError, TypeError, KeyError) as error:
                 errors.append("全市場新聞輸入：%s" % error)
+        if "market_fear_greed_input" in self.bundle:
+            from etf_agent.perception.market_fear_greed import validate_pair as validate_fear_greed, FearGreedError
+            try:
+                validate_fear_greed(self.bundle["market_fear_greed_input"], self.bundle.get("snapshot_id"), self.bundle.get("decision_cutoff"))
+            except (FearGreedError, TypeError, KeyError) as error:
+                errors.append("恐懼貪婪指標輸入：%s" % error)
         self._validate_global_evidence_ids(errors)
         return errors
 
