@@ -11,7 +11,7 @@ import json
 import math
 import re
 from datetime import date, datetime
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from typing import Dict, List, Mapping, Sequence
 
 from etf_agent.decision import DecisionInputValidator, DecisionResultValidator
@@ -202,7 +202,7 @@ class DPlanValidator:
                     low, high = map(lambda x: Decimal(str(x)), cash)
                     if low < 0 or high > Decimal("0.25") or low > high:
                         errors.append("target_cash_pct_range 必須滿足 0 ≤ 下限 ≤ 上限 ≤ 0.25")
-                except Exception:
+                except (InvalidOperation, ValueError, TypeError):
                     errors.append("target_cash_pct_range 必須是數值")
 
     @staticmethod
@@ -282,7 +282,7 @@ class DPlanValidator:
                     weight = Decimal(str(row.get("target_weight")))
                     if weight < 0 or weight > Decimal("0.25"):
                         errors.append("decision.target_weight 超過 schema 上限")
-                except Exception:
+                except (InvalidOperation, ValueError, TypeError):
                     errors.append("decision.target_weight 必須是數值")
         for row in plan.get("no_trade_decisions", []):
             if isinstance(row, Mapping) and (not isinstance(row.get("reason_refs"), list) or not 1 <= len(row["reason_refs"]) <= 5):

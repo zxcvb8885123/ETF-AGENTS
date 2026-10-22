@@ -44,7 +44,7 @@ flowchart TD
 
 說明：
 
-- `decision` 與 `perception` 互相 import：`decision`（`analysts.py`、`contracts.py`、`market_scope.py`）用 `perception`。
+- `decision` 與 `perception` 互相 import：`decision`（`analysts.py`、`input_validator.py`、`market_scope.py`）用 `perception`。
 - `perception.market_news.service` 用 `decision.contracts.decision_bundle_sha256`；改動這兩個套件時需檢查循環 import。
 - `data`、`fundamentals`、`ledger`、`reporting`、`runtime` 只依賴 `core`。
 - `reporting`、`runtime` 沒有其他子套件 import，圖中以獨立節點表示。
