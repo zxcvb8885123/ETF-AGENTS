@@ -161,7 +161,11 @@ class DailyPipelineTests(unittest.TestCase):
             self.assertEqual([order["symbol"] for order in result.orders], ["2317.TW"])
             self.assertEqual(
                 [name for name, _ in runner.prompts],
-                ["technical_b0", "fundamental_b0", "event_b0", "bull_b0", "bear_b0", "trader_b0", "cash_stance", "review_r0"],
+                ["technical_b0", "fundamental_b0", "bull_b0", "bear_b0", "trader_b0", "cash_stance", "review_r0"],
+            )
+            self.assertEqual(
+                json.loads((world.run_dir / "analyst_event.json").read_text(encoding="utf-8"))["items"][0]["data_gaps"][0],
+                "查詢視窗內沒有重大訊息事件，無法判斷公司事件方向。",
             )
             run_dir = DecisionRepository(world.repository).verify("decision-fixture")
             team = json.loads((run_dir / "team_inputs.json").read_text(encoding="utf-8"))
@@ -197,14 +201,13 @@ class DailyPipelineTests(unittest.TestCase):
             result = world.run(main, analyst_runner=analyst)
 
             self.assertEqual(result.status, "completed", result.errors)
-            self.assertEqual([name for name, _ in analyst.prompts], ["technical_b0", "fundamental_b0", "event_b0"])
+            self.assertEqual([name for name, _ in analyst.prompts], ["technical_b0", "fundamental_b0"])
             self.assertEqual(
                 [name for name, _ in main.prompts],
                 ["bull_b0", "bear_b0", "trader_b0", "cash_stance", "review_r0"],
             )
             models = {call["name"]: call["model"] for call in result.agent_calls}
             self.assertEqual(models["technical_b0"], "cheap-model")
-            self.assertEqual(models["event_b0"], "cheap-model")
             self.assertEqual(models["bull_b0"], "strong-model")
             self.assertEqual(models["trader_b0"], "strong-model")
 
@@ -230,6 +233,7 @@ class DailyPipelineTests(unittest.TestCase):
                 findings=[finding("event-2330-high", EVENT_ID)],
                 events=[{"evidence_id": EVENT_ID, "materiality": "high", "summary": "董事會核准資本預算。"}],
             )
+            events["items"] = [events["items"][1]]  # 2317 無重大訊息，由程式輸出，不在 Agent 批次內
             bull = copy.deepcopy(BULL)
             bull["items"][1]["claims"] = [stance_claim("bull-2330-1", EVENT_ID, ["event-2330-high"])]
             runner = FakeRunner(team_outputs(event_b0=[events], bull_b0=[bull]))

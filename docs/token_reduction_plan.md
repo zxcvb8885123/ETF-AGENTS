@@ -29,6 +29,9 @@ flowchart LR
 | 分級模型 | 已實作 | Claude CLI 預設 `sonnet`，品質無實跑對照 |
 | 交易 brief 去重 | 已接入 | 完整帳戶持倉改為持股代號與檔數，各批少 3,176 bytes；逐股 `held_shares`、雙方 claims 與引用完整保留 |
 | 減少無效重試 | 部分 | 單股硬上限減碼改由程式處理；`liquidity_fill_rate` 為 1 |
+| 關閉 MCP 外掛 | 已實作 | Claude CLI 加 `--strict-mcp-config`，不載入使用者的 MCP 工具；實測一句 `ok` 的固定開銷由約 50,000 降到約 9,700 cache 建立 token |
+| brief 精簡格式 | 已實作 | `save_brief` 不縮排、`symbols` 每檔一行，仍是合法 JSON；多頭第一批由 138,854 降到 79,040 字元 |
+| 事件分析師略過無事件股票 | 已實作 | 查詢視窗內無重大訊息者，Validator 本就強制 `unknown`，改由程式輸出（`no_event_item`），不送 Agent；以 10/22 資料算 35／150 檔 |
 | 用量量測 | 部分 | bytes 可量；OpenCode 已記 token；Codex／Claude 未量得 |
 
 ## 旗標與參數
@@ -121,6 +124,6 @@ flowchart LR
 | Codex 用量擷取 | 未實作 | 評估 `codex exec --json` 的 `turn.completed.usage`；成功與失敗／重試分開記錄 |
 | 預算式提早警示 | 未實作 | 送交易 Agent 前，用程式預算會使 Guard 失敗的狀況（如持股數貼近上限） |
 | 增量執行 | 研究項目，不接入 | 以每檔輸入雜湊沿用前一日已驗證分析；須標明來源 run 與 cutoff，雜湊不同一律重跑；風險最高 |
-| 無損表示再縮小 | 未開始 | 欄位表加逐行資料，可逆 `encode → decode` 驗證，先在技術 brief 試；避免單行過長被 CLI Read 截斷 |
+| 欄位表式編碼 | 未開始 | 欄位表加逐行資料，可逆 `encode → decode` 驗證，先在技術 brief 試；避免單行過長被 CLI Read 截斷 |
 | 連續視窗與事件 parent 檢索 | 未開始 | 技術資料連續時間窗，衝突時整檔回退完整序列；事件按 ID 回讀同 Snapshot 原文；SQLite FTS5 僅輔助定位，不得篩掉需分級事件 |
 | 外部套件（rank-bm25、LangChain、LlamaIndex） | 不採用 | 專案規則不直接引入；無已驗證可省 token 又維持品質的現成套件 |

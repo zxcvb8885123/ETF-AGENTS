@@ -46,7 +46,9 @@ from etf_agent.decision import (
     trade_decision_envelope,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
-from etf_agent.decision.analysts import LLM_ANALYSTS, MATERIALITY, OUTLOOKS, seal_event_market_report
+from etf_agent.decision.analysts import (
+    LLM_ANALYSTS, MATERIALITY, OUTLOOKS, no_event_item, seal_event_market_report,
+)
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
 from etf_agent.decision.stance import STANCE_ROLES, STRENGTHS
@@ -184,6 +186,21 @@ def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dic
     }
 
 
+def compact_brief_json(payload: Mapping[str, object]) -> str:
+    """頂層每個欄位一行；值是物件陣列（如 symbols）時每個元素一行，其餘不縮排。"""
+    def dump(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    lines = []
+    for key, value in payload.items():
+        if isinstance(value, list) and value and all(isinstance(item, Mapping) for item in value):
+            body = "[\n" + ",\n".join(dump(item) for item in value) + "\n]"
+        else:
+            body = dump(value)
+        lines.append("%s:%s" % (dump(str(key)), body))
+    return "{\n" + ",\n".join(lines) + "\n}\n"
+
+
 @dataclass
 class PipelineResult:
     status: str
@@ -235,6 +252,12 @@ class DailyDecisionPipeline:
     def save_artifact(self, name: str, payload: Mapping[str, object]) -> Path:
         path = self._path(name)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return path
+
+    def save_brief(self, name: str, payload: Mapping[str, object]) -> Path:
+        """Agent 讀取的輸入摘要：不縮排，symbols 每檔一行，仍是合法 JSON，可分段讀取且少約四成字元。"""
+        path = self._path(name)
+        path.write_text(compact_brief_json(payload), encoding="utf-8")
         return path
 
     def agent_step(
@@ -464,10 +487,17 @@ class DailyDecisionPipeline:
                 for row in brief["symbols"]:
                     row["data_availability"] = availability.get(row["symbol"], [{"status": "本次未查資料庫候選狀態，不能宣稱來源沒有資料"}])
             outputs: List[List[Dict[str, object]]] = []
-            analyst_batches = (
-                universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]], EVENT_BATCH_SIZE)
-                if analyst == "event" else batches
-            )
+            analyst_batches = batches
+            program_items: List[Dict[str, object]] = []
+            if analyst == "event":
+                # 查詢視窗內沒有重大訊息的股票，結果只可能是 unknown（Validator 強制），由程式直接產出，不送 Agent。
+                program_items = [no_event_item(row["symbol"], row["data_availability"])
+                                 for row in brief["symbols"] if not row["events"]]
+                skipped = {item["symbol"] for item in program_items}
+                self.log("  [事件] %d 檔無重大訊息，由程式輸出 unknown，其餘 %d 檔交給 Agent" % (
+                    len(skipped), len(brief["symbols"]) - len(skipped)))
+                analyst_batches = universe_batches(
+                    [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped], EVENT_BATCH_SIZE)
             for batch in analyst_batches:
                 members = set(batch["symbols"])
                 batch_brief = {
@@ -483,7 +513,7 @@ class DailyDecisionPipeline:
                         "full_history_symbols": len(members) - len(gated),
                     }
                 name = "%s_b%d" % (analyst, batch["batch_index"])
-                brief_path = self.save_artifact("brief_%s" % name, batch_brief)
+                brief_path = self.save_brief("brief_%s" % name, batch_brief)
                 validator = AnalystReportValidator(bundle, analyst, symbols=batch["symbols"])
                 task = AgentTask(
                     name,
@@ -502,6 +532,10 @@ class DailyDecisionPipeline:
                     validator.validate,
                 )
                 outputs.append(partial["items"])
+            if program_items:
+                analyst_batches = [*analyst_batches, {"batch_index": len(analyst_batches),
+                                                      "symbols": [item["symbol"] for item in program_items]}]
+                outputs.append(program_items)
             combined = merge_batch_items(analyst_batches, outputs, analyst)
             report = (seal_event_market_report(bundle, brief["report_envelope"], combined)
                       if analyst == "event" else seal_report(brief["report_envelope"], combined))
@@ -530,7 +564,7 @@ class DailyDecisionPipeline:
             for batch in batches:
                 members = set(batch["symbols"])
                 name = "%s_b%d" % (role, batch["batch_index"])
-                brief_path = self.save_artifact(
+                brief_path = self.save_brief(
                     "brief_%s" % name,
                     {**brief, "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                      "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members]},
@@ -596,7 +630,7 @@ class DailyDecisionPipeline:
         outputs: List[List[Dict[str, object]]] = []
         for batch in batches:
             name = "trader_b%d" % batch["batch_index"]
-            brief_path = self.save_artifact(
+            brief_path = self.save_brief(
                 "brief_%s" % name,
                 {
                     "regime_assessment": momentum.get("regime_assessment"),
@@ -671,7 +705,7 @@ class DailyDecisionPipeline:
         price_evidence = sorted(
             {str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"] if row.get("source_evidence_id")}
         )
-        brief_path = self.save_artifact(
+        brief_path = self.save_brief(
             "brief_cash_stance",
             {
                 "regime_assessment": momentum.get("regime_assessment"),

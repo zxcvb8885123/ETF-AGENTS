@@ -38,7 +38,7 @@
 ### 後續 Agent
 
 - 每日決策鏈依[目前每日決策架構](docs/architecture.md)採分析團隊 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
-- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
+- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師只處理查詢視窗內有重大訊息的股票，沒有重大訊息者由程式直接輸出 `unknown`（最終報告仍覆蓋全部交易池）；標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 作為多頭／空頭研究的整合者，先說明兩方論點的取捨，再逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
 - Decision run 必須另存 `team_inputs`（2.1 為三份分析報告與現金姿態；舊 2.0 的三／四份分析報告及事件研究保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
