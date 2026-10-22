@@ -35,6 +35,7 @@
 | `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）與已判讀輸入接入（`integrate`） |
 | `news_sentiment.py` | 核對資料庫新聞候選、保存原頁版本並驗證全量情緒標註 |
 | `market_context_probe.py` | 補抓公開大盤成交、指數與法人資料（交易背景），不產生情緒結論 |
+| `calibration.py` | 校準旁觀者：`snapshot` 記錄封存決策、`report` 以官方成交均價對答案（少於 20 個決策日不給結論）、`gap-audit` 審計決策價與成交均價的偏離；不影響決策 |
 | `dashboard.py` | 啟動唯讀虛擬帳戶績效儀表板（FastAPI），`./start.sh` 預設模式使用 |
 
 從專案根目錄執行，例如：

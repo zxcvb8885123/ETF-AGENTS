@@ -143,6 +143,7 @@ ETF_AGENTS/
 │   ├── fundamentals/        #   財務比率計算
 │   ├── research/            #   事件研究（獨立流程與舊封存）
 │   ├── dashboard/           #   績效儀表板
+│   ├── calibration/         #   校準旁觀者：信心等級事後對答案、決策價與成交均價偏離（不入決策鏈）
 │   ├── runtime/, core/      #   管線串接，以及共用的雜湊、時間、數值工具
 │
 ├── cli/                     # 單步命令入口：只解析參數並呼叫 src/，不放邏輯（見 cli/README.md）

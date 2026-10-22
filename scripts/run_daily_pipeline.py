@@ -74,6 +74,24 @@ def notify(title: str, message: str) -> None:
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
 
 
+def record_calibration() -> dict:
+    """旁觀記錄：把已封存的決策記成校準觀測。只呼叫 CLI，不匯入校準套件；失敗只記錄，不影響決策、摘要狀態與結束碼。"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "cli" / "calibration.py"), "snapshot"],
+            cwd=ROOT, check=False, capture_output=True, text=True, timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        log("[校準] 未執行：%s" % error)
+        return {"status": "error", "error": str(error)}
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[-200:]
+        log("[校準] 記錄失敗（exit %d）：%s" % (completed.returncode, detail))
+        return {"status": "error", "exit_code": completed.returncode, "error": detail}
+    log("[校準] 已記錄封存決策的觀測")
+    return {"status": "recorded"}
+
+
 def run_data_stage(account_id: str, account_run_id: str, history_end=None) -> None:
     """沿用 ./start.sh daily：抓資料、建 Snapshot、推進帳本。
 
@@ -537,6 +555,7 @@ def main() -> int:
             except (ValueError, OSError) as publish_error:
                 summary["delivery_publish_error"] = str(publish_error)
                 log("交付診斷發布失敗：%s" % publish_error)
+    summary["calibration"] = record_calibration()
     summary.setdefault("finished_at", datetime.now(TAIPEI_TIMEZONE).isoformat())
     write_json(summary_path, summary)
 
