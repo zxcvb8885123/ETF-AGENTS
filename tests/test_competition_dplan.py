@@ -3,9 +3,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from etf_agent.competition import (
-    DPlanContextBuilder, DPlanError, DPlanExporter, DPlanValidator, load_decision_run,
+    DPlanContextBuilder, DPlanError, DPlanExportService, DPlanExporter, DPlanValidator, load_decision_run,
     verify_account_binding,
 )
 from etf_agent.decision import (
@@ -122,6 +123,80 @@ class DPlanContractTests(unittest.TestCase):
         self.assertEqual(context["market_view"]["basis_refs"], ["O1"])
         self.assertTrue(context["inference_refs_by_ticker"])
 
+
+class DPlanExportServiceTests(unittest.TestCase):
+    def test_export_uses_daily_target_session_and_fixed_competition_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "profile.json"
+            profile.write_text(json.dumps(approved_profile()), encoding="utf-8")
+            daily = {
+                "run_id": "daily-20261020",
+                "started_at": "2026-10-19T18:00:00+08:00",
+                "finished_at": "2026-10-19T18:30:00+08:00",
+                "target_session": {"start": "2026-10-20T09:00:00+08:00", "end": "2026-10-20T13:30:00+08:00"},
+            }
+            context = {"fixture": "context"}
+            plan = {"fixture": "dplan"}
+            service = DPlanExportService(root)
+            with patch("etf_agent.competition.service.load_decision_run", return_value={"fixture": "artifacts"}), \
+                    patch("etf_agent.competition.service.DPlanContextBuilder.build", return_value=context), \
+                    patch("etf_agent.competition.service.verify_account_binding", return_value={"run_id": "prepare-1"}), \
+                    patch("etf_agent.competition.service.DPlanExporter.build", return_value=plan), \
+                    patch.object(service, "code_version", return_value="git:test"):
+                result = service.export(
+                    decision_repository=root / "decisions",
+                    decision_run_id="decision-1",
+                    daily_run=daily,
+                    profile_path=profile,
+                    account_id="ai-cup-2026",
+                    account_run_id="prepare-1",
+                )
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual(result["trade_date"], "2026-10-20")
+            output = root / "artifacts/competition_d_plan/D-Plan_TEAM_11067_2026-10-20.json"
+            context_output = root / "artifacts/competition_d_plan/contexts/context_decision-1.json"
+            self.assertEqual(Path(result["output"]), output)
+            self.assertEqual(Path(result["context_output"]), context_output)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), plan)
+            self.assertEqual(json.loads(context_output.read_text(encoding="utf-8")), context)
+
+    def test_trade_date_requires_a_timed_target_session(self):
+        with self.assertRaisesRegex(DPlanError, "target_session"):
+            DPlanExportService.trade_date({})
+        with self.assertRaisesRegex(DPlanError, "缺少時區"):
+            DPlanExportService.trade_date({"target_session": {"start": "2026-10-20T09:00:00"}})
+
+    def test_export_latest_reads_date_partitioned_daily_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "artifacts" / "daily_runs" / "2026-10-20" / "daily-20261020"
+            run_dir.mkdir(parents=True)
+            daily = {
+                "run_id": "daily-20261020",
+                "status": "completed",
+                "decision_status": "approved",
+                "decision_run_id": "decision-20261020",
+                "finished_at": "2026-10-20T18:30:00+08:00",
+                "target_session": {"start": "2026-10-21T09:00:00+08:00"},
+            }
+            (run_dir / "pipeline.json").write_text(json.dumps(daily), encoding="utf-8")
+            service = DPlanExportService(root)
+            expected = {"status": "ready"}
+            with patch.object(service, "current_account_run_id", return_value="prepare-1"), \
+                    patch.object(service, "export", return_value=expected) as export:
+                self.assertEqual(service.export_latest(), expected)
+            export.assert_called_once_with(
+                decision_repository=root / "artifacts" / "decision_runs",
+                decision_run_id="decision-20261020",
+                daily_run=daily,
+                profile_path=root / "config" / "competition_profile.json",
+                account_id="ai-cup-2026",
+                account_run_id="prepare-1",
+            )
+
+
+class DPlanAdditionalContractTests(unittest.TestCase):
     def test_detects_orphan_references_unknown_fields_and_noncontiguous_ids(self):
         plan = valid_plan()
         self.assertEqual(DPlanValidator().validate(plan), [])
