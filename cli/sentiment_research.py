@@ -96,7 +96,7 @@ class SentimentResearchApplication:
         parser.add_argument(
             "--bundle",
             type=Path,
-            default=self.root / "artifacts" / "perception_data_latest.json",
+            default=self.root / "artifacts" / "data" / "perception_data_latest.json",
         )
         commands = parser.add_subparsers(dest="command", required=True)
         build = commands.add_parser("build-result", help="全池聚合情緒與共識並驗證結果，拒絕覆寫")

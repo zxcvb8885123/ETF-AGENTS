@@ -167,10 +167,10 @@ class DPlanExportServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(DPlanError, "缺少時區"):
             DPlanExportService.trade_date({"target_session": {"start": "2026-10-20T09:00:00"}})
 
-    def test_export_latest_reads_date_partitioned_daily_runs(self):
+    def test_export_latest_reads_date_partitioned_daily(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            run_dir = root / "artifacts" / "daily_runs" / "2026-10-20" / "daily-20261020"
+            run_dir = root / "artifacts" / "daily" / "2026-10-20" / "daily-20261020"
             run_dir.mkdir(parents=True)
             daily = {
                 "run_id": "daily-20261020",
@@ -187,7 +187,7 @@ class DPlanExportServiceTests(unittest.TestCase):
                     patch.object(service, "export", return_value=expected) as export:
                 self.assertEqual(service.export_latest(), expected)
             export.assert_called_once_with(
-                decision_repository=root / "artifacts" / "decision_runs",
+                decision_repository=root / "artifacts" / "decisions",
                 decision_run_id="decision-20261020",
                 daily_run=daily,
                 profile_path=root / "config" / "competition_profile.json",

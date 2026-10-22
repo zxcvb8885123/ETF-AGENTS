@@ -24,20 +24,20 @@ description: 使用同一份 ResearchSnapshot 的已驗證財報與確定性指�
 
 ```bash
 .venv/bin/python cli/fundamental_research.py \
-  --snapshot artifacts/research_snapshot_latest.json status
+  --snapshot artifacts/data/research_snapshot_latest.json status
 
 .venv/bin/python cli/fundamental_research.py \
-  --snapshot artifacts/research_snapshot_latest.json build-bundle \
+  --snapshot artifacts/data/research_snapshot_latest.json build-bundle \
   --symbols 2330.TW --fiscal-year 2026 --fiscal-quarter 2 \
   --output artifacts/fundamental_bundle.json
 
 .venv/bin/python cli/fundamental_research.py \
-  --snapshot artifacts/research_snapshot_latest.json compute-metrics \
+  --snapshot artifacts/data/research_snapshot_latest.json compute-metrics \
   --bundle artifacts/fundamental_bundle.json \
   --output artifacts/fundamental_metrics.json
 
 .venv/bin/python cli/fundamental_research.py \
-  --snapshot artifacts/research_snapshot_latest.json validate-result \
+  --snapshot artifacts/data/research_snapshot_latest.json validate-result \
   --bundle artifacts/fundamental_bundle.json \
   --metrics artifacts/fundamental_metrics.json \
   --input artifacts/fundamental_research_draft.json \

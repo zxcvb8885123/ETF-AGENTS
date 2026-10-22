@@ -23,10 +23,9 @@ from etf_agent.data import (  # noqa: E402
 
 
 def report_file_name(kind: str, generated_at: str, report_id: str) -> str:
-    """相對路徑：台北日期資料夾／種類_台北時間_識別碼前八碼，例如 2026-09-29/source_probe_163216_078ba66f.json。"""
+    """相對路徑：台北日期資料夾／種類_台北時間，例如 2026-09-29/source_probe_2026-09-29_16-32-16.json；報告識別碼寫在檔案內容裡。"""
     moment = datetime.fromisoformat(generated_at).astimezone(ZoneInfo("Asia/Taipei"))
-    short_id = report_id.split("-")[0][:8]
-    return "%s/%s_%s_%s.json" % (moment.strftime("%Y-%m-%d"), kind, moment.strftime("%H%M%S"), short_id)
+    return "%s/%s_%s.json" % (moment.strftime("%Y-%m-%d"), kind, moment.strftime("%Y-%m-%d_%H-%M-%S"))
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=ROOT / "artifacts" / "source_probe_reports",
+        default=ROOT / "artifacts" / "debug" / "source_probe",
     )
     parser.add_argument("--json", action="store_true", help="將完整結果輸出為 JSON")
     return parser.parse_args()

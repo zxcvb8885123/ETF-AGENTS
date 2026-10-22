@@ -252,7 +252,7 @@ class DecisionPolicyBuilderTests(unittest.TestCase):
 class PolicyBuilderCliTests(unittest.TestCase):
     def test_cli_build_policy_produces_valid_base_policy(self):
         bundle = valid_inputs()[0]
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         template = json.loads((root / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         # 內附樣板的時間晚於 fixture cutoff；只替換時間以驗證其餘欄位可直接使用。
         template["available_at"] = "2026-09-19T00:00:00+00:00"

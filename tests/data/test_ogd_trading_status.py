@@ -67,6 +67,11 @@ class TradingCalendarTests(unittest.TestCase):
         # 週五晚上 cutoff：跳過週末與 9/28 教師節。
         session = next_trading_session("2026-09-25T12:00:00+00:00", closed)
         self.assertEqual(session["start"], "2026-09-29T09:00:00+08:00")
+        # 平日開盤前的 cutoff 排到當天；休市日開盤前仍往後找。
+        self.assertEqual(next_trading_session("2026-09-29T01:30:00+08:00", closed)["start"], "2026-09-29T09:00:00+08:00")
+        self.assertEqual(next_trading_session("2026-09-28T01:30:00+08:00", closed)["start"], "2026-09-29T09:00:00+08:00")
+        self.assertEqual(next_trading_session("2026-09-29T08:54:00+08:00", closed)["start"], "2026-09-29T09:00:00+08:00")
+        self.assertEqual(next_trading_session("2026-09-29T08:55:00+08:00", closed)["start"], "2026-09-30T09:00:00+08:00")
 
 
 class OgdMapperTests(unittest.TestCase):

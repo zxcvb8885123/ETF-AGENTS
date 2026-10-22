@@ -20,6 +20,8 @@ from .evidence import TAIPEI_TIMEZONE
 
 CALENDAR_BASIS = "twse_ogd_calendar"
 SESSION_OPEN = time(9, 0)
+# 決策截止：交易日 08:55 前的 cutoff 以當天為目標時段；08:55 起（含）排到下一個交易日。
+DECISION_DEADLINE = time(8, 55)
 SESSION_CLOSE = time(13, 30)
 _SETTLEMENT_ONLY_MARK = "僅辦理結算交割"
 _TRADING_MARKS = ("開始交易", "最後交易")
@@ -97,9 +99,13 @@ class TradingCalendar:
         raise TradingCalendarError("%s 起找不到 T+%d 交割日，行事曆資料可能錯誤" % (trade_date.isoformat(), count))
 
     def next_trading_session(self, decision_cutoff: str) -> Dict[str, str]:
-        """cutoff 後第一個交易日的 09:00–13:30（台北）；cutoff 在盤中或盤後都排到下一個交易日。"""
+        """cutoff 後第一個 09:00–13:30（台北）交易時段；交易日 08:55 前的 cutoff 排到當天，
+        08:55 起、盤中或盤後的 cutoff 排到下一個交易日。"""
         cutoff = parse_aware_time(decision_cutoff, "decision_cutoff", error=TradingCalendarError).astimezone(TAIPEI_TIMEZONE)
-        day = self.next_trading_day(cutoff.date())
+        if cutoff.time() < DECISION_DEADLINE and self.is_trading_day(cutoff.date()):
+            day = cutoff.date()
+        else:
+            day = self.next_trading_day(cutoff.date())
         return {
             "start": datetime.combine(day, SESSION_OPEN, TAIPEI_TIMEZONE).isoformat(),
             "end": datetime.combine(day, SESSION_CLOSE, TAIPEI_TIMEZONE).isoformat(),

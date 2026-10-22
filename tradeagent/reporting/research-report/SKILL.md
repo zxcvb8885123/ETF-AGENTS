@@ -23,7 +23,7 @@ description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情�
 
 ```bash
 .venv/bin/python cli/research_report.py build \
-  --snapshot artifacts/research_snapshot_latest.json \
+  --snapshot artifacts/data/research_snapshot_latest.json \
   --research artifacts/event_research_validated.json \
   --json-output artifacts/research_report.json \
   --markdown-output artifacts/research_report.md
@@ -33,10 +33,10 @@ description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情�
 
 ```bash
 .venv/bin/python cli/research_report.py build \
-  --snapshot artifacts/research_snapshot_latest.json \
+  --snapshot artifacts/data/research_snapshot_latest.json \
   --research artifacts/event_research_validated.json \
   --perception artifacts/market_perception_validated.json \
-  --perception-bundle artifacts/perception_data_latest.json \
+  --perception-bundle artifacts/data/perception_data_latest.json \
   --json-output artifacts/research_report.json \
   --markdown-output artifacts/research_report.md
 ```
@@ -45,7 +45,7 @@ description: 將已驗證的 ResearchSnapshot、事件研究與選配市場情�
 
 ```bash
 .venv/bin/python cli/research_report.py validate \
-  --snapshot artifacts/research_snapshot_latest.json \
+  --snapshot artifacts/data/research_snapshot_latest.json \
   --research artifacts/event_research_validated.json \
   --input artifacts/research_report.json
 ```

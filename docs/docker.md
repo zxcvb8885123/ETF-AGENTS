@@ -59,7 +59,7 @@ docker compose version
 - Yahoo 當日缺檔，不會跳過其他來源，最後以非零狀態回報。
 - 缺 FinMind 憑證，或候選來源失敗，也會回報「降級」。
 
-**macOS 排程**（樣板在 `scripts/launchd/`，日誌在 `artifacts/daily_runs/`）
+**macOS 排程**（樣板在 `scripts/launchd/`，日誌在 `artifacts/daily/`）
 
 | 排程 | 時間（台北） | 作用 |
 | --- | --- | --- |

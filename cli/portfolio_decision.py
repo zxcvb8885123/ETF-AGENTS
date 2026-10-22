@@ -176,7 +176,7 @@ class PortfolioDecisionApplication:
         parser.add_argument(
             "--bundle",
             type=Path,
-            default=self.root / "artifacts" / "decision_input_latest.json",
+            default=self.root / "artifacts" / "data" / "decision_input_latest.json",
         )
         commands = parser.add_subparsers(dest="command", required=True)
         build_input = commands.add_parser(
@@ -184,7 +184,7 @@ class PortfolioDecisionApplication:
             help="由 Snapshot、SQLite 歷史行情與決策規則建立 DecisionInputBundle（寫入 --bundle）；未附帳戶時輸出供 attach-account 使用的樣板",
         )
         build_input.add_argument(
-            "--snapshot", type=Path, default=self.root / "artifacts" / "research_snapshot_latest.json"
+            "--snapshot", type=Path, default=self.root / "artifacts" / "data" / "research_snapshot_latest.json"
         )
         build_input.add_argument("--database", type=Path, default=self.root / "var" / "etf_agent.db")
         build_input.add_argument(
@@ -328,7 +328,7 @@ class PortfolioDecisionApplication:
             "--team-inputs", type=Path, required=True,
             help="三份分析報告（舊封存四份）、事件研究與現金姿態，供完整重建驗證",
         )
-        save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "decision_runs")
+        save.add_argument("--repository", type=Path, default=self.root / "artifacts" / "decisions")
         return parser
 
     @staticmethod

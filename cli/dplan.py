@@ -41,7 +41,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     build.add_argument("--context-output", type=Path, help="自動整理的 context 輸出位置（不可覆寫）")
     build.add_argument("--decision-repository", type=Path, required=True)
     build.add_argument("--decision-run-id", required=True)
-    build.add_argument("--virtual-account-repository", type=Path, default=ROOT / "artifacts" / "virtual_accounts")
+    build.add_argument("--virtual-account-repository", type=Path, default=ROOT / "artifacts" / "ledger")
     build.add_argument("--virtual-account-account-id", required=True)
     build.add_argument("--virtual-account-run-id", required=True, help="決策使用的 prepare-day 封存 run")
     build.add_argument("--output", type=Path)

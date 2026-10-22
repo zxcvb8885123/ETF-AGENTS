@@ -16,7 +16,7 @@ from etf_agent.data import (
 from etf_agent.data.evidence import SourceEvidenceBuilder
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests" / "fixtures" / "twse_stock_day_all.json"
 TPEX_FIXTURE = ROOT / "tests" / "fixtures" / "universe_validation_tpex.json"
 

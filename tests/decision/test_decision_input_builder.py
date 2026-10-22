@@ -118,7 +118,7 @@ class DecisionInputBuilderTests(unittest.TestCase):
 
     def test_shipped_decision_rules_pass_rule_validation(self):
         snapshot, _, history, account = builder_inputs()
-        rules_path = Path(__file__).resolve().parents[1] / "config" / "decision_rules.json"
+        rules_path = Path(__file__).resolve().parents[2] / "config" / "decision_rules.json"
         rules = json.loads(rules_path.read_text(encoding="utf-8"))
         builder = DecisionInputBuilder(snapshot, rules, history, account_snapshot=account)
         self.assertEqual(

@@ -251,7 +251,7 @@ class TradingStatusTests(unittest.TestCase):
 
     def test_cli_build_and_validate_returns_machine_readable_result(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(__file__).resolve().parents[1]
+            root = Path(__file__).resolve().parents[2]
             directory_path = Path(directory)
             request_path = directory_path / "request.json"
             records_path = directory_path / "records.json"
@@ -288,7 +288,7 @@ class TradingStatusTests(unittest.TestCase):
         snapshot = decision_fixture()["snapshot"]
         snapshot["universe_version"] = "universe-fixture"
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(__file__).resolve().parents[1]
+            root = Path(__file__).resolve().parents[2]
             snapshot_path = Path(directory) / "snapshot.json"
             bundle_path = Path(directory) / "bundle.json"
             snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")

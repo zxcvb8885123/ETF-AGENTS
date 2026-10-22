@@ -26,7 +26,7 @@ python3 -m venv .venv
 | 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板；不更新資料 |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
-| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日），會自動沿用、不重抓 |
+| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日），會自動沿用、不重抓；資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
 首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
@@ -150,21 +150,19 @@ ETF_AGENTS/
 ├── game_docs/               # 主辦方原始文件：標的清單、D-Plan 指南與 schema、DataPack 規格
 ├── docs/                    # 設計與操作文件
 │   └── source_audit/        #   來源核對與核准證據，程式與核准設定會引用，不可刪
-├── tests/                   # pytest 測試
+├── tests/                   # pytest 測試，依職責分 core／data／perception／research／decision／account／automation
 │   └── fixtures/            #   測試用的小型資料
 │
 ├── var/                     # 執行時資料，不進 git：etf_agent.db（行情、公司文件、來源原文）與快取
 └── artifacts/               # 執行時產物，不進 git
-    ├── daily_runs/          #   每日執行狀態
-    ├── decision_runs/       #   不可變決策封存與重建輸入
-    ├── decision_reports/    #   決策報告（依日期的閱讀副本與交付紀錄）
+    ├── latest/              #   先看這裡：最新中文報告（latest.md／latest.json）或失敗診斷
+    ├── daily/               #   每日執行狀態、分析師與決策輸出（<日期>/<run_id>/）
+    ├── decisions/           #   不可變決策封存與重建輸入
+    ├── reports/             #   決策報告：runs（交付紀錄）、views（依日期的閱讀副本）
     ├── competition_d_plan/  #   D-Plan v4.3 候選與內部 context
-    ├── virtual_accounts/    #   虛擬帳本
-    ├── latest_reports/      #   最新中文報告
-    ├── source_audit/        #   來源原始抓取與稽核
-    ├── source_probe_reports/#   資料來源可行性探測
-    ├── official_history/    #   官方歷史行情補抓覆蓋
-    ├── financial_statements/#   財報收集覆蓋
+    ├── ledger/              #   虛擬帳本與帳戶快照
+    ├── data/                #   最新資料：研究快照、財報、產業分類、決策輸入、官方歷史行情
+    ├── debug/               #   平常不用看：source_audit（來源原始抓取）、source_probe（來源探測）
     └── archive/             #   舊實驗、被取代的決策
 ```
 
@@ -181,10 +179,12 @@ ETF_AGENTS/
 
 - `var/`、`artifacts/` 不進 git，新環境是空的。
 - 由 `./start.sh` 與每日管線產生。
-- 決策封存（`artifacts/decision_runs/`）是下游重建驗證的依據，刪除前先確認不需要重建。
-- 每日輸出依台北日期分資料夾：`daily_runs`、`decision_runs`、`decision_reports`（`runs`／`views`／`dated`）、`source_audit/captures`、`source_audit/sector_classification` 與 `source_probe_reports` 都是 `<資料夾>/YYYY-MM-DD/<名稱>`。日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期；同一個 run ID 出現在兩個日期資料夾會被拒絕。
-- 帳本（`virtual_accounts/`）是雜湊鏈，不分日期資料夾；`archive/` 是手動整理的舊實驗，也不改。
-- `artifacts/portfolio_decisions` 是指向 `decision_runs` 的相容連結：舊的交付 `request.json` 已封存了這條絕對路徑，沒有它就無法重新驗證舊交付，請勿刪除。
+- 決策封存（`artifacts/decisions/`）是下游重建驗證的依據，刪除前先確認不需要重建。
+- 每日輸出依台北日期分資料夾：`daily`、`decisions`、`reports`（`runs`／`views`／`dated`）、`debug/source_audit/sector_classification` 與 `debug/source_probe` 都是 `<資料夾>/YYYY-MM-DD/<名稱>`。日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期；同一個 run ID 出現在兩個日期資料夾會被拒絕。
+- 帳本（`ledger/`）是雜湊鏈，不分日期資料夾；`archive/` 是手動整理的舊實驗，也不改。
+- FinMind 財報候選（候選資料，不進正式 Snapshot）：首次補 `FINMIND_YEARS` 年（預設 3，可設 2～5）歷史，之後只在財報公布區間（約 2/15–4/10、4/20–5/25、7/20–8/24、10/20–11/24）每天更新一次，區間外略過；狀態記在 `artifacts/data/finmind_schedule.json`，`FORCE_FETCH=1` 可強制更新。補抓的歷史財報以抓取時間為 `available_at`，不會回填到過去的決策。
+- 政府開放 CSV（開休市日期表、注意／處置／暫停交易／特殊標的）放在 `artifacts/data/trading_status/`（每天會跑，屬於執行產物，不進 git）。每次八份全部抓成功才刪除舊的，只留最新一份；有任何一份失敗就保留舊封存當後備。每日決策仍把當次的交易狀態寫進 `artifacts/daily/<日期>/<run_id>/trading_status.json`，所以不依賴舊封存重建。
+- 2026-10-22 起頂層資料夾改為上述名稱（舊名：`daily_runs`、`decision_runs`、`decision_reports`、`latest_reports`、`virtual_accounts`、`source_audit`、`source_probe_reports`、`official_history`，以及散在頂層的 `*_latest.json`）。舊名稱的資料已清除，沒有相容連結；不要把舊名稱的資料夾搬回來。
 
 ## 目前狀態與限制
 
@@ -211,10 +211,10 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 | --- | --- |
 | `data/official_universe.csv` | 150 檔交易池輸入 |
 | `var/etf_agent.db` | 行情、公司文件、來源原文、時間與版本 |
-| `artifacts/latest_reports/latest.md` | 最新中文報告或失敗診斷 |
-| `artifacts/daily_runs/<日期>/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
-| `artifacts/decision_runs/<日期>/<run_id>/` | 不可變決策封存與重建輸入 |
-| `artifacts/virtual_accounts/` | 虛擬帳本與帳戶快照 |
+| `artifacts/latest/latest.md` | 最新中文報告或失敗診斷 |
+| `artifacts/daily/<日期>/<run_id>/pipeline.json` | 每日執行狀態與阻擋原因 |
+| `artifacts/decisions/<日期>/<run_id>/` | 不可變決策封存與重建輸入 |
+| `artifacts/ledger/` | 虛擬帳本與帳戶快照 |
 | `artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` | 可人工上傳的 D-Plan v4.3 候選 |
 | `artifacts/competition_d_plan/contexts/` | D-Plan 內部 context 稽核檔；不是主辦方繳交檔 |
 

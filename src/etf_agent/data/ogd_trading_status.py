@@ -18,7 +18,7 @@ from etf_agent.core import canonical_sha256, parse_aware_time
 from etf_agent.core.run_layout import list_run_dirs
 from .evidence import TAIPEI_TIMEZONE
 from .ogd_candidate_facts import extract_ogd_candidate_facts
-from .trading_calendar import TradingCalendar, TradingCalendarError
+from .trading_calendar import DECISION_DEADLINE, TradingCalendar, TradingCalendarError
 from .trading_status import DEFAULT_REQUIRED_CATEGORIES, TradingStatusError, TradingStatusRequest
 
 
@@ -76,9 +76,10 @@ def closed_dates_from_calendar(facts: Iterable[Mapping[str, object]]) -> Set[str
 
 
 def next_trading_session(decision_cutoff: str, closed_dates: Set[str]) -> Dict[str, str]:
-    """cutoff 後第一個非週末、非休市日的 09:00–13:30（台北）。"""
+    """cutoff 後第一個非週末、非休市日的 09:00–13:30（台北）；08:55 前的 cutoff 排到當天。"""
     cutoff = parse_aware_time(decision_cutoff, "decision_cutoff", error=TradingStatusError).astimezone(TAIPEI_TIMEZONE)
-    day = cutoff.date() + timedelta(days=1)
+    before_open = cutoff.time() < DECISION_DEADLINE
+    day = cutoff.date() if before_open else cutoff.date() + timedelta(days=1)
     for _ in range(40):
         if day.weekday() < 5 and day.isoformat() not in closed_dates:
             break

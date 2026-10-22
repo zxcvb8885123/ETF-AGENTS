@@ -118,7 +118,7 @@ class DPlanExportService:
 
     def current_account_run_id(self, account_id: str) -> str:
         latest = read_object(
-            self.root / "artifacts" / "virtual_accounts" / account_id / "latest.json",
+            self.root / "artifacts" / "ledger" / account_id / "latest.json",
             "VirtualAccount latest",
         )
         run_id = latest.get("run_id")
@@ -153,7 +153,7 @@ class DPlanExportService:
         context = DPlanContextBuilder().build(artifacts, profile, daily_run, self.code_version())
         account = verify_account_binding(
             artifacts,
-            str(self.root / "artifacts" / "virtual_accounts"),
+            str(self.root / "artifacts" / "ledger"),
             account_id,
             account_run_id,
         )
@@ -179,8 +179,8 @@ class DPlanExportService:
     def export_latest(self, *, account_id: str = "ai-cup-2026", profile_path: Optional[Path] = None) -> Dict[str, object]:
         """Manually retry the newest completed daily run without copying run IDs."""
         candidates = []
-        daily_runs_root = self.root / "artifacts" / "daily_runs"
-        for run_dir in list_run_dirs(daily_runs_root):
+        daily_root = self.root / "artifacts" / "daily"
+        for run_dir in list_run_dirs(daily_root):
             summary_path = run_dir / "pipeline.json"
             if not summary_path.is_file():
                 continue
@@ -205,7 +205,7 @@ class DPlanExportService:
             raise DPlanError("找不到可匯出的 approved/no_trade 每日決策")
         _, daily_run, decision_run_id = max(candidates, key=lambda item: item[0])
         return self.export(
-            decision_repository=self.root / "artifacts" / "decision_runs",
+            decision_repository=self.root / "artifacts" / "decisions",
             decision_run_id=decision_run_id,
             daily_run=daily_run,
             profile_path=profile_path or self.root / "config" / "competition_profile.json",

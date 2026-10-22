@@ -36,7 +36,7 @@ from test_stance import bear_items, bull_items
 from test_trader import STANCE, items as trade_items
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def tradable_bundle():

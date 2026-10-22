@@ -74,9 +74,14 @@ def notify(title: str, message: str) -> None:
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
 
 
-def run_data_stage(account_id: str, account_run_id: str) -> None:
-    """沿用 ./start.sh daily：抓資料、建 Snapshot、推進帳本。"""
+def run_data_stage(account_id: str, account_run_id: str, history_end=None) -> None:
+    """沿用 ./start.sh daily：抓資料、建 Snapshot、推進帳本。
+
+    history_end 是此刻應已有收盤行情的最近交易日；交易日 15:00 前它是前一個交易日，
+    不能要求「今天」的日線。判斷不出時不傳，維持 collect_history 預設的當日要求（fail-closed）。"""
     env = dict(os.environ, ACCOUNT_ID=account_id, ACCOUNT_RUN_ID=account_run_id)
+    if history_end is not None:
+        env["HISTORY_END"] = history_end.isoformat()
     completed = subprocess.run([str(ROOT / "start.sh"), "daily"], cwd=ROOT, env=env, check=False)
     if completed.returncode != 0:
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
@@ -193,8 +198,25 @@ def resumed_decision_run_id(run_dir: Path):
 
 
 def prepared_account_run(account_id: str) -> str:
-    latest = json.loads((ROOT / "artifacts/virtual_accounts" / account_id / "latest.json").read_text(encoding="utf-8"))
+    latest = json.loads((ROOT / "artifacts/ledger" / account_id / "latest.json").read_text(encoding="utf-8"))
     return str(latest["run_id"])
+
+
+def capture_trading_sources(captures_root: Path) -> dict:
+    """抓八份政府開放 CSV；成功才刪除舊封存，只留最新一份。"""
+    report = json.loads((ROOT / "docs" / "source_audit" / "2026-09-25_ogd_crosscheck.json").read_text(encoding="utf-8"))
+    return capture_ogd_candidates(report, captures_root, keep_latest_only=True)
+
+
+def ensure_calendar_capture(captures_root: Path, now: datetime) -> None:
+    """還沒有開休市日期表（新環境或資料夾被清掉）就先去抓；抓不到則照原本流程報錯停止。"""
+    try:
+        if latest_calendar_capture_before(captures_root, now.isoformat()) is not None:
+            return
+        log("找不到封存的開休市日期表，先抓政府開放 CSV")
+        capture_trading_sources(captures_root)
+    except (TradingCalendarError, OSError, ValueError) as error:
+        log("政府開放 CSV 抓取失敗：%s" % error)
 
 
 def trading_day_check(captures_root: Path, now: datetime) -> bool:
@@ -207,20 +229,20 @@ def trading_day_check(captures_root: Path, now: datetime) -> bool:
 
 def deliver_saved_run(root: Path, name: str) -> dict:
     """只重建已封存決策的交付，不抓資料或重跑模型。"""
-    with publication_lock(root / "artifacts/daily_runs", filename=".lock"):
+    with publication_lock(root / "artifacts/daily", filename=".lock"):
         return _deliver_saved_run(root, name)
 
 
 def _deliver_saved_run(root: Path, name: str) -> dict:
     if not re.fullmatch(r"daily-[0-9A-Za-z-]+", name):
         raise ValueError("每日 run 名稱不符合白名單")
-    summary_path = daily_run_path(root / "artifacts/daily_runs", name) / "pipeline.json"
+    summary_path = daily_run_path(root / "artifacts/daily", name) / "pipeline.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     decision_id = summary.get("decision_run_id") or summary.get("planned_decision_run_id")
     if not decision_id:
         raise ValueError("此 run 沒有封存決策識別，不能只續跑交付")
-    delivery = build_delivery(root / "artifacts/decision_runs", decision_id,
-        root / "artifacts/decision_reports", reports_root=root / "artifacts/latest_reports",
+    delivery = build_delivery(root / "artifacts/decisions", decision_id,
+        root / "artifacts/reports", reports_root=root / "artifacts/latest",
         started_at=summary["started_at"])
     summary["delivery"] = delivery
     if delivery["report_status"] == "ready":
@@ -282,7 +304,7 @@ def main() -> int:
     perception_bundle, perception_result = args.perception if args.perception else (None, None)
 
     now = datetime.now(TAIPEI_TIMEZONE)
-    runs_root = ROOT / "artifacts" / "daily_runs"
+    runs_root = ROOT / "artifacts" / "daily"
     runs_root.mkdir(parents=True, exist_ok=True)
     lock_handle = (runs_root / ".lock").open("a+b")
     try:
@@ -305,8 +327,9 @@ def main() -> int:
         for check in checks:
             log("%s %s：%s" % ("通過" if check.ok else "失敗", check.name, check.detail))
         return 0 if all(check.ok for check in checks) else 1
-    captures_root = ROOT / "artifacts" / "source_audit" / "captures"
+    captures_root = ROOT / "artifacts" / "data" / "trading_status"
     if not args.force:
+        ensure_calendar_capture(captures_root, now)
         try:
             if not trading_day_check(captures_root, now):
                 log("%s 依官方開休市日曆休市，不執行（--force 可強制）。" % now.date().isoformat())
@@ -314,9 +337,9 @@ def main() -> int:
         except (TradingCalendarError, OSError, ValueError) as error:
             log("無法判定今天是否為交易日，停止：%s" % error)
             try:
-                save_failure(ROOT / "artifacts/decision_reports", str(error),
+                save_failure(ROOT / "artifacts/reports", str(error),
                     "calendar-%s" % now.strftime("%Y%m%dT%H%M%S"),
-                    reports_root=ROOT / "artifacts/latest_reports", started_at=now.isoformat())
+                    reports_root=ROOT / "artifacts/latest", started_at=now.isoformat())
             except (ValueError, OSError) as publish_error:
                 log("交付診斷發布失敗：%s" % publish_error)
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
@@ -366,8 +389,8 @@ def main() -> int:
     if not args.skip_data:
         trade_date = expected_latest_trade_date(captures_root, now)
         if data_already_fetched(
-            ROOT / "artifacts" / "research_snapshot_latest.json",
-            ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json", trade_date,
+            ROOT / "artifacts" / "data" / "research_snapshot_latest.json",
+            ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json", trade_date,
         ):
             log("已有 %s 的行情資料（Snapshot 150 檔齊全），沿用既有 Snapshot 與帳戶快照，不重抓。" % trade_date.isoformat())
             summary["data_reused_trade_date"] = trade_date.isoformat()
@@ -376,24 +399,30 @@ def main() -> int:
 
     try:
         # 在抓資料與呼叫任何子 Agent 前確認環境；一次列出全部失敗項目。
+        # 全新帳戶自動開帳；已有帳本只驗證並沿用，不會重建。失敗時交給下方預檢一併回報。
+        opened = subprocess.run(
+            [sys.executable, str(ROOT / "cli/virtual_account.py"), "--account-id", args.account_id, "ensure-init"],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        if opened.returncode != 0:
+            log("帳戶自動開帳未成功：%s" % (opened.stderr or opened.stdout).strip()[-300:])
         log("[預檢] Docker、%s 登入、帳戶、必要檔案、磁碟空間" % args.agent_cli)
         checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes, agent_cli=args.agent_cli)
         summary["preflight"] = checks_to_dict(checks)
         require_preflight(checks)
-        snapshot_path = ROOT / "artifacts" / "research_snapshot_latest.json"
-        account_path = ROOT / "artifacts" / "virtual_accounts" / args.account_id / "account_snapshot_latest.json"
+        snapshot_path = ROOT / "artifacts" / "data" / "research_snapshot_latest.json"
+        account_path = ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json"
         if not args.skip_data:
             # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
             log("[0/4] 封存交易狀態與開休市政府開放 CSV")
             try:
-                report = json.loads((ROOT / "docs" / "source_audit" / "2026-09-25_ogd_crosscheck.json").read_text(encoding="utf-8"))
-                capture = capture_ogd_candidates(report, captures_root)
+                capture = capture_trading_sources(captures_root)
                 summary["trading_status_capture"] = capture.get("run_id")
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 summary["trading_status_capture_error"] = str(error)
                 log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
             log("[1/4] ./start.sh daily：資料、Snapshot、虛擬帳本")
-            run_data_stage(args.account_id, "prepare-%s" % stamp)
+            run_data_stage(args.account_id, "prepare-%s" % stamp, trade_date)
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
                 raise RuntimeError("虛擬帳本未建立本次 prepare 狀態（可能在等待前次決策的收盤價），不能產生新決策")
         account_run_id = prepared_account_run(args.account_id)
@@ -428,7 +457,7 @@ def main() -> int:
         pipeline = DailyDecisionPipeline(
             ROOT, run_dir,
             agent_runner,
-            ROOT / "artifacts" / "decision_runs",
+            ROOT / "artifacts" / "decisions",
             log=log,
             resume=args.resume is not None,
             analyst_runner=analyst_runner,
@@ -456,7 +485,7 @@ def main() -> int:
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
         summary["event_analysis_mode"] = "integrated_analyst"
         superseded = supersede_decision_runs(
-            ROOT / "artifacts" / "decision_runs", result.decision_run_id,
+            ROOT / "artifacts" / "decisions", result.decision_run_id,
             ROOT / "artifacts" / "archive" / "superseded_decisions",
         )
         if superseded:
@@ -464,8 +493,8 @@ def main() -> int:
             log("新決策取代同一份帳戶快照的舊決策，舊 run 已移到 artifacts/archive/superseded_decisions：%s" % "、".join(superseded))
         log("[交付] 重建風控後最終中文報告")
         summary["delivery"] = build_delivery(
-            ROOT / "artifacts/decision_runs", result.decision_run_id,
-            ROOT / "artifacts/decision_reports", reports_root=ROOT / "artifacts/latest_reports",
+            ROOT / "artifacts/decisions", result.decision_run_id,
+            ROOT / "artifacts/reports", reports_root=ROOT / "artifacts/latest",
             started_at=summary["started_at"],
         )
         if summary["delivery"]["report_status"] != "ready":
@@ -483,7 +512,7 @@ def main() -> int:
             # 不接受使用者另外手抄 run ID 來繞過一致性檢查。
             try:
                 summary["dplan"] = DPlanExportService(ROOT).export(
-                    decision_repository=ROOT / "artifacts" / "decision_runs",
+                    decision_repository=ROOT / "artifacts" / "decisions",
                     decision_run_id=result.decision_run_id,
                     daily_run=summary,
                     profile_path=ROOT / "config" / "competition_profile.json",
@@ -502,8 +531,8 @@ def main() -> int:
         if "delivery" not in summary:
             try:
                 summary["delivery"] = save_failure(
-                    ROOT / "artifacts/decision_reports", str(error), run_id,
-                    reports_root=ROOT / "artifacts/latest_reports", started_at=summary["started_at"],
+                    ROOT / "artifacts/reports", str(error), run_id,
+                    reports_root=ROOT / "artifacts/latest", started_at=summary["started_at"],
                 )
             except (ValueError, OSError) as publish_error:
                 summary["delivery_publish_error"] = str(publish_error)

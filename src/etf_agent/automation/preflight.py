@@ -35,8 +35,8 @@ def required_files(account_id: str, skip_data: bool) -> List[str]:
     files = list(REQUIRED_FILES)
     if skip_data:
         files += [
-            "artifacts/research_snapshot_latest.json",
-            "artifacts/virtual_accounts/%s/account_snapshot_latest.json" % account_id,
+            "artifacts/data/research_snapshot_latest.json",
+            "artifacts/ledger/%s/account_snapshot_latest.json" % account_id,
         ]
     return files
 
@@ -114,7 +114,7 @@ def check_opencode(runner: CommandRunner, which: Callable[[str], Optional[str]],
 
 
 def check_account(root: Path, account_id: str) -> PreflightCheck:
-    account_root = root / "artifacts" / "virtual_accounts"
+    account_root = root / "artifacts" / "ledger"
     # 先確認索引存在，避免建立 repository 時替未開帳的帳戶建出空目錄。
     if not (account_root / account_id / "latest.json").exists():
         return PreflightCheck("account", False, "虛擬帳戶 %s 尚未開帳（cli/virtual_account.py init）" % account_id)

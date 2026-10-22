@@ -28,8 +28,8 @@
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>StandardOutPath</key>
-  <string>__PROJECT_ROOT__/artifacts/daily_runs/data-launchd.log</string>
+  <string>__PROJECT_ROOT__/artifacts/daily/data-launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>__PROJECT_ROOT__/artifacts/daily_runs/data-launchd.log</string>
+  <string>__PROJECT_ROOT__/artifacts/daily/data-launchd.log</string>
 </dict>
 </plist>

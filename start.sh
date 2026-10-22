@@ -4,6 +4,17 @@ set -eu
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$PROJECT_DIR"
 
+# 關閉 Docker 的「What's next」提示。
+export DOCKER_CLI_HINTS=false
+
+# 每個資料階段結束時印出耗時，方便找出最慢的一步。
+STAGE_AT=$(date +%s)
+stage_time() {
+  STAGE_NOW=$(date +%s)
+  echo "  耗時 $((STAGE_NOW - STAGE_AT)) 秒：$1"
+  STAGE_AT=$STAGE_NOW
+}
+
 # macOS ChatGPT.app 內附的 Codex CLI；非互動 shell／launchd 不會載入 ~/.zshrc。
 if [ -x "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex" ]; then
   PATH="/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin:$PATH"
@@ -102,7 +113,7 @@ fi
 if [ "$MODE" = "dashboard" ]; then
   ACCOUNT_ID=${ACCOUNT_ID:-ai-cup-2026}
   export ACCOUNT_ID
-  mkdir -p artifacts/virtual_accounts
+  mkdir -p artifacts/ledger artifacts/data
   echo "[2/3] 驗證既有帳戶或建立新帳戶：$ACCOUNT_ID"
   docker compose run --rm agent python3 cli/virtual_account.py \
     --account-id "$ACCOUNT_ID" ensure-init
@@ -126,6 +137,7 @@ docker compose run --rm agent python3 scripts/init_db.py
 if [ "$DAILY_RUN" -eq 1 ] && [ "$DATA_ONLY" -eq 0 ]; then
   echo "[3a/4] 驗證官方來源與交易池"
   docker compose run --rm agent python3 scripts/probe_data_sources.py
+  stage_time "來源探測"
 fi
 
 if [ "$MODE" = "auto" ]; then
@@ -140,57 +152,72 @@ if [ "$MODE" = "auto" ]; then
   fi
 fi
 
+# 收盤行情是固定時間定案的資料：資料庫已有收盤後抓到的完整當日行情就不重抓。
+# 重大訊息、月營收、財報、新聞等發布時間不固定，不受此影響，下面照常收集。FORCE_FETCH=1 可強制重抓行情。
+prices_current() {
+  [ "${FORCE_FETCH:-0}" != "1" ] || return 1
+  docker compose run --rm agent python3 scripts/prices_current.py --step "$1" ${HISTORY_END:+--date "$HISTORY_END"}
+}
+
 if [ "$MODE" = "official" ]; then
-  docker compose run --rm agent python3 scripts/collect_latest_prices.py
-  if [ "$DATA_ONLY" -eq 1 ]; then
+  if ! prices_current official_latest; then
+    docker compose run --rm agent python3 scripts/collect_latest_prices.py
+  fi
+  if prices_current yahoo; then
+    YAHOO_EXIT=0
+  elif [ "$DATA_ONLY" -eq 1 ]; then
     set +e
-    docker compose run --rm agent python3 scripts/collect_history.py
+    docker compose run --rm agent python3 scripts/collect_history.py ${HISTORY_END:+--end "$HISTORY_END"}
     YAHOO_EXIT=$?
     set -e
     if [ "$YAHOO_EXIT" -ne 0 ]; then
       echo "Yahoo 當日日線未完整（exit ${YAHOO_EXIT}）；仍繼續抓其他資料，資料排程最後回報非零狀態。" >&2
     fi
   else
-    docker compose run --rm agent python3 scripts/collect_history.py
+    docker compose run --rm agent python3 scripts/collect_history.py ${HISTORY_END:+--end "$HISTORY_END"}
   fi
-  if [ "$DAILY_RUN" -eq 1 ] && [ "$DATA_ONLY" -eq 0 ]; then
+  if [ "$DAILY_RUN" -eq 1 ] && [ "$DATA_ONLY" -eq 0 ] && ! prices_current official_history; then
     # 正式帳本需當日官方成交金額／股數；全市場端點延遲時只在決策流程補個股原價。
     set +e
     docker compose run --rm agent python3 scripts/collect_official_history.py >/dev/null
     OFFICIAL_HISTORY_EXIT=$?
     set -e
     if [ "$OFFICIAL_HISTORY_EXIT" -eq 1 ]; then
-      echo "帳本官方個股價量補抓失敗；結算將等待可用行情。詳見 artifacts/official_history/latest.json" >&2
+      echo "帳本官方個股價量補抓失敗；結算將等待可用行情。詳見 artifacts/data/official_history/latest.json" >&2
     fi
   fi
 else
   docker compose run --rm agent python3 scripts/collect_twse.py --all-listed
 fi
+stage_time "行情"
 
 if [ "$DAILY_RUN" -eq 1 ]; then
   DATA_STATUS=0
   echo "[3b/4] 收集官方月營收與重大訊息"
   docker compose run --rm agent python3 cli/data_agent.py collect
+  stage_time "月營收與重大訊息"
   echo "[3b+/4] 收集最近已到期季度的官方財報"
   # 覆蓋不完整（exit 2）屬預期，基本面分析會標示缺口；只有執行失敗才提示，但不中止每日流程。
   set +e
   docker compose run --rm agent python3 scripts/collect_financial_statements.py \
-    --latest-due --report artifacts/financial_statements_latest.json >/dev/null
+    --latest-due --report artifacts/data/financial_statements_latest.json >/dev/null
   FINANCIAL_EXIT=$?
   set -e
   if [ "$FINANCIAL_EXIT" -eq 1 ]; then
-    echo "財報收集失敗；本次基本面分析將只使用月營收。詳見 artifacts/financial_statements_latest.json" >&2
+    echo "財報收集失敗；本次基本面分析將只使用月營收。詳見 artifacts/data/financial_statements_latest.json" >&2
   fi
+  stage_time "官方財報"
   echo "[3b+/4] 更新官方公司基本資料與產業分類候選"
   set +e
   docker compose run --rm agent python3 scripts/collect_sector_classification.py \
-    --output artifacts/sector_classification_latest.json >/dev/null
+    --output artifacts/data/sector_classification_latest.json >/dev/null
   SECTOR_EXIT=$?
   set -e
   if [ "$SECTOR_EXIT" -ne 0 ]; then
     echo "公司資料擷取未完整（exit ${SECTOR_EXIT}）；正式決策仍沿用現有已驗證分類。" >&2
     DATA_STATUS=2
   fi
+  stage_time "產業分類"
   if [ -z "${FINMIND_TOKEN:-}" ] && [ -r .env ]; then
     FINMIND_TOKEN=$(sed -n 's/^FINMIND_TOKEN=//p' .env | sed -n '1p')
     export FINMIND_TOKEN
@@ -200,21 +227,41 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     export FINMIND_TOKEN
   fi
   if [ -n "${FINMIND_TOKEN:-}" ]; then
-    FINMIND_YEAR=$(TZ=Asia/Taipei date '+%Y')
-    FINMIND_START="$((FINMIND_YEAR - 2))-01-01"
     FINMIND_END=$(TZ=Asia/Taipei date '+%Y-%m-%d')
+    # 財報只在公布區間內變動：首次補 FINMIND_YEARS 年（預設 3，可設 2～5）歷史，之後只在區間內每天更新一次。
+    # FORCE_FETCH=1 可強制更新。
     for DATASET in TaiwanStockFinancialStatements TaiwanStockBalanceSheet TaiwanStockCashFlowsStatement; do
-      echo "[3b+/4] FinMind ${DATASET}：逐股更新財報候選"
+      FINMIND_FORCE=""
+      [ "${FORCE_FETCH:-0}" != "1" ] || FINMIND_FORCE="--force"
+      # 排程狀態讀不到時略過這一組並提醒，不讓補充資料的問題中斷每日流程。
+      FINMIND_PLAN=$(docker compose run --rm -T agent python3 scripts/finmind_schedule.py plan --dataset "$DATASET" $FINMIND_FORCE) || {
+        FINMIND_PLAN="skip||排程狀態讀取失敗"
+        DATA_STATUS=2
+      }
+      FINMIND_ACTION=${FINMIND_PLAN%%|*}
+      FINMIND_REST=${FINMIND_PLAN#*|}
+      FINMIND_START=${FINMIND_REST%%|*}
+      FINMIND_REASON=${FINMIND_REST#*|}
+      if [ "$FINMIND_ACTION" = "skip" ]; then
+        echo "[3b+/4] FinMind ${DATASET}：略過（${FINMIND_REASON}）"
+        continue
+      fi
+      echo "[3b+/4] FinMind ${DATASET}：逐股更新財報候選（${FINMIND_REASON}，自 ${FINMIND_START}）"
       set +e
       docker compose run --rm -e FINMIND_TOKEN agent python3 scripts/collect_supplemental_sources.py \
         finmind --dataset "$DATASET" --universe data/official_universe.csv \
         --start "$FINMIND_START" --end "$FINMIND_END"
       FINMIND_EXIT=$?
       set -e
+      # exit 2 只是部分公司尚未公布（沒有資料列），整批仍算完成；exit 1 才是執行失敗。
+      if [ "$FINMIND_EXIT" -eq 0 ] || [ "$FINMIND_EXIT" -eq 2 ]; then
+        docker compose run --rm agent python3 scripts/finmind_schedule.py done --dataset "$DATASET" --start "$FINMIND_START"
+      fi
       if [ "$FINMIND_EXIT" -ne 0 ]; then
         echo "FinMind ${DATASET} 候選擷取未完整（exit ${FINMIND_EXIT}）；不影響正式 Snapshot。" >&2
         DATA_STATUS=2
       fi
+      stage_time "FinMind ${DATASET}"
     done
   else
     echo "未設定 FINMIND_TOKEN；略過 FinMind 候選擷取。" >&2
@@ -234,19 +281,21 @@ if [ "$DAILY_RUN" -eq 1 ]; then
   echo "[3c/4] 建立研究 Snapshot：$DAILY_CUTOFF"
   docker compose run --rm agent python3 cli/data_agent.py snapshot \
     --decision-cutoff "$DAILY_CUTOFF" \
-    --output artifacts/research_snapshot_latest.json
+    --output artifacts/data/research_snapshot_latest.json
+  stage_time "研究 Snapshot"
   ACCOUNT_ID=${ACCOUNT_ID:-ai-cup-2026}
   ACCOUNT_RUN_ID=${ACCOUNT_RUN_ID:-prepare-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
   echo "[3c+/4] 推進虛擬帳本：以收盤價結算前一份決策，並建立決策前帳戶快照"
   set +e
   docker compose run --rm agent python3 cli/virtual_account.py \
     --account-id "$ACCOUNT_ID" daily \
-    --snapshot artifacts/research_snapshot_latest.json \
+    --snapshot artifacts/data/research_snapshot_latest.json \
     --database var/etf_agent.db \
     --run-id "$ACCOUNT_RUN_ID" \
-    --account-output "artifacts/virtual_accounts/$ACCOUNT_ID/account_snapshot_latest.json"
+    --account-output "artifacts/ledger/$ACCOUNT_ID/account_snapshot_latest.json"
   ACCOUNT_EXIT=$?
   set -e
+  stage_time "虛擬帳本"
 fi
 
 echo "[4/4] 顯示資料狀態"

@@ -8,7 +8,8 @@ from unittest.mock import patch
 from etf_agent.decision import DecisionRepository, DecisionFinalizer, RevisionHistoryBuilder, decision_policy_sha256, decision_rules_sha256, decision_bundle_sha256
 from etf_agent.decision_delivery import build_delivery, validate_delivery, save_failure, DeliveryError
 from etf_agent.decision_delivery.builder import build_report
-from etf_agent.decision_delivery.renderer import render_report
+from etf_agent.decision_delivery.renderer import render_report, renderer_for
+from etf_agent.decision_delivery.renderer_v1 import render_report_v1
 from etf_agent.decision_delivery.validator import validate_report
 from test_team_chain import team_world, finalize
 from test_portfolio_risk_decision import risk_review, policy, valid_inputs
@@ -69,7 +70,7 @@ class DeliveryTests(unittest.TestCase):
     def test_cli_round_trip(self):
         import subprocess
         import sys
-        script = Path(__file__).resolve().parents[1] / "cli/decision_delivery.py"
+        script = Path(__file__).resolve().parents[2] / "cli/decision_delivery.py"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             DecisionRepository(root / "decisions").save("example", world())
@@ -122,26 +123,26 @@ class DeliveryTests(unittest.TestCase):
 
     def test_pipeline_delivery_only_requires_no_model(self):
         import importlib.util
-        script = Path(__file__).resolve().parents[1] / "scripts/run_daily_pipeline.py"
+        script = Path(__file__).resolve().parents[2] / "scripts/run_daily_pipeline.py"
         spec = importlib.util.spec_from_file_location("delivery_daily_test", script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            DecisionRepository(root / "artifacts/decision_runs").save("example", world())
-            path = root / "artifacts/daily_runs/2026-10-11/daily-20261011/pipeline.json"
+            DecisionRepository(root / "artifacts/decisions").save("example", world())
+            path = root / "artifacts/daily/2026-10-11/daily-20261011/pipeline.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps({"status": "failed", "planned_decision_run_id": "example", "started_at": "2026-10-11T08:00:00+08:00"}), encoding="utf-8")
             result = module.deliver_saved_run(root, "daily-20261011")
             self.assertEqual(result["report_status"], "ready")
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "completed")
             # 已完成 run 的來源後來被竄改時，不保留 completed 假象。
-            source = next((root / "artifacts/decision_runs").glob("*/example/decision.json"))
+            source = next((root / "artifacts/decisions").glob("*/example/decision.json"))
             source.write_text("{}", encoding="utf-8")
             blocked = module.deliver_saved_run(root, "daily-20261011")
             self.assertEqual(blocked["report_status"], "blocked")
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "failed")
-            self.assertIn("未產生已驗證", (root / "artifacts/latest_reports/latest.md").read_text(encoding="utf-8"))
+            self.assertIn("未產生已驗證", (root / "artifacts/latest/latest.md").read_text(encoding="utf-8"))
 
     def test_report_and_markdown_rebuild_and_tampering(self):
         a = world()
@@ -156,6 +157,28 @@ class DeliveryTests(unittest.TestCase):
         report["orders"][0]["shares"] += 1000
         with self.assertRaises(DeliveryError):
             validate_report(a, "example", report, text)
+
+    def test_markdown_is_compact_and_readable(self):
+        report = build_report(world(), "compact")
+        report["risk_summary"]["constraint_flags"] = [
+            {"symbol": "AAA.TW", "code": "MAX_POSITIONS", "detail": "持股檔數已達上限"},
+            {"symbol": "BBB.TW", "code": "MAX_POSITIONS", "detail": "持股檔數已達上限"}]
+        text = render_report(report)
+        self.assertNotIn("&quot;", text)
+        self.assertIn("（MAX\\_POSITIONS，2 檔）：AAA.TW、BBB.TW", text)
+        self.assertIn("### 參考價格", text)
+        self.assertNotIn('"evidence"', text)  # 逐筆引用只留在 report.json。
+        main = {row["symbol"] for row in report["decision_rows"] if row["before"] or row["after"] or row["order"]}
+        appendix = text.split("## 附錄", 1)[1].split("## 引用與價格時間", 1)[0]
+        for symbol in main:
+            self.assertNotIn("### %s\n" % symbol, appendix)
+
+    def test_sealed_markdown_is_rebuilt_with_its_own_template(self):
+        report = build_report(world(), "versions")
+        self.assertIs(renderer_for(render_report(report)), render_report)
+        legacy = render_report_v1(report)
+        self.assertIs(renderer_for(legacy), render_report_v1)
+        self.assertNotEqual(legacy, render_report(report))
 
     def test_rejected_never_presents_proposal_orders(self):
         report = build_report(world(True), "reject")

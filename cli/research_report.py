@@ -88,7 +88,7 @@ class ResearchReportApplication:
         parser.add_argument(
             "--snapshot",
             type=Path,
-            default=self.root / "artifacts" / "research_snapshot_latest.json",
+            default=self.root / "artifacts" / "data" / "research_snapshot_latest.json",
         )
         parser.add_argument(
             "--research",

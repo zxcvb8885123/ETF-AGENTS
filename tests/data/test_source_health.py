@@ -15,7 +15,7 @@ from etf_agent.data import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 FETCHED_AT = "2026-09-17T06:00:00+00:00"
 

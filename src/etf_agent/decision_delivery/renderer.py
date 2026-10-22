@@ -1,16 +1,22 @@
 """固定模板中文閱讀版；所有判斷引用原文。"""
 
 import json
-from .tools import cell, percent, TAIPEI
+from .tools import cell as _cell, percent, TAIPEI
 from etf_agent.core import parse_aware_time
 from etf_agent.decision.trader_report import INTENT_LABELS, CONVICTION_LABELS
 
+TEMPLATE_MARKER = "<!-- report_template: 2 -->"
 STATUS = {"approved": "決策核准，待人工檢視", "no_trade": "決策通過，本日無委託", "rejected": "決策遭拒絕，不提供可執行委託"}
+
+
+def cell(value):
+    # 純文字呈現：跳脫 HTML／Markdown 控制字元，但引號保持原樣，避免 &quot; 出現在閱讀版。
+    return _cell(value, quote=False)
 
 
 def render_report(report):
     p, risk = report["provenance"], report["risk_summary"]
-    lines = ["# 最終決策報告", "", "**%s**" % STATUS[report["decision_status"]], "",
+    lines = [TEMPLATE_MARKER, "", "# 最終決策報告", "", "**%s**" % STATUS[report["decision_status"]], "",
         "交易日：%s｜資料截止：%s（台北時間）" % (cell(p["trade_date"]), cell(parse_aware_time(p["decision_cutoff"], "decision_cutoff").astimezone(TAIPEI).isoformat())), "",
         "決策 run：%s" % cell(p["decision_run_id"]), "",
         "本報告已通過決策鏈重建；預計持倉、價格、現金與費稅均非成交結果。D-Plan 狀態另見交付狀態。", "",
@@ -30,7 +36,7 @@ def render_report(report):
     for row in report["decision_rows"]:
         item, position = row["intent"], row["after"]
         # 未持有且無最終委託的標的列於附錄，避免主文塞滿交易池。
-        if not row["before"] and not position and not row["order"]:
+        if not _in_main(row):
             continue
         lines += ["### " + cell(row["symbol"]), "",
             "決策前股數：%s；預計股數：%s；預計配置：%s。" % (cell((row["before"] or {}).get("shares", 0)),
@@ -46,23 +52,34 @@ def render_report(report):
     lines += ["", "### 未解問題", ""] + ["- " + cell(x) for x in risk["review"]["unresolved_questions"]]
     lines += ["", "### 規則檢查", "", "| 規則 | 結果 | 檢查明細 |", "| --- | --- | --- |"]
     for check in risk["guard"]["checks"]:
-        lines += ["| %s | %s | %s |" % (cell(check["rule_id"]), "通過" if check["passed"] else "未通過", cell(json.dumps(check["details"], ensure_ascii=False)))]
+        lines += ["| %s | %s | %s |" % (cell(check["rule_id"]), "通過" if check["passed"] else "未通過", _details(check["details"]))]
     lines += ["", "### 配置限制", ""]
-    lines += ["- " + cell(json.dumps(value, ensure_ascii=False)) for value in risk["constraint_flags"]] or ["無額外配置限制。"]
+    lines += _constraints(risk["constraint_flags"]) or ["無額外配置限制。"]
     lines += ["", "完整壓力情境與原始引用請見同次交付的 report.json。", ""]
-    lines += ["## 研究資料缺口", "", "以下保留各分析師的資料缺口；未提供或 unavailable 不表示中性。", ""]
+    lines += ["## 研究資料缺口", "", "以下依分析師與缺口內容合併；未提供或 unavailable 不表示中性。", ""]
     for name, analyst in report["analyst_reports"].items():
+        gaps = {}
         for item in analyst.get("items", []):
-            if item.get("data_gaps"):
-                lines += ["- %s／%s：%s" % (cell(name), cell(item.get("symbol")), cell("；".join(item["data_gaps"])))]
+            for gap in item.get("data_gaps") or []:
+                gaps.setdefault(gap, []).append(item.get("symbol"))
+        for gap, symbols in gaps.items():
+            lines += ["- %s：%s（%d 檔）：%s" % (cell(name), cell(gap), len(symbols), "、".join(cell(x) for x in symbols))]
         if "market_sentiment" in analyst:
             lines += ["- 全市場情緒原始通道：" + cell(json.dumps(analyst["market_sentiment"], ensure_ascii=False))]
-    lines += ["", "## 附錄：全交易池原意圖（非最終委託）", ""]
-    for row in report["decision_rows"]:
+    # 主文已列出的標的不在附錄重複。
+    rest = [row for row in report["decision_rows"] if not _in_main(row)]
+    lines += ["", "## 附錄：其餘交易池原意圖（未持有、無委託，非最終委託）", "", "共 %d 檔；已列於上方的標的不重複。" % len(rest), ""]
+    for row in rest:
         lines += ["### " + cell(row["symbol"]), ""] + _intent(row["intent"])
-    lines += ["## 引用與價格時間", "", "原始來源及內容／抓取／可得時間如下；引用保留 ID 供稽核。", "",
-        cell(json.dumps({"evidence": report["evidence_index"], "prices": report["reference_prices"]}, ensure_ascii=False, indent=2)), "",
-        "報告識別：%s；內容雜湊：%s。" % (cell(report["report_id"]), report["content_sha256"]), ""]
+    lines += ["## 引用與價格時間", "",
+        "引用共 %d 筆，逐筆來源、內容／抓取／可得時間與原始回應識別請見同次交付的 report.json 的 `evidence_index`。" % len(report["evidence_index"]), "", "| 來源 | 筆數 |", "| --- | --- |"]
+    counts = {}
+    for evidence in report["evidence_index"]:
+        counts[evidence.get("source")] = counts.get(evidence.get("source"), 0) + 1
+    lines += ["| %s | %d |" % (cell(source), count) for source, count in sorted(counts.items(), key=lambda kv: (-kv[1], str(kv[0])))]
+    lines += ["", "### 參考價格", "", "| 股票 | 交易日 | 收盤價 | 來源 | 引用 |", "| --- | --- | --- | --- | --- |"]
+    lines += ["| %s | %s | %s | %s | %s |" % tuple(cell(price.get(k)) for k in ("symbol", "trade_date", "close_price", "source", "source_evidence_id")) for price in report["reference_prices"]]
+    lines += ["", "報告識別：%s；內容雜湊：%s。" % (cell(report["report_id"]), report["content_sha256"]), ""]
     return "\n".join(lines)
 
 
@@ -73,3 +90,39 @@ def _intent(item):
     for key, title in (("unresolved_questions", "未解問題"), ("invalidation_conditions", "重估條件")):
         result.extend("- %s：%s" % (title, cell(value)) for value in item.get(key, []))
     return result + [""]
+
+
+def _in_main(row):
+    return bool(row["before"] or row["after"] or row["order"])
+
+
+def _details(details):
+    """規則檢查明細：空值寫「無」，其餘攤成可讀文字；完整內容仍在 report.json。"""
+    if not details:
+        return "無"
+    if isinstance(details, dict):
+        return cell("；".join("%s：%s" % (key, _scalar(value)) for key, value in details.items()))
+    return cell("共 %d 項（見 report.json）" % len(details)) if isinstance(details, list) else cell(details)
+
+
+def _scalar(value):
+    if isinstance(value, (list, dict)):
+        return "無" if not value else json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _constraints(flags):
+    """同一限制代碼與說明的標的合併為一行。"""
+    groups, other = {}, []
+    for flag in flags:
+        if isinstance(flag, dict) and set(flag) == {"symbol", "code", "detail"}:
+            groups.setdefault((flag["code"], flag["detail"]), []).append(flag["symbol"])
+        else:
+            other.append("- " + cell(json.dumps(flag, ensure_ascii=False)))
+    return ["- %s（%s，%d 檔）：%s" % (cell(detail), cell(code), len(symbols), "、".join(cell(x) for x in symbols)) for (code, detail), symbols in groups.items()] + other
+
+
+def renderer_for(markdown):
+    """已封存的閱讀版依自身樣板版本重建；沒有版本標記的是第 1 版。"""
+    from .renderer_v1 import render_report_v1
+    return render_report if markdown.startswith(TEMPLATE_MARKER) else render_report_v1

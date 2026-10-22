@@ -29,8 +29,8 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 # 以下為歷史重建或除錯用的進階入口。
 .venv/bin/python cli/dplan.py build-context \
-  --decision-repository artifacts/decision_runs --decision-run-id DECISION_RUN_ID \
-  --daily-run artifacts/daily_runs/YYYY-MM-DD/DAILY_RUN_ID/pipeline.json \
+  --decision-repository artifacts/decisions --decision-run-id DECISION_RUN_ID \
+  --daily-run artifacts/daily/YYYY-MM-DD/DAILY_RUN_ID/pipeline.json \
   --output artifacts/competition_d_plan/contexts/context_DECISION_RUN_ID.json
 ```
 

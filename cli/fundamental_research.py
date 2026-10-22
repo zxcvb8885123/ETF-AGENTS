@@ -95,7 +95,7 @@ class FundamentalResearchApplication:
         parser.add_argument(
             "--snapshot",
             type=Path,
-            default=self.root / "artifacts" / "research_snapshot_latest.json",
+            default=self.root / "artifacts" / "data" / "research_snapshot_latest.json",
             help="同一 cutoff 的可用 ResearchSnapshot JSON",
         )
         commands = parser.add_subparsers(dest="command", required=True)

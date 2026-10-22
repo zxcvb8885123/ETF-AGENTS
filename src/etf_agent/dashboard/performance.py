@@ -129,10 +129,16 @@ def _pending_orders(decision_repository: Optional[Path], latest: Mapping[str, ob
         execution_date = str(end)[:10] if end else None
     except (VirtualAccountError, OSError, json.JSONDecodeError):
         return None
+    # 決策後各檔占 NAV 的比重（決策已封存的 portfolio）；已出清的賣單沒有持股，比重留空。
+    weights = {str(item.get("symbol", "")).upper(): item.get("weight")
+               for item in (decision.get("portfolio") or {}).get("positions", []) if isinstance(item, Mapping)}
     orders = [{
         "symbol": order.get("symbol"), "side": order.get("side"), "intent": order.get("intent"),
         "lots": order.get("lots"), "shares": order.get("shares"),
+        "weight": weights.get(str(order.get("symbol", "")).upper()),
     } for order in decision.get("orders", [])]
+    # 占資金由高到低；沒有比重（已出清）的排最後，同比重維持決策原順序。
+    orders.sort(key=lambda item: -float(item["weight"]) if item["weight"] is not None else float("inf"))
     return {"decision_run_id": run_id, "status": decision.get("status"), "execution_date": execution_date, "orders": orders}
 
 

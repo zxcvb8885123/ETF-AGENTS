@@ -15,11 +15,11 @@ def trade_date(bundle):
     return parse_aware_time(start, "target_session.start", error=DeliveryError).astimezone(TAIPEI).date().isoformat() if start else None
 
 
-def cell(value):
+def cell(value, quote=True):
     if value is None:
         return "未提供"
     # 外部文字只能呈現為文字，避免 HTML／Markdown 偽造報告與連結。
-    text = escape(str(value), quote=True)
+    text = escape(str(value), quote=quote)
     for token in ("\\", "`", "*", "_", "[", "]", "#", "|", "~"):
         text = text.replace(token, "\\" + token)
     return text.replace("\r", "").replace("\n", "<br>")

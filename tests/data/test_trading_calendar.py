@@ -15,7 +15,7 @@ from etf_agent.data import (
 from etf_agent.data.evidence import TAIPEI_TIMEZONE
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 # 節錄自 2026（民國 115）年 TWSE 開休市日期表。
 CALENDAR_CSV = (
     "名稱,日期,星期,說明\n"
@@ -90,6 +90,15 @@ class TradingCalendarTests(unittest.TestCase):
     def test_session_after_friday_cutoff_skips_weekend_and_holiday(self):
         session = self.calendar.next_trading_session("2026-10-08T18:00:00+08:00")
         self.assertEqual(session, {"start": "2026-10-12T09:00:00+08:00", "end": "2026-10-12T13:30:00+08:00"})
+
+    def test_pre_open_cutoff_on_trading_day_targets_same_day(self):
+        session = self.calendar.next_trading_session("2026-10-08T01:30:00+08:00")
+        self.assertEqual(session, {"start": "2026-10-08T09:00:00+08:00", "end": "2026-10-08T13:30:00+08:00"})
+        self.assertEqual(self.calendar.next_trading_session("2026-10-08T08:54:59+08:00")["start"], "2026-10-08T09:00:00+08:00")
+        # 08:55 起超過決策截止，排到下一個交易日；休市日開盤前則仍往後找。
+        self.assertEqual(self.calendar.next_trading_session("2026-10-08T08:55:00+08:00")["start"], "2026-10-12T09:00:00+08:00")
+        self.assertEqual(self.calendar.next_trading_session("2026-10-08T09:00:00+08:00")["start"], "2026-10-12T09:00:00+08:00")
+        self.assertEqual(self.calendar.next_trading_session("2026-10-10T01:30:00+08:00")["start"], "2026-10-12T09:00:00+08:00")
 
     def test_uncovered_year_is_rejected(self):
         with self.assertRaisesRegex(TradingCalendarError, "未涵蓋 2027"):
