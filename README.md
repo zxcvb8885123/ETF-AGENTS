@@ -181,6 +181,7 @@ ETF_AGENTS/
 - 決策封存（`artifacts/decisions/`）是下游重建驗證的依據，刪除前先確認不需要重建。
 - 每日輸出依台北日期分資料夾：`daily`、`decisions`、`reports`（`runs`／`views`／`dated`）、`debug/source_audit/sector_classification` 與 `debug/source_probe` 都是 `<資料夾>/YYYY-MM-DD/<名稱>`。日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期；同一個 run ID 出現在兩個日期資料夾會被拒絕。
 - 帳本（`ledger/`）是雜湊鏈，不分日期資料夾；`archive/` 是手動整理的舊實驗，也不改。
+- FinMind 財報候選（候選資料，不進正式 Snapshot）：首次補 `FINMIND_YEARS` 年（預設 3，可設 2～5）歷史，之後只在財報公布區間（約 2/15–4/10、4/20–5/25、7/20–8/24、10/20–11/24）每天更新一次，區間外略過；狀態記在 `artifacts/data/finmind_schedule.json`，`FORCE_FETCH=1` 可強制更新。補抓的歷史財報以抓取時間為 `available_at`，不會回填到過去的決策。
 - 政府開放 CSV（開休市日期表、注意／處置／暫停交易／特殊標的）放在 `artifacts/data/trading_status/`（每天會跑，屬於執行產物，不進 git）。每次八份全部抓成功才刪除舊的，只留最新一份；有任何一份失敗就保留舊封存當後備。每日決策仍把當次的交易狀態寫進 `artifacts/daily/<日期>/<run_id>/trading_status.json`，所以不依賴舊封存重建。
 - 2026-10-22 起頂層資料夾改為上述名稱（舊名：`daily_runs`、`decision_runs`、`decision_reports`、`latest_reports`、`virtual_accounts`、`source_audit`、`source_probe_reports`、`official_history`，以及散在頂層的 `*_latest.json`）。舊名稱的資料已清除，沒有相容連結；不要把舊名稱的資料夾搬回來。
 

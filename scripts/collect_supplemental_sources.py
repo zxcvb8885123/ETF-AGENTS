@@ -34,8 +34,8 @@ def main(argv=None):
     parser.add_argument("--end", type=date.fromisoformat)
     parser.add_argument("--date", type=date.fromisoformat,
                         help="個股新聞查詢日；FinMind 每次只回傳一天")
-    parser.add_argument("--request-delay", type=float, default=1.0,
-                        help="FinMind 逐股請求間隔秒數，預設 1 秒")
+    parser.add_argument("--request-delay", type=float, default=0.1,
+                        help="FinMind 逐股請求間隔秒數，預設 0.1 秒（免費註冊帳號每小時 600 次，每日財報 3 組 × 150 檔約 450 次）")
     args = parser.parse_args(argv)
     if args.request_delay < 0:
         parser.error("--request-delay 不得小於 0")
