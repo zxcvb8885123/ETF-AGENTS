@@ -10,7 +10,7 @@ TWSE「開休市日期」政府開放資料只列出例外日期：國定假日�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from typing import Dict, FrozenSet, Iterable, Mapping
 
@@ -40,6 +40,8 @@ class TradingCalendar:
     settlement_only: FrozenSet[str]
     covered_years: FrozenSet[int]
     source_sha256: str
+    # 官方日期表未列、但由行情缺口推斷的臨時休市日（例如颱風假）；與官方休市日分開保存。
+    inferred_closed: FrozenSet[str] = frozenset()
 
     @classmethod
     def from_ogd_facts(cls, facts: Iterable[Mapping[str, object]], source_sha256: str) -> "TradingCalendar":
@@ -59,6 +61,10 @@ class TradingCalendar:
             raise TradingCalendarError("開休市日期表沒有任何日期，不能建立交易日曆")
         return cls(frozenset(holidays), frozenset(settlement_only), frozenset(years), source_sha256)
 
+    def with_inferred_closed(self, days: Iterable[str]) -> "TradingCalendar":
+        """回傳多了臨時休市日的日曆；臨時休市日不交易也不交割。"""
+        return replace(self, inferred_closed=self.inferred_closed | frozenset(days))
+
     def _require_covered(self, day: date) -> None:
         if day.year not in self.covered_years:
             raise TradingCalendarError(
@@ -69,11 +75,12 @@ class TradingCalendar:
     def is_trading_day(self, day: date) -> bool:
         self._require_covered(day)
         iso = day.isoformat()
-        return day.weekday() < 5 and iso not in self.holidays and iso not in self.settlement_only
+        return (day.weekday() < 5 and iso not in self.holidays and iso not in self.settlement_only
+                and iso not in self.inferred_closed)
 
     def is_settlement_day(self, day: date) -> bool:
         self._require_covered(day)
-        return day.weekday() < 5 and day.isoformat() not in self.holidays
+        return day.weekday() < 5 and day.isoformat() not in self.holidays and day.isoformat() not in self.inferred_closed
 
     def next_trading_day(self, day: date) -> date:
         """``day`` 之後（不含當日）第一個交易日。"""
@@ -112,12 +119,18 @@ class TradingCalendar:
         }
 
     def provenance(self) -> Dict[str, object]:
-        return {
+        hashed: Dict[str, object] = {
+            "holidays": sorted(self.holidays), "settlement_only": sorted(self.settlement_only),
+            "covered_years": sorted(self.covered_years),
+        }
+        result: Dict[str, object] = {
             "basis": CALENDAR_BASIS,
             "source_sha256": self.source_sha256,
             "covered_years": sorted(self.covered_years),
-            "calendar_sha256": canonical_sha256(
-                {"holidays": sorted(self.holidays), "settlement_only": sorted(self.settlement_only),
-                 "covered_years": sorted(self.covered_years)}
-            ),
         }
+        if self.inferred_closed:
+            # 只有存在臨時休市日時才加入，沒有時雜湊與舊決策一致。
+            hashed["inferred_closed"] = sorted(self.inferred_closed)
+            result["inferred_closed_days"] = sorted(self.inferred_closed)
+        result["calendar_sha256"] = canonical_sha256(hashed)
+        return result

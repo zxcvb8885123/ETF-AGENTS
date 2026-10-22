@@ -62,6 +62,7 @@
 
 | 日期 | 內容 |
 | --- | --- |
+| 2026-10-22 | 資料套件新增臨時休市日推斷（`inferred_closures.py`），說明見 `src/etf_agent/data/README.md`。 |
 | 2026-10-22 | 新增本索引、`repository-layout.md`、`modules.md`、`runtime-artifacts.md`；各資料夾與 `src/etf_agent/` 各套件新增 README；根 `README.md` 加上整體架構圖。 |
 
 ## 維護規則
