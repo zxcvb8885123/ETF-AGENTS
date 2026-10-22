@@ -5,7 +5,7 @@ from etf_agent.core import canonical_sha256
 from .builder import build_report
 from .contracts import DeliveryError, VERSION
 from .provider import load_verified
-from .renderer import render_report
+from .renderer import render_report, renderer_for
 from .repository import DeliveryRepository
 from .tools import cell
 from .validator import validate_report
@@ -98,6 +98,7 @@ def validate_delivery(output_root, delivery_id):
         raise DeliveryError("交付狀態與決策重建不一致")
     if artifacts["validation"] != {"decision_rebuild": "passed", "report_rebuild": "passed", "schema_version": VERSION}:
         raise DeliveryError("交付驗證欄位遭修改")
-    if artifacts["rendering"]["markdown"] != render_report(artifacts["report"]) + status_footer(artifacts["delivery_status"]):
+    render = renderer_for(artifacts["rendering"]["markdown"])
+    if artifacts["rendering"]["markdown"] != render(artifacts["report"]) + status_footer(artifacts["delivery_status"]):
         raise DeliveryError("交付閱讀版與重建不一致")
     return {"valid": True, "decision_validated": True}

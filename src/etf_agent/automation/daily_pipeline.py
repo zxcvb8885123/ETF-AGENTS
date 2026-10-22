@@ -157,6 +157,16 @@ _SHARED_RULES = (
     "不得使用網路、模型記憶或自行推測補充事實；不得輸出權重、股數、金額、費稅或訂單。"
 )
 
+# 事件分析師要逐則分級重大訊息；一批 50 檔（約 330 則）時 Agent 只做前 12 檔、其餘交白卷，重試也一樣，
+# 所以事件批次縮小到 15 檔。其他分析師維持預設批次。
+EVENT_BATCH_SIZE = 15
+
+# 事件分析師常見驗證失敗：finding_id 在不同股票重複、漏分級重大訊息；重試整批很貴，所以先在提示講清楚。
+_EVENT_RULES = (
+    "finding_id 在整份報告（含所有股票）中必須唯一，請用「股票代號:f序號」，例如 2330.TW:f1，不可每檔都從 f1 起算；"
+    "輸入列出的每一則重大訊息都必須在該股票的 events 逐一分級一次，不可漏掉或重複。"
+)
+
 
 def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dict[str, object]:
     """舊版 fixture／獨立研究的降級結果；新每日鏈不使用此相容工具。"""
@@ -358,7 +368,7 @@ class DailyDecisionPipeline:
         )
         self.save_artifact("policy_base", base_policy)
         stance = self.run_cash_stance(bundle, momentum, analysts, trade)
-        policy = apply_trade_decision(base_policy, trade, stance, bundle)
+        policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy)
         if policy_errors:
@@ -443,6 +453,7 @@ class DailyDecisionPipeline:
             brief = build_analyst_brief(
                 bundle, momentum, analyst, metrics, event_market_scope=analyst == "event",
                 technical_gate=self.technical_gate and analyst == "technical",
+                compact_technical=analyst == "technical",
             )
             if "technical_gate" in brief:
                 self.log("  [技術閘門] 趨勢一致 %d 檔只附 momentum，其餘 %d 檔附完整歷史" % (
@@ -451,7 +462,11 @@ class DailyDecisionPipeline:
                 for row in brief["symbols"]:
                     row["data_availability"] = availability.get(row["symbol"], [{"status": "本次未查資料庫候選狀態，不能宣稱來源沒有資料"}])
             outputs: List[List[Dict[str, object]]] = []
-            for batch in batches:
+            analyst_batches = (
+                universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]], EVENT_BATCH_SIZE)
+                if analyst == "event" else batches
+            )
+            for batch in analyst_batches:
                 members = set(batch["symbols"])
                 batch_brief = {
                     **brief,
@@ -473,7 +488,8 @@ class DailyDecisionPipeline:
                     "你是 $%s-analyst。先讀 %s，再讀本批輸入摘要 %s。只輸出本批 %d 檔股票（%s），每一檔都必須出現一次。%s"
                     % (
                         analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
-                        len(batch["symbols"]), "、".join(batch["symbols"]), _SHARED_RULES,
+                        len(batch["symbols"]), "、".join(batch["symbols"]),
+                        _SHARED_RULES + (_EVENT_RULES if analyst == "event" else ""),
                     ),
                     EVENT_ANALYST_SCHEMA if analyst == "event" else ANALYST_SCHEMA,
                 )
@@ -484,7 +500,7 @@ class DailyDecisionPipeline:
                     validator.validate,
                 )
                 outputs.append(partial["items"])
-            combined = merge_batch_items(batches, outputs, analyst)
+            combined = merge_batch_items(analyst_batches, outputs, analyst)
             report = (seal_event_market_report(bundle, brief["report_envelope"], combined)
                       if analyst == "event" else seal_report(brief["report_envelope"], combined))
             errors = AnalystReportValidator(bundle, analyst).validate(report)

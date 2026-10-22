@@ -101,7 +101,23 @@ class ClaudeAgentRunner:
         output = payload.get("structured_output")
         if payload.get("is_error") or not isinstance(output, dict):
             raise DailyPipelineError("%s Agent 未產生結構化輸出：%s" % (task.name, str(payload.get("result"))[:500]))
-        return AgentCall(task.name, 0, output, float(payload.get("total_cost_usd") or 0.0))
+        return AgentCall(task.name, 0, output, float(payload.get("total_cost_usd") or 0.0), _claude_usage_tokens(payload))
+
+
+def _claude_usage_tokens(payload: Dict[str, object]) -> Optional[Dict[str, int]]:
+    """claude -p 的 usage 欄位換成與 Codex 相同的 token 欄位；缺欄位或型別不對時不猜測，回 None。"""
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    fields = {
+        "input_tokens": usage.get("input_tokens"),
+        "cached_input_tokens": usage.get("cache_read_input_tokens"),
+        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+    }
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in fields.values() if value is not None):
+        return None
+    return {name: value for name, value in fields.items() if value is not None} or None
 
 
 class CodexAgentRunner:
