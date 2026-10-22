@@ -4,8 +4,11 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from etf_agent.automation.agent_runner import AgentCall
+from etf_agent.automation import daily_pipeline
+from etf_agent.automation.batching import universe_batches
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
 
 from test_daily_pipeline import FakeRunner, PipelineWorld, ROOT, team_outputs
@@ -23,6 +26,24 @@ def run_pipeline(world, runner, max_workers=None):
     )
 
 
+SYMBOLS = ("2317.TW", "2330.TW")
+
+
+def one_symbol_batches(symbols, batch_size=50):
+    """每批一檔，讓兩檔的 fixture 產生兩個批次，才能驗證批次之間的平行。"""
+    return universe_batches(symbols, 1)
+
+
+def per_symbol_outputs():
+    """把每個分批 Agent 的預備輸出依股票拆成 b0（2317）與 b1（2330）。"""
+    outputs = team_outputs()
+    for stage in ("technical", "fundamental", "event", "bull", "bear", "trader"):
+        full = outputs.pop("%s_b0" % stage)[0]
+        for index, symbol in enumerate(SYMBOLS):
+            outputs["%s_b%d" % (stage, index)] = [{"items": [item for item in full["items"] if item["symbol"] == symbol]}]
+    return outputs
+
+
 class SlowRunner(FakeRunner):
     """記錄同時執行中的呼叫數；技術分析師刻意最慢，驗證結果順序不依完成先後。"""
 
@@ -31,6 +52,8 @@ class SlowRunner(FakeRunner):
         self.lock = threading.Lock()
         self.active = 0
         self.max_active = 0
+        self.trader_active = 0
+        self.max_trader_active = 0
         self.delay = delay
         self.fail_on = fail_on
 
@@ -38,6 +61,9 @@ class SlowRunner(FakeRunner):
         with self.lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
+            if task.name.startswith("trader"):
+                self.trader_active += 1
+                self.max_trader_active = max(self.max_trader_active, self.trader_active)
         try:
             time.sleep(self.delay * (3 if task.name == "technical_b0" else 1))
             if task.name == self.fail_on:
@@ -47,6 +73,8 @@ class SlowRunner(FakeRunner):
         finally:
             with self.lock:
                 self.active -= 1
+                if task.name.startswith("trader"):
+                    self.trader_active -= 1
 
 
 class ParallelPipelineTests(unittest.TestCase):
@@ -113,6 +141,35 @@ class ParallelPipelineTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertIn("fundamental_b0", result.errors[0])
         self.assertFalse(decision_saved)
+
+    def test_trader_batches_run_in_parallel_and_match_serial(self):
+        with mock.patch.object(daily_pipeline, "universe_batches", one_symbol_batches), \
+                tempfile.TemporaryDirectory() as serial_dir, tempfile.TemporaryDirectory() as parallel_dir:
+            serial_world = PipelineWorld(Path(serial_dir), approved_status=True)
+            parallel_world = PipelineWorld(Path(parallel_dir), approved_status=True)
+            serial = run_pipeline(serial_world, FakeRunner(per_symbol_outputs()), max_workers=1)
+            runner = SlowRunner(per_symbol_outputs(), fail_on=None)
+            parallel = run_pipeline(parallel_world, runner, max_workers=2)
+            trader_names = [call["name"] for call in parallel.agent_calls if call["name"].startswith("trader")]
+            serial_trade = json.loads((serial_world.run_dir / "trade_decision.json").read_text(encoding="utf-8"))
+            parallel_trade = json.loads((parallel_world.run_dir / "trade_decision.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(serial.status, "completed", serial.errors)
+        self.assertEqual(parallel.status, "completed", parallel.errors)
+        self.assertEqual(serial_trade, parallel_trade)
+        self.assertEqual(serial.orders, parallel.orders)
+        self.assertEqual(trader_names, ["trader_b0", "trader_b1"])
+        self.assertEqual(runner.max_trader_active, 2)
+
+    def test_trader_stage_is_serial_when_workers_is_one(self):
+        with mock.patch.object(daily_pipeline, "universe_batches", one_symbol_batches), \
+                tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = SlowRunner(per_symbol_outputs(), delay=0.01)
+            result = run_pipeline(world, runner, max_workers=1)
+
+        self.assertEqual(result.status, "completed", result.errors)
+        self.assertEqual(runner.max_trader_active, 1)
 
     def test_stage_durations_are_recorded(self):
         with tempfile.TemporaryDirectory() as directory:

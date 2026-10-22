@@ -705,8 +705,7 @@ class DailyDecisionPipeline:
             for name, report in analyst_reports.items()
         }
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
-        outputs: List[List[Dict[str, object]]] = []
-        for batch in batches:
+        def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]
             brief_path = self.save_brief(
                 "brief_%s" % name,
@@ -750,10 +749,13 @@ class DailyDecisionPipeline:
                 ),
                 TRADE_SCHEMA,
             )
-            partial = self.agent_step(
+            return name, lambda: self.agent_step(
                 task, lambda output: seal_trade_decision(envelope, output["items"]), validator.validate
             )
-            outputs.append(partial["items"])
+
+        # 各批只讀共同的帳戶、多空與動能輸入，不讀其他批的輸出，可同時執行。
+        partials = self._run_jobs([make_job(batch) for batch in batches])
+        outputs: List[List[Dict[str, object]]] = [partial["items"] for partial in partials]
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
         errors = TradeDecisionValidator(bundle, momentum, debate).validate(decision)
         if errors:

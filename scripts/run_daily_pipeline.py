@@ -282,8 +282,8 @@ def main() -> int:
         help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
     )
     parser.add_argument(
-        "--max-workers", type=int, default=3, choices=range(1, 9), metavar="N",
-        help="分析師與多空研究階段同時執行的子 Agent 數（1～8，預設 3；1 為串行）。同時呼叫越多越容易撞到用量上限",
+        "--max-workers", type=int, default=6, choices=range(1, 9), metavar="N",
+        help="分析師、多空研究與交易階段同時執行的子 Agent 數（1～8，預設 6；1 為串行）。同時呼叫越多越容易撞到用量上限",
     )
     parser.add_argument("--preflight-only", action="store_true", help="只檢查 Docker、所選 Agent CLI 登入、帳戶、必要檔案與磁碟")
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
