@@ -9,7 +9,7 @@
 | `__init__.py` | 匯出公開介面 | 見下方 |
 | `context.py` | 由已驗證決策 run 確定性投影出 D-Plan context | `DPlanContextBuilder`（`build`） |
 | `dplan.py` | D-Plan v4.3 匯出與本地驗證、帳本綁定檢查、載入決策 run | `DPlanError`、`DPlanValidator`、`DPlanExporter`、`verify_account_binding`、`load_decision_run` |
-| `service.py` | 從已封存的每日 run 產物編排候選匯出；以原子方式新建 JSON，拒絕覆寫 | `DPlanExportService`（`code_version`、`trade_date`、`output_paths`、`current_account_run_id`、`export`、`export_latest`）、`read_object`、`write_new_json` |
+| `service.py` | 從已封存的每日 run 產物編排候選匯出；D-Plan 以原子方式取代同交易日舊檔，context 與 CLI 仍以新建為主、拒絕覆寫 | `DPlanExportService`（`code_version`、`trade_date`、`output_paths`、`current_account_run_id`、`export`、`export_latest`）、`read_object`、`write_new_json`、`replace_json` |
 
 ## 對外介面
 

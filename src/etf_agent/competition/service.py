@@ -53,6 +53,30 @@ def write_new_json(path: Path, payload: Mapping[str, object]) -> None:
             os.unlink(temp_name)
 
 
+def replace_json(path: Path, payload: Mapping[str, object]) -> bool:
+    """Atomically write a JSON candidate, replacing an older one for the same trade date.
+
+    Returns True when an existing file was replaced.
+    """
+    path = Path(path)
+    replaced = path.exists()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_name: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+            temp_name = stream.name
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, path)
+        temp_name = None
+    finally:
+        if temp_name and os.path.exists(temp_name):
+            os.unlink(temp_name)
+    return replaced
+
+
 class DPlanExportService:
     """Build a submission candidate using only the current sealed daily decision.
 
@@ -158,18 +182,18 @@ class DPlanExportService:
             account_run_id,
         )
         plan = DPlanExporter().build(team_id, effective_trade_date, context, artifacts)
-        if plan_output.exists():
-            raise DPlanError("輸出檔已存在，拒絕覆寫：%s" % plan_output)
         if context_output.exists():
             raise DPlanError("context 輸出檔已存在，拒絕覆寫：%s" % context_output)
         write_new_json(context_output, context)
-        write_new_json(plan_output, plan)
+        # 同一交易日重跑會產生新決策，D-Plan 檔名只含隊伍與交易日，直接取代舊檔。
+        replaced_existing = replace_json(plan_output, plan)
         return {
             "status": "ready",
             "output": str(plan_output),
             "context_output": str(context_output),
             "trade_date": effective_trade_date,
             "decision_run_id": decision_run_id,
+            "replaced_existing_output": replaced_existing,
             "account_binding": account,
             "local_validation": "passed",
             "organizer_server_validation": "not_run",
