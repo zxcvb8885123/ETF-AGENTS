@@ -171,11 +171,27 @@ class TradeDecisionValidator:
             errors.append("%s %s 必須採納至少一個空頭 claim" % (prefix, intent))
 
 
+def support_by_symbol(
+    decision: Mapping[str, object], debate: Mapping[str, object]
+) -> Dict[str, int]:
+    """buy／add 股票的同等級排序依據：採納的多頭 claim 數減採納的空頭 claim 數。"""
+    claims = claims_by_symbol(debate)
+    result: Dict[str, int] = {}
+    for item in decision.get("items", []):
+        if item.get("intent") not in SIZED:
+            continue
+        symbol = str(item["symbol"]).upper()
+        roles = [claims.get(symbol, {}).get(str(claim_id)) for claim_id in item.get("adopted_claim_ids", [])]
+        result[symbol] = roles.count("bull") - roles.count("bear")
+    return result
+
+
 def apply_trade_decision(
     policy: Mapping[str, object],
     decision: Mapping[str, object],
     cash_stance: Mapping[str, object],
     bundle: Mapping[str, object],
+    debate: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """把交易 Agent 的信心等級與風險 Agent 的現金姿態綁進新版 policy；呼叫端重新封存驗證。"""
     stance_errors: List[str] = []
@@ -202,6 +218,8 @@ def apply_trade_decision(
             if item.get("intent") in SIZED
         },
     }
+    if debate is not None:
+        result["position_sizing"]["support_by_symbol"] = support_by_symbol(decision, debate)
     result["policy_id"] = "%s+%s" % (policy.get("policy_id"), decision["decision_id"])
     result.pop("content_sha256", None)
     return result

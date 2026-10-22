@@ -64,7 +64,7 @@ def validate_position_sizing(
         {
             "method", "conviction_multipliers", "volatility_floor", "cash_buffer_by_stance",
             "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
-            "stock_weight_fit",
+            "support_by_symbol", "stock_weight_fit",
         },
         "DecisionPolicy.position_sizing",
         errors,
@@ -137,6 +137,17 @@ def validate_position_sizing(
             errors.append("position_sizing.conviction_by_symbol 含交易池外或非大寫股票：%s" % symbol)
         if tier not in CONVICTION_LEVELS:
             errors.append("position_sizing.conviction_by_symbol.%s 等級無效" % symbol)
+    _validate_support(sizing, tiers, errors)
+
+
+def _validate_support(sizing: Mapping[str, object], tiers: Mapping[str, object], errors: List[str]) -> None:
+    support = sizing.get("support_by_symbol")
+    if support is None:
+        return
+    if not isinstance(support, Mapping) or set(support) != set(tiers):
+        errors.append("position_sizing.support_by_symbol 必須與 conviction_by_symbol 股票一致")
+    elif any(isinstance(value, bool) or not isinstance(value, int) for value in support.values()):
+        errors.append("position_sizing.support_by_symbol 必須是整數")
 
 
 def conviction_weights(

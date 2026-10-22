@@ -22,7 +22,7 @@ from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, EVENT_MARKET_VERSION
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
-from .trader import SIZED, TradeDecisionValidator
+from .trader import SIZED, TradeDecisionValidator, support_by_symbol
 
 
 DECISION_ENGINE_VERSION = "1.0.0"
@@ -204,6 +204,8 @@ class DecisionFinalizer:
                 if isinstance(item, Mapping) and item.get("intent") in SIZED
             },
         }
+        if "support_by_symbol" in sizing:
+            expected["support_by_symbol"] = support_by_symbol(self.intent, self.debate)
         for field, value in expected.items():
             if sizing.get(field) != value:
                 errors.append("DecisionPolicy.position_sizing.%s 與交易決策或現金姿態不一致" % field)

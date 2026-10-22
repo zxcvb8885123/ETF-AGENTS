@@ -492,7 +492,11 @@ class AllocationOrderEngine:
         missing = [symbol for symbol in candidates if symbol not in tiers]
         if missing:
             raise DecisionToolError("交易決策缺少候選等級：" + ", ".join(missing))
-        ordered = sorted(candidates, key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), symbol))
+        support = sizing.get("support_by_symbol", {})
+        ordered = sorted(
+            candidates,
+            key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),
+        )
         volatility = self._atr_pct()
         slots = max_positions - len(active_symbols - set(ordered))
         eligible: List[str] = []
