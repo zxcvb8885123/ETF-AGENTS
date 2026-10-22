@@ -304,6 +304,77 @@ class DataReuseTests(unittest.TestCase):
             self.assertEqual(self.run_main(root, "--force", expected=date(2026, 10, 22)), [False])
             self.assertEqual(self.run_main(root, "--force", expected=None), [False])
 
+    def refresh(self, snapshot_cutoff, now, calendar=True):
+        from etf_agent.data import TradingCalendar
+
+        real = TradingCalendar.from_ogd_facts(
+            [{"kind": "calendar_event", "event_date": "2026-10-10", "name": "國慶日"}], "fixture-sha")
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot, _ = self.write_data(Path(directory), decision_cutoff=snapshot_cutoff)
+            with patch.object(self.module, "latest_calendar_capture_before", lambda *_a: object() if calendar else None), \
+                    patch.object(self.module, "calendar_from_capture", lambda _capture: real):
+                return self.module.refresh_before_deadline(Path(directory), snapshot,
+                                                           datetime.fromisoformat(now))
+
+    def test_refreshes_snapshot_until_submission_deadline(self):
+        # 10/21 晚上建立的 Snapshot 排到 10/22 時段；10/22 08:55 前重跑仍是同一時段，應重抓事件資料。
+        evening = "2026-10-21T18:00:00+08:00"
+        self.assertTrue(self.refresh(evening, "2026-10-21T20:00:00+08:00"))
+        self.assertTrue(self.refresh(evening, "2026-10-22T07:30:00+08:00"))
+        self.assertTrue(self.refresh(evening, "2026-10-22T08:54:59+08:00"))
+
+    def test_keeps_snapshot_after_deadline_or_without_calendar(self):
+        evening = "2026-10-21T18:00:00+08:00"
+        self.assertFalse(self.refresh(evening, "2026-10-22T08:55:00+08:00"))
+        self.assertFalse(self.refresh(evening, "2026-10-22T10:00:00+08:00"))
+        self.assertFalse(self.refresh(evening, "2026-10-22T07:30:00+08:00", calendar=False))
+        self.assertFalse(self.refresh(None, "2026-10-22T07:30:00+08:00"))
+
+    def write_run(self, runs_root, name, status, session_start=None):
+        run_dir = runs_root / "2026-10-22" / name
+        run_dir.mkdir(parents=True)
+        summary = {"run_id": name, "status": status}
+        if session_start:
+            summary["target_session"] = {"start": session_start}
+        (run_dir / "pipeline.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    def test_same_day_run_for_another_session_is_not_a_duplicate(self):
+        # 早上的 run 為 10/22 時段；晚上的 run 為 10/23 時段，不能被當成「當日已完成」。
+        morning, tomorrow = "2026-10-22T09:00:00+08:00", "2026-10-23T09:00:00+08:00"
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            self.write_run(runs, "daily-20261022", "completed", morning)
+            find = self.module.completed_run_for_session
+            self.assertIsNone(find(runs, "daily-20261022", tomorrow))
+            self.assertEqual(find(runs, "daily-20261022", morning)[0], "daily-20261022")
+            # 晚上的 run 完成後，再次觸發同一時段就略過。
+            self.write_run(runs, "daily-20261022-180000", "completed", tomorrow)
+            self.assertEqual(find(runs, "daily-20261022", tomorrow)[0], "daily-20261022-180000")
+
+    def test_unknown_session_or_legacy_run_keeps_skip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            self.write_run(runs, "daily-20261022", "completed")
+            find = self.module.completed_run_for_session
+            self.assertIsNotNone(find(runs, "daily-20261022", "2026-10-23T09:00:00+08:00"))
+            self.assertIsNotNone(find(runs, "daily-20261022", None))
+            self.assertIsNone(find(runs, "daily-20261021", None))
+
+    def test_failed_run_is_not_counted_as_completed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            self.write_run(runs, "daily-20261022", "failed", "2026-10-23T09:00:00+08:00")
+            self.assertIsNone(self.module.completed_run_for_session(runs, "daily-20261022", None))
+
+    def test_run_rebuilds_snapshot_before_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_data(root)
+            with patch.object(self.module, "refresh_before_deadline", lambda *_a: True):
+                self.assertEqual(self.run_main(root, "--force"), [False])
+            with patch.object(self.module, "refresh_before_deadline", lambda *_a: False):
+                self.assertEqual(self.run_main(root, "--force"), [True])
+
 
 if __name__ == "__main__":
     unittest.main()

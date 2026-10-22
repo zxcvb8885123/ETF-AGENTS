@@ -1,10 +1,12 @@
 import json
+import shutil
 import sqlite3
 import tempfile
 import unittest
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 from etf_agent.core import content_sha256
 from etf_agent.dashboard import build_performance_summary
@@ -290,6 +292,84 @@ class DailyAccountRunnerTests(unittest.TestCase):
         self.assertIsNone(market.build("2026-09-21", ["2330.TW"]))
         execution, close = market.build("2026-09-21", ["2317.TW"])
         self.assertEqual(execution["execution_at"], "2026-09-21T13:30:00+08:00")
+
+
+class SupersedeBeforeSessionTests(unittest.TestCase):
+    """晚上已有待成交決策，隔天交件期限（08:55）前用新資料重跑可取代；過期限、已開盤或收盤價晚到仍阻擋。"""
+
+    SESSION_START = "2026-09-21T09:00:00+08:00"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        rules = self.root / "rules.json"
+        rules.write_text(json.dumps({"initial_capital_twd": 1_000_000_000, "version": "fixture-v1"}), encoding="utf-8")
+        self.repository = VirtualAccountRepository(self.root / "accounts", "cup-test")
+        self.service = VirtualAccountService(self.repository)
+        self.service.initialize(rules, "cup-test", "2026-09-18T17:00:00+08:00")
+        self.database = self.root / "prices.db"
+        create_prices(self.database, [])
+        self.snapshot, self.decisions = prepare_and_decide(self.service, self.root)
+        self.before = self.repository.latest()["run_id"]
+        # settle 與取代判斷讀驗證後路徑內的 decision_input；以複本加上目標時段。
+        self.original = next(self.decisions.glob("*/decision-1"))
+        self.patched = self.root / "patched-decision"
+        shutil.copytree(self.original, self.patched)
+        bundle = json.loads((self.patched / "decision_input.json").read_text(encoding="utf-8"))
+        bundle["trading_status_bundle"] = {"target_session": {
+            "start": self.SESSION_START, "end": "2026-09-21T13:30:00+08:00"}}
+        (self.patched / "decision_input.json").write_text(json.dumps(bundle), encoding="utf-8")
+        self.archive = self.root / "archive"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def rerun(self, cutoff):
+        path = self.root / "next.json"
+        path.write_text(json.dumps(dict(self.snapshot, decision_cutoff=cutoff)), encoding="utf-8")
+        runner = DailyAccountRunner(self.repository, self.database, self.decisions, archive_root=self.archive)
+        with mock.patch("etf_agent.virtual_account.daily.DecisionRepository.verify", return_value=self.patched):
+            return runner.run(path, "prepare-morning", self.root / "account.json")
+
+    def test_cutoff_before_session_start_archives_decision_and_prepares(self):
+        result = self.rerun("2026-09-21T07:30:00+08:00")
+        self.assertEqual(result["settle"]["status"], "superseded_before_session")
+        self.assertEqual(result["settle"]["decision_run_id"], "decision-1")
+        self.assertEqual(result["prepare"]["status"], "prepared")
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-morning")
+        self.assertFalse(self.original.exists())
+        archived = self.archive / self.original.parent.name / "decision-1"
+        self.assertEqual(Path(result["settle"]["archived_to"]), archived)
+        self.assertTrue((archived / "decision.json").exists())
+
+    def test_cutoff_after_session_start_stays_blocked(self):
+        result = self.rerun("2026-09-21T10:00:00+08:00")
+        self.assertEqual(result["prepare"]["status"], "blocked_by_pending_decision")
+        self.assertEqual(self.repository.latest()["run_id"], self.before)
+        self.assertTrue(self.original.exists())
+        self.assertFalse(self.archive.exists())
+
+    def test_cutoff_after_submission_deadline_stays_blocked(self):
+        # 08:55 起的新 cutoff 會排到下一個時段，取代會讓原時段沒有決策。
+        result = self.rerun("2026-09-21T08:57:00+08:00")
+        self.assertEqual(result["prepare"]["status"], "blocked_by_pending_decision")
+        self.assertEqual(self.repository.latest()["run_id"], self.before)
+        self.assertTrue(self.original.exists())
+
+    def test_late_close_data_next_morning_stays_blocked(self):
+        # 成交日收盤後官方價量尚未入庫，隔天早上重跑：時段已過，不得取代。
+        result = self.rerun("2026-09-22T07:30:00+08:00")
+        self.assertEqual(result["settle"]["status"], "waiting_for_close_data")
+        self.assertEqual(result["prepare"]["status"], "blocked_by_pending_decision")
+        self.assertEqual(self.repository.latest()["run_id"], self.before)
+        self.assertTrue(self.original.exists())
+
+    def test_archive_name_collision_fails_closed(self):
+        (self.archive / self.original.parent.name / "decision-1").mkdir(parents=True)
+        with self.assertRaisesRegex(VirtualAccountError, "封存區已有同名"):
+            self.rerun("2026-09-21T07:30:00+08:00")
+        self.assertEqual(self.repository.latest()["run_id"], self.before)
+        self.assertTrue(self.original.exists())
 
 
 if __name__ == "__main__":

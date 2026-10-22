@@ -152,6 +152,24 @@ def data_already_fetched(snapshot_path: Path, account_path: Path, expected_trade
     )
 
 
+def refresh_before_deadline(captures_root: Path, snapshot_path: Path, now: datetime) -> bool:
+    """既有 Snapshot 與此刻新建的 Snapshot 是否排到同一個交易時段（仍在交件期限 08:55 前）。
+
+    是的話應重建 Snapshot：日線由 start.sh 判斷已齊全而略過，重大訊息、新聞與恐懼貪婪等照常
+    重抓，cutoff 改為此刻；帳本會把該時段尚未執行的舊決策移到封存區。已過期限、日曆缺漏或讀取
+    失敗時回 False，維持沿用既有 Snapshot。
+    """
+    try:
+        capture = latest_calendar_capture_before(captures_root, now.isoformat())
+        if capture is None:
+            return False
+        calendar = calendar_from_capture(capture)
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        return calendar.next_trading_session(snapshot["decision_cutoff"]) == calendar.next_trading_session(now.isoformat())
+    except (TradingCalendarError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def daily_run_path(runs_root: Path, run_id: str) -> Path:
     """每日 run 放在 <runs_root>/<台北日期>/<run_id>；已存在則沿用其位置。"""
     existing = find_run_dir(runs_root, run_id, RuntimeError)
@@ -259,6 +277,38 @@ def trading_day_check(captures_root: Path, now: datetime) -> bool:
     if capture is None:
         raise TradingCalendarError("找不到封存的官方開休市日期表（%s）" % captures_root)
     return calendar_from_capture(capture).is_trading_day(now.date())
+
+
+def upcoming_session_start(captures_root: Path, now: datetime):
+    """此刻做決策會排到的交易時段開盤時間；日曆缺漏或判斷失敗回 None。"""
+    try:
+        capture = latest_calendar_capture_before(captures_root, now.isoformat())
+        if capture is None:
+            return None
+        return calendar_from_capture(capture).next_trading_session(now.isoformat())["start"]
+    except (TradingCalendarError, OSError, ValueError):
+        return None
+
+
+def completed_run_for_session(runs_root: Path, run_id: str, session_start):
+    """同一台北日期已完成、且目標時段相同的 run；回傳 run 名稱，沒有則回 None。
+
+    早上的 run 為當天時段、晚上的 run 為下一時段，兩者同日期但不算重複。``session_start`` 為
+    None（日曆缺漏）或舊 run 沒記錄目標時段時，視同相同時段，維持「當日已完成不重跑」。
+    """
+    for run_dir in list_run_dirs(runs_root):
+        if run_dir.name != run_id and not run_dir.name.startswith(run_id + "-"):
+            continue
+        summary_path = run_dir / "pipeline.json"
+        if not summary_path.exists():
+            continue
+        previous = json.loads(summary_path.read_text(encoding="utf-8"))
+        if previous.get("status") != "completed":
+            continue
+        previous_start = (previous.get("target_session") or {}).get("start")
+        if session_start is None or previous_start is None or previous_start == session_start:
+            return run_dir.name, previous.get("decision_status")
+    return None
 
 
 def deliver_saved_run(root: Path, name: str) -> dict:
@@ -386,11 +436,14 @@ def main() -> int:
     run_id = "daily-%s" % now.strftime("%Y%m%d")
     run_dir = daily_run_path(runs_root, run_id)
     summary_path = run_dir / "pipeline.json"
+    new_session_run = False
     if summary_path.exists() and not args.force:
-        previous = json.loads(summary_path.read_text(encoding="utf-8"))
-        if previous.get("status") == "completed":
-            log("%s 已完成（%s），不重跑。" % (run_id, previous.get("decision_status")))
+        done = completed_run_for_session(runs_root, run_id, upcoming_session_start(captures_root, now))
+        if done is not None:
+            log("%s 已完成（%s），不重跑。" % done)
             return 0
+        # 同日已完成的 run 是為另一個交易時段（例如早上為當天、晚上為隔天），另開新 run 目錄。
+        new_session_run = json.loads(summary_path.read_text(encoding="utf-8")).get("status") == "completed"
     if args.resume not in (None, RESUME_LATEST):
         try:
             resumable = named_resumable_run(runs_root, args.resume)
@@ -411,7 +464,7 @@ def main() -> int:
         log("續跑沿用 run 目錄：%s" % run_id)
         # 可續跑的 run 已有 Agent 輸出，代表 Snapshot 與帳戶快照已建立；重抓資料會讓快照與已驗證輸出對不上。
         args.skip_data = True
-    elif args.force and run_dir.exists():
+    elif (args.force or new_session_run) and run_dir.exists():
         run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
         run_dir = daily_run_path(runs_root, run_id)
         summary_path = run_dir / "pipeline.json"
@@ -427,10 +480,14 @@ def main() -> int:
         summary["resumed_at"] = now.isoformat()
     if not args.skip_data:
         trade_date = expected_latest_trade_date(captures_root, now)
-        if data_already_fetched(
-            ROOT / "artifacts" / "data" / "research_snapshot_latest.json",
-            ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json", trade_date,
-        ):
+        latest_snapshot = ROOT / "artifacts" / "data" / "research_snapshot_latest.json"
+        fetched = data_already_fetched(
+            latest_snapshot, ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json", trade_date,
+        )
+        if fetched and refresh_before_deadline(captures_root, latest_snapshot, now):
+            log("已有 %s 的行情資料，但仍在交件期限前：日線略過，重抓事件與情緒資料並重建 Snapshot。" % trade_date.isoformat())
+            summary["data_refreshed_before_deadline"] = trade_date.isoformat()
+        elif fetched:
             log("已有 %s 的行情資料（Snapshot 150 檔齊全），沿用既有 Snapshot 與帳戶快照，不重抓。" % trade_date.isoformat())
             summary["data_reused_trade_date"] = trade_date.isoformat()
             args.skip_data = True

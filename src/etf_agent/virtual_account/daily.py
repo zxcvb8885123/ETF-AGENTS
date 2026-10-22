@@ -20,7 +20,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256
 from etf_agent.core.run_layout import list_run_dirs
-from etf_agent.data.trading_calendar import CALENDAR_BASIS, TradingCalendar
+from etf_agent.data.trading_calendar import CALENDAR_BASIS, DECISION_DEADLINE, TradingCalendar
 from etf_agent.decision.finalization import DecisionRepository
 
 from .service import VirtualAccountError, VirtualAccountRepository, VirtualAccountService, parse_time
@@ -210,14 +210,20 @@ class DailyAccountRunner:
         decision_repository: Path,
         settlement_days: int = 2,
         calendar: Optional[TradingCalendar] = None,
+        archive_root: Optional[Path] = None,
     ):
-        """``calendar`` 為官方開休市日曆；省略時交割日退回週一至週五近似並在結果標示。"""
+        """``calendar`` 為官方開休市日曆；省略時交割日退回週一至週五近似並在結果標示。
+
+        ``archive_root`` 存放開盤前被新資料取代的決策；省略時為決策庫旁的 ``archive/superseded_decisions``。
+        """
         self.repository = repository
         self.service = VirtualAccountService(repository)
         self.market = OfficialCloseMarket(database)
         self.decision_repository = Path(decision_repository)
         self.settlement_days = settlement_days
         self.calendar = calendar
+        self.archive_root = (Path(archive_root) if archive_root is not None
+                             else self.decision_repository.parent / "archive" / "superseded_decisions")
 
     def settlement_date(self, trade_date: str) -> Tuple[str, Dict[str, object]]:
         day = date.fromisoformat(trade_date)
@@ -276,6 +282,33 @@ class DailyAccountRunner:
                 "unfilled": len(result["transition"]["execution"]["unfilled_orders"]),
                 **calendar_basis}
 
+    def supersede_unstarted_decision(self, decision_run_id: Optional[str], cutoff: str) -> Optional[Path]:
+        """新 cutoff 早於待結算決策目標時段當天的交件期限（08:55）時，把該決策整個移到封存區並回傳新位置。
+
+        以交件期限而非 09:00 開盤判斷：08:55 起的新 cutoff 會排到下一個交易時段，若在此取代，
+        原時段就沒有決策。缺少驗證過的目標時段、或已過期限（決策可能已執行、或只是收盤價晚到）
+        一律回傳 None，維持阻擋。
+        """
+        if not decision_run_id:
+            return None
+        decision_path = DecisionRepository(self.decision_repository).verify(decision_run_id)
+        bundle = json.loads((decision_path / "decision_input.json").read_text(encoding="utf-8"))
+        start = ((bundle.get("trading_status_bundle") or {}).get("target_session") or {}).get("start")
+        if not start:
+            return None
+        session_day = parse_time(start, "target_session_start").astimezone(TAIPEI).date()
+        if parse_time(cutoff, "decision_cutoff") >= datetime.combine(session_day, DECISION_DEADLINE, TAIPEI):
+            return None
+        run_dir = DecisionRepository(self.decision_repository).run_dir(decision_run_id)
+        if run_dir is None:
+            raise VirtualAccountError("找不到要封存的 Decision run：%s" % decision_run_id)
+        target = self.archive_root / run_dir.parent.name / run_dir.name
+        if target.exists():
+            raise VirtualAccountError("封存區已有同名 Decision run：%s" % target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(run_dir), str(target))
+        return target
+
     def run(self, snapshot_path: Path, prepare_run_id: str, account_output: Path) -> Dict[str, object]:
         snapshot = self.service.read_snapshot(snapshot_path)
         current = self.repository.latest()
@@ -288,8 +321,13 @@ class DailyAccountRunner:
             raise VirtualAccountError("新 Snapshot cutoff 必須晚於目前帳戶狀態；同一快照請直接重用")
         settled = self.settle(snapshot["decision_cutoff"])
         if settled["status"] == "waiting_for_close_data":
-            # 已有待成交決策時不得建立新的 prepare，否則會覆蓋尚未結算的決策。
-            return {"settle": settled, "prepare": {"status": "blocked_by_pending_decision"}}
+            # 已有待成交決策時不得建立新的 prepare，否則會覆蓋尚未結算的決策；
+            # 唯一例外是新 cutoff 早於該決策目標時段的交件期限，決策尚未執行，可由新資料重做。
+            archived = self.supersede_unstarted_decision(settled.get("decision_run_id"), snapshot["decision_cutoff"])
+            if archived is None:
+                return {"settle": settled, "prepare": {"status": "blocked_by_pending_decision"}}
+            settled = {"status": "superseded_before_session", "run_id": settled["run_id"],
+                       "decision_run_id": settled["decision_run_id"], "archived_to": str(archived)}
         prepared = self.service.prepare_day(snapshot_path, prepare_run_id)
         account_output.parent.mkdir(parents=True, exist_ok=True)
         account_output.write_text(json.dumps(prepared["account_snapshot"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

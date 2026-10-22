@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | `VirtualAccountError`、`VirtualAccountRepository`、`VirtualAccountService` |
 | `service.py` | 帳本保存／驗證（hash 鏈）與狀態轉移：初始化、`prepare_day`、`apply_decision` | `VirtualAccountError`、`parse_time`、`VirtualAccountRepository`（`save`、`verify`、`latest`）、`VirtualAccountService`（`ensure_initialized`、`initialize`、`prepare_day`、`apply_decision`、`read_snapshot`） |
-| `daily.py` | 每日帳本推進：從資料庫取官方成交價建立執行市場，結算前一份決策，建立下一次決策前狀態 | `OfficialCloseMarket`（`execution_date`、`quotes`、`build`）、`DailyAccountRunner`（`settlement_date`、`settle`、`run`）、`add_business_days`、`average_price`、`find_decision_run`、`supersede_decision_runs` |
+| `daily.py` | 每日帳本推進：從資料庫取官方成交價建立執行市場，結算前一份決策，建立下一次決策前狀態 | `OfficialCloseMarket`（`execution_date`、`quotes`、`build`）、`DailyAccountRunner`（`settlement_date`、`settle`、`supersede_unstarted_decision`、`run`）、`add_business_days`、`average_price`、`find_decision_run`、`supersede_decision_runs` |
 
 ## 對外介面
 
@@ -42,3 +42,4 @@ flowchart LR
 - 結算用官方 TWSE／TPEx 價量；缺官方價時 `run` 停止並顯示缺口，不改用 Yahoo 價格（見根 README「常見問題」）。
 - 新決策取代同一份帳戶快照的舊決策時，舊 run 會被移到 `artifacts/archive/superseded_decisions`（`supersede_decision_runs`）。
 - 只模擬成交，不自動下單。
+- 有待成交決策時預設不建立新的 prepare；只有新 Snapshot 的 cutoff 早於該決策目標時段當天的交件期限（08:55）時，`DailyAccountRunner.run` 才把該決策移到同一封存區並建立新 prepare（`supersede_unstarted_decision`）。缺少目標時段、已過期限或收盤價晚到時維持 `blocked_by_pending_decision`。

@@ -104,7 +104,7 @@ flowchart LR
 | `artifacts/ledger/` | 虛擬帳本（雜湊鏈）與帳戶快照 | `src/etf_agent/virtual_account/service.py` 的 `VirtualAccountRepository`，入口 `cli/virtual_account.py`（`start.sh` 呼叫） | 否 | 不要刪。這是帳戶唯一狀態來源，刪了帳戶歷史與績效消失，只能重建新帳戶 |
 | `artifacts/data/` | 最新資料快照與資料收集狀態 | `start.sh` 各階段與 `scripts/`（見 2.5） | 否 | 多數可刪，下次收集重建；`trading_status/` 刪了需重新抓才能判定交易日 |
 | `artifacts/debug/` | 來源原始抓取與探測報告 | `scripts/probe_data_sources.py`、`scripts/collect_sector_classification.py` | 否 | 可刪。平常不用看，只在稽核來源時用 |
-| `artifacts/archive/` | 被取代的決策 | `supersede_decision_runs`（`src/etf_agent/virtual_account/daily.py`），由 `run_daily_pipeline.py` 呼叫 | 否 | 可刪；這些決策已被新決策取代，不再參與帳本 |
+| `artifacts/archive/` | 被取代的決策 | `supersede_decision_runs`（`src/etf_agent/virtual_account/daily.py`，由 `run_daily_pipeline.py` 呼叫）與 `DailyAccountRunner.supersede_unstarted_decision`（交件期限前重建 Snapshot 時） | 否 | 可刪；這些決策已被新決策取代，不再參與帳本 |
 
 ### 2.2 `artifacts/latest/` 與 `artifacts/reports/`
 
@@ -146,7 +146,7 @@ flowchart LR
 | `ledger/<account_id>/.write.lock` | 寫入時暫時建立、結束即刪除的鎖 | `VirtualAccountRepository.save` | 若殘留代表上次寫入中斷，確認沒有程式在跑才可刪 |
 | `competition_d_plan/D-Plan_<team_id>_<交易日>.json` | D-Plan v4.3 候選，待人工驗證與上傳 | `DPlanExportService.export`；也可由 `cli/dplan.py build` 指定 `--output` | 不自動送件；同交易日重跑直接取代舊檔，結果帶 `replaced_existing_output` |
 | `competition_d_plan/contexts/context_<decision_run_id>.json` | 內部 context（綁定決策與帳本） | 同上 | |
-| `archive/superseded_decisions/<日期>/<decision-run-id>/` | 同一份帳戶快照重跑後被取代的舊決策整個搬到這裡 | `supersede_decision_runs`（`shutil.move`） | 只保留不再使用的 run |
+| `archive/superseded_decisions/<日期>/<decision-run-id>/` | 同一份帳戶快照重跑、或交件期限前用新 Snapshot 重跑後被取代的舊決策整個搬到這裡 | `supersede_decision_runs`、`supersede_unstarted_decision`（`shutil.move`） | 只保留不再使用的 run |
 
 ### 2.5 `artifacts/data/` 與 `artifacts/debug/`
 
