@@ -13,3 +13,4 @@ var/*.db.*
 var/logs/
 var/*.json
 !var/.gitkeep
+.claude

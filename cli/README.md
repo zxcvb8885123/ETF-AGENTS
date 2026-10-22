@@ -1,8 +1,23 @@
 # ETF Agent CLI
 
-這個目錄提供人工操作、排程器與 Skill 共用的單步命令入口，只解析參數並呼叫 `src/etf_agent/` 的核心服務，不複製資料蒐集、投資判斷或數值計算邏輯。
+人工、排程器與 Skill 共用的單步命令入口：只解析參數並呼叫 `src/etf_agent/` 的核心服務，不複製資料蒐集、投資判斷或數值計算邏輯。
 
-日常操作請用專案根目錄的 `./start.sh`（`auto` 更新資料、`daily` 準備帳本、`run` 完整每日決策、`status` 查資料狀態，無參數開儀表板；`./start.sh --help` 查看全部），見 [Docker 使用說明](../docs/docker.md)。`run` 會呼叫 `scripts/run_daily_pipeline.py`，以 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI；可先執行 `./start.sh run --agent-cli opencode --preflight-only --skip-data` 驗證 OpenCode 已登入與必要檔案。下列單步入口供進階操作使用。
+## 與 `start.sh` 的關係
+
+| 項目 | 說明 |
+| --- | --- |
+| 日常入口 | 根目錄 `./start.sh`，見 [Docker 使用說明](../docs/docker.md) |
+| `auto` | 更新資料 |
+| `daily` | 準備帳本 |
+| `run` | 完整每日決策，呼叫 `scripts/run_daily_pipeline.py` |
+| `status` | 查資料狀態 |
+| 無參數 | 開儀表板 |
+| 子 Agent CLI | `run --agent-cli claude\|codex\|opencode` |
+| 驗證 OpenCode | `./start.sh run --agent-cli opencode --preflight-only --skip-data` |
+
+下表的單步入口供進階操作使用。
+
+## 入口清單
 
 | 入口 | 核心領域 |
 | --- | --- |
@@ -15,6 +30,12 @@
 | `virtual_account.py` | `ensure-init` 首次開帳或驗證既有帳本；其餘命令處理決策前快照與模擬成交 |
 | `dplan.py` | 從封存決策自動整理 D-Plan context、匯出 v4.3 候選（核對 prepare-day 帳本）與本地結構檢查 |
 | `decision_delivery.py` | 從封存 Decision run 建立風控後中文 JSON／Markdown；重建驗證及拒絕診斷，不產 D-Plan |
+| `fundamental_research.py` | 基本面研究的唯讀資料包、指標、結果驗證與封存 |
+| `fundamental_repair.py` | 資料不足時補抓官方當期與 FinMind 去年同期累計財報；不執行分析或交易 Agent |
+| `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）與已判讀輸入接入（`integrate`） |
+| `news_sentiment.py` | 核對資料庫新聞候選、保存原頁版本並驗證全量情緒標註 |
+| `market_context_probe.py` | 補抓公開大盤成交、指數與法人資料（交易背景），不產生情緒結論 |
+| `dashboard.py` | 啟動唯讀虛擬帳戶績效儀表板（FastAPI），`./start.sh` 預設模式使用 |
 
 從專案根目錄執行，例如：
 
@@ -34,6 +55,8 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
   --output artifacts/competition_d_plan/contexts/context_DECISION_RUN_ID.json
 ```
 
-`tradeagent/` 定義 Codex／Claude／OpenCode 共用的工作流程、可讀輸入、停止條件與輸出格式；Skill 與人工操作都使用本目錄相同的 CLI，避免複製邏輯。
+## 規則
 
-單步 CLI 的部分功能供離線驗證或 fixture 研究使用；不能因命令可執行就視為已接入每日正式決策。各來源的核准與限制見 [資料來源清單](../docs/data_sources_inventory.md)。
+- `tradeagent/` 的 Skill 與人工操作使用本目錄相同的 CLI。
+- 部分單步 CLI 供離線驗證或 fixture 研究使用，可執行不代表已接入每日正式決策。
+- 各來源的核准狀態見 [資料來源清單](../docs/data_sources_inventory.md)。

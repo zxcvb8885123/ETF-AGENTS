@@ -107,6 +107,21 @@ python3 -m venv .venv
 
 ## 專案架構與資料夾
 
+整體架構（細節見[資料夾架構](docs/repository-layout.md)、[套件依賴](docs/modules.md)、[執行產物](docs/runtime-artifacts.md)）：
+
+```mermaid
+flowchart LR
+  S[start.sh] --> SC[scripts/ cli/]
+  SC --> SRC[src/etf_agent/ 核心程式]
+  SRC --> TA[tradeagent/ 子 Agent Skill]
+  CFG[config/ data/] --> SRC
+  SRC --> VAR[var/ 資料庫]
+  SRC --> ART[artifacts/ 報告與帳本]
+  GD[game_docs/ 主辦方文件] -.參考.-> SRC
+```
+
+各資料夾都有自己的 README，也可先看[文件索引](docs/README.md)。
+
 ```text
 ETF_AGENTS/
 ├── start.sh                 # 日常入口：儀表板、auto、daily、run、status
@@ -153,7 +168,7 @@ ETF_AGENTS/
 ├── tests/                   # pytest 測試，依職責分 core／data／perception／research／decision／account／automation
 │   └── fixtures/            #   測試用的小型資料
 │
-├── var/                     # 執行時資料，不進 git：etf_agent.db（行情、公司文件、來源原文）與快取
+├── var/                     # 執行時資料，不進 git：etf_agent.db（行情、公司文件、來源原文）
 └── artifacts/               # 執行時產物，不進 git
     ├── latest/              #   先看這裡：最新中文報告（latest.md／latest.json）或失敗診斷
     ├── daily/               #   每日執行狀態、分析師與決策輸出（<日期>/<run_id>/）
@@ -177,14 +192,26 @@ ETF_AGENTS/
 
 ### 執行時產生的資料夾
 
-- `var/`、`artifacts/` 不進 git，新環境是空的。
-- 由 `./start.sh` 與每日管線產生。
-- 決策封存（`artifacts/decisions/`）是下游重建驗證的依據，刪除前先確認不需要重建。
-- 每日輸出依台北日期分資料夾：`daily`、`decisions`、`reports`（`runs`／`views`／`dated`）、`debug/source_audit/sector_classification` 與 `debug/source_probe` 都是 `<資料夾>/YYYY-MM-DD/<名稱>`。日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期；同一個 run ID 出現在兩個日期資料夾會被拒絕。
-- 帳本（`ledger/`）是雜湊鏈，不分日期資料夾；`archive/` 是手動整理的舊實驗，也不改。
-- FinMind 財報候選（候選資料，不進正式 Snapshot）：首次補 `FINMIND_YEARS` 年（預設 3，可設 2～5）歷史，之後只在財報公布區間（約 2/15–4/10、4/20–5/25、7/20–8/24、10/20–11/24）每天更新一次，區間外略過；狀態記在 `artifacts/data/finmind_schedule.json`，`FORCE_FETCH=1` 可強制更新。補抓的歷史財報以抓取時間為 `available_at`，不會回填到過去的決策。
-- 政府開放 CSV（開休市日期表、注意／處置／暫停交易／特殊標的）放在 `artifacts/data/trading_status/`（每天會跑，屬於執行產物，不進 git）。每次八份全部抓成功才刪除舊的，只留最新一份；有任何一份失敗就保留舊封存當後備。每日決策仍把當次的交易狀態寫進 `artifacts/daily/<日期>/<run_id>/trading_status.json`，所以不依賴舊封存重建。
-- 2026-10-22 起頂層資料夾改為上述名稱（舊名：`daily_runs`、`decision_runs`、`decision_reports`、`latest_reports`、`virtual_accounts`、`source_audit`、`source_probe_reports`、`official_history`，以及散在頂層的 `*_latest.json`）。舊名稱的資料已清除，沒有相容連結；不要把舊名稱的資料夾搬回來。
+`var/`、`artifacts/` 不進 git，由 `./start.sh` 與每日管線產生，新環境是空的。
+
+| 資料夾 | 內容 | 按日期分 | 能否刪 |
+| --- | --- | --- | --- |
+| `var/etf_agent.db` | 行情、公司文件、來源原文與時間版本 | 否 | 不要刪，無法依原時間點重建 |
+| `artifacts/latest/` | 最新中文報告或失敗診斷 | 否 | 可刪，交付時重建 |
+| `artifacts/daily/` | 每日執行狀態、分析師與子 Agent 輸出 | 是 | 可刪舊日期；刪了無法續跑與審計 |
+| `artifacts/decisions/` | 不可變決策封存 | 是 | 不建議刪，是重建驗證的依據 |
+| `artifacts/reports/` | 交付紀錄與閱讀副本 | 是 | 不建議刪，可由 `decisions/` 重建 |
+| `artifacts/competition_d_plan/` | D-Plan v4.3 候選與 context | 否 | 已人工上傳即可刪 |
+| `artifacts/ledger/` | 虛擬帳本（雜湊鏈）與帳戶快照 | 否 | 不要刪，是帳戶唯一狀態來源 |
+| `artifacts/data/` | 最新 Snapshot、財報、產業分類、交易狀態 CSV | 否（`trading_status/` 依日期） | 多數可刪，下次收集重建 |
+| `artifacts/debug/` | 來源原始抓取與探測 | 是 | 可刪 |
+| `artifacts/archive/` | 舊實驗、被取代的決策 | 手動整理 | 可刪 |
+
+規則：
+
+- 日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期。
+- 同一個 run ID 出現在兩個日期資料夾會被拒絕。
+- FinMind 財報補抓時程、交易狀態封存保存規則與 2026-10-22 前的舊資料夾名稱，見 [執行產物說明](docs/runtime-artifacts.md#5-保存規則與歷史名稱)。
 
 ## 目前狀態與限制
 
@@ -248,6 +275,8 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 ## 詳細文件
 
+- [文件索引](docs/README.md)：所有文件的分類入口與更新紀錄。
+- 資料夾說明：[config](config/README.md)、[data](data/README.md)、[game_docs](game_docs/README.md)、[scripts](scripts/README.md)、[tradeagent](tradeagent/README.md)、[tests](tests/README.md)。
 - [環境安裝與 Docker](docs/docker.md)、[CLI 與單步操作](cli/README.md)
 - [每日決策架構](docs/architecture.md)、[資料來源與授權限制](docs/data_sources_inventory.md)
 - [事件與市場情緒邊界](docs/event_market_scope.md)、[事件研究整合](docs/integrated_event_analysis.md)、[技術分析歷史輸入](docs/technical_trend_history.md)
