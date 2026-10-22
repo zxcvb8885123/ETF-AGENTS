@@ -105,6 +105,7 @@ docker compose version
 | 參數 | 說明 |
 | --- | --- |
 | `--analyst-model MODEL` | 只用於技術／基本面／事件分析師批次。Claude CLI 預設 `sonnet`，傳 `inherit` 沿用 `--model`。其他 CLI 未指定時沿用 `--model` |
+| `--max-workers N` | 分析師與多空研究階段同時執行的子 Agent 數（1～8，預設 3；1 為串行）。交易與風險階段仍串行 |
 | `--technical-gate`／`--no-technical-gate` | 預設開啟，見[降 token 計劃](token_reduction_plan.md) |
 
 Windows PowerShell 可執行單步 Python CLI。`start.sh` 的 PowerShell 對應入口尚未實作。

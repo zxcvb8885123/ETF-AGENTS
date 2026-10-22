@@ -56,6 +56,21 @@
 - 重放過去日期時，退回的價格含事後除權息調整，這是已知限制。
 - 舊封存沒有此欄位，仍可重建驗證。
 
+## 平行執行與耗時
+
+`--max-workers N`（1～8，CLI 預設 3；程式內 `DailyDecisionPipeline` 預設 1 即串行）讓下列階段同時執行子 Agent：
+
+- 技術／基本面／事件三位分析師的所有批次。
+- 多頭與空頭研究員的所有批次。兩方仍只讀同一份共同輸入，任務之間不共享輸出。
+
+交易與風險階段維持串行。平行只改變執行方式，不改 brief、Validator、Policy 與 Guard：
+
+- 結果依提交順序合併，`agent_calls` 也依提交順序整理，不受完成先後影響。
+- 任一任務失敗就取消尚未開始的任務並整體失敗（fail-closed），不使用部分結果。
+- `--resume` 沿用以任務名稱區分的 `*_raw_N.json`，平行與串行的續跑互通。
+- `pipeline.json` 的 `stage_durations` 記錄 `analysts`、`research`、`trader`、`cash_stance`、`allocation_review` 的牆鐘秒數。
+- 同時呼叫越多，越容易撞到訂閱用量或速率上限；實際加速幅度尚未用真實 run 量得。
+
 ## 降低 token 的設定
 
 詳見[降 token 計劃](token_reduction_plan.md)。
