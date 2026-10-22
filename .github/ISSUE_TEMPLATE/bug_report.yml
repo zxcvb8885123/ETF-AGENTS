@@ -1,0 +1,53 @@
+name: 錯誤回報
+description: 回報可重現的程式、資料或文件問題；安全漏洞請勿使用公開 Issue。
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報！請先確認沒有重複的 Issue。安全漏洞請依 SECURITY.md 私下通報；請勿貼上密鑰、帳號或私人資料。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 問題描述
+      description: 清楚描述發生了什麼事，以及預期行為。
+      placeholder: 執行某個指令後，實際結果與預期不同。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 重現步驟
+      description: 提供最小重現步驟；請先移除敏感資訊。
+      placeholder: |
+        1. 使用的指令或入口
+        2. 輸入條件
+        3. 觀察到的結果
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 預期行為
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: 版本或 commit
+      description: 請填入 commit SHA 或分支名稱。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 執行環境
+      description: 作業系統、Python、Docker、CLI 版本及相關設定（請勿包含密鑰）。
+  - type: textarea
+    id: logs
+    attributes:
+      label: 錯誤訊息與補充資料
+      description: 可貼去識別化的日誌、截圖或資料來源與 cutoff；請勿上傳原始憑證或私人資料。
+      render: shell

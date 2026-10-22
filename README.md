@@ -284,3 +284,9 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 - [每日決策架構](docs/architecture.md)、[資料來源與授權限制](docs/data_sources_inventory.md)
 - [事件與市場情緒邊界](docs/event_market_scope.md)、[事件研究整合](docs/integrated_event_analysis.md)、[技術分析歷史輸入](docs/technical_trend_history.md)
 - [開發規則與測試要求](AGENTS.md)：核心程式在 `src/etf_agent/`，命令入口在 `cli/`／`scripts/`，Agent Skill 在 `tradeagent/`。
+
+## 參與專案
+
+- [貢獻指南](CONTRIBUTING.md)與[行為準則](CODE_OF_CONDUCT.md)。
+- [安全漏洞通報方式](SECURITY.md)：請勿公開漏洞或憑證。
+- 本專案採用 [MIT License](LICENSE)。
