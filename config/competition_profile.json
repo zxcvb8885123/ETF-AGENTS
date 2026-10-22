@@ -1,24 +1,24 @@
 {
   "schema_version": "1.0",
   "team_id": "TEAM_11067",
-  "strategy_status": "pending_user_confirmation",
+  "strategy_status": "approved",
   "strategy": {
-    "etf_name": null,
-    "investment_theme": null,
-    "investment_philosophy": null,
-    "approved_at": null
+    "etf_name": "主動台股品質動能ETF",
+    "investment_theme": "台灣上市櫃品質成長與趨勢動能選股",
+    "investment_philosophy": "本策略以台灣上市櫃股票為投資範圍，透過基本面品質、獲利成長、價格趨勢與波動風險的綜合評估，建立分散化持股組合。系統先以可稽核資料篩選交易池，再依技術、基本面與事件研究形成買進、加碼、減碼或持有意圖；配置與股數則由程式依既定風控規則、持股上限、現金比例及流動性條件計算。當資料不足、來源不可驗證或風控條件未通過時，策略維持現金或不交易，不以推測補足缺漏。",
+    "approved_at": "2026-10-21T00:00:00+08:00"
   },
   "agent": {
-    "model_provider": null,
-    "model_version": null
+    "model_provider": "anthropic",
+    "model_version": "claude-sonnet"
   },
   "notes": {
     "etf_name": "待使用者確認；正式 ETF 公開說明書要求 20 字內的中文或英文名稱。",
     "investment_theme": "待使用者確認；正式 ETF 公開說明書要求 50 字內的投資主題。",
     "investment_philosophy": "待使用者確認；正式 ETF 公開說明書要求 100–300 字的投資理念。",
     "approved_at": "待使用者確認策略後填入確認時間，格式為 YYYY-MM-DDTHH:MM:SS+08:00。",
-    "model_provider": "待確認實際決策模型的供應商；Codex CLI 對應 OpenAI 時填 openai。",
-    "model_version": "待確認實際決策模型版本；不得以未確認的 CLI 版本冒充模型版本。",
+    "model_provider": "歷史 pipeline 記錄 agent_cli=claude，因此填 anthropic。",
+    "model_version": "歷史 pipeline 僅記錄 model=sonnet，未保存更細的 Claude Sonnet 版本，因此填 claude-sonnet，不推測 4／4.5 等子版本。",
     "submission_guard": "strategy_status 不是 approved，或任一 strategy 欄位為空時，不得產生正式 D-Plan。"
   }
 }

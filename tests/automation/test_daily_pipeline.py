@@ -77,6 +77,14 @@ APPROVE = {
 }
 
 
+class CodexSchemaTests(unittest.TestCase):
+    def test_review_action_schema_requires_all_declared_properties(self):
+        from etf_agent.automation.daily_pipeline import REVIEW_SCHEMA
+
+        action = REVIEW_SCHEMA["properties"]["revision_actions"]["items"]
+        self.assertEqual(set(action["properties"]), set(action["required"]))
+
+
 def team_outputs(**overrides):
     outputs = {
         "technical_b0": [TECHNICAL], "fundamental_b0": [FUNDAMENTAL], "event_b0": [EVENT],

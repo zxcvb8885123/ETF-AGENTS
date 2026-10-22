@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.decision_delivery import build_delivery, save_failure
 from etf_agent.decision_delivery.repository import publication_lock
+from etf_agent.competition import DPlanError, DPlanExportService
 
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
@@ -499,6 +500,30 @@ def main() -> int:
         if summary["delivery"]["report_status"] != "ready":
             raise RuntimeError("最終報告重建失敗，詳見交付診斷")
         summary["status"] = "completed"
+        summary["finished_at"] = datetime.now(TAIPEI_TIMEZONE).isoformat()
+        if result.decision_status not in {"approved", "no_trade"}:
+            summary["dplan"] = {
+                "status": "blocked",
+                "error": "決策狀態為 %s，只有 approved/no_trade 可產生 D-Plan。" % result.decision_status,
+            }
+            log("[D-Plan] 未產生：%s" % summary["dplan"]["error"])
+        else:
+            # D-Plan 綁定本次封存決策、prepare-day 帳本與 target_session；
+            # 不接受使用者另外手抄 run ID 來繞過一致性檢查。
+            try:
+                summary["dplan"] = DPlanExportService(ROOT).export(
+                    decision_repository=ROOT / "artifacts" / "decisions",
+                    decision_run_id=result.decision_run_id,
+                    daily_run=summary,
+                    profile_path=ROOT / "config" / "competition_profile.json",
+                    account_id=args.account_id,
+                    account_run_id=account_run_id,
+                )
+                log("[D-Plan] 已產生：%s" % summary["dplan"]["output"])
+            except (DPlanError, OSError, ValueError, TypeError, KeyError) as error:
+                # 候選交件檔失敗不得否定已封存決策，也不得阻止中文報告重建。
+                summary["dplan"] = {"status": "blocked", "error": str(error)}
+                log("[D-Plan] 未產生：%s" % error)
     except Exception as error:  # noqa: BLE001 — 任何失敗都要寫入摘要並通知
         summary["status"] = "failed"
         summary["error"] = str(error)
@@ -512,7 +537,7 @@ def main() -> int:
             except (ValueError, OSError) as publish_error:
                 summary["delivery_publish_error"] = str(publish_error)
                 log("交付診斷發布失敗：%s" % publish_error)
-    summary["finished_at"] = datetime.now(TAIPEI_TIMEZONE).isoformat()
+    summary.setdefault("finished_at", datetime.now(TAIPEI_TIMEZONE).isoformat())
     write_json(summary_path, summary)
 
     log("[4/4] 通知")
@@ -526,10 +551,16 @@ def main() -> int:
     else:
         message = "失敗：%s" % str(summary.get("error"))[:120]
     if summary.get("delivery"):
-        message += "；報告 %s；D-Plan %s" % (summary["delivery"]["report_status"], summary["delivery"]["dplan_status"])
+        message += "；報告 %s；D-Plan %s" % (
+            summary["delivery"]["report_status"], summary.get("dplan", {}).get("status", "not_run"),
+        )
     notify("ETF Agent 每日決策", message)
     if summary.get("delivery"):
-        log("最終報告：%s；D-Plan：%s" % (summary["delivery"]["report_path"], summary["delivery"]["dplan_status"]))
+        dplan = summary.get("dplan", {})
+        detail = dplan.get("output") if dplan.get("status") == "ready" else dplan.get("error", "not_run")
+        log("最終報告：%s；D-Plan：%s（%s）" % (
+            summary["delivery"]["report_path"], dplan.get("status", "not_run"), detail,
+        ))
     log(message)
     log("摘要：%s" % summary_path)
     return 0 if summary["status"] == "completed" else 1
