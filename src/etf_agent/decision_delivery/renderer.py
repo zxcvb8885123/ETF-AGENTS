@@ -5,7 +5,10 @@ from .tools import cell as _cell, percent, TAIPEI
 from etf_agent.core import parse_aware_time
 from etf_agent.decision.trader_report import INTENT_LABELS, CONVICTION_LABELS
 
-TEMPLATE_MARKER = "<!-- report_template: 2 -->"
+TEMPLATE_MARKER = "<!-- report_template: 3 -->"
+TEMPLATE_MARKER_V2 = "<!-- report_template: 2 -->"
+# AccountSnapshot 沒有幣別欄位；DecisionPolicy 驗證只接受 TWD，競賽金額亦以新台幣元計。
+DEFAULT_CURRENCY = "TWD（新台幣元）"
 STATUS = {"approved": "決策核准，待人工檢視", "no_trade": "決策通過，本日無委託", "rejected": "決策遭拒絕，不提供可執行委託"}
 
 
@@ -15,14 +18,34 @@ def cell(value):
 
 
 def render_report(report):
+    return _render(report, 3)
+
+
+def render_report_v2(report):
+    """第 2 版樣板：幣別缺值顯示「未提供」、估值時間保留原時區，只用來驗證舊交付。"""
+    return _render(report, 2)
+
+
+def _account_lines(account, template):
+    if template == 2:
+        currency, valuation = account.get("currency"), account.get("valuation_at")
+    else:
+        currency = account.get("currency") or DEFAULT_CURRENCY
+        valuation = account.get("valuation_at")
+        if valuation is not None:
+            valuation = parse_aware_time(valuation, "valuation_at").astimezone(TAIPEI).isoformat() + "（台北時間）"
+    return ["金額單位：%s。配置比例分母為配置引擎的預估 NAV；不是 D-Plan 目標權重。" % cell(currency), "",
+        "決策前 NAV：%s；現金：%s；估值時間：%s。" % (cell(account.get("nav")), cell(account.get("cash")), cell(valuation)), ""]
+
+
+def _render(report, template):
     p, risk = report["provenance"], report["risk_summary"]
-    lines = [TEMPLATE_MARKER, "", "# 最終決策報告", "", "**%s**" % STATUS[report["decision_status"]], "",
+    marker = TEMPLATE_MARKER if template == 3 else TEMPLATE_MARKER_V2
+    lines = [marker, "", "# 最終決策報告", "", "**%s**" % STATUS[report["decision_status"]], "",
         "交易日：%s｜資料截止：%s（台北時間）" % (cell(p["trade_date"]), cell(parse_aware_time(p["decision_cutoff"], "decision_cutoff").astimezone(TAIPEI).isoformat())), "",
         "決策 run：%s" % cell(p["decision_run_id"]), "",
         "本報告已通過決策鏈重建；預計持倉、價格、現金與費稅均非成交結果。D-Plan 狀態另見交付狀態。", "",
-        "## 帳戶與預計配置", "",
-        "金額單位：%s。配置比例分母為配置引擎的預估 NAV；不是 D-Plan 目標權重。" % cell(report["account_before"].get("currency")), "",
-        "決策前 NAV：%s；現金：%s；估值時間：%s。" % tuple(cell(report["account_before"].get(k)) for k in ("nav", "cash", "valuation_at")), ""]
+        "## 帳戶與預計配置", "", *_account_lines(report["account_before"], template)]
     portfolio = report["portfolio_after_estimate"]
     if portfolio is not None:
         lines += ["預估 NAV：%s；現金：%s（%s）；持股：%d 檔。" % (cell(portfolio["nav"]), cell(portfolio["cash"]), percent(portfolio["cash_weight"]), len(portfolio["positions"])), "",
@@ -125,4 +148,6 @@ def _constraints(flags):
 def renderer_for(markdown):
     """已封存的閱讀版依自身樣板版本重建；沒有版本標記的是第 1 版。"""
     from .renderer_v1 import render_report_v1
-    return render_report if markdown.startswith(TEMPLATE_MARKER) else render_report_v1
+    if markdown.startswith(TEMPLATE_MARKER):
+        return render_report
+    return render_report_v2 if markdown.startswith(TEMPLATE_MARKER_V2) else render_report_v1

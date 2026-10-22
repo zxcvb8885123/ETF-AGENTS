@@ -158,6 +158,7 @@ flowchart LR
 | `data/finmind_schedule.json` | FinMind 財報補抓狀態（`backfilled_from`、`last_done`） | `scripts/finmind_schedule.py done` | 可刪；刪了會視為首次補抓，重新消耗 FinMind 額度 |
 | `data/official_history/latest.json` | 帳本官方個股價量補抓報告 | `scripts/collect_official_history.py --report`（預設路徑） | 可刪，只是報告；實際行情在 `etf_agent.db` |
 | `data/trading_status/<日期>/<UTC時間>Z/` | 八份政府開放 CSV（`TWSE_CALENDAR_OGD.csv`、`*_HALTS_*`、`*_DISPOSAL_*`、`*_ATTENTION_*`、`*_SPECIAL_*` 等）與 `manifest.json` | `scripts/capture_trading_status_candidates.py`、`run_daily_pipeline.py` 的 `capture_trading_sources` | 刪了則虛擬帳本算不出交割日、也無法判定開休市；`--only-if-missing` 與 `ensure_calendar_capture` 會嘗試重抓，但必須在固定 cutoff 之前。八份全部成功才刪舊封存，只留最新一份。同層的 `inferred_closed_days.json` 是推斷的臨時休市日（颱風假）稽核紀錄，不會被清掉 |
+| `data/market_news/market-news-<雜湊>/` | 全市場新聞 RSS 原始回應（`captures.json`）與整理項目，每次 `start.sh daily` 在 cutoff 前抓一次 | `start.sh`：`cli/market_news.py capture` | 可刪舊的；每日決策只取截止前最後一份，刪了當天新聞改用恐懼貪婪指標 |
 | `data/decision_input_latest.json`、`data/perception_data_latest.json` | 手動 CLI 的預設路徑（`cli/portfolio_decision.py`、`cli/sentiment_research.py`），每日流程不寫 | 該些 CLI | 目前實際目錄沒有 |
 | `debug/source_probe/<日期>/source_probe_<日期>_<時間>.json`、`universe_check_*.json` | 來源可行性探測與交易池核對報告（檔名另有短雜湊形式） | `scripts/probe_data_sources.py`（`write_json_artifact`），同時寫入資料庫 | 可刪；資料庫另存一份 |
 | `debug/source_audit/sector_classification/<日期>/<UTC時間>Z/{TWSE,TPEX}_COMPANY_PROFILE.json` | 官方公司基本資料原始回應 | `scripts/collect_sector_classification.py`（`--raw-dir`） | 可刪；只為稽核來源 |
@@ -180,6 +181,7 @@ flowchart LR
 | `var/.gitkeep` | 讓空資料夾存在於 git | 手動維護 | 是 | 不要刪 |
 | `var/etf_agent.db` | SQLite：行情、公司文件、財報事實、來源原文、快照與時間／版本。目前實際約 1.4 GB。資料表包含 `daily_prices`、`source_documents`、`raw_payloads`、`financial_statements`、`research_snapshots`、`snapshot_documents`、`snapshot_prices`、`finmind_news_candidates`、`market_news_captures`、`collection_runs`、`quality_issues` 等 | `scripts/init_db.py` 建表；`scripts/collect_*.py`、`collect_latest_prices.py`、`collect_official_history.py`、`collect_supplemental_sources.py`、`probe_data_sources.py`、`repair_pending_tpex_close.py`、`cli/data_agent.py`、`cli/news_sentiment.py` 等寫入 | 否 | 不要隨意刪。所有資料版本、來源原文與 `available_at` 都在這裡；刪了 Snapshot 與決策輸入無法依原時間點重建，歷史來源原文也不可能完全重抓還原 |
 | `var/etf_agent.db-wal`、`-shm` | SQLite 的寫前日誌（`.gitignore` 已列入）；目前不存在 | SQLite 自動 | 否 | 資料庫使用中不要手動刪 |
+| `var/datapack/` | 人工從參賽者後台下載的主辦方資料包（`.gitignore` 已列入）；每日 `run` 依隊伍與交易日自動尋找，對帳副本存入該次 `artifacts/daily/<日期>/<run_id>/datapack.json` | 人工放入 | 否 | 可刪舊檔；當天的不要刪，續跑時會比對同一份 |
 | `var/logs/` | `.gitignore` 預留；`src/`、`scripts/`、`cli/` 沒有寫入它的程式 | 無 | 否 | 目前不存在 |
 | `var/yahoo_industries.json`、`var/current_price_snapshot.json`、`var/current_strategy_proposal.json` | 2026-09-13 的舊版遺留檔；`src/`、`scripts/`、`cli/`、`config/`、`docs/`、`tests/` 沒有引用 | 無 | 否（被 `var/*.json` 忽略） | 沒有程式使用，確認不需要後可刪 |
 

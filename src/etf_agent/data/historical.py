@@ -51,7 +51,11 @@ def plan_history_refresh(
     lookback_years: int = 2,
     overlap_days: int = 7,
 ) -> List[HistoryRefreshBatch]:
-    """為新標的回補、為既有標的重抓重疊區間。"""
+    """為新標的回補、為既有標的重抓重疊區間。
+
+    停抓超過重疊天數的標的整段重抓：Yahoo 在停抓期間改寫事件前原價時，
+    重疊區間已看不到被改寫的舊列，只有整段重抓才能回到同一基準。
+    """
 
     if overlap_days < 0:
         raise ValueError("歷史行情重疊天數不得小於 0")
@@ -59,9 +63,10 @@ def plan_history_refresh(
     grouped: Dict[date, List[Instrument]] = {}
     for instrument in universe:
         last_date = last_dates.get(instrument.symbol)
-        start = floor if last_date is None else max(
-            floor, last_date - timedelta(days=overlap_days)
-        )
+        if last_date is None or (end - last_date).days > overlap_days:
+            start = floor
+        else:
+            start = max(floor, last_date - timedelta(days=overlap_days))
         grouped.setdefault(start, []).append(instrument)
     return [
         HistoryRefreshBatch(start_date=start, instruments=tuple(instruments))

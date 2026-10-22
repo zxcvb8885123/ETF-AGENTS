@@ -378,3 +378,95 @@ class DataReuseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DataPackGateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_datapack", ROOT / "scripts" / "run_daily_pipeline.py")
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "config").mkdir()
+        (self.root / "data").mkdir()
+        (self.root / "run").mkdir()
+        (self.root / "var/datapack").mkdir(parents=True)
+        (self.root / "config/competition_profile.json").write_text(json.dumps({"team_id": "TEAM_11067"}), encoding="utf-8")
+        (self.root / "data/official_universe.csv").write_text("symbol,name,market,source_date\n2330,台積電,TWSE,2026-09-14\n", encoding="utf-8")
+        self.account = self.root / "account.json"
+        self.account.write_text(json.dumps({"cash": "1000000000", "positions": []}), encoding="utf-8")
+        self.session = {"start": "2026-10-26T09:00:00+08:00"}
+        self.pack = {
+            "schema_version": "3.0", "doc_type": "DataPack", "team_id": "TEAM_11067", "trade_date": "2026-10-26",
+            "as_of_date": None, "generated_at": "2026-10-20T05:12:08+08:00", "missing": [],
+            "prev_day_orders": {"outcome": "none", "void_reasons": [], "excluded_codes": []},
+            "account": {"cash": 1000000000.0, "cash_ratio_tradable": 1.0, "nav_tradable": 1000000000.0,
+                        "aum": 1000000000.0, "receivable_cash": 0.0, "holdings_count": 0},
+            "holdings": [], "compliance": {"violations": 0, "notices": 0, "incidents": []},
+        }
+
+    def gate(self, previous=None, **overrides):
+        from decimal import Decimal
+        from types import SimpleNamespace
+        args = SimpleNamespace(skip_datapack=False, datapack=None, datapack_dir=self.root / "var/datapack", account_id="acct",
+                               datapack_cash_tolerance=Decimal("0.0005"))
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        with patch.object(self.module, "ROOT", self.root), patch.object(self.module, "log", lambda *_a: None):
+            return self.module.datapack_gate(args, self.root / "run", self.account, self.session, previous)
+
+    def write_pack(self, name="pack.json"):
+        (self.root / "var/datapack" / name).write_text(json.dumps(self.pack), encoding="utf-8")
+
+    def test_matching_datapack_is_recorded_and_copied(self):
+        self.write_pack()
+        result = self.gate()
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["trade_date"], "2026-10-26")
+        self.assertTrue((self.root / "run/datapack.json").is_file())
+
+    def test_missing_mismatched_or_changed_datapack_stops_before_agents(self):
+        from etf_agent.competition import DataPackError
+        with self.assertRaisesRegex(DataPackError, "找不到"):
+            self.gate()
+        self.write_pack()
+        self.account.write_text(json.dumps({"cash": "1000000000", "positions": [{"symbol": "2330.TW", "shares": 1000}]}), encoding="utf-8")
+        with self.assertRaisesRegex(DataPackError, "不一致"):
+            self.gate()
+        with self.assertRaisesRegex(DataPackError, "續跑"):
+            self.gate(previous={"datapack_sha256": "0" * 64})
+
+    def test_explicit_skip_is_recorded(self):
+        self.assertEqual(self.gate(skip_datapack=True), {"status": "skipped"})
+
+    def test_rebase_flag_rebuilds_then_rechecks(self):
+        self.write_pack()
+        self.account.write_text(json.dumps({"cash": "1000000000", "positions": [{"symbol": "2330.TW", "shares": 1000}]}), encoding="utf-8")
+        rebuilt = {"rebase_run_id": "rebase-x", "prepare_run_id": "prepare-x-datapack",
+                   "account_snapshot": {"cash": "1000000000", "positions": []}}
+        with patch.object(self.module, "rebase_account_to_datapack", return_value=rebuilt) as rebase:
+            result = self.gate(rebase_to_datapack=True)
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["rebased"]["prepare_run_id"], "prepare-x-datapack")
+        rebase.assert_called_once()
+        with patch.object(self.module, "rebase_account_to_datapack", return_value=dict(rebuilt, account_snapshot={"cash": "1", "positions": []})):
+            with self.assertRaisesRegex(Exception, "不一致"):
+                self.gate(rebase_to_datapack=True)
+
+
+class MarketNewsSwitchTests(unittest.TestCase):
+    def test_no_market_news_flag_is_parsed_and_rejects_nothing_else(self):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_news", ROOT / "scripts" / "run_daily_pipeline.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (ROOT / "scripts" / "run_daily_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn('market_news_root=None if args.no_market_news else', source)
+        self.assertIn('"market_news": "disabled" if args.no_market_news else "enabled"', source)
+        with patch("sys.argv", ["run_daily_pipeline.py", "--no-market-news", "--help"]):
+            with self.assertRaises(SystemExit) as caught:
+                module.main()
+        self.assertEqual(caught.exception.code, 0)

@@ -93,6 +93,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         perception_result_path: Optional[Path] = None,
         fear_greed_root: Optional[Path] = None,
         fear_greed_approvals_path: Optional[Path] = None,
+        market_news_root: Optional[Path] = None,
     ) -> PipelineResult:
         result = PipelineResult(status="failed")
         try:
@@ -100,7 +101,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 result, snapshot_path, account_snapshot_path, trading_status_path,
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
                 perception_bundle_path, perception_result_path,
-                fear_greed_root, fear_greed_approvals_path,
+                fear_greed_root, fear_greed_approvals_path, market_news_root,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -115,6 +116,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
         perception_bundle_path: Optional[Path], perception_result_path: Optional[Path],
         fear_greed_root: Optional[Path] = None, fear_greed_approvals_path: Optional[Path] = None,
+        market_news_root: Optional[Path] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -128,6 +130,18 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         if perception_bundle_path is not None and perception_result_path is None:
             from .perception_stage import build_daily_perception
             perception_result_path = build_daily_perception(self, snapshot_path, perception_bundle_path)
+        market_news = None
+        if market_news_root is not None:
+            from etf_agent.perception.market_news import MarketNewsError
+            from .market_news_stage import build_daily_market_news
+            try:
+                with self._timed("market_news"):
+                    market_news = build_daily_market_news(
+                        self, service.read_json(snapshot_path, " ResearchSnapshot"), market_news_root, database_path)
+            except (MarketNewsError, DailyPipelineError) as error:
+                # 新聞只是次級輸入：失敗時降級為恐懼貪婪指標，不讓整天交不出決策。
+                self.save_artifact("market_news_error", {"error": str(error)})
+                self.log("[新聞] 未接入（%s），市場情緒改用恐懼貪婪指標" % error)
         self.log("[decision 1] 建立並驗證 DecisionInputBundle")
         # 公司事件由分析團隊交付，不另產生四子 Agent 的 ResearchResult。
         built = service.build_input_file(
@@ -135,6 +149,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             trading_status_path=trading_status_path, account_path=account_snapshot_path,
             perception_bundle_path=perception_bundle_path, perception_result_path=perception_result_path,
             fear_greed_root=fear_greed_root, fear_greed_approvals_path=fear_greed_approvals_path,
+            market_news_input=market_news,
         )
         if not built["valid"]:
             raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(built["errors"]))

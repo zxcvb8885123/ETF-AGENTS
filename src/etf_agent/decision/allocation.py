@@ -344,6 +344,10 @@ class AllocationOrderEngine:
             current, orders, projected_cash, effective
         )
         constraint_flags.extend(weight_flags)
+        orders, projected_cash, sector_flags = self._fit_sector_weights(
+            current, orders, projected_cash, effective
+        )
+        constraint_flags.extend(sector_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1
@@ -629,6 +633,100 @@ class AllocationOrderEngine:
                     "code": "RISK_STOCK_WEIGHT",
                     "detail": "單股硬性上限風險調整：預計股數由 %d 降為 %d（訂單意圖由程式標為 trim／exit，交易 Agent 的意圖未被改寫）" % (original[symbol], shares[symbol]),
                 })
+        fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
+        return fitted, cash, flags
+
+    def _fit_sector_weights(
+        self,
+        current: Mapping[str, int],
+        orders: List[Dict[str, object]],
+        cash: Decimal,
+        effective: Mapping[str, object],
+    ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
+        """產業權重在任一情境超過上限時，在 Guard 前由程式按整張減碼。
+
+        先減當日買進，再賣既有持股；同產業內先減信心等級低、情境市值大的股票。
+        上限為 1 時不動作，舊 Decision run 的重建結果不變。
+        """
+        raw_limit = decimal_value(self.policy["max_sector_weight"], "max_sector_weight")
+        if raw_limit >= 1:
+            return orders, cash, []
+        limit = raw_limit * LIMIT_HEADROOM
+        sectors = {str(k).upper(): str(v) for k, v in self.policy.get("sector_by_symbol", {}).items()}
+        tiers = (self.policy.get("position_sizing") or {}).get("conviction_by_symbol") or {}
+        fitted = list(orders)
+        shares = dict(current)
+        for order in fitted:
+            symbol = str(order["symbol"])
+            shares[symbol] = shares.get(symbol, 0) + (1 if order["side"] == "buy" else -1) * int(order["shares"])
+        original = dict(shares)
+        lot = int(effective["lot_size"])
+        from .risk import ScenarioEngine
+
+        scenarios = ScenarioEngine(self.context.bundle, self.policy)
+        # 每輪至少減一張，總張數有限，迴圈必定結束；上限只防程式錯誤造成無窮迴圈。
+        for _ in range(10000):
+            result = scenarios.run({"proposal_id": "risk-fit", "order_proposal": {"orders": fitted}})
+            worst: Optional[Tuple[Decimal, str, Dict[str, Decimal]]] = None
+            for scenario in result["scenarios"]:
+                nav = decimal_value(scenario["nav"], "scenario.nav")
+                if nav <= 0:
+                    raise DecisionToolError("產業限額調整後情境 NAV 必須大於 0")
+                values: Dict[str, Decimal] = {}
+                by_symbol: Dict[str, Decimal] = {}
+                for row in scenario["positions"]:
+                    symbol = str(row["symbol"]).upper()
+                    if symbol in sectors:
+                        value = decimal_value(row["assumed_value"], "assumed_value")
+                        by_symbol[symbol] = value
+                        values[sectors[symbol]] = values.get(sectors[symbol], Decimal("0")) + value
+                for sector, value in sorted(values.items()):
+                    excess = value - nav * limit
+                    if excess > 0 and (worst is None or excess > worst[0]):
+                        worst = (excess, sector, by_symbol)
+            if worst is None:
+                break
+            excess, sector, by_symbol = worst
+            buying = {str(o["symbol"]) for o in fitted if o["side"] == "buy"}
+            members = [s for s in shares if shares[s] > 0 and sectors.get(s) == sector]
+            if not members:
+                # 部分成交情境下已無可再減的部位；交由 Guard 判定，不宣稱已修正。
+                break
+            symbol = min(members, key=lambda s: (
+                0 if s in buying else 1,
+                -CONVICTION_LEVELS.index(tiers[s]) if s in tiers else 0,
+                -by_symbol.get(s, Decimal("0")), s,
+            ))
+            lots = int((excess / (self.prices[symbol] * lot)).to_integral_value(rounding=ROUND_CEILING))
+            existing = next((item for item in fitted if item["symbol"] == symbol), None)
+            if existing is not None and existing["side"] == "buy":
+                cut = min(lots, int(existing["shares"]) // lot) * lot
+                replacement = self._order(symbol, "buy", int(existing["shares"]) - cut, str(existing["intent"]), effective) if int(existing["shares"]) > cut else None
+            else:
+                cut = min(max(lots, 1), shares[symbol] // lot) * lot
+                sold = (int(existing["shares"]) if existing is not None else 0) + cut
+                sell_intent = str(existing["intent"]) if existing else "hold"
+                if sell_intent == "hold":
+                    sell_intent = "trim" if shares[symbol] - cut > 0 else "exit"
+                replacement = self._order(symbol, "sell", sold, sell_intent, effective)
+            if existing is not None:
+                fitted.remove(existing)
+                cash -= decimal_value(existing["net_cash_impact"], "net_cash_impact")
+            if replacement is not None:
+                fitted.append(replacement)
+                cash += decimal_value(replacement["net_cash_impact"], "net_cash_impact")
+            shares[symbol] -= cut
+        else:
+            raise DecisionToolError("產業限額調整未收斂")
+        flags = [
+            {
+                "symbol": symbol,
+                "code": "RISK_SECTOR_WEIGHT",
+                "detail": "產業權重上限風險調整（%s）：預計股數由 %d 降為 %d（訂單意圖由程式標為 trim／exit，交易 Agent 的意圖未被改寫）"
+                % (sectors.get(symbol, "UNCLASSIFIED"), original[symbol], shares[symbol]),
+            }
+            for symbol in sorted(shares) if shares[symbol] != original[symbol]
+        ]
         fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
         return fitted, cash, flags
 

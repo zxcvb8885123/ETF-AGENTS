@@ -291,6 +291,40 @@ class VirtualAccountService:
         self.repository.save(run_id, {"snapshot": snapshot, "state": prepared_state, "account_snapshot": account_snapshot, "corporate_actions": {"items": actions}}, prepared_state)
         return {"state": prepared_state, "account_snapshot": account_snapshot, "run_id": run_id}
 
+    def rebase(self, positions: Mapping[str, Mapping[str, object]], cash: object, as_of: str, source: Mapping[str, object], run_id: str) -> Mapping[str, object]:
+        """以主辦方結算結果取代尚未產生決策的 prepare 狀態；保留雜湊鏈，舊狀態不改寫。
+
+        positions 為 {symbol: {"shares", "close_price"}}；成本以結算收盤價代替（主辦方不提供成本）。
+        """
+        current = self.repository.latest()
+        state = current["state"]
+        if state.get("provenance", {}).get("type") != "prepared":
+            raise VirtualAccountError("只能在新建立、尚未產生決策的 prepare 狀態上依結算結果重建")
+        parse_time(as_of, "rebase.as_of")
+        settled = parse_decimal(cash, "rebase.cash", error=VirtualAccountError)
+        rows, prices = [], {}
+        for symbol, row in sorted(positions.items()):
+            shares = row.get("shares")
+            if not isinstance(shares, int) or isinstance(shares, bool) or shares <= 0:
+                raise VirtualAccountError("%s 股數必須是正整數" % symbol)
+            price = parse_decimal(row.get("close_price"), "%s.close_price" % symbol, error=VirtualAccountError)
+            if price <= 0:
+                raise VirtualAccountError("%s 缺少有效結算收盤價，不能重建成本" % symbol)
+            rows.append({"symbol": symbol, "shares": shares, "cost_basis": str(price)})
+            prices[symbol] = str(price)
+        ledger = AccountLedger({"settled_cash": str(settled), "unsettled_cash": "0", "positions": rows})
+        marked = ledger.snapshot(prices, str(source.get("as_of_date") or ""))
+        next_state = self._state(
+            account_id=self.repository.root.name, sequence=int(state["sequence"]) + 1,
+            parent_state_id=state["state_id"], as_of=as_of,
+            settled_cash=settled, unsettled_cash=Decimal(0), pending_settlements=[],
+            positions=marked["positions"], nav=Decimal(marked["nav"]),
+            provenance={"type": "datapack_rebase", "parent_run_id": current["run_id"], "replaced_positions": state["positions"],
+                        "replaced_settled_cash": state["settled_cash"], "replaced_unsettled_cash": state["unsettled_cash"], **dict(source)},
+        )
+        self.repository.save(run_id, {"source": dict(source), "state": next_state}, next_state)
+        return {"run_id": run_id, "state": next_state}
+
     def apply_decision(self, decision_repository: Path, decision_run_id: str, execution_market_path: Path, close_market_path: Path, settlement_date: str, run_id: str) -> Mapping[str, object]:
         prepared = self.repository.latest()
         state = prepared["state"]

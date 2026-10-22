@@ -75,6 +75,7 @@ class PortfolioDecisionApplicationService:
         perception_result_path: Optional[Path] = None,
         fear_greed_root: Optional[Path] = None,
         fear_greed_approvals_path: Optional[Path] = None,
+        market_news_input: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。
 
@@ -125,6 +126,7 @@ class PortfolioDecisionApplicationService:
                 else None
             ),
             market_fear_greed_input=fear_greed,
+            market_news_input=market_news_input,
         )
         bundle = builder.build()
         errors = builder.validate(bundle)

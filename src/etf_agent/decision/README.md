@@ -81,6 +81,7 @@ flowchart TD
 - 修正循環最多三次；硬性規則失敗一律拒絕。
 - 單股硬性權重上限的減碼一律由程式執行。
 - 減碼賣單意圖由程式標為 `trim` 或 `exit`，並留下 `RISK_STOCK_WEIGHT` 旗標。
+- 產業權重在任一情境超過 `max_sector_weight` 時，`_fit_sector_weights` 同樣在 Guard 前按整張減碼（先減買單、再賣持股；同產業先減低信心、大市值），留下 `RISK_SECTOR_WEIGHT` 旗標；上限為 1 時不動作。
 - Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。
 - 舊版 1.0 debate 已移除，Finalizer 與 Validator 遇到一律拒絕。
 - Decision artifacts 使用嚴格欄位白名單與可重算內容雜湊。

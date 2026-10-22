@@ -89,7 +89,7 @@ Decision run 的 artifact 為 `momentum`、`debate`（`ResearchDebateBundle` 2.0
 }
 ```
 
-`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。若既有 `hold` 持股或候選在配置及壓力情境（含部分成交）下超過單股硬上限，程式會先按整張減少買單或產生必要賣單，`RISK_STOCK_WEIGHT` 保留原始意圖與減碼後股數；這是確定性風控，不宣稱交易 Agent 主動提出賣出。無法同時滿足其他硬規則時仍由 Guard 拒絕。內容必須可由原始帳戶、cutoff 行情、TradeDecision 與 DecisionPolicy 完整重算。
+`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。若既有 `hold` 持股或候選在配置及壓力情境（含部分成交）下超過單股硬上限，程式會先按整張減少買單或產生必要賣單，`RISK_STOCK_WEIGHT` 保留原始意圖與減碼後股數；產業權重超過 `max_sector_weight` 時同樣由程式按整張減碼並留下 `RISK_SECTOR_WEIGHT`。這些是確定性風控，不宣稱交易 Agent 主動提出賣出。無法同時滿足其他硬規則時仍由 Guard 拒絕。內容必須可由原始帳戶、cutoff 行情、TradeDecision 與 DecisionPolicy 完整重算。
 
 ## ScenarioResult、GuardResult 與 RiskReview
 

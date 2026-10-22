@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.data import TradingCalendar, calendar_from_capture, latest_calendar_capture_before  # noqa: E402
 from etf_agent.decision.contracts import DecisionInputValidator, canonical_sha256, decision_bundle_sha256  # noqa: E402
-from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService  # noqa: E402
+from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService, active_account_id  # noqa: E402
 from etf_agent.virtual_account.daily import DailyAccountRunner  # noqa: E402
 
 
@@ -43,7 +43,7 @@ def load_calendar(captures_root: Path, limit_time: str) -> TradingCalendar:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=Path, default=ROOT / "artifacts" / "ledger")
-    parser.add_argument("--account-id", default="ai-cup-2026")
+    parser.add_argument("--account-id", help="預設讀取 config/active_account.json")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="只使用一次設定本金建立空倉虛擬帳戶")
@@ -90,11 +90,41 @@ def main(argv=None) -> int:
             daily.add_argument("--run-id", required=True)
             daily.add_argument("--account-output", type=Path, required=True)
 
+    opening = commands.add_parser("open-competition", help="比賽第一天開全新帳戶並設為使用中；舊帳戶保留不刪")
+    opening.add_argument("--new-account-id", required=True)
+    opening.add_argument("--datapack", type=Path, help="第一個交易日的主辦方 DataPack；提供時核對全現金、0 檔且金額等於規則本金")
+
+    check = commands.add_parser("reconcile", help="不跑 Agent，用主辦方 DataPack 檢查最新帳戶快照；一致回傳 0，不一致回傳 2")
+    check.add_argument("--datapack", type=Path, required=True)
+    check.add_argument("--cash-tolerance", default=None, help="現金差容忍比率（分母 nav_tradable）；預設 0.0005")
+
     commands.add_parser("status", help="顯示已驗證的最新帳戶狀態")
     verify = commands.add_parser("verify", help="驗證最新帳本 run 與 manifest")
     verify.add_argument("--run-id")
 
     args = parser.parse_args(argv)
+    if args.command == "open-competition":
+        from etf_agent.competition import open_competition_account
+        try:
+            result = open_competition_account(ROOT, args.new_account_id, datapack_path=args.datapack)
+        except (VirtualAccountError, OSError, ValueError) as error:
+            print("開新帳戶失敗：%s" % error, file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    args.account_id = args.account_id or active_account_id(ROOT)
+    if args.command == "reconcile":
+        from decimal import Decimal
+        from etf_agent.competition import reconcile_account
+        from etf_agent.competition.datapack import DEFAULT_CASH_TOLERANCE_RATE
+        try:
+            result = reconcile_account(ROOT, args.account_id, args.datapack,
+                                       Decimal(args.cash_tolerance) if args.cash_tolerance else DEFAULT_CASH_TOLERANCE_RATE)
+        except (VirtualAccountError, OSError, ValueError, ArithmeticError) as error:
+            print("對帳失敗：%s" % error, file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["status"] == "matched" else 2
     repository = VirtualAccountRepository(args.repository, args.account_id)
     service = VirtualAccountService(repository)
     try:

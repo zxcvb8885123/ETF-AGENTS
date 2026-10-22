@@ -6,6 +6,7 @@
 """
 
 import argparse
+import shutil
 try:
     import fcntl
 except ImportError:  # Windows 以 msvcrt 鎖定同一執行鎖。
@@ -17,6 +18,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +26,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.decision_delivery import build_delivery, save_failure
 from etf_agent.decision_delivery.repository import publication_lock
-from etf_agent.competition import DPlanError, DPlanExportService
+from etf_agent.competition import DataPackError, DPlanError, DPlanExportService, find_datapack, load_datapack, load_universe, rebase_account_to_datapack, reconcile
+from etf_agent.competition.datapack import DEFAULT_CASH_TOLERANCE_RATE
+from etf_agent.virtual_account import active_account_id
 
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
@@ -340,13 +344,51 @@ def _deliver_saved_run(root: Path, name: str) -> dict:
     return delivery
 
 
+def datapack_gate(args, run_dir: Path, account_path: Path, session, previous, snapshot_path: Path = None, stamp: str = "") -> dict:
+    """本次目標交易日的 DataPack 必須與帳本一致；結果寫入 pipeline.json 供 D-Plan 綁定。"""
+    if args.skip_datapack:
+        log("[對帳] 依 --skip-datapack 略過 DataPack 對帳；D-Plan 會記錄為略過")
+        return {"status": "skipped"}
+    team_id = json.loads((ROOT / "config" / "competition_profile.json").read_text(encoding="utf-8")).get("team_id")
+    trade_date = DPlanExportService.trade_date({"target_session": session})
+    log("[對帳] 主辦方 DataPack（%s，交易日 %s）" % (team_id, trade_date))
+    loaded = load_datapack(args.datapack) if args.datapack else find_datapack(args.datapack_dir, team_id, trade_date)
+    if isinstance(previous, dict) and previous.get("datapack_sha256") and previous["datapack_sha256"] != loaded["raw_sha256"]:
+        raise DataPackError("續跑時 DataPack 與原本對帳的檔案不同；請不帶 --resume 重新執行")
+    shutil.copyfile(loaded["path"], run_dir / "datapack.json")
+    account = json.loads(account_path.read_text(encoding="utf-8"))
+    universe = load_universe(ROOT / "data" / "official_universe.csv")
+    result = reconcile(loaded, account, team_id=team_id, trade_date=trade_date, universe=universe,
+                       cash_tolerance_rate=args.datapack_cash_tolerance)
+    if result["status"] == "mismatch" and getattr(args, "rebase_to_datapack", False):
+        log("[對帳] 不一致，依 --rebase-to-datapack 以 DataPack 重建帳本：%s" % "；".join(result["problems"]))
+        rebased = rebase_account_to_datapack(ROOT, args.account_id, loaded, snapshot_path,
+                                             "prepare-%s-datapack" % stamp, account_path, universe)
+        result = reconcile(loaded, rebased["account_snapshot"], team_id=team_id, trade_date=trade_date, universe=universe,
+                           cash_tolerance_rate=args.datapack_cash_tolerance)
+        result["rebased"] = {"rebase_run_id": rebased["rebase_run_id"], "prepare_run_id": rebased["prepare_run_id"]}
+    for warning in result["warnings"]:
+        log("[對帳] 注意：%s" % warning)
+    if result["status"] != "matched":
+        raise DataPackError("帳本與主辦方 DataPack 不一致，已在呼叫 Agent 前停止：%s。確認資料包是最新的後，"
+                            "加 --rebase-to-datapack 重新執行即可依資料包重建帳本" % "；".join(result["problems"]))
+    log("[對帳] 一致：持股 %d 檔，現金差 %s 元" % (len(result["sellable_shares"]), result["cash"]["difference"]))
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--perception", nargs=2, type=Path, metavar=("BUNDLE", "RESULT"),
         help="已核准授權且同 cutoff 的情緒與共識資料包，以及與其成對的已驗證結果；兩個檔案須同時提供",
     )
-    parser.add_argument("--account-id", default="ai-cup-2026")
+    parser.add_argument("--account-id", help="預設讀取 config/active_account.json")
+    parser.add_argument("--datapack", type=Path, help="指定本次要對帳的主辦方 DataPack；預設在 --datapack-dir 找本隊、本交易日最新的一份")
+    parser.add_argument("--datapack-dir", type=Path, default=ROOT / "var" / "datapack", help="放主辦方 DataPack 的資料夾（預設 var/datapack）")
+    parser.add_argument("--no-market-news", action="store_true", help="不接入全市場新聞（新聞步驟出問題時的緊急開關）；市場情緒改用恐懼貪婪指標")
+    parser.add_argument("--rebase-to-datapack", action="store_true", help="帳本與 DataPack 不一致時，以 DataPack 重建帳本並重建決策前快照（會重抓資料建立新 Snapshot）；舊帳本狀態保留")
+    parser.add_argument("--skip-datapack", action="store_true", help="明確略過 DataPack 對帳（會記錄在 pipeline.json）；比賽期間不要使用")
+    parser.add_argument("--datapack-cash-tolerance", default=str(DEFAULT_CASH_TOLERANCE_RATE), help="帳本與 DataPack 現金差的容忍比率（分母 nav_tradable），預設 %s" % DEFAULT_CASH_TOLERANCE_RATE)
     parser.add_argument("--delivery-only", metavar="DAILY_RUN_ID", help="只重建既有每日 run 的最終交付，不執行資料準備或 Agent")
     parser.add_argument("--skip-data", action="store_true", help="沿用既有 Snapshot 與帳戶快照，不執行 ./start.sh daily")
     parser.add_argument("--force", action="store_true", help="休市日（週末或官方開休市日期表列出者）或當日已完成仍執行")
@@ -373,6 +415,17 @@ def main() -> int:
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
     parser.add_argument("--max-budget-usd", type=float, help="Claude CLI 單次子 Agent 的估算用量上限；預設 3 美元")
     args = parser.parse_args()
+    args.account_id = args.account_id or active_account_id(ROOT)
+    try:
+        args.datapack_cash_tolerance = Decimal(args.datapack_cash_tolerance)
+    except InvalidOperation:
+        parser.error("--datapack-cash-tolerance 必須是數值")
+    if not args.datapack_cash_tolerance.is_finite() or args.datapack_cash_tolerance < 0:
+        parser.error("--datapack-cash-tolerance 必須是非負有限數值")
+    if args.skip_datapack and args.datapack:
+        parser.error("--skip-datapack 不能和 --datapack 同時使用")
+    if args.rebase_to_datapack and (args.skip_datapack or args.resume is not None):
+        parser.error("--rebase-to-datapack 不能和 --skip-datapack 或 --resume 同時使用")
     if args.analyst_model == "inherit":
         args.analyst_model = None
     elif args.analyst_model is None and args.agent_cli == "claude":
@@ -474,14 +527,17 @@ def main() -> int:
     if resumable is not None:
         # Agent 任務名與 envelope 都含 decision run ID；續跑必須沿用同一個，已驗證輸出才對得上。
         decision_run_id = resumed_decision_run_id(run_dir) or decision_run_id
-    original_start = json.loads(summary_path.read_text(encoding="utf-8"))["started_at"] if resumable is not None else now.isoformat()
-    summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli}
+    previous_summary = json.loads(summary_path.read_text(encoding="utf-8")) if resumable is not None else {}
+    original_start = previous_summary["started_at"] if resumable is not None else now.isoformat()
+    summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli,
+               "market_news": "disabled" if args.no_market_news else "enabled"}
     if resumable is not None:
         summary["resumed_at"] = now.isoformat()
     if not args.skip_data:
         trade_date = expected_latest_trade_date(captures_root, now)
         latest_snapshot = ROOT / "artifacts" / "data" / "research_snapshot_latest.json"
-        fetched = data_already_fetched(
+        # 依 DataPack 重建時一律建立新 Snapshot，cutoff 才會晚於資料包產生時間。
+        fetched = not args.rebase_to_datapack and data_already_fetched(
             latest_snapshot, ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json", trade_date,
         )
         if fetched and refresh_before_deadline(captures_root, latest_snapshot, now):
@@ -544,6 +600,11 @@ def main() -> int:
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
 
+        # 在呼叫任何子 Agent 前對帳，對不上就停，不耗用量。
+        summary["datapack"] = datapack_gate(args, run_dir, account_path, session, previous_summary.get("datapack"), snapshot_path, stamp)
+        account_run_id = prepared_account_run(args.account_id)
+        write_json(summary_path, summary)
+
         log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s）" % args.agent_cli)
         def make_runner(model):
             return (ClaudeAgentRunner(ROOT, model=model, max_budget_usd=args.max_budget_usd or 3.0)
@@ -571,6 +632,7 @@ def main() -> int:
             perception_bundle_path=perception_bundle, perception_result_path=perception_result,
             fear_greed_root=ROOT / "artifacts" / "data" / "market_fear_greed",
             fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
+            market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
         )
         summary.update(
             {

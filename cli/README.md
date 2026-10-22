@@ -27,12 +27,12 @@
 | `sentiment_research.py` | 市場情緒、分析師共識與驗證 |
 | `research_report.py` | Research Report V0 建立與重建驗證 |
 | `portfolio_decision.py` | 動能、配置、風控、最終決策與封存 |
-| `virtual_account.py` | `ensure-init` 首次開帳或驗證既有帳本；其餘命令處理決策前快照與模擬成交 |
-| `dplan.py` | 從封存決策自動整理 D-Plan context、匯出 v4.3 候選（核對 prepare-day 帳本）與本地結構檢查 |
+| `virtual_account.py` | `ensure-init` 首次開帳或驗證既有帳本；`open-competition` 比賽第一天開新帳戶並切換使用中帳戶；`reconcile` 不跑 Agent、直接用資料包檢查最新帳戶快照；其餘命令處理決策前快照與模擬成交。`--account-id` 預設讀 `config/active_account.json` |
+| `dplan.py` | 從封存決策自動整理 D-Plan context、匯出 v4.3 候選（核對 prepare-day 帳本與資料包對帳）、本地結構檢查，以及上傳前用主辦方資料包檢查（`check-datapack`） |
 | `decision_delivery.py` | 從封存 Decision run 建立風控後中文 JSON／Markdown；重建驗證及拒絕診斷，不產 D-Plan |
 | `fundamental_research.py` | 基本面研究的唯讀資料包、指標、結果驗證與封存 |
 | `fundamental_repair.py` | 資料不足時補抓官方當期與 FinMind 去年同期累計財報；不執行分析或交易 Agent |
-| `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）與已判讀輸入接入（`integrate`） |
+| `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）、已判讀輸入接入（`integrate`）與來源使用核對（`review`） |
 | `market_fear_greed.py` | 台股恐懼貪婪指標來源補抓（`capture`）與截止前分數檢視（`show`） |
 | `news_sentiment.py` | 核對資料庫新聞候選、保存原頁版本並驗證全量情緒標註 |
 | `market_context_probe.py` | 補抓公開大盤成交、指數與法人資料（交易背景），不產生情緒結論 |

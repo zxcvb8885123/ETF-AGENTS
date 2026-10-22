@@ -283,11 +283,8 @@ def build_analyst_brief(
         }
     if analyst == "event" and event_market_scope:
         from .market_scope import market_sentiment_channel
+        # 全市場新聞已由獨立步驟逐則標註並由程式重建；這裡只給結果，不再把原文複製進每一批。
         brief["market_sentiment"] = market_sentiment_channel(bundle)
-        if "market_news_input" in bundle:
-            from etf_agent.perception.market_news import prepare
-            pack = bundle["market_news_input"]["bundle"]
-            brief["market_news"] = prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"])
     return brief
 
 

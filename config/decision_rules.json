@@ -1,8 +1,8 @@
 {
-  "version": "decision-rules-2026-09-25",
+  "version": "decision-rules-2026-10-23",
   "source_url": "config/competition_rules.json",
   "published_at": "2026-09-14T00:00:00+08:00",
-  "available_at": "2026-09-14T00:00:00+08:00",
+  "available_at": "2026-10-23T03:40:00+08:00",
   "required_benchmark_ids": [],
   "lot_size": 1000,
   "commission_rate": "0.001425",
@@ -12,7 +12,7 @@
   "special_weight_limits": {
     "2330.TW": "0.25"
   },
-  "max_sector_weight": "1",
+  "max_sector_weight": "0.35",
   "min_positions": 20,
   "max_positions": 30,
   "cash_weight_must_be_below": "0.25",

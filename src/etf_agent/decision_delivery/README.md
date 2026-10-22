@@ -10,7 +10,7 @@
 | `contracts.py` | 交付契約的錯誤型別 | `DeliveryError` |
 | `provider.py` | 只載入經 manifest 及完整決策鏈驗證的封存 | `verify_inputs`、`load_verified` |
 | `builder.py` | 由決策封存建立同源閱讀資料 | `build_report` |
-| `renderer.py` | 現行固定模板的中文 Markdown，判斷皆引用原文 | `render_report`、`renderer_for`、`cell` |
+| `renderer.py` | 現行固定模板（第 3 版：金額單位顯示 TWD、估值時間轉台北時間顯示，封存值不改）的中文 Markdown，判斷皆引用原文；另保留第 2 版只驗證舊交付 | `render_report`、`render_report_v2`、`renderer_for`、`cell` |
 | `renderer_v1.py` | 第 1 版樣板，只用來驗證舊交付 | `render_report_v1` |
 | `tools.py` | 確定性格式與交易時鐘工具 | `trade_date`、`cell`、`percent` |
 | `validator.py` | 以原始封存重建 JSON 與 Markdown 並比對 | `validate_report` |

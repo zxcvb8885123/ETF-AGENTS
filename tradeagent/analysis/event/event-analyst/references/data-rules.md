@@ -17,6 +17,6 @@
 
 ## 全市場 RSS 接入
 
-先依 [全市場新聞收集與接入](../../../../../docs/market_news_integration.md) 補抓來源。每個查詢視窗保留全部取得項目，不挑選有利材料。逐項交付相關性、看法與中文理由，綜合判讀引用市場項目。核對 source_approvals 的使用範圍與真實依據；目前真實 RSS 比賽使用權未確認，不自動改為 approved。沒有歷史存檔的日子不能用今天的 RSS 回填。
+先依 [全市場新聞收集與接入](../../../../../docs/market_news_integration.md) 補抓來源。每個查詢視窗保留全部取得項目，不挑選有利材料。逐項交付相關性、看法與中文理由，綜合判讀引用市場項目。核對 source_approvals 的使用範圍與真實依據；中央社、自由時報已於 2026-10-23 由使用者核准，核准紀錄由程式從資料庫帶入，不得自行改寫狀態。每日決策時，新聞已由獨立步驟逐則標註並由程式重建，事件分析的輸入只有結果 `market_sentiment`，不要重新標註。沒有歷史存檔的日子不能用今天的 RSS 回填。
 
 缺少日期的新聞時，執行 `cli/market_news.py backfill --start-date YYYY-MM-DD --end-date YYYY-MM-DD --database var/etf_agent.db --output-root artifacts/market_news_history`，走完指定來源的實際分頁，再查發布時間、摘要及取得時間，全部判讀後以1.1資料包接入。不要只重抓最近RSS，也不要把今天取得的原頁回填成過去版本。使用規範查核結果須具體列出允許範圍及依據，不以「還需核對」或「抓不到」代替。詳見 [補抓與規範結果](../../../../../docs/market_news_history.md)。

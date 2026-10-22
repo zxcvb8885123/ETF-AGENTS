@@ -9,6 +9,8 @@
 | `__init__.py` | 匯出公開介面 | 見下方 |
 | `context.py` | 由已驗證決策 run 確定性投影出 D-Plan context | `DPlanContextBuilder`（`build`） |
 | `dplan.py` | D-Plan v4.3 匯出與本地驗證、帳本綁定檢查、載入決策 run | `DPlanError`、`DPlanValidator`、`DPlanExporter`、`verify_account_binding`、`load_decision_run` |
+| `datapack.py` | 主辦方 DataPack 嚴格解析、依隊伍與交易日尋找、與帳本快照對帳、賣出上限與上傳前 D-Plan 檢查 | `DataPackError`、`parse_datapack`、`load_datapack`、`find_datapack`、`load_universe`、`reconcile`、`check_sells`、`check_dplan_against_datapack`、`reconcile_account` |
+| `account_opening.py` | 比賽第一天開全新帳戶（可用第一天 DataPack 核對全現金、0 檔與本金）並切換使用中帳戶；對帳不一致時依 DataPack 重建帳本並重建決策前快照 | `open_competition_account`、`rebase_account_to_datapack` |
 | `service.py` | 從已封存的每日 run 產物編排候選匯出；D-Plan 以原子方式取代同交易日舊檔，context 與 CLI 仍以新建為主、拒絕覆寫 | `DPlanExportService`（`code_version`、`trade_date`、`output_paths`、`current_account_run_id`、`export`、`export_latest`）、`read_object`、`write_new_json`、`replace_json` |
 
 ## 對外介面
@@ -35,9 +37,9 @@ flowchart LR
 
 ## 對應的 CLI／scripts／測試
 
-- CLI：`cli/dplan.py`（`build-latest`、`build`、`validate`、`build-context`）；每日 `run` 在決策為 `approved`／`no_trade`、競賽設定已確認且帳本綁定通過時自動嘗試匯出。
+- CLI：`cli/dplan.py`（`build-latest`、`build`、`validate`、`build-context`、`check-datapack`）、`cli/virtual_account.py open-competition`；每日 `run` 在決策為 `approved`／`no_trade`、競賽設定已確認、帳本綁定與 DataPack 對帳都通過時自動嘗試匯出。
 - scripts：`scripts/run_daily_pipeline.py`。
-- 測試：`tests/account/test_competition_dplan.py`。
+- 測試：`tests/account/test_competition_dplan.py`、`tests/account/test_datapack.py`、`tests/automation/test_daily_script.py`（對帳關卡）。
 
 ## 規則與邊界
 
@@ -46,3 +48,5 @@ flowchart LR
 - D-Plan 失敗不否定已封存決策，也不阻止中文報告。
 - D-Plan 失敗原因寫入同一次 `pipeline.json`。
 - 主辦方伺服器驗證與上傳由人工執行，不自動下單或送件。
+- DataPack 是不受信任的外部檔：欄位嚴格白名單、`null` 不當空陣列；持股股數必須與帳本完全相同，現金依容忍比率比較，對不上一律停止；只有明確加 `--rebase-to-datapack` 才以 DataPack 重建帳本，舊狀態保留在雜湊鏈。
+- 開新帳戶只建立新的帳本資料夾並改指標，不刪除或改寫舊帳戶。

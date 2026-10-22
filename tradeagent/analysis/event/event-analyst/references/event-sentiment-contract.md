@@ -14,6 +14,6 @@ outlook 與 event_outlook 必須相同，僅表示該公司事件的結果，使
 
 ### 全市場新聞資料包接入
 
-DecisionInputBundle 可包含 market_news_input 的 bundle/result 成對資料。market_sentiment 由來源回應、完整標籤及綜合 findings 重建，不能改寫已驗證結果。RSS Provider 已接入；真實來源的比賽使用權尚未確認，所以本次正式結果 unavailable，新聞診斷結果只供研究測試。詳細資料契約見 [接入說明](../../../../../docs/market_news_integration.md)。
+DecisionInputBundle 可包含 market_news_input 的 bundle/result 成對資料。market_sentiment 由來源回應、完整標籤及綜合 findings 重建，不能改寫已驗證結果。RSS Provider 已接入每日決策鏈，來源已於 2026-10-23 核准；正式結果是否可用由程式依樣本數（至少 5 則獨立市場新聞）與媒體數（至少 2 家）決定，不足時 unavailable，改用恐懼貪婪指標。詳細資料契約見 [接入說明](../../../../../docs/market_news_integration.md)。
 
 市場新聞1.1資料包可包含RSS與歷史原頁。原頁必須重建發布／取得時間與標題摘要；同媒體不同管道不增加來源數。舊1.0封存結果維持原重建，不改寫。1.1只交代具體查詢範圍，不固定加入「尚不能涵蓋全部歷史」警語。

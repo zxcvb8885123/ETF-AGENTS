@@ -25,6 +25,12 @@ if [ -x "$HOME/.opencode/bin/opencode" ]; then
   export PATH
 fi
 
+# 使用中的帳戶集中在 config/active_account.json；比賽第一天開新帳戶時由 open-competition 改寫。
+active_account_id() {
+  ACTIVE_ID=$(sed -n 's/^[[:space:]]*"account_id":[[:space:]]*"\([A-Za-z0-9._-]*\)".*/\1/p' config/active_account.json 2>/dev/null | sed -n '1p')
+  echo "${ACTIVE_ID:-ai-cup-2026}"
+}
+
 MODE=${1:-dashboard}
 if [ "$#" -gt 0 ]; then
   shift
@@ -111,7 +117,7 @@ else
 fi
 
 if [ "$MODE" = "dashboard" ]; then
-  ACCOUNT_ID=${ACCOUNT_ID:-ai-cup-2026}
+  ACCOUNT_ID=${ACCOUNT_ID:-$(active_account_id)}
   export ACCOUNT_ID
   mkdir -p artifacts/ledger artifacts/data
   echo "[2/3] 驗證既有帳戶或建立新帳戶：$ACCOUNT_ID"
@@ -257,8 +263,11 @@ if [ "$DAILY_RUN" -eq 1 ]; then
       if [ "$FINMIND_EXIT" -eq 0 ] || [ "$FINMIND_EXIT" -eq 2 ]; then
         docker compose run --rm agent python3 scripts/finmind_schedule.py done --dataset "$DATASET" --start "$FINMIND_START"
       fi
-      if [ "$FINMIND_EXIT" -ne 0 ]; then
-        echo "FinMind ${DATASET} 候選擷取未完整（exit ${FINMIND_EXIT}）；不影響正式 Snapshot。" >&2
+      if [ "$FINMIND_EXIT" -eq 2 ]; then
+        # 預期中的部分空白不標成整體失敗，否則排程每天都回報失敗，真正的錯誤會被淹沒。
+        echo "FinMind ${DATASET} 部分公司尚無資料列（exit 2，屬預期）；不影響正式 Snapshot。"
+      elif [ "$FINMIND_EXIT" -ne 0 ]; then
+        echo "FinMind ${DATASET} 候選擷取失敗（exit ${FINMIND_EXIT}）；不影響正式 Snapshot。" >&2
         DATA_STATUS=2
       fi
       stage_time "FinMind ${DATASET}"
@@ -282,6 +291,18 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     DATA_STATUS=2
   fi
   stage_time "恐懼貪婪指標"
+  # 全市場新聞也必須在 cutoff 前抓；失敗只讓市場情緒改用恐懼貪婪指標，不中止每日流程。
+  echo "[3b+/4] 抓取全市場新聞 RSS（中央社、自由時報）"
+  set +e
+  docker compose run --rm agent python3 cli/market_news.py capture \
+    --database var/etf_agent.db --output-root artifacts/data/market_news >/dev/null
+  MARKET_NEWS_EXIT=$?
+  set -e
+  if [ "$MARKET_NEWS_EXIT" -ne 0 ]; then
+    echo "全市場新聞抓取失敗（exit ${MARKET_NEWS_EXIT}）；市場情緒改用恐懼貪婪指標。" >&2
+    DATA_STATUS=2
+  fi
+  stage_time "全市場新聞"
   if [ "$DATA_ONLY" -eq 1 ]; then
     echo "[4/4] 顯示資料狀態"
     docker compose run --rm agent python3 scripts/data_status.py
@@ -310,7 +331,7 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     --decision-cutoff "$DAILY_CUTOFF" \
     --output artifacts/data/research_snapshot_latest.json
   stage_time "研究 Snapshot"
-  ACCOUNT_ID=${ACCOUNT_ID:-ai-cup-2026}
+  ACCOUNT_ID=${ACCOUNT_ID:-$(active_account_id)}
   ACCOUNT_RUN_ID=${ACCOUNT_RUN_ID:-prepare-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
   echo "[3c+/4] 推進虛擬帳本：以收盤價結算前一份決策，並建立決策前帳戶快照"
   set +e
