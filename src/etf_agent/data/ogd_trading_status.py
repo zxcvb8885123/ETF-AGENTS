@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 from etf_agent.core import canonical_sha256, parse_aware_time
 from etf_agent.core.run_layout import list_run_dirs
 from .evidence import TAIPEI_TIMEZONE
+from .inferred_closures import load_inferred_closed_days
 from .ogd_candidate_facts import extract_ogd_candidate_facts
 from .trading_calendar import DECISION_DEADLINE, TradingCalendar, TradingCalendarError
 from .trading_status import DEFAULT_REQUIRED_CATEGORIES, TradingStatusError, TradingStatusRequest
@@ -106,7 +107,12 @@ def calendar_from_capture(capture_dir: Path) -> TradingCalendar:
     if hashlib.sha256(raw).hexdigest() != entry.get("sha256"):
         raise TradingCalendarError("開休市日期表原始檔雜湊不一致：%s" % Path(capture_dir).name)
     facts, _ = extract_ogd_candidate_facts(CALENDAR_SOURCE_ID, raw, fetched_at=str(entry["fetch_finished_at"]))
-    return TradingCalendar.from_ogd_facts(facts, str(entry["sha256"]))
+    return _with_inferred_closures(TradingCalendar.from_ogd_facts(facts, str(entry["sha256"])), Path(capture_dir))
+
+
+def _with_inferred_closures(calendar: TradingCalendar, capture_dir: Path) -> TradingCalendar:
+    """加入行情缺口推斷的臨時休市日；紀錄放在封存根目錄（日期資料夾／run 資料夾的上兩層）。"""
+    return calendar.with_inferred_closed(load_inferred_closed_days(capture_dir.parent.parent))
 
 
 def latest_calendar_capture_before(captures_root: Path, limit_time: str) -> Optional[Path]:
@@ -213,6 +219,7 @@ class OgdTradingStatusMapper:
         entries = manifest.get("sources")
         if not isinstance(entries, list):
             raise TradingStatusError("封存 manifest 缺少 sources")
+        self.capture_dir = Path(capture_dir)
         self.entries: Dict[str, Mapping[str, object]] = {}
         self.facts: Dict[str, List[Dict[str, object]]] = {}
         for entry in entries:
@@ -233,7 +240,8 @@ class OgdTradingStatusMapper:
         entry = self.entries.get(CALENDAR_SOURCE_ID)
         if entry is None:
             raise TradingCalendarError("封存缺少開休市日期表：%s" % CALENDAR_SOURCE_ID)
-        return TradingCalendar.from_ogd_facts(self.facts[CALENDAR_SOURCE_ID], str(entry["sha256"]))
+        return _with_inferred_closures(
+            TradingCalendar.from_ogd_facts(self.facts[CALENDAR_SOURCE_ID], str(entry["sha256"])), self.capture_dir)
 
     def build(
         self, request: TradingStatusRequest, approvals: Mapping[str, Mapping[str, object]]

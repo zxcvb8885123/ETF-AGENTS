@@ -62,7 +62,8 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `source_health.py` | 確定性來源健康探測與交易池驗證 | `SourceHealthProbe`、`SourceProbeDefinition`、`UniverseValidator`、`compute_universe_version`、`load_probe_definitions`、`write_json_artifact` |
 | `status.py` | Data Agent 狀態查詢物件 | `DataAgentStatusRepository`、`DataAgentStatus`、`DocumentStatus`、`PriceSourceStatus`、`PriceStatus`、`CollectionRunStatus`、`SourceReportStatus`、`UniverseValidationStatus`、`format_status_time` |
 | `trading_status.py` | 官方交易狀態的版本化契約、重建與可交易性判斷 | `TradingStatusBundleBuilder`、`TradingStatusBundleValidator`、`TradingStatusCollector`、`TradingStatusRepository`、`TradingStatusProvider`、`SavedJsonTradingStatusProvider`、`TradingStatusRequest`、`TradingStatusSourceDefinition`、`TradingStatusCollectionResult`、`TradingStatusError`、`parse_trading_status_payload` |
-| `trading_calendar.py` | 由官方開休市日期表建立的交易日與交割日曆 | `TradingCalendar`、`TradingCalendarError` |
+| `trading_calendar.py` | 由官方開休市日期表建立的交易日與交割日曆；可併入臨時休市日 | `TradingCalendar`、`TradingCalendarError` |
+| `inferred_closures.py` | 官方日期表未列的臨時休市日（如颱風假）：日曆認定為交易日、資料庫整天沒有行情，且兩市場在該日前後都有官方行情時才推斷（要等後一個交易日確認，當晚不推斷）；證據寫入 `artifacts/data/trading_status/inferred_closed_days.json`，由 `calendar_from_capture` 併入 | `infer_closed_days`、`update_inferred_closed_days`、`load_inferred_closed_days` |
 | `source_capture.py` | 封存已列明授權候選的政府開放 CSV；不產生交易許可 | `capture_ogd_candidates` |
 | `ogd_trading_status.py` | 把已封存的政府開放 CSV 轉成 `TradingStatusBundle` 的 records／coverage 與交易日曆 | `OgdTradingStatusMapper`、`build_trading_status_from_capture`、`calendar_from_capture`、`latest_calendar_capture_before`、`latest_capture_before`、`closed_dates_from_calendar`、`next_trading_session`、`load_approvals`、`load_not_applicable`、`not_applicable_coverage` |
 | `ogd_candidate_facts.py` | 政府開放 CSV 的日期精度候選事實；不產生交易許可或正式 coverage | `extract_ogd_candidate_facts`、`build_candidate_fact_report` |
@@ -100,7 +101,7 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 - scripts（收集）：`init_db.py`、`collect_twse.py`、`collect_latest_prices.py`、`collect_history.py`、`collect_official_history.py`、`collect_financial_statements.py`、`collect_supplemental_sources.py`、`collect_sector_classification.py`。
 - scripts（排程與狀態）：`finmind_schedule.py`、`prices_current.py`、`data_status.py`、`run_daily_pipeline.py`（`./start.sh auto`／`daily`／`run` 串接）。
 - scripts（來源與交易狀態）：`probe_data_sources.py`、`capture_trading_status_candidates.py`、`normalize_trading_status_candidates.py`、`verify_ogd_crosscheck.py`、`repair_pending_tpex_close.py`。
-- 測試：`tests/data/`（`test_data_agent.py`、`test_data_collection.py`、`test_historical.py`、`test_financial_statements.py`、`test_finmind_schedule.py`、`test_fundamental_repair.py`、`test_trading_status.py`、`test_ogd_trading_status.py`、`test_trading_calendar.py` 等）；`tests/fixtures/` 有小型行情 fixture。
+- 測試：`tests/data/`（`test_data_agent.py`、`test_data_collection.py`、`test_historical.py`、`test_financial_statements.py`、`test_finmind_schedule.py`、`test_fundamental_repair.py`、`test_trading_status.py`、`test_ogd_trading_status.py`、`test_trading_calendar.py`、`test_inferred_closures.py` 等）；`tests/fixtures/` 有小型行情 fixture。
 - 相關文件：[docs/data_sources_inventory.md](../../../docs/data_sources_inventory.md)、[docs/fundamental_data_repair.md](../../../docs/fundamental_data_repair.md)。
 
 ## 規則與邊界

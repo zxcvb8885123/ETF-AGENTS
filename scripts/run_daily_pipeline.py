@@ -47,6 +47,7 @@ from etf_agent.data import (  # noqa: E402
     load_approvals,
     load_not_applicable,
 )
+from etf_agent.data.inferred_closures import update_inferred_closed_days  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
@@ -237,6 +238,21 @@ def ensure_calendar_capture(captures_root: Path, now: datetime) -> None:
         log("政府開放 CSV 抓取失敗：%s" % error)
 
 
+def refresh_inferred_closures(captures_root: Path, now: datetime) -> None:
+    """用資料庫的官方行情缺口推斷官方日期表沒列的臨時休市日（如颱風假）並保存證據；失敗只記錄，不中斷。"""
+    try:
+        capture = latest_calendar_capture_before(captures_root, now.isoformat())
+        database = ROOT / "var" / "etf_agent.db"
+        if capture is None or not database.exists():
+            return
+        added = update_inferred_closed_days(database, captures_root, calendar_from_capture(capture), now)
+        if added:
+            log("依官方行情缺口，推斷臨時休市日：%s（證據：%s）" % ("、".join(added), captures_root / "inferred_closed_days.json"))
+            notify("ETF Agent 每日決策", "推斷臨時休市：%s" % "、".join(added))
+    except (TradingCalendarError, OSError, ValueError) as error:
+        log("臨時休市推斷未執行：%s" % error)
+
+
 def trading_day_check(captures_root: Path, now: datetime) -> bool:
     """依 now 前最近封存的官方開休市日曆判斷今天是否為交易日；日曆缺漏或未涵蓋今年即拋錯。"""
     capture = latest_calendar_capture_before(captures_root, now.isoformat())
@@ -348,6 +364,7 @@ def main() -> int:
     captures_root = ROOT / "artifacts" / "data" / "trading_status"
     if not args.force:
         ensure_calendar_capture(captures_root, now)
+        refresh_inferred_closures(captures_root, now)
         try:
             if not trading_day_check(captures_root, now):
                 log("%s 依官方開休市日曆休市，不執行（--force 可強制）。" % now.date().isoformat())
@@ -440,7 +457,10 @@ def main() -> int:
                 summary["trading_status_capture_error"] = str(error)
                 log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
             log("[1/4] ./start.sh daily：資料、Snapshot、虛擬帳本")
-            run_data_stage(args.account_id, "prepare-%s" % stamp, trade_date)
+            try:
+                run_data_stage(args.account_id, "prepare-%s" % stamp, trade_date)
+            finally:
+                refresh_inferred_closures(captures_root, datetime.now(TAIPEI_TIMEZONE))
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
                 raise RuntimeError("虛擬帳本未建立本次 prepare 狀態（可能在等待前次決策的收盤價），不能產生新決策")
         account_run_id = prepared_account_run(args.account_id)

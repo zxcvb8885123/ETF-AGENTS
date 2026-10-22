@@ -78,6 +78,7 @@ from .ogd_trading_status import (
     load_not_applicable,
     next_trading_session,
 )
+from .inferred_closures import infer_closed_days, load_inferred_closed_days, update_inferred_closed_days
 from .trading_calendar import CALENDAR_BASIS, TradingCalendar, TradingCalendarError
 from .sector_classification import (
     SECTOR_SOURCES,
@@ -178,6 +179,9 @@ __all__ = [
     "latest_capture_before",
     "CALENDAR_BASIS",
     "TradingCalendar",
+    "infer_closed_days",
+    "load_inferred_closed_days",
+    "update_inferred_closed_days",
     "TradingCalendarError",
     "load_approvals",
     "load_not_applicable",
