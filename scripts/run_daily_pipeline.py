@@ -28,7 +28,7 @@ from etf_agent.decision_delivery import build_delivery, save_failure
 from etf_agent.decision_delivery.repository import publication_lock
 from etf_agent.competition import DataPackError, DPlanError, DPlanExportService, find_datapack, load_datapack, load_universe, rebase_account_to_datapack, reconcile
 from etf_agent.competition.datapack import DEFAULT_CASH_TOLERANCE_RATE
-from etf_agent.virtual_account import active_account_id
+from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, active_account_id
 
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
@@ -52,16 +52,22 @@ from etf_agent.data import (  # noqa: E402
     load_not_applicable,
 )
 from etf_agent.data.inferred_closures import update_inferred_closed_days  # noqa: E402
+from etf_agent.data.trading_calendar import DECISION_DEADLINE  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
-from etf_agent.virtual_account.daily import supersede_decision_runs  # noqa: E402
+from etf_agent.virtual_account.daily import (  # noqa: E402
+    pending_decision,
+    restore_superseded_decision,
+    supersede_decision_runs,
+)
 
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
 RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
 DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
 TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
+RECENT_RUN_WINDOW = timedelta(hours=1)  # 同時段的 run 在此時間內完成才略過；更早的（例如半夜手動跑）照常重做
 
 
 def log(message: str) -> None:
@@ -198,6 +204,9 @@ def latest_resumable_run(runs_root: Path, run_id: str):
         # 決策被拒的 run 可在規則修正後續跑；被拒封存未移走時重新封存會衝突而停止。
         if previous.get("status") == "completed" and previous.get("decision_status") != "rejected":
             continue
+        # 已還原的 run，其 Agent 輸出綁定已移走的帳本狀態，不能續跑。
+        if previous.get("rolled_back"):
+            continue
         candidates.append((summary_path.stat().st_mtime, run_dir))
     return max(candidates)[1] if candidates else None
 
@@ -211,6 +220,8 @@ def named_resumable_run(runs_root: Path, name: str) -> Path:
     previous = json.loads(summary_path.read_text(encoding="utf-8"))
     if previous.get("status") == "completed" and previous.get("decision_status") != "rejected":
         raise RuntimeError("%s 已完成，不需續跑" % name)
+    if previous.get("rolled_back"):
+        raise RuntimeError("%s 已還原成重跑前的帳本與決策，不能續跑；請改用 --force 重新執行" % name)
     if not any(run_dir.glob("*_raw_*.json")):
         raise RuntimeError("%s 沒有已保存的 Agent 輸出，無可沿用內容" % name)
     return run_dir
@@ -294,11 +305,24 @@ def upcoming_session_start(captures_root: Path, now: datetime):
         return None
 
 
-def completed_run_for_session(runs_root: Path, run_id: str, session_start):
-    """同一台北日期已完成、且目標時段相同的 run；回傳 run 名稱，沒有則回 None。
+def finished_recently(summary: dict, now: datetime) -> bool:
+    """run 是否在 ``RECENT_RUN_WINDOW`` 內完成；沒有可解析的完成時間時保守視為剛完成。"""
+    value = summary.get("finished_at") or summary.get("started_at")
+    try:
+        finished = datetime.fromisoformat(str(value))
+    except ValueError:
+        return True
+    if finished.tzinfo is None:
+        return True
+    return now - finished <= RECENT_RUN_WINDOW
+
+
+def completed_run_for_session(runs_root: Path, run_id: str, session_start, now: datetime):
+    """同一台北日期、目標時段相同且剛完成的 run；回傳 run 名稱，沒有則回 None。
 
     早上的 run 為當天時段、晚上的 run 為下一時段，兩者同日期但不算重複。``session_start`` 為
-    None（日曆缺漏）或舊 run 沒記錄目標時段時，視同相同時段，維持「當日已完成不重跑」。
+    None（日曆缺漏）或舊 run 沒記錄目標時段時，視同相同時段。同時段但完成已超過
+    ``RECENT_RUN_WINDOW``（例如半夜手動跑過）不算，排程照常用新資料重做；舊版保留不刪。
     """
     for run_dir in list_run_dirs(runs_root):
         if run_dir.name != run_id and not run_dir.name.startswith(run_id + "-"):
@@ -307,12 +331,56 @@ def completed_run_for_session(runs_root: Path, run_id: str, session_start):
         if not summary_path.exists():
             continue
         previous = json.loads(summary_path.read_text(encoding="utf-8"))
-        if previous.get("status") != "completed":
+        if previous.get("status") != "completed" or previous.get("rolled_back"):
             continue
         previous_start = (previous.get("target_session") or {}).get("start")
-        if session_start is None or previous_start is None or previous_start == session_start:
+        same_session = session_start is None or previous_start is None or previous_start == session_start
+        if same_session and finished_recently(previous, now):
             return run_dir.name, previous.get("decision_status")
     return None
+
+
+ROLLBACK_SNAPSHOT = "rollback_research_snapshot.json"  # 重跑前的 Snapshot 副本，還原時放回 latest
+
+
+def session_deadline_passed(session, now: datetime) -> bool:
+    """目標時段當天的交件期限（08:55）是否已過；缺少或無法解析開盤時間時視為已過（fail-closed）。"""
+    try:
+        start = datetime.fromisoformat(str((session or {}).get("start")))
+    except ValueError:
+        return True
+    if start.tzinfo is None:
+        return True
+    deadline = datetime.combine(start.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
+    return now >= deadline
+
+
+def superseded_pending(account_id: str, pending) -> bool:
+    """資料階段是否把重跑前的待成交決策移到封存區；帳本可能已前進，也可能在建立新 prepare 前就失敗。"""
+    if pending is None:
+        return False
+    return find_run_dir(ROOT / "artifacts" / "decisions", pending["decision_run_id"], RuntimeError) is None
+
+
+def roll_back_superseded(summary: dict, run_dir: Path, account_id: str, decision_run_id: str) -> None:
+    """本次取代了待成交決策卻沒產生新 D-Plan：帳本、決策與 Snapshot 還原成重跑前，原 D-Plan 主檔仍對得上。"""
+    try:
+        restored = restore_superseded_decision(
+            VirtualAccountRepository(ROOT / "artifacts" / "ledger", account_id),
+            ROOT / "artifacts" / "decisions",
+            ROOT / "artifacts" / "archive" / "superseded_decisions",
+            summary["superseded_pending"],
+            ROOT / "artifacts" / "ledger" / account_id / "account_snapshot_latest.json",
+            discard_decision_run_id=decision_run_id,
+        )
+        backup = run_dir / ROLLBACK_SNAPSHOT
+        if backup.exists():
+            shutil.copy2(backup, ROOT / "artifacts" / "data" / "research_snapshot_latest.json")
+        summary["rolled_back"] = restored
+        log("本次沒有產生新 D-Plan，已還原重跑前的帳本與決策 %s；原本的 D-Plan 主檔仍可上傳。" % restored["decision_run_id"])
+    except (VirtualAccountError, OSError, ValueError, KeyError) as error:
+        summary["rollback_error"] = str(error)
+        log("還原重跑前的決策失敗，請人工檢查帳本：%s" % error)
 
 
 def deliver_saved_run(root: Path, name: str) -> dict:
@@ -486,17 +554,17 @@ def main() -> int:
                 log("交付診斷發布失敗：%s" % publish_error)
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
             return 1
-    run_id = "daily-%s" % now.strftime("%Y%m%d")
-    run_dir = daily_run_path(runs_root, run_id)
-    summary_path = run_dir / "pipeline.json"
-    new_session_run = False
-    if summary_path.exists() and not args.force:
-        done = completed_run_for_session(runs_root, run_id, upcoming_session_start(captures_root, now))
+    day_run_prefix = "daily-%s" % now.strftime("%Y%m%d")
+    if not args.force:
+        # 同一時段剛完成才略過；另一時段（早上為當天、晚上為隔天）或完成已久的照常另開新 run。
+        done = completed_run_for_session(runs_root, day_run_prefix, upcoming_session_start(captures_root, now), now)
         if done is not None:
             log("%s 已完成（%s），不重跑。" % done)
             return 0
-        # 同日已完成的 run 是為另一個交易時段（例如早上為當天、晚上為隔天），另開新 run 目錄。
-        new_session_run = json.loads(summary_path.read_text(encoding="utf-8")).get("status") == "completed"
+    # 每次 run 目錄都帶台北時間，同日多次執行各自保留、互不覆蓋。
+    run_id = "%s-%s" % (day_run_prefix, now.strftime("%H%M%S"))
+    run_dir = daily_run_path(runs_root, run_id)
+    summary_path = run_dir / "pipeline.json"
     if args.resume not in (None, RESUME_LATEST):
         try:
             resumable = named_resumable_run(runs_root, args.resume)
@@ -504,7 +572,7 @@ def main() -> int:
             log("無法續跑：%s" % error)
             return 1
     else:
-        resumable = latest_resumable_run(runs_root, run_id) if args.resume else None
+        resumable = latest_resumable_run(runs_root, day_run_prefix) if args.resume else None
     if resumable is not None:
         previous_cli = resumable_agent_cli(resumable)
         if previous_cli != args.agent_cli:
@@ -517,10 +585,6 @@ def main() -> int:
         log("續跑沿用 run 目錄：%s" % run_id)
         # 可續跑的 run 已有 Agent 輸出，代表 Snapshot 與帳戶快照已建立；重抓資料會讓快照與已驗證輸出對不上。
         args.skip_data = True
-    elif (args.force or new_session_run) and run_dir.exists():
-        run_id = "%s-%s" % (run_id, now.strftime("%H%M%S"))
-        run_dir = daily_run_path(runs_root, run_id)
-        summary_path = run_dir / "pipeline.json"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     decision_run_id = "decision-%s" % stamp
@@ -573,11 +637,19 @@ def main() -> int:
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 summary["trading_status_capture_error"] = str(error)
                 log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
+            # 記下重跑前的待成交決策與 Snapshot；本次若取代它卻沒產生新 D-Plan，結束時還原。
+            pending = pending_decision(
+                VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id), ROOT / "artifacts" / "decisions",
+            )
+            if pending is not None and snapshot_path.exists():
+                shutil.copy2(snapshot_path, run_dir / ROLLBACK_SNAPSHOT)
             log("[1/4] ./start.sh daily：資料、Snapshot、虛擬帳本")
             try:
                 run_data_stage(args.account_id, "prepare-%s" % stamp, trade_date)
             finally:
                 refresh_inferred_closures(captures_root, datetime.now(TAIPEI_TIMEZONE))
+                if superseded_pending(args.account_id, pending):
+                    summary["superseded_pending"] = pending
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
                 raise RuntimeError("虛擬帳本未建立本次 prepare 狀態（可能在等待前次決策的收盤價），不能產生新決策")
         account_run_id = prepared_account_run(args.account_id)
@@ -591,6 +663,10 @@ def main() -> int:
         approvals = load_approvals(approvals_path)
         not_applicable = load_not_applicable(approvals_path)
         status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals, not_applicable)
+        if session_deadline_passed(session, now):
+            # 沿用的舊 Snapshot 仍排到已過交件期限的時段；再做決策會取代已上傳那份，帳本與實際交件對不上。
+            raise RuntimeError("目標時段 %s 已過交件期限 %s，不再為它產生決策；收盤資料到齊後再跑會排到下一時段" % (
+                session.get("start"), DECISION_DEADLINE.strftime("%H:%M")))
         summary["trading_status"] = {
             "capture_dir": str(capture_dir) if capture_dir else None,
             "approved_sources": sorted(approvals),
@@ -653,6 +729,8 @@ def main() -> int:
         superseded = supersede_decision_runs(
             ROOT / "artifacts" / "decisions", result.decision_run_id,
             ROOT / "artifacts" / "archive" / "superseded_decisions",
+            # 以完成當下判斷：跑到超過 08:55 才完成時，舊決策可能已上傳，改保留舊的。
+            now=datetime.now(TAIPEI_TIMEZONE),
         )
         if superseded:
             summary["superseded_decision_runs"] = superseded
@@ -703,6 +781,8 @@ def main() -> int:
             except (ValueError, OSError) as publish_error:
                 summary["delivery_publish_error"] = str(publish_error)
                 log("交付診斷發布失敗：%s" % publish_error)
+    if summary.get("superseded_pending") and summary.get("dplan", {}).get("status") != "ready":
+        roll_back_superseded(summary, run_dir, args.account_id, decision_run_id)
     summary["calibration"] = record_calibration()
     summary.setdefault("finished_at", datetime.now(TAIPEI_TIMEZONE).isoformat())
     write_json(summary_path, summary)
@@ -717,6 +797,10 @@ def main() -> int:
             message += "，Agent 估算用量 $%s（訂閱不計費）" % summary.get("agent_estimated_usage_usd")
     else:
         message = "失敗：%s" % str(summary.get("error"))[:120]
+    if summary.get("rolled_back"):
+        message += "；已還原重跑前的備案決策，請上傳原本的 D-Plan 主檔（latest 報告仍是本次內容）"
+    elif summary.get("rollback_error"):
+        message += "；還原重跑前的決策失敗，請人工檢查帳本"
     if summary.get("delivery"):
         message += "；報告 %s；D-Plan %s" % (
             summary["delivery"]["report_status"], summary.get("dplan", {}).get("status", "not_run"),

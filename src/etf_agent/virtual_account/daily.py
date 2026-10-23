@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256
-from etf_agent.core.run_layout import list_run_dirs
+from etf_agent.core.run_layout import find_run_dir, list_run_dirs
 from etf_agent.data.trading_calendar import CALENDAR_BASIS, DECISION_DEADLINE, TradingCalendar
 from etf_agent.decision.finalization import DecisionRepository
 
@@ -81,15 +81,29 @@ def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, 
     return matches[0] if matches else None
 
 
-def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive_root: Path) -> List[str]:
-    """同一份 AccountSnapshot 重跑後，把較舊的 Decision run 整個搬到封存區，只留 keep_run_id；回傳被取代的 run。"""
+def submission_deadline_passed(bundle: Mapping[str, object], now: datetime) -> bool:
+    """決策目標時段當天的交件期限（08:55）是否已過；缺少目標時段時視為已過（可能已上傳，不得取代）。"""
+    start = ((bundle.get("trading_status_bundle") or {}).get("target_session") or {}).get("start")
+    if not start:
+        return True
+    session_day = parse_time(start, "target_session_start").astimezone(TAIPEI).date()
+    return now >= datetime.combine(session_day, DECISION_DEADLINE, TAIPEI)
+
+
+def supersede_decision_runs(
+    decision_repository: Path, keep_run_id: str, archive_root: Path, now: Optional[datetime] = None,
+) -> List[str]:
+    """同一份 AccountSnapshot 重跑後，把較舊的 Decision run 整個搬到封存區，只留 keep_run_id；回傳被取代的 run。
+
+    給 ``now`` 時，舊決策的目標時段已過交件期限（可能已上傳）就不得取代：改把 keep_run_id 移到封存區並拒絕。
+    """
     root = Path(decision_repository)
     kept_dir = DecisionRepository(root).run_dir(keep_run_id)
     if kept_dir is None:
         raise VirtualAccountError("找不到要保留的 Decision run：%s" % keep_run_id)
     kept = kept_dir / "decision_input.json"
     account_snapshot = json.loads(kept.read_text(encoding="utf-8")).get("account_snapshot")
-    superseded: List[str] = []
+    matches: List[Path] = []
     for run_dir in list_run_dirs(root):
         if run_dir.name == keep_run_id or not (run_dir / "decision_input.json").exists():
             continue
@@ -98,11 +112,85 @@ def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(bundle, Mapping) and bundle.get("account_snapshot") == account_snapshot:
-            target = Path(archive_root) / run_dir.parent.name
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(run_dir), str(target / run_dir.name))
-            superseded.append(run_dir.name)
+            if now is not None and submission_deadline_passed(bundle, now):
+                target = Path(archive_root) / kept_dir.parent.name
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(kept_dir), str(target / kept_dir.name))
+                raise VirtualAccountError(
+                    "舊決策 %s 的時段已過交件期限，可能已上傳，保留舊決策；新決策 %s 已移到封存區"
+                    % (run_dir.name, keep_run_id))
+            matches.append(run_dir)
+    superseded: List[str] = []
+    for run_dir in matches:
+        target = Path(archive_root) / run_dir.parent.name
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(run_dir), str(target / run_dir.name))
+        superseded.append(run_dir.name)
     return superseded
+
+
+def pending_decision(repository: VirtualAccountRepository, decision_repository: Path) -> Optional[Dict[str, str]]:
+    """最新狀態是已有決策、尚未結算的 prepare 時，回傳帳本 run 與 Decision run；否則回 None。"""
+    current = repository.latest(optional=True)
+    if current is None:
+        return None
+    provenance = current["state"].get("provenance", {})
+    if provenance.get("type") != "prepared":
+        return None
+    decision_run_id = find_decision_run(decision_repository, provenance.get("account_snapshot"))
+    if decision_run_id is None:
+        return None
+    return {"account_run_id": current["run_id"], "decision_run_id": decision_run_id}
+
+
+def restore_superseded_decision(
+    repository: VirtualAccountRepository,
+    decision_repository: Path,
+    archive_root: Path,
+    pending: Mapping[str, str],
+    account_output: Path,
+    discard_decision_run_id: Optional[str] = None,
+) -> Dict[str, object]:
+    """開盤前重跑取代了 ``pending`` 卻沒產生新 D-Plan 時，把帳本與決策還原成重跑前。
+
+    帳本已前進時 latest 指回原 prepare，重跑建立的 prepare 移到 ``rolled_back/``；被取代的決策從封存區搬回
+    決策庫；本次重跑已封存的新決策（``discard_decision_run_id``）改移到封存區。全部檔案只搬移、不刪除。
+    帳本已被其他執行推進、原決策不在封存區或決策庫已有同名 run 時，在修改任何檔案前拒絕。
+    """
+    decisions = DecisionRepository(decision_repository)
+    decision_run_id = pending["decision_run_id"]
+    if decisions.run_dir(decision_run_id) is not None:
+        raise VirtualAccountError("被取代的決策仍在決策庫，不需還原：%s" % decision_run_id)
+    archived = find_run_dir(Path(archive_root), decision_run_id, VirtualAccountError)
+    if archived is None:
+        raise VirtualAccountError("封存區找不到被取代的決策：%s" % decision_run_id)
+    restored_dir = Path(decision_repository) / archived.parent.name / decision_run_id
+    current = repository.latest()
+    # 決策已封存但新 prepare 建立失敗時，帳本仍停在原 prepare，只需搬回決策。
+    ledger_moved = current["run_id"] != pending["account_run_id"]
+    if ledger_moved and current["state"].get("provenance", {}).get("parent_run_id") != pending["account_run_id"]:
+        raise VirtualAccountError("帳本最新狀態不是接在 %s 之後的重跑，拒絕還原" % pending["account_run_id"])
+    discard_dir = decisions.run_dir(discard_decision_run_id) if discard_decision_run_id else None
+    discard_target = Path(archive_root) / discard_dir.parent.name / discard_dir.name if discard_dir else None
+    if discard_target is not None and discard_target.exists():
+        raise VirtualAccountError("封存區已有同名 Decision run：%s" % discard_target)
+    rolled_back = repository.rollback_latest(current["run_id"], pending["account_run_id"]) if ledger_moved else None
+    if discard_dir is not None:
+        discard_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(discard_dir), str(discard_target))
+    restored_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(archived), str(restored_dir))
+    decisions.verify(decision_run_id)
+    restored = repository.latest()
+    account_output = Path(account_output)
+    account_output.parent.mkdir(parents=True, exist_ok=True)
+    account_output.write_text(
+        json.dumps(restored["state"]["provenance"]["account_snapshot"], ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {"account_run_id": restored["run_id"], "decision_run_id": decision_run_id,
+            "rolled_back_account_run": str(rolled_back) if rolled_back else None,
+            "discarded_decision_run": str(discard_target) if discard_target else None}
 
 
 class OfficialCloseMarket:

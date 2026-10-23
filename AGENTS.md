@@ -82,7 +82,7 @@
 ## 開發與 Docker 環境
 
 - `requirements.txt` 是本機 `.venv` 與 Docker 的共用依賴，包含 Skill 驗證需要的 PyYAML 與執行測試的 pytest；Dockerfile 安裝同一份檔案。改動依賴後須重建 Docker 映像。
-- 本機首次建立環境：`python3 -m venv .venv`，再執行 `.venv/bin/python -m pip install -r requirements.txt`；已有 `.venv` 時直接重裝需求即可。
+- 本機 `.venv` 使用 Python 3.12（與 Docker 相同，不再使用系統內建 3.9）。首次建立環境：`uv python install 3.12`、`"$(uv python find 3.12)" -m venv .venv`，再執行 `.venv/bin/python -m pip install -r requirements.txt`；已有 `.venv` 時直接重裝需求即可。
 - 本機測試、編譯與 Skill 驗證統一使用 `.venv/bin/python`；Docker 內使用 `python3`。若缺少模組，檢查目前使用的解譯器、`.venv/bin/python -m pip check` 或重建 Docker 映像，不跳過驗證。
 
 ## 測試與驗證

@@ -64,7 +64,7 @@ class StartEntrypointTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result, _, calls = self.invoke([mode], python=False)
                 self.assertEqual(result.returncode, 1)
-                self.assertIn("python3 -m venv .venv", result.stderr)
+                self.assertIn("uv python install 3.12", result.stderr)
                 self.assertFalse(calls)
 
     def test_help_needs_neither_local_python_nor_docker(self):

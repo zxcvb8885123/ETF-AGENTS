@@ -142,6 +142,16 @@ class DPlanExportService:
             root / "contexts" / ("context_%s.json" % decision_run_id),
         )
 
+    @staticmethod
+    def version_path(plan_output: Path, decision_run_id: str) -> Path:
+        """每個決策另存一份帶台北時間的 D-Plan，主檔被新決策取代後仍查得到交過哪一版。"""
+        try:
+            stamp = datetime.strptime(decision_run_id, "decision-%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+            label = stamp.astimezone(TAIPEI).strftime("%Y%m%d-%H%M%S")
+        except ValueError:
+            label = decision_run_id
+        return plan_output.parent / "versions" / ("%s_%s.json" % (plan_output.stem, label))
+
     def current_account_run_id(self, account_id: str) -> str:
         latest = read_object(
             self.root / "artifacts" / "ledger" / account_id / "latest.json",
@@ -189,14 +199,18 @@ class DPlanExportService:
             oversell = check_sells(plan["orders"], datapack["sellable_shares"])
             if oversell:
                 raise DPlanError("D-Plan 賣出超過 DataPack 持股：" + "；".join(oversell))
-        if context_output.exists():
-            raise DPlanError("context 輸出檔已存在，拒絕覆寫：%s" % context_output)
+        version_output = self.version_path(plan_output, decision_run_id)
+        for existing in (context_output, version_output):
+            if existing.exists():
+                raise DPlanError("輸出檔已存在，拒絕覆寫：%s" % existing)
         write_new_json(context_output, context)
-        # 同一交易日重跑會產生新決策，D-Plan 檔名只含隊伍與交易日，直接取代舊檔。
+        write_new_json(version_output, plan)
+        # 同一交易日重跑會產生新決策，D-Plan 主檔名只含隊伍與交易日，直接取代舊檔；舊版留在 versions/。
         replaced_existing = replace_json(plan_output, plan)
         return {
             "status": "ready",
             "output": str(plan_output),
+            "version_output": str(version_output),
             "context_output": str(context_output),
             "trade_date": effective_trade_date,
             "decision_run_id": decision_run_id,
@@ -235,6 +249,9 @@ class DPlanExportService:
             except DPlanError:
                 continue
             if daily_run.get("status") != "completed" or daily_run.get("decision_status") not in {"approved", "no_trade"}:
+                continue
+            # 已還原的 run，其決策已移到封存區，不能再匯出。
+            if daily_run.get("rolled_back"):
                 continue
             decision_run_id = daily_run.get("decision_run_id")
             finished_at = daily_run.get("finished_at")
