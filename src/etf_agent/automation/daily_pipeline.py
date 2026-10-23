@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional, Sequence
 
 from etf_agent.decision import (
     AllocationOrderEngine,
     CompetitionGuardV2,
     DecisionFinalizer,
+    DecisionInputValidator,
     DecisionResultValidator,
     DecisionToolError,
     MomentumEngine,
@@ -23,6 +24,7 @@ from etf_agent.decision import (
     RevisionHistoryBuilder,
     ScenarioEngine,
     apply_trade_decision,
+    bind_drawdown,
     build_decision_policy,
     build_team_inputs,
     decision_policy_sha256,
@@ -94,6 +96,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         fear_greed_root: Optional[Path] = None,
         fear_greed_approvals_path: Optional[Path] = None,
         market_news_root: Optional[Path] = None,
+        nav_history: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> PipelineResult:
         result = PipelineResult(status="failed")
         try:
@@ -101,7 +104,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 result, snapshot_path, account_snapshot_path, trading_status_path,
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
                 perception_bundle_path, perception_result_path,
-                fear_greed_root, fear_greed_approvals_path, market_news_root,
+                fear_greed_root, fear_greed_approvals_path, market_news_root, nav_history,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -117,6 +120,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         perception_bundle_path: Optional[Path], perception_result_path: Optional[Path],
         fear_greed_root: Optional[Path] = None, fear_greed_approvals_path: Optional[Path] = None,
         market_news_root: Optional[Path] = None,
+        nav_history: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -158,6 +162,47 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             pair = bundle["perception_inputs"][0]
             self.save_artifact("perception_bundle", pair["bundle"])
             self.save_artifact("perception_result", pair["result"])
+        self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id, nav_history)
+
+    def run_from_bundle(
+        self,
+        bundle_path: Path,
+        database_path: Path,
+        policy_template_path: Path,
+        sector_path: Path,
+        decision_run_id: str,
+        nav_history: Optional[Sequence[Mapping[str, object]]] = None,
+        stop_after: Optional[str] = None,
+    ) -> PipelineResult:
+        """從已封存的 DecisionInputBundle 重跑決策鏈（評測用）；不抓資料、不碰帳本，Bundle 先重新驗證。
+
+        ``stop_after="analysts"`` 時跑完分析團隊就停，只評測分析師、省下多空與交易的用量。
+        """
+        if stop_after not in {None, "analysts"}:
+            raise ValueError("stop_after 只支援 analysts")
+        result = PipelineResult(status="failed")
+        try:
+            service = PortfolioDecisionApplicationService
+            bundle = dict(service.read_json(Path(bundle_path), " DecisionInputBundle"))
+            errors = DecisionInputValidator(bundle).validate()
+            if errors:
+                raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(errors))
+            self.save_artifact("decision_input", bundle)
+            self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id,
+                         nav_history, stop_after)
+            result.status = "completed"
+        except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
+            result.errors.append(str(error))
+        result.agent_calls = self.calls
+        result.stage_durations = dict(self.stage_durations)
+        return result
+
+    def _decide(
+        self, result: PipelineResult, bundle: Mapping[str, object], database_path: Path,
+        policy_template_path: Path, sector_path: Path, decision_run_id: str,
+        nav_history: Optional[Sequence[Mapping[str, object]]] = None, stop_after: Optional[str] = None,
+    ) -> None:
+        service = PortfolioDecisionApplicationService
         decision = service(bundle)
 
         self.log("[decision 2] 計算動能")
@@ -167,6 +212,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.log("[decision 3] 分析團隊：技術／基本面／事件（逐批），情緒無核准來源時 unavailable")
         with self._timed("analysts"):
             analysts = self.run_analyst_team(bundle, momentum, database_path)
+        if stop_after == "analysts":
+            return
 
         # 空物件表示新鏈沒有獨立事件研究輸入，不是假造 completed／空事件結果。
         research: Dict[str, object] = {}
@@ -185,9 +232,12 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             bundle,
             service.read_json(sector_path, " 產業分類"),
         )
+        # 回撤由程式從帳本 NAV 歷史計算並綁進 policy；風險 Agent 只看到結果與現金姿態下限。
+        base_policy = bind_drawdown(base_policy, bundle, nav_history)
+        base_policy["content_sha256"] = decision_policy_sha256(base_policy)
         self.save_artifact("policy_base", base_policy)
         with self._timed("cash_stance"):
-            stance = self.run_cash_stance(bundle, momentum, analysts, trade)
+            stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy)

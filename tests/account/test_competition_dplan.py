@@ -5,6 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from decimal import Decimal
+
+from etf_agent.competition.dplan import (
+    check_cutoff_before_deadline, derivation_nav, official_target_shares, official_target_weight,
+    require_official_closes,
+)
 from etf_agent.competition import (
     DPlanContextBuilder, DPlanError, DPlanExportService, DPlanExporter, DPlanValidator, load_decision_run,
     verify_account_binding,
@@ -236,8 +242,9 @@ class DPlanExportServiceTests(unittest.TestCase):
         with patch("etf_agent.competition.service.load_decision_run", return_value={}), \
                 patch("etf_agent.competition.service.DPlanContextBuilder.build", return_value={}), \
                 patch("etf_agent.competition.service.verify_account_binding", return_value={"run_id": "prepare-1"}), \
-                patch("etf_agent.competition.service.DPlanExporter.build", return_value=plan), \
+                patch("etf_agent.competition.service.DPlanExporter.build", return_value=plan) as build, \
                 patch.object(service, "code_version", return_value="git:test"):
+            self.last_build = build
             return service.export(decision_repository=root / "decisions", decision_run_id="decision-1", daily_run=daily,
                                   profile_path=profile, account_id="ai-cup-2026", account_run_id="prepare-1")
 
@@ -253,7 +260,9 @@ class DPlanExportServiceTests(unittest.TestCase):
                 daily = dict(base, **({"datapack": datapack} if datapack else {}))
                 with self.assertRaisesRegex(DPlanError, "DataPack 對帳"):
                     self._export(root, daily, plan)
-            result = self._export(root, dict(base, datapack=matched), plan)
+            result = self._export(root, dict(base, datapack=dict(matched, nav_tradable="1000", close_prices={"2330.TW": "10"})), plan)
+            self.assertEqual(self.last_build.call_args.kwargs, {"official_nav": "1000", "official_prices": {"2330.TW": "10"}})
+            self.assertEqual(result["datapack"]["nav_tradable"], "1000")
             self.assertEqual(result["datapack"]["status"], "matched")
             with self.assertRaisesRegex(DPlanError, "賣出超過 DataPack"):
                 self._export(root, dict(base, datapack=matched), {"orders": [{"ticker": "2330", "side": "SELL", "shares": 4000}]})
@@ -334,6 +343,46 @@ class DPlanAdditionalContractTests(unittest.TestCase):
             DPlanExporter().build("TEAM_042", "2026-09-22", {}, artifacts)
         with self.assertRaisesRegex(DPlanError, "eligible_tickers"):
             DPlanExporter().build("TEAM_042", "2026-09-22", valid_context(), artifacts)
+
+    def test_cutoff_compares_against_taipei_deadline_not_utc_date(self):
+        # 台北 07:00、08:30 開跑的 cutoff 都早於當天 08:55，可匯出；08:30 在 UTC 已是同一天，舊版會誤擋。
+        check_cutoff_before_deadline("2026-10-22T23:00:00+00:00", "2026-10-23")
+        check_cutoff_before_deadline("2026-10-23T00:30:00+00:00", "2026-10-23")
+        for cutoff in ("2026-10-23T01:00:00+00:00", "2026-10-23T00:55:00+00:00", "2026-10-24T00:00:00+08:00"):
+            with self.assertRaisesRegex(DPlanError, "交件期限"):
+                check_cutoff_before_deadline(cutoff, "2026-10-23")
+        with self.assertRaisesRegex(DPlanError, "交件期限"):
+            check_cutoff_before_deadline("2026-10-23T00:30:00", "2026-10-23")
+        with self.assertRaisesRegex(DPlanError, "無法解析"):
+            check_cutoff_before_deadline("not-a-time", "2026-10-23")
+
+    def test_target_weight_uses_datapack_nav_so_organizer_derives_same_lots(self):
+        # 帳本 NAV 比主辦方 nav_tradable 低 0.04%：用帳本反推的權重，在主辦方公式下會少一張。
+        price, shares = Decimal("100"), 100_000
+        ledger_nav, official_nav = Decimal("99960000"), Decimal("100000000")
+        ledger_weight = official_target_weight(shares, price, ledger_nav)
+        self.assertLess(official_target_shares(ledger_weight, price, official_nav), shares + 1000)
+        prices = {"2330.TW": price}
+        nav = derivation_nav(ledger_nav, prices, "100000000", {"2330.TW": "100"})
+        self.assertEqual(nav, official_nav)
+        self.assertEqual(official_target_shares(official_target_weight(shares, price, nav), price, official_nav), shares)
+        # 沒有 DataPack（略過對帳）時沿用帳本 NAV。
+        self.assertEqual(derivation_nav(ledger_nav, prices), ledger_nav)
+
+    def test_dplan_symbols_need_exchange_close_not_adjusted_fallback(self):
+        rows = [{"symbol": "2330.TW", "execution_close_price": "100", "analysis_close_price": "99"},
+                {"symbol": "2317.TW", "execution_close_price": None, "analysis_close_price": "50"}]
+        require_official_closes(rows, {"2330.TW"})
+        with self.assertRaisesRegex(DPlanError, "2317"):
+            require_official_closes(rows, {"2330.TW", "2317.TW"})
+
+    def test_derivation_rejects_datapack_price_or_nav_problems(self):
+        prices = {"2330.TW": Decimal("100")}
+        with self.assertRaisesRegex(DPlanError, "前日收盤價"):
+            derivation_nav("1000", prices, "1000", {"2330.TW": "100.5"})
+        for nav in ("0", "-1", "NaN", True):
+            with self.assertRaises(DPlanError):
+                derivation_nav("1000", prices, nav, {})
 
     def test_validator_rejects_trade_orphan_and_bad_lot(self):
         plan = valid_plan()

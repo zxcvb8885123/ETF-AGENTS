@@ -13,7 +13,7 @@ from etf_agent.automation.daily_pipeline import (
 )
 from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest, next_trading_session
 from etf_agent.data.trading_status import DEFAULT_REQUIRED_CATEGORIES
-from etf_agent.decision import DecisionRepository, DecisionFinalizer
+from etf_agent.decision import DecisionRepository, DecisionFinalizer, liquidity_exposure
 
 from test_decision_input_builder import builder_inputs, seed_history
 
@@ -269,6 +269,32 @@ class DailyPipelineTests(unittest.TestCase):
             risk = json.loads((world.run_dir / "brief_cash_stance.json").read_text())
             self.assertEqual(risk["company_events"][1]["events"][0]["evidence_id"], EVENT_ID)
 
+    def test_event_counter_evidence_flows_to_research_and_delivery(self):
+        from test_analysts import bundle_with_event, EVENT_ID
+        from etf_agent.decision_delivery.service import build_delivery
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            source = bundle_with_event()["snapshot"]
+            world.snapshot["documents"].append(source["documents"][-1])
+            world.snapshot["source_evidence"].append(source["source_evidence"][-1])
+            world.paths["snapshot"].write_text(json.dumps(world.snapshot), encoding="utf-8")
+            events = copy.deepcopy(EVENT)
+            events["items"][1].update(
+                outlook="positive", event_outlook="positive", data_gaps=[],
+                findings=[finding("event-2330-high", EVENT_ID)],
+                events=[{"evidence_id": EVENT_ID, "materiality": "high", "summary": "董事會核准資本預算。",
+                         "counter_evidence": ["公告未說明資金來源。"], "pending_confirmations": ["執行時程尚未公布。"]}],
+            )
+            events["items"] = [events["items"][1]]
+            result = world.run(FakeRunner(team_outputs(event_b0=[events])))
+            self.assertEqual(result.status, "completed", result.errors)
+            brief = json.loads((world.run_dir / "brief_bull_b0.json").read_text())
+            row = next(item for item in brief["symbols"] if item["symbol"] == "2330.TW")
+            self.assertEqual(row["analysts"]["event"]["events"][0]["pending_confirmations"], ["執行時程尚未公布。"])
+            delivery = build_delivery(world.repository, "decision-fixture", Path(directory) / "reports")
+            # 新欄位不得讓最終報告重建失敗（失敗會讓早上重做退回備案）。
+            self.assertEqual(delivery["report_status"], "ready", delivery)
+
     def test_integrated_team_rejects_legacy_research_injection_and_version_change(self):
         with tempfile.TemporaryDirectory() as directory:
             world = PipelineWorld(Path(directory), approved_status=True)
@@ -337,6 +363,36 @@ class DailyPipelineTests(unittest.TestCase):
         self.assertNotIn("review_r0", [name for name, _ in runner.prompts])
         self.assertEqual(review["decision"], "reject")
         self.assertTrue(any(flag.startswith("GUARD_FAILED") for flag in review["risk_flags"]))
+
+
+class LiquidityExposureTests(unittest.TestCase):
+    def test_review_sees_order_share_of_average_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertIn("liquidity_exposure_review_input_r0", dict(runner.prompts)["review_r0"])
+            liquidity = json.loads((world.run_dir / "liquidity_exposure_review_input_r0.json").read_text(encoding="utf-8"))
+            proposal = json.loads((world.run_dir / "proposal_r0.json").read_text(encoding="utf-8"))
+            momentum = {item["symbol"]: item for item in json.loads((world.run_dir / "momentum.json").read_text(encoding="utf-8"))["items"]}
+        orders = proposal["order_proposal"]["orders"]
+        self.assertEqual(len(liquidity["items"]), len(orders))
+        for row in liquidity["items"]:
+            volume = Decimal(str(momentum[row["symbol"]]["average_volume_20d"]))
+            self.assertEqual(Decimal(row["participation"]), (Decimal(row["shares"]) / volume).quantize(Decimal(row["participation"])))
+            self.assertEqual(row["flagged"], Decimal(row["shares"]) / volume > Decimal("0.10"))
+
+    def test_missing_volume_is_flagged_not_hidden(self):
+        proposal = {"proposal_id": "p", "order_proposal": {"orders": [
+            {"symbol": "2330.TW", "side": "buy", "shares": 1000}, {"symbol": "2317.TW", "side": "buy", "shares": 50000}]}}
+        momentum = {"items": [{"symbol": "2330.TW", "average_volume_20d": None},
+                              {"symbol": "2317.TW", "average_volume_20d": 100000}]}
+        result = liquidity_exposure(proposal, momentum)
+        self.assertEqual([row["symbol"] for row in result["items"]], ["2330.TW", "2317.TW"])
+        self.assertEqual(result["items"][0]["status"], "unavailable")
+        self.assertEqual(Decimal(result["items"][1]["participation"]), Decimal("0.5"))
+        self.assertEqual(result["flagged_symbols"], ["2317.TW", "2330.TW"])
 
 
 class SectorExposureTests(unittest.TestCase):

@@ -123,15 +123,15 @@ flowchart LR
 | 路徑 | 內容 | 誰寫入 | 備註 |
 | --- | --- | --- | --- |
 | `daily/.lock` | 防止兩個每日流程同時跑的檔案鎖 | `scripts/run_daily_pipeline.py` | 實際目錄已存在，可忽略 |
-| `daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json` | 每日執行狀態、決策 run ID、交付結果、D-Plan 結果、阻擋原因；取代又還原時記 `superseded_pending` 與 `rolled_back`（舊版第一次 run 沒有時間後綴） | `run_daily_pipeline.py`（`write_json`） | D-Plan 匯出時作為 `daily_run` 輸入；`export_latest` 也掃它 |
+| `daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json` | 每日執行狀態、決策 run ID、交付結果、D-Plan 結果、阻擋原因；取代又還原時記 `superseded_pending` 與 `rolled_back`；決策跑完已過交件期限且沒有備案時記 `late_decision_archived_to`（舊版第一次 run 沒有時間後綴） | `run_daily_pipeline.py`（`write_json`） | D-Plan 匯出時作為 `daily_run` 輸入；`export_latest` 也掃它 |
 | `.../trading_status.json` | 當次交易狀態 bundle 與 assessment | `run_daily_pipeline.py` | 讓重建不依賴舊的 `data/trading_status` 封存 |
 | `.../decision_input.json` | 決策輸入 bundle（Snapshot、帳戶快照等） | `DailyDecisionPipeline` | 決策封存也會保存一份 |
 | `.../momentum.json`、`fundamental_metrics.json`、`analyst_data_availability.json` | 程式計算的動能、財務指標與資料可用性 | `DailyDecisionPipeline.save_artifact` | 確定性計算結果 |
 | `.../brief_<分析師>_b<N>.json` | 給子 Agent 的分批任務簡報（`technical_gate` 時含 `momentum_only_symbols`、`full_history_symbols`） | 同上 | 供審計當日餵給 Agent 的內容 |
 | `.../analyst_technical.json` 等 `analyst_<名稱>.json` | 分析師報告 | 同上 | 分析團隊輸出 |
-| `.../<task>_raw_<N>.json`（例如 `technical_b0_raw_1.json`） | 子 Agent 原始輸出，含每次呼叫耗時 | `DailyDecisionPipeline`（第 276 行附近） | 續跑時以這些檔判定已完成的呼叫 |
+| `.../<task>_raw_<N>.json`（例如 `technical_b0_raw_1.json`） | 子 Agent 原始輸出；`pipeline.json` 的 `agent_calls` 另記每次呼叫耗時、用量，驗證失敗時記 `validation_errors` 與前三項錯誤 | `DailyDecisionPipeline`（第 276 行附近） | 續跑時以這些檔判定已完成的呼叫 |
 | `.../decision_chain.json` | 決策鏈摘要 | 同上 | |
-| 另有（視流程走到哪）：`perception_bundle.json`、`perception_result.json`、`policy_base.json`、`policy.json`、`<role>_stance.json`、`research_debate.json`、`trade_decision.json`、`cash_stance.json`、`proposal.json`、`scenario.json`、`guard.json`、`risk_review.json`、`revision_history.json`、`decision.json`、`team_inputs.json`、`trader_report.md`、`review_*_r<N>.json` | 多空研究、交易、風險與修正循環的中間檔 | `DailyDecisionPipeline` | 檔名來自 `save_artifact` 與第 650 行的 `trader_report.md`；目前實際目錄只走到分析師階段，這些檔案尚未出現 |
+| 另有（視流程走到哪）：`perception_bundle.json`、`perception_result.json`、`policy_base.json`、`policy.json`、`<role>_stance.json`、`research_debate.json`、`trade_decision.json`、`cash_stance.json`、`proposal.json`、`scenario.json`、`guard.json`、`risk_review.json`、`revision_history.json`、`decision.json`、`team_inputs.json`、`trader_report.md`、`review_*_r<N>.json`、`<proposal／scenario／guard／sector_exposure／liquidity_exposure>_review_input_r<N>.json` | 多空研究、交易、風險與修正循環的中間檔 | `DailyDecisionPipeline` | 檔名來自 `save_artifact` 與第 650 行的 `trader_report.md`；目前實際目錄只走到分析師階段，這些檔案尚未出現 |
 | `daily/launchd.log`、`data-launchd.log`、`finmind-news-launchd.log` | launchd 排程的標準輸出 | `scripts/launchd/*.plist.template` 設定的 `StandardOutPath` | 只有安裝排程後才有 |
 | `decisions/<日期>/decision-<UTC時間>Z/` | 一次決策的封存：`decision_input`、`momentum`、`debate`、`intent`、`policy`、`proposal`、`scenario`、`guard`、`risk_review`、`revision_history`、`decision`、`team_inputs` 各一個 `.json`，加 `manifest.json` | `DecisionRepository.save`，必要名單在 `src/etf_agent/decision/service.py` 的 `required` | 雜湊封存，內容不得被修改；`ImmutableRunStore.verify` 會檢查檔案集合與 SHA-256 |
 
@@ -175,6 +175,7 @@ flowchart LR
 | `artifacts/event_research_validated.json` | `cli/research_report.py` 預設讀取（事件研究驗證結果） |
 | `artifacts/market_context_probes/` | `cli/market_context_probe.py` |
 | `artifacts/fundamental_repairs/` | `cli/fundamental_repair.py` |
+| `artifacts/evaluation/coverage_latest.json`、`suites/<名稱>.json`、`runs/eval-<UTC時間>/`（`manifest.json`、`report.json`、`report.md`、每份考卷每次重跑的 run 目錄與自己的 `decisions/`） | `cli/agent_eval.py` |
 
 ## 3. `var/` 逐項說明
 

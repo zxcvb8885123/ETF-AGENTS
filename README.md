@@ -58,7 +58,7 @@ uv python install 3.12
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020-180000`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。已還原成重跑前狀態的 run（`pipeline.json` 有 `rolled_back`）不能續跑，改用 `--force`。 |
+| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020-180000`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。已還原成重跑前狀態的 run（`pipeline.json` 有 `rolled_back`）不能續跑，改用 `--force`。Snapshot 截止時間早於 `config/decision_policy.json` 的 `available_at`（目前 2026-10-23 00:00 台北）的舊 run 也不能續跑，建立 Policy 時會被擋下（策略設定晚於資料截止）；改用 `--force` 重抓資料重跑。 |
 | `--skip-data` | 關 | 一律沿用既有 Snapshot 與帳戶快照，不重新執行資料更新，不看更新時間。續跑、或 Snapshot 已含應有的最新交易日資料（150 檔齊全，且是該日 15:00 後建立）時會自動套用，通常不用手動加。 |
 | `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期、同一目標時段在 1 小時內已完成就不重跑（早上為當天時段、晚上為隔天時段，兩者不算重複）；更早完成的（例如半夜手動跑）照常重跑，舊 run 目錄與 D-Plan 版本都保留。 |
 | `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
@@ -102,6 +102,16 @@ uv python install 3.12
 - **分工**：Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。
 - **時間一致**：所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。
 - **失敗處理**：資料不足或風控失敗時停止或明確降級。
+
+### 對應參賽策略文件
+
+交給主辦方的策略文件（`game_docs/ETF-AGENTS_AI_Agent_選股與決策策略_參賽格式.pdf`）寫的因子，都由程式計算後交給 Agent，細節見[架構文件](docs/architecture.md#對應參賽策略文件的四類因子)：
+
+- **基本面**：營收、獲利、負債，加上現金流（FinMind 現金流量表，稅前淨利與官方損益表相符才用）。
+- **技術**：5／20／60 日變化、MA20／MA60 數值、ATR 與下行波動。
+- **公司事件**：每則事件寫影響、反證（`counter_evidence`）與尚待確認事項（`pending_confirmations`）。
+- **市場與風險**：風險 Agent 讀整體市場情緒、產業集中、每筆委託佔 20 日均量比例與壓力情境（比賽以成交均價結算，成交量只作提醒，不限制成交）。
+- **控制回撤**：程式算帳戶峰值回撤，達 5% 時現金姿態至少 neutral、達 10% 時至少 defensive（`config/decision_policy.json` 的 `drawdown_control`）。
 
 ### 單股超出權重上限時
 
@@ -159,6 +169,7 @@ ETF_AGENTS/
 │   ├── research/            #   事件研究（獨立流程與舊封存）
 │   ├── dashboard/           #   績效儀表板
 │   ├── calibration/         #   校準旁觀者：信心等級事後對答案、決策價與成交均價偏離（不入決策鏈）
+│   ├── evaluation/          #   Agent 評測：資料抓齊率、評測集重跑、與當時結論一致度和重跑穩定度（不入決策鏈）
 │   └── core/                #   共用的雜湊、時間、數值工具
 │
 ├── cli/                     # 單步命令入口：只解析參數並呼叫 src/，不放邏輯（見 cli/README.md）
@@ -222,12 +233,24 @@ ETF_AGENTS/
 | `artifacts/data/` | 最新 Snapshot、財報、產業分類、交易狀態 CSV | 否（`trading_status/` 依日期） | 多數可刪，下次收集重建 |
 | `artifacts/debug/` | 來源原始抓取與探測 | 是 | 可刪 |
 | `artifacts/archive/` | 舊實驗、被取代的決策 | 手動整理 | 可刪 |
+| `artifacts/evaluation/` | 資料抓齊率、評測集清單、評測重跑與報告 | 否 | 可刪；評測集清單刪了要重建 |
 
 規則：
 
 - 日期資料夾只是排列方式，run ID、manifest 與雜湊不含日期。
 - 同一個 run ID 出現在兩個日期資料夾會被拒絕。
 - FinMind 財報補抓時程、交易狀態封存保存規則與 2026-10-22 前的舊資料夾名稱，見 [執行產物說明](docs/runtime-artifacts.md#5-保存規則與歷史名稱)。
+
+### Agent 評測
+
+`cli/agent_eval.py` 量四件事，細節見 [evaluation 說明](src/etf_agent/evaluation/README.md)：
+
+- **資料抓齊率**（不花用量）：`.venv/bin/python cli/agent_eval.py coverage`。官方公告、月營收、財報與行情有沒有漏存；不完整時回傳 2。
+- **評測集**：拿過去已封存的每日決策當考卷，`suite --name 名稱` 建立。
+- **一致度與穩定度**（會花用量）：`run --suite 名稱 --repeats 2 --yes` 重跑，比較和當時結論、以及兩次重跑之間有多少相同、有幾檔正負相反。`--stop-after analysts` 只跑分析師，較省。
+- **過程**：報告列出每次呼叫的重試、驗證失敗與用量。
+
+- **準不準**：考卷的答案是之後真正的官方成交均價。看好的有沒有贏交易池平均、看壞的有沒有輸；價格還沒出來標「待答案」，累積到 20 個決策日才給命中率。之後再跑 `report --eval-id 編號` 就會更新。
 
 ## 目前狀態與限制
 
@@ -253,13 +276,14 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 ### 每日排程：晚上備案、早上重做
 
-排程（`scripts/launchd/`）平日 18:00、07:00 各跑一次 `run`：
+排程（`scripts/launchd/`）平日 21:00、07:00 各跑一次 `run`：
 
-- **18:00 備案**：用當天收盤資料做下一個交易日的決策與 D-Plan。早上出事時，手上仍有一份能交。
+- **21:00 備案**：用當天收盤資料做下一個交易日的決策與 D-Plan。早上出事時，手上仍有一份能交。主辦方約 19:00 才產生隔天的 DataPack，**21:00 前要先下載到 `var/datapack/`**，否則對帳不過、不會有備案。
 - **07:00 重做**：在 08:55 交件期限前，用晚上到早上的新事件、新聞與情緒重做，取代晚上那份。
 - **何時略過**：同一目標時段在 1 小時內已有完成的 run 才略過（例如 06:30 手動跑完，07:00 不跑）。半夜手動跑的不算，07:00 照常重做。
 - **每次都保留**：run 目錄一律帶台北時間（`daily-<YYYYMMDD>-<HHMMSS>`）。每份 D-Plan 另存在 `artifacts/competition_d_plan/versions/`，檔名結尾是決策時間（台北）；主檔 `D-Plan_<team_id>_<交易日>.json` 永遠是最新一份。
-- **重做失敗時自動還原**：早上重做沒產生新 D-Plan（失敗、被擋或決策被拒），程式把帳本、晚上的決策與 Snapshot 還原成重做前，重做建立的帳本狀態移到 `artifacts/ledger/<account_id>/rolled_back/`（不刪除）。通知會寫「已還原重跑前的備案決策」。
+- **跑完已過 08:55 不換主檔**：決策跑完時若已過目標時段的交件期限，不產生 D-Plan、不取代已上傳的決策；沒有備案時新決策移到封存區，帳本視為該時段沒交件。
+- **重做失敗時自動還原**：早上重做沒產生新 D-Plan（失敗、被擋、決策被拒或跑完已過 08:55），程式把帳本、晚上的決策與 Snapshot 還原成重做前，重做建立的帳本狀態移到 `artifacts/ledger/<account_id>/rolled_back/`（不刪除）。通知會寫「已還原重跑前的備案決策」。
 
 還原之後：
 
@@ -274,6 +298,7 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 資料包是主辦方每天提供的結算結果（現金、持股、前日委託結果、違規紀錄），比賽以它為準。每天跑 `run` 前，到參賽者後台「文件繳交」頁下載資料包，放進 `var/datapack/`（不進 git，檔名不限）。
 
 - 找不到本交易日的資料包、主辦方結算尚未產生（`missing` 含 `prev_settlement`）、持股股數不同或現金差超過容忍值時，流程在呼叫 Agent 前停止，並列出逐檔差異與可能原因（前日整批作廢、被排除代號、違規天數）。
+- 對帳通過後，D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推（主辦方公式 `floor(target_weight × 前日淨值 ÷ 前日收盤價 ÷ 1000) × 1000` 用的就是它），帳本淨值的小差異不會讓邊界上的股數差一張；資料包持股的收盤價和 Snapshot 不同、或要換算的股票缺交易所收盤價時，不產生 D-Plan。略過對帳時沿用帳本淨值。
 - 不跑 Agent、只想確認帳本和資料包是否一致：`.venv/bin/python cli/virtual_account.py reconcile --datapack var/datapack/<檔名>.json`（一致回傳 0，不一致回傳 2，並印出現金差，可用來校準容忍值）。
 - 對不上時，先確認資料包是最新的，再執行 `./start.sh run --rebase-to-datapack`：以資料包重建帳本（成本以結算收盤價代替），重建決策前快照，再對帳一次才跑 Agent。資料包須早於新 Snapshot 的截止時間、結算日須等於行情日；目前快照已有待成交決策時拒絕。
 - 上傳前可再用最新資料包檢查 D-Plan（同隊同日、賣出不超過持股、每檔持股都有交代），不跑 Agent：

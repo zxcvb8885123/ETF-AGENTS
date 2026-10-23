@@ -129,6 +129,19 @@ def supersede_decision_runs(
     return superseded
 
 
+def archive_decision_run(decision_repository: Path, run_id: str, archive_root: Path) -> Path:
+    """把一份 Decision run 整個搬到封存區（不刪除）；封存區已有同名 run 時拒絕。"""
+    run_dir = DecisionRepository(decision_repository).run_dir(run_id)
+    if run_dir is None:
+        raise VirtualAccountError("找不到要封存的 Decision run：%s" % run_id)
+    target = Path(archive_root) / run_dir.parent.name / run_dir.name
+    if target.exists():
+        raise VirtualAccountError("封存區已有同名 Decision run：%s" % target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(run_dir), str(target))
+    return target
+
+
 def pending_decision(repository: VirtualAccountRepository, decision_repository: Path) -> Optional[Dict[str, str]]:
     """最新狀態是已有決策、尚未結算的 prepare 時，回傳帳本 run 與 Decision run；否則回 None。"""
     current = repository.latest(optional=True)

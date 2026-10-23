@@ -27,9 +27,9 @@
 | `decision_rules.json` | `source_url` 指向 `config/competition_rules.json`，兩份數值需一致 |
 | `decision_rules.json` | `max_sector_weight` 為 `"0.35"`（2026-10-23 起；超過時由配置程式在 Guard 前按整張減碼，見根 README）；`minimum_active_share` 為 `"0"`，即不設實際限制（比賽只比總報酬，與主動型 ETF 的差異不加分） |
 | `decision_policy.json` | 現金緩衝、預設權重、減碼比例、滑價、換手、壓力情境、修正次數與 `position_sizing` |
-| `decision_policy.json` | 可調：`cash_buffer_by_stance`（aggressive／neutral／defensive 現金比例）、`conviction_multipliers`（high／medium／low 乘數）、`volatility_floor`、`slippage_bps`、`trim_fraction` |
+| `decision_policy.json` | 可調：`drawdown_control`（`neutral_at`／`defensive_at` 峰值回撤門檻，達到時現金姿態至少 neutral／defensive）、`cash_buffer_by_stance`（aggressive／neutral／defensive 現金比例）、`conviction_multipliers`（high／medium／low 乘數）、`volatility_floor`、`slippage_bps`、`trim_fraction` |
 | `decision_policy.json` | 樣板不得含硬性規則或產業分類欄位，否則 `build_decision_policy` 拒絕 |
-| `decision_policy.json` | 變更會改變權重與成交模擬，並影響可重算雜湊 |
+| `decision_policy.json` | 變更會改變權重與成交模擬，並影響可重算雜湊；改版時更新 `policy_id` 與 `available_at`，Snapshot 截止時間早於 `available_at` 的舊 run 不能再 `--resume`，要用 `--force` 重跑 |
 | `decision_rules.json` ＋ `decision_policy.json` | `build_decision_policy`（`src/etf_agent/decision/policy_builder.py`）以後者為樣板，併入前者的硬性規則與 `data/sector_classification.json`，產生帶 `content_sha256` 的 Policy |
 | `data_sources.json` | 涵蓋 TWSE／TPEx 最新價、`source_probes`、歷史行情（節流、重試、回補年數）、yfinance、月營收與重大訊息、財報來源、交易狀態候選端點 |
 | `data_sources.json` | 抓取參數：`timeout_seconds`、`retries`、`max_workers`、`min_request_interval_seconds`、`throttle_backoff_seconds`、`lookback_years`、`overlap_days`、`batch_size` |

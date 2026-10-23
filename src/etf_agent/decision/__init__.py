@@ -42,6 +42,7 @@ from .trader import (
 from .sizing import SIZING_METHOD
 from .trader_report import render_trader_report
 from .policy_builder import build_decision_policy
+from .drawdown import bind_drawdown, measure_drawdown, stance_floor, stance_meets_floor
 from .allocation import (
     AllocationOrderEngine,
     DecisionPolicyValidator,
@@ -56,6 +57,7 @@ from .risk import (
     ScenarioValidator,
     revision_effects,
     sector_exposure,
+    liquidity_exposure,
 )
 from .finalization import (
     DecisionFinalizer,
@@ -104,6 +106,10 @@ __all__ = [
     "render_trader_report",
     "SIZING_METHOD",
     "build_decision_policy",
+    "bind_drawdown",
+    "measure_drawdown",
+    "stance_floor",
+    "stance_meets_floor",
     "AllocationOrderEngine",
     "DecisionPolicyValidator",
     "ProposalValidator",
@@ -115,6 +121,7 @@ __all__ = [
     "RiskReviewValidator",
     "revision_effects",
     "sector_exposure",
+    "liquidity_exposure",
     "DecisionFinalizer",
     "build_team_inputs",
     "DecisionResultValidator",

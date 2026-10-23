@@ -180,6 +180,10 @@ class PipelineBase:
             errors = validate(artifact)
             if not errors:
                 return artifact
+            # 每次驗證失敗的錯誤數與前幾項留在執行紀錄，評測時可看出 Agent 在哪裡出錯。
+            with self._calls_lock:
+                item["validation_errors"] = len(errors)
+                item["first_validation_errors"] = [str(error)[:200] for error in errors[:3]]
             prompt = (
                 task.prompt
                 + "\n\n上一次輸出未通過確定性驗證，錯誤如下；請修正後重新輸出完整結果：\n- "

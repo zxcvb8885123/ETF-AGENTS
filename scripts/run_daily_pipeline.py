@@ -58,6 +58,7 @@ from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_di
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 from etf_agent.virtual_account.daily import (  # noqa: E402
+    archive_decision_run,
     pending_decision,
     restore_superseded_decision,
     supersede_decision_runs,
@@ -353,6 +354,20 @@ def session_deadline_passed(session, now: datetime) -> bool:
         return True
     deadline = datetime.combine(start.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
     return now >= deadline
+
+
+def refuse_late_decision(summary: dict, session, decision_run_id: str, now: datetime) -> None:
+    """決策跑完時已過目標時段的交件期限：不換 D-Plan 主檔、不留新決策。
+
+    有被取代的備案時，結束時的還原會一併封存新決策；沒有備案時直接封存新決策，帳本視為該時段沒交件。
+    """
+    if not session_deadline_passed(session, now):
+        return
+    if not summary.get("superseded_pending"):
+        summary["late_decision_archived_to"] = str(archive_decision_run(
+            ROOT / "artifacts" / "decisions", decision_run_id, ROOT / "artifacts" / "archive" / "superseded_decisions"))
+    raise RuntimeError("決策跑完時已過目標時段 %s 的交件期限 %s，不產生 D-Plan，也不取代已上傳的決策" % (
+        (session or {}).get("start"), DECISION_DEADLINE.strftime("%H:%M")))
 
 
 def superseded_pending(account_id: str, pending) -> bool:
@@ -663,8 +678,8 @@ def main() -> int:
         approvals = load_approvals(approvals_path)
         not_applicable = load_not_applicable(approvals_path)
         status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals, not_applicable)
-        if session_deadline_passed(session, now):
-            # 沿用的舊 Snapshot 仍排到已過交件期限的時段；再做決策會取代已上傳那份，帳本與實際交件對不上。
+        if session_deadline_passed(session, datetime.now(TAIPEI_TIMEZONE)):
+            # 資料階段可能拖過期限；沿用的舊 Snapshot 仍排到已過交件期限的時段；再做決策會取代已上傳那份，帳本與實際交件對不上。
             raise RuntimeError("目標時段 %s 已過交件期限 %s，不再為它產生決策；收盤資料到齊後再跑會排到下一時段" % (
                 session.get("start"), DECISION_DEADLINE.strftime("%H:%M")))
         summary["trading_status"] = {
@@ -709,6 +724,7 @@ def main() -> int:
             fear_greed_root=ROOT / "artifacts" / "data" / "market_fear_greed",
             fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
             market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
+            nav_history=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).nav_history(),
         )
         summary.update(
             {
@@ -726,6 +742,7 @@ def main() -> int:
         if result.status != "completed":
             raise RuntimeError("決策鏈失敗：%s" % "；".join(result.errors))
         summary["event_analysis_mode"] = "integrated_analyst"
+        refuse_late_decision(summary, session, result.decision_run_id, datetime.now(TAIPEI_TIMEZONE))
         superseded = supersede_decision_runs(
             ROOT / "artifacts" / "decisions", result.decision_run_id,
             ROOT / "artifacts" / "archive" / "superseded_decisions",

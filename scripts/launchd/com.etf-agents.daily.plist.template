@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- 安裝：將 __PROJECT_ROOT__ 與 __HOME__ 換成實際路徑後複製到 ~/Library/LaunchAgents/，
      再執行 launchctl load ~/Library/LaunchAgents/com.etf-agents.daily.plist。
-     平日 18:00 先做隔天時段的決策當備案，隔天 07:00 在交件期限（08:55）前用新資料重做
+     平日 21:00 先做隔天時段的決策當備案（主辦方約 19:00 才產生隔天的 DataPack，須先下載到 var/datapack），隔天 07:00 在交件期限（08:55）前用新資料重做
      （日線不重抓，事件、新聞與情緒重抓；沒產生新 D-Plan 時自動還原晚上的備案；本機時區須為 Asia/Taipei）。
      週末、休市日與同一時段 1 小時內已完成由腳本自行略過。
      需要 Docker Desktop 已啟動、claude CLI 已登入，且 Mac 在該時間未休眠。 -->
@@ -29,11 +29,11 @@
     <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>StandardOutPath</key>
   <string>__PROJECT_ROOT__/artifacts/daily/launchd.log</string>

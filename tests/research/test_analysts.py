@@ -2,6 +2,7 @@ import copy
 import json
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
@@ -118,6 +119,22 @@ class AnalystReportValidatorTests(unittest.TestCase):
         errors = AnalystReportValidator(bundle, "technical").validate(report(bundle, "technical", technical_with_events))
         self.assertTrue(any("未允許欄位" in error for error in errors), errors)
 
+    def test_event_counter_evidence_and_pending_confirmations(self):
+        # 策略文件：事件要看反證與尚待確認事項；舊封存沒有這兩欄仍有效，有就必須是字串陣列。
+        bundle = bundle_with_event()
+        validator = AnalystReportValidator(bundle, "event")
+        items = event_items()
+        items[1]["events"][0].update(counter_evidence=["同期財報顯示資本支出已占營收三成。"],
+                                     pending_confirmations=["資本預算的執行時程尚未公布。"])
+        self.assertEqual(validator.validate(report(bundle, "event", items)), [])
+        for bad in ("只有一句", [1], [""]):
+            items = event_items()
+            items[1]["events"][0]["counter_evidence"] = bad
+            self.assertTrue(any("counter_evidence" in error for error in validator.validate(report(bundle, "event", items))), bad)
+        items = event_items()
+        items[1]["events"][0]["impact_score"] = ["high"]
+        self.assertTrue(any("impact_score" in error for error in validator.validate(report(bundle, "event", items))))
+
     def test_high_materiality_events_are_listed_for_full_event_research(self):
         bundle = bundle_with_event()
         self.assertEqual(high_materiality_events(report(bundle, "event", event_items("high"))), [{"symbol": "2330.TW", "evidence_id": EVENT_ID}])
@@ -145,11 +162,19 @@ class AnalystBriefTests(unittest.TestCase):
         technical = build_analyst_brief(bundle, momentum, "technical")
         tsmc = next(item for item in technical["symbols"] if item["symbol"] == "2330.TW")
         self.assertEqual(tsmc["momentum"]["evidence_ids"], ["price-2330"])
+        # 策略文件寫「均線」：給均線數值本身，不只給是否站上均線。
+        source = next(item for item in momentum["items"] if item["symbol"] == "2330.TW")
+        for field in ("ma20", "ma60"):
+            self.assertIn(field, tsmc["momentum"])
+            if source[field] is not None:
+                self.assertEqual(Decimal(tsmc["momentum"][field]), Decimal(source[field]).quantize(Decimal("0.01")))
         self.assertEqual(technical["regime_assessment"], momentum["regime_assessment"])
         event = build_analyst_brief(bundle, momentum, "event")
         self.assertEqual(next(item for item in event["symbols"] if item["symbol"] == "2330.TW")["events"][0]["evidence_id"], EVENT_ID)
         fundamental = build_analyst_brief(bundle, momentum, "fundamental", None)
         self.assertEqual({item["financial_status"] for item in fundamental["symbols"]}, {"unavailable"})
+        # 沒有已核對的現金流文件時明確標為資料缺口，不留空白讓分析師自行推測。
+        self.assertEqual({item["cash_flow"]["status"] for item in fundamental["symbols"]}, {"unavailable"})
 
 
 class AnalystTeamTests(unittest.TestCase):

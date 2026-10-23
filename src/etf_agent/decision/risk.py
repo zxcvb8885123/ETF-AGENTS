@@ -72,6 +72,38 @@ def sector_exposure(proposal: Mapping[str, object], policy: Mapping[str, object]
     }
 
 
+LIQUIDITY_PARTICIPATION_WARNING = Decimal("0.10")  # 委託股數超過 20 日均量一成即標示，供審查判斷，不是硬性規則
+
+
+def liquidity_exposure(proposal: Mapping[str, object], momentum: Mapping[str, object]) -> Dict[str, object]:
+    """每筆委託佔 20 日平均成交股數的比例（策略文件的「流動性」壓力）；不改變 Guard 或情境結果。"""
+    volumes = {
+        str(item.get("symbol", "")).upper(): item.get("average_volume_20d")
+        for item in momentum.get("items", []) if isinstance(item, Mapping)
+    }
+    items = []
+    for order in proposal["order_proposal"]["orders"]:
+        symbol = str(order["symbol"]).upper()
+        shares = decimal_value(order["shares"], "%s.shares" % symbol)
+        volume = volumes.get(symbol)
+        row: Dict[str, object] = {"symbol": symbol, "side": order.get("side"), "shares": int(shares)}
+        if volume is None or decimal_value(volume, "%s.average_volume_20d" % symbol) <= 0:
+            row.update(status="unavailable", average_volume_20d=None, participation=None, flagged=True)
+        else:
+            participation = shares / decimal_value(volume, "%s.average_volume_20d" % symbol)
+            row.update(status="available", average_volume_20d=str(volume), participation=_rate(participation),
+                       flagged=participation > LIQUIDITY_PARTICIPATION_WARNING)
+        items.append(row)
+    # 缺均量的排最前，其餘依佔比由高到低。
+    items.sort(key=lambda row: (row["participation"] is None, Decimal(row["participation"] or "0")), reverse=True)
+    return {
+        "proposal_id": proposal["proposal_id"],
+        "warning_participation": _rate(LIQUIDITY_PARTICIPATION_WARNING),
+        "flagged_symbols": sorted(row["symbol"] for row in items if row["flagged"]),
+        "items": items,
+    }
+
+
 class ScenarioEngine:
     """Apply transparent price and liquidity assumptions to one proposal."""
 

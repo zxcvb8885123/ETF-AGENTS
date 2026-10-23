@@ -15,6 +15,9 @@ from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from typing import Dict, List, Mapping, Sequence
 
 from etf_agent.decision import DecisionInputValidator, DecisionResultValidator
+from etf_agent.core import parse_decimal
+from etf_agent.data.evidence import TAIPEI_TIMEZONE as TAIPEI
+from etf_agent.data.trading_calendar import DECISION_DEADLINE
 from etf_agent.decision.contracts import DecisionToolError, decimal_value, snapshot_execution_price
 
 
@@ -295,6 +298,70 @@ class DPlanValidator:
                 errors.append("market_view.basis_refs 必須是字串陣列")
 
 
+def official_target_shares(weight: float, price: Decimal, nav: Decimal) -> int:
+    """主辦方公式：floor(target_weight × 前日淨值 ÷ 前日收盤價 ÷ 1000) × 1000。"""
+    return int((Decimal(str(weight)) * nav / price / Decimal(1000)).to_integral_value(rounding=ROUND_FLOOR)) * 1000
+
+
+def official_target_weight(shares: int, price: Decimal, nav: Decimal) -> float:
+    """反推 target_weight，使主辦方公式在同一 nav 下剛好得到 shares。"""
+    weight = float(Decimal(shares) * price / nav)
+    # JSON Schema numbers are parsed as binary floats by common
+    # toolchains. Move by at most a few ULPs so exact lot boundaries
+    # do not floor one lot too low after serialization.
+    for _ in range(8):
+        if official_target_shares(weight, price, nav) >= shares:
+            break
+        bumped = math.nextafter(weight, math.inf)
+        if bumped > 0.25:
+            break
+        weight = bumped
+    return weight
+
+
+def require_official_closes(rows: Sequence[Mapping[str, object]], symbols: set) -> None:
+    """主辦方以交易所公布的前日收盤價換算股數；缺官方收盤價時退回的調整價不能拿來換算。"""
+    unofficial = sorted(str(row["symbol"])[:4] for row in rows
+                        if str(row["symbol"]) in symbols and row.get("execution_close_price") is None)
+    if unofficial:
+        raise DPlanError("缺少交易所前日收盤價，不能換算主辦方股數：" + "、".join(unofficial))
+
+
+def derivation_nav(
+    ledger_nav: object, latest_prices: Mapping[str, Decimal],
+    official_nav: object = None, official_prices: Mapping[str, object] = None,
+) -> Decimal:
+    """換算 target_weight 的分母：有已對帳的 DataPack 時用它的 nav_tradable（主辦方的前日淨值），否則用帳本 NAV。
+
+    DataPack 持股的前日收盤價必須與 Snapshot 相同，否則主辦方換算的股數會不同，直接拒絕。
+    """
+    for symbol, official_price in sorted((official_prices or {}).items()):
+        price = parse_decimal(official_price, "DataPack close_price", error=DPlanError, reject_bool=True)
+        if symbol in latest_prices and price != latest_prices[symbol]:
+            raise DPlanError("%s 前日收盤價 %s 與 DataPack %s 不一致，主辦方換算的股數會不同" % (
+                symbol[:4], latest_prices[symbol], official_price))
+    if official_nav is None:
+        return Decimal(str(ledger_nav))
+    nav = parse_decimal(official_nav, "DataPack nav_tradable", error=DPlanError, reject_bool=True)
+    if nav <= 0:
+        raise DPlanError("DataPack nav_tradable 必須大於 0")
+    return nav
+
+
+def check_cutoff_before_deadline(decision_cutoff: object, trade_date: str) -> None:
+    """資料 cutoff 必須早於交易日當天 08:55 交件期限。
+
+    cutoff 以 UTC 保存；台北 08:00 後在 UTC 仍是同一天，不能直接比日期字串。
+    """
+    try:
+        cutoff = datetime.fromisoformat(str(decision_cutoff).replace("Z", "+00:00"))
+        trade_day = date.fromisoformat(trade_date)
+    except ValueError as error:
+        raise DPlanError("trade_date 或 decision_cutoff 無法解析") from error
+    if cutoff.tzinfo is None or cutoff >= datetime.combine(trade_day, DECISION_DEADLINE, TAIPEI):
+        raise DPlanError("decision_cutoff 必須早於 trade_date 的交件期限 %s" % DECISION_DEADLINE.strftime("%H:%M"))
+
+
 class DPlanExporter:
     """Map a validated decision run plus agent-authored reasoning into D-Plan."""
 
@@ -304,7 +371,14 @@ class DPlanExporter:
         trade_date: str,
         context: Mapping[str, object],
         artifacts: Mapping[str, Mapping[str, object]],
+        official_nav: object = None,
+        official_prices: Mapping[str, object] = None,
     ) -> Dict[str, object]:
+        """official_nav／official_prices 來自已對帳的 DataPack（nav_tradable 與持股前日收盤價）。
+
+        主辦方以 floor(target_weight × nav_tradable ÷ 前日收盤價) 換算目標股數；有 DataPack 時 target_weight
+        以它的 nav_tradable 反推，避免帳本淨值的小差異讓邊界上的股數差一張而整份作廢。
+        """
         required = {"decision_input", "momentum", "debate", "intent", "policy", "proposal", "scenario", "guard", "risk_review", "revision_history", "decision", "team_inputs"}
         missing = sorted(required - set(artifacts))
         if missing:
@@ -321,8 +395,7 @@ class DPlanExporter:
             raise DPlanError("DecisionResult 驗證失敗：" + "; ".join(result_errors))
         if result.get("status") not in {"approved", "no_trade"}:
             raise DPlanError("只有 approved/no_trade DecisionResult 可匯出")
-        if trade_date <= str(bundle["decision_cutoff"])[:10]:
-            raise DPlanError("trade_date 必須晚於決策資料 cutoff 日期")
+        check_cutoff_before_deadline(bundle["decision_cutoff"], trade_date)
         required_context = {
             "sources", "observations", "market_view", "inferences", "inference_refs_by_ticker",
             "agent_metadata", "eligible_tickers", "strategy_statement",
@@ -348,9 +421,10 @@ class DPlanExporter:
         held = {str(row["symbol"]): int(row["shares"]) for row in account.get("positions", [])}
         latest_prices = {str(row["symbol"]): snapshot_execution_price(row, "latest_prices") for row in bundle["snapshot"].get("latest_prices", [])}
         target = {str(row["symbol"]): int(row["shares"]) for row in positions}
+        require_official_closes(bundle["snapshot"].get("latest_prices", []), set(held) | set(target))
         if any(not re.fullmatch(r"\d{4}\.(?:TW|TWO)", symbol) for symbol in set(held) | set(target)):
             raise DPlanError("D-Plan 只支援具四位數台股代碼且可映射為 ####.TW／####.TWO 的標的")
-        nav = Decimal(str(account["nav"]))
+        nav = derivation_nav(account["nav"], latest_prices, official_nav, official_prices)
         refs_map = context.get("inference_refs_by_ticker")
         if not isinstance(refs_map, Mapping):
             raise DPlanError("inference_refs_by_ticker 必須是股票代碼對應推論 ID 的物件")
@@ -389,19 +463,7 @@ class DPlanExporter:
                 action, weight = "SELL_ALL", 0.0
             else:
                 action = "BUY" if current == 0 else "ADD" if shares > current else "TRIM"
-                exact_weight = Decimal(shares) * price / nav
-                weight = float(exact_weight)
-                # JSON Schema numbers are parsed as binary floats by common
-                # toolchains. Move by at most a few ULPs so exact lot boundaries
-                # do not floor one lot too low after serialization.
-                for _ in range(8):
-                    derived = int((Decimal(str(weight)) * nav / price / Decimal(1000)).to_integral_value(rounding=ROUND_FLOOR)) * 1000
-                    if derived >= shares:
-                        break
-                    bumped = math.nextafter(weight, math.inf)
-                    if bumped > 0.25:
-                        break
-                    weight = bumped
+                weight = official_target_weight(shares, price, nav)
             decision_id = "D%d" % (len(decisions) + 1)
             decision_id_by_symbol[symbol] = decision_id
             decisions.append({"decision_id": decision_id, "ticker": ticker, "action": action, "target_weight": weight, "inference_refs": list(refs)})
@@ -414,7 +476,7 @@ class DPlanExporter:
             decision_ref = by_decision.get(ticker)
             if price is None or decision_ref is None:
                 raise DPlanError("缺少委託價格或決策引用：%s" % ticker)
-            target_shares = int((Decimal(str(next(row["target_weight"] for row in decisions if row["ticker"] == ticker))) * nav / price / Decimal(1000)).to_integral_value(rounding=ROUND_FLOOR)) * 1000 if shares else 0
+            target_shares = official_target_shares(next(row["target_weight"] for row in decisions if row["ticker"] == ticker), price, nav) if shares else 0
             delta = target_shares - current
             if delta:
                 order_rows.append({"ticker": ticker, "side": "BUY" if delta > 0 else "SELL", "shares": abs(delta), "decision_ref": decision_ref})

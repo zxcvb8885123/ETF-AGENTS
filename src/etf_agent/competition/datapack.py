@@ -267,6 +267,12 @@ def reconcile(loaded: Mapping[str, object], account_snapshot: Mapping[str, objec
         if official.get(symbol, 0) != ledger.get(symbol, 0):
             differences.append({"symbol": symbol, "ledger_shares": ledger.get(symbol, 0), "datapack_shares": official.get(symbol, 0)})
     result["share_differences"] = differences
+    # 主辦方以 nav_tradable 與交易所前日收盤價換算 target_weight 的股數；D-Plan 匯出時沿用同一組分母與價格。
+    result["nav_tradable"] = str(pack["account"]["nav_tradable"])
+    result["close_prices"] = {
+        universe[row["code"]]: str(row["close_price"]) for row in pack["holdings"]
+        if row["close_price"] is not None and int(row["shares"]) > 0 and row["code"] in universe
+    }
     ledger_cash = Decimal(str(account_snapshot["cash"]))
     official_cash = Decimal(str(pack["account"]["cash"]))
     tolerance = Decimal(str(pack["account"]["nav_tradable"])) * cash_tolerance_rate

@@ -194,8 +194,13 @@ class DPlanExportService:
             account_id,
             account_run_id,
         )
-        plan = DPlanExporter().build(team_id, effective_trade_date, context, artifacts)
-        if datapack["status"] == "matched":
+        matched = datapack["status"] == "matched"
+        plan = DPlanExporter().build(
+            team_id, effective_trade_date, context, artifacts,
+            official_nav=datapack.get("nav_tradable") if matched else None,
+            official_prices=datapack.get("close_prices") if matched else None,
+        )
+        if matched:
             oversell = check_sells(plan["orders"], datapack["sellable_shares"])
             if oversell:
                 raise DPlanError("D-Plan 賣出超過 DataPack 持股：" + "；".join(oversell))
@@ -216,7 +221,7 @@ class DPlanExportService:
             "decision_run_id": decision_run_id,
             "replaced_existing_output": replaced_existing,
             "account_binding": account,
-            "datapack": {k: datapack.get(k) for k in ("status", "datapack_sha256", "as_of_date", "generated_at")},
+            "datapack": {k: datapack.get(k) for k in ("status", "datapack_sha256", "as_of_date", "generated_at", "nav_tradable")},
             "local_validation": "passed",
             "organizer_server_validation": "not_run",
             "requires_human_review": True,

@@ -51,6 +51,7 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `price_freshness.py` | 判斷資料庫是否已有某交易日收盤後定案行情，供 `start.sh` 略過重複抓取 | `prices_current` |
 | `corporate.py`（轉出層）、`corporate_contracts.py`、`corporate_parsing.py`、`corporate_provider.py`、`corporate_collector.py` | 官方公司資料（重大訊息、月營收、財報）：契約、解析、Provider、收集與保存分檔，`corporate.py` 維持舊 import 路徑 | `SourceDocument`、`MonthlyRevenue`、`FinancialStatementFact`、`FinancialStatement`、`CorporateRecord`、`CorporateResponse`、`OfficialCorporateProvider`、`OfficialCorporateProviderFactory`、`CorporateDataCollector`、`CorporateCollectionResult` |
 | `financial.py` | 官方財報彙總資料的請求、覆蓋驗收與來源可行性結果 | `FinancialStatementRequest`、`FinancialCoverageGap`、`FinancialCollectionResult`、`FinancialStatementCollector`、`latest_due_quarter` |
+| `cash_flow.py` | 以官方累計稅前淨利核對 FinMind 現金流量表，轉成 `cash_flow_statement` 快照文件（不連網） | `VerifiedCashFlowProvider`、`verified_cash_flow_record` |
 | `fundamental_repair.py` | 以官方當期金額核對 FinMind 單季口徑，補足去年同期累計財報 | `OfficialCompanyProfileProvider`、`FundamentalRepairProvider`、`verified_prior_record` |
 | `supplemental_sources.py` | 版本化擷取 FinMind 財報與個股新聞線索（候選） | `FinMindApiProvider`、`FinMindFundamentalProvider`、`FinMindNewsProvider`、`FinMindFundamentalCollector`、`FinMindNewsCollector`、`SupplementalRepository`、`SupplementalResult` |
 | `finmind_schedule.py` | FinMind 財報抓取排程：首次補歷史，之後只在財報公布區間內每天更新 | `FinMindScheduleError`、`in_filing_window`、`history_start`、`load_state`、`plan`、`record_done` |
@@ -98,10 +99,10 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 ## 對應的 CLI／scripts／測試
 
 - CLI：`cli/data_agent.py`（資料狀態、收集、快照）、`cli/trading_status.py`、`cli/fundamental_repair.py`、`cli/market_context_probe.py`。
-- scripts（收集）：`init_db.py`、`collect_twse.py`、`collect_latest_prices.py`、`collect_history.py`、`collect_official_history.py`、`collect_financial_statements.py`、`collect_supplemental_sources.py`、`collect_sector_classification.py`。
+- scripts（收集）：`init_db.py`、`collect_twse.py`、`collect_latest_prices.py`、`collect_history.py`、`collect_official_history.py`、`collect_financial_statements.py`、`collect_supplemental_sources.py`、`collect_sector_classification.py`、`collect_cash_flow.py`。
 - scripts（排程與狀態）：`finmind_schedule.py`、`prices_current.py`、`data_status.py`、`run_daily_pipeline.py`（`./start.sh auto`／`daily`／`run` 串接）。
 - scripts（來源與交易狀態）：`probe_data_sources.py`、`capture_trading_status_candidates.py`、`normalize_trading_status_candidates.py`、`verify_ogd_crosscheck.py`、`repair_pending_tpex_close.py`。
-- 測試：`tests/data/`（`test_data_agent.py`、`test_data_collection.py`、`test_historical.py`、`test_financial_statements.py`、`test_finmind_schedule.py`、`test_fundamental_repair.py`、`test_trading_status.py`、`test_ogd_trading_status.py`、`test_trading_calendar.py`、`test_inferred_closures.py` 等）；`tests/fixtures/` 有小型行情 fixture。
+- 測試：`tests/data/`（`test_data_agent.py`、`test_data_collection.py`、`test_historical.py`、`test_financial_statements.py`、`test_finmind_schedule.py`、`test_fundamental_repair.py`、`test_cash_flow.py`、`test_trading_status.py`、`test_ogd_trading_status.py`、`test_trading_calendar.py`、`test_inferred_closures.py` 等）；`tests/fixtures/` 有小型行情 fixture。
 - 相關文件：[docs/data_sources_inventory.md](../../../docs/data_sources_inventory.md)、[docs/fundamental_data_repair.md](../../../docs/fundamental_data_repair.md)。
 
 ## 規則與邊界

@@ -17,6 +17,7 @@ from .contracts import (
     required_string,
     string_list,
 )
+from .drawdown import stance_meets_floor
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -205,6 +206,10 @@ def apply_trade_decision(
     level = cash_stance.get("level")
     if not isinstance(buffers, Mapping) or level not in CASH_STANCES or level not in buffers:
         raise DecisionToolError("cash_stance 無法對應 position_sizing.cash_buffer_by_stance")
+    control = policy.get("drawdown_control")
+    floor = control.get("stance_floor") if isinstance(control, Mapping) else None
+    if not stance_meets_floor(level, floor):
+        raise DecisionToolError("現金姿態 %s 低於回撤下限 %s" % (level, floor))
     result = dict(policy)
     result["cash_buffer_rate"] = buffers[level]
     result["position_sizing"] = {

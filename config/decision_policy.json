@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-09-26",
-  "available_at": "2026-09-26T00:00:00+08:00",
+  "policy_id": "strategy-2026-10-23",
+  "available_at": "2026-10-23T00:00:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -12,6 +12,10 @@
   "stress_slippage_multiplier": "2",
   "liquidity_fill_rate": "1",
   "max_revisions": 3,
+  "drawdown_control": {
+    "neutral_at": "0.05",
+    "defensive_at": "0.10"
+  },
   "position_sizing": {
     "method": "conviction_volatility_v1",
     "conviction_multipliers": {

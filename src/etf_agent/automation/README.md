@@ -7,7 +7,7 @@
 | 檔案 | 職責 | 主要公開項目 |
 | --- | --- | --- |
 | `__init__.py` | 僅模組說明，無匯出 | — |
-| `daily_pipeline.py` | 每日決策鏈主流程 `run`：DecisionInputBundle、動能、串接各階段、policy、配置／情境／Guard／風險審查迴圈（最多 `max_revisions` 次修正）、finalize 與封存；同時為既有 import 路徑再匯出下列拆出的項目 | `DailyDecisionPipeline`、`validate_research_result`（並再匯出 `PipelineResult`、`degraded_research_result`、`compact_brief_json`、各 Schema 與 runner 型別） |
+| `daily_pipeline.py` | 每日決策鏈主流程 `run`（評測用 `run_from_bundle` 從已封存的 DecisionInputBundle 重跑，可只跑到分析師）：DecisionInputBundle、動能、串接各階段、policy、配置／情境／Guard／風險審查迴圈（最多 `max_revisions` 次修正）、finalize 與封存；同時為既有 import 路徑再匯出下列拆出的項目 | `DailyDecisionPipeline`、`validate_research_result`（並再匯出 `PipelineResult`、`degraded_research_result`、`compact_brief_json`、各 Schema 與 runner 型別） |
 | `pipeline_base.py` | 執行基礎：`PipelineResult`、輸入摘要序列化、`PipelineBase`（Agent 步驟的驗證重試與續跑、平行任務、artifact 保存、階段計時） | `PipelineBase`（`agent_step`、`save_artifact`、`save_brief`）、`PipelineResult`、`degraded_research_result`、`compact_brief_json` |
 | `team_stages.py` | 團隊階段 mixin：分析師、多頭／空頭研究員、交易 Agent（逐批、可平行） | `TeamStagesMixin`（`run_analyst_team`、`run_research_team`、`run_trader`） |
 | `risk_stages.py` | 風險階段 mixin：配置前現金姿態、每次修正的風險審查 | `RiskStagesMixin`（`run_cash_stance`、`_review`） |
