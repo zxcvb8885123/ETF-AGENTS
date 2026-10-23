@@ -88,9 +88,12 @@ class ExecutionSimulator:
         body["content_sha256"] = content_sha256(body)
         return body
 
-    def _fill(self, symbol: str, side: str, shares: int, price: Decimal) -> Dict[str, object]:
+    def fill(self, symbol: str, side: str, shares: int, price: Decimal) -> Dict[str, object]:
+        """單筆整張成交的費稅與現金影響；基準（買入持有）計算也用同一套公式。"""
         gross = price * Decimal(shares)
         commission = max(gross * decimal_value(self.assumptions["commission_rate"], "commission_rate"), decimal_value(self.assumptions["minimum_commission"], "minimum_commission")).quantize(MONEY, rounding=ROUND_CEILING)
         tax = (gross * decimal_value(self.assumptions["sell_tax_rate"], "sell_tax_rate") if side == "sell" else Decimal("0")).quantize(MONEY, rounding=ROUND_CEILING)
         impact = -(gross + commission) if side == "buy" else gross - commission - tax
         return {"symbol": symbol, "side": side, "lots": shares // self.lot_size, "shares": shares, "execution_price": str(price), "gross_amount": money_string(gross), "commission": money_string(commission), "tax": money_string(tax), "net_cash_impact": money_string(impact)}
+
+    _fill = fill

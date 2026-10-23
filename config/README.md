@@ -14,6 +14,7 @@
 | `competition_profile.json` | 隊伍設定檔（不是 D-Plan） | `cli/dplan.py`（`--profile` 預設）、`src/etf_agent/competition/`、`scripts/run_daily_pipeline.py` |
 | `competition_profile.md` | 設定檔的填寫說明（文件，程式不讀） | 人工閱讀 |
 | `active_account.json` | 使用中的帳戶 ID；比賽第一天由 `cli/virtual_account.py open-competition` 改寫 | `start.sh`、`scripts/run_daily_pipeline.py`、`cli/virtual_account.py`、`cli/dplan.py`、`cli/dashboard.py`、`scripts/repair_pending_tpex_close.py` |
+| `benchmarks.json` | 績效比較基準清單：0050 買入持有（單一標的）與 150 檔等權買入持有，含來源與 `license_status` | `cli/benchmark.py`、`cli/dashboard.py`（`--benchmarks` 預設）、`src/etf_agent/data/benchmarks.py`、`src/etf_agent/benchmark/` |
 
 ## 欄位說明與規則
 
@@ -41,6 +42,8 @@
 | `competition_profile.json` | `team_id`（主辦方配發）、ETF 名稱／主題／投資理念、`approved_at`、模型供應商與版本 |
 | `competition_profile.json` | `strategy_status` 不是 `approved` 或 `strategy.*` 欄位為空時，不產生正式 D-Plan |
 | `competition_profile.json` | D-Plan 預設輸出至 `artifacts/competition_d_plan/` |
+| `benchmarks.json` | 每筆需有 `benchmark_id`、`label`、`kind`（`single_instrument`／`universe_equal_weight`）與 `license_status`；單一標的另需 `symbol`、`name`、`market`、`source`（官方來源，如 `TWSE_STOCK_DAY`）。只有 `license_status=approved` 的基準會收集與進正式計算，其餘在儀表板與 CLI 顯示 unavailable |
+| `benchmarks.json` | 基準標的只保存行情，不加入 150 檔交易池（`instruments.in_competition_universe` 維持 0）；費稅沿用 `decision_rules.json`，不另設 |
 
 ## 設定如何流入決策
 

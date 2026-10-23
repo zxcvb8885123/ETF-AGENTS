@@ -228,6 +228,23 @@ class VirtualAccountRepository:
             run_id = state.get("provenance", {}).get("parent_run_id")
         return list(reversed(history))
 
+    def applied_decision_run_ids(self) -> List[str]:
+        """沿 latest 的 parent_run_id 往回走，回傳帳本實際結算過（close 狀態記錄）的 Decision run（舊到新）。
+
+        被取代或還原的決策不在鏈上；用來在同一交易時段有多個封存 run 時，挑出真正交出去的那一個。"""
+        applied: List[str] = []
+        seen = set()
+        run_id: Optional[str] = self.latest()["run_id"]
+        while run_id:
+            if run_id in seen:
+                raise VirtualAccountError("帳本 parent_run_id 形成循環：%s" % run_id)
+            seen.add(run_id)
+            provenance = _read(self.verify(run_id) / "state.json", "state").get("provenance", {})
+            if provenance.get("type") == "close" and provenance.get("decision_run_id"):
+                applied.append(str(provenance["decision_run_id"]))
+            run_id = provenance.get("parent_run_id")
+        return list(reversed(applied))
+
 
 class VirtualAccountService:
     def __init__(self, repository: VirtualAccountRepository):

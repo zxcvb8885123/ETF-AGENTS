@@ -2,13 +2,76 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Optional, Sequence, Tuple
 
-from .contracts import SourceFeasibilityReport, UniverseValidationResult
+from etf_agent.core import parse_aware_time
 
+from .contracts import SourceFeasibilityReport, UniverseValidationResult
+from .price_finality import (
+    TAIPEI_TIMEZONE,
+    price_finalized_at,
+    requires_finalized_fetch,
+)
 from .twse import DailyPrice
 from .universe import Instrument
+
+
+# daily_prices 是 append-only 的版本表：主鍵含 fetched_at，同一（symbol, trade_date, source）
+# 每次抓到不同內容就新增一個版本，讀取端取「fetched_at ≤ cutoff 的最新版本」才能依原時間點重放。
+DAILY_PRICES_COLUMNS_SQL = """
+    symbol TEXT NOT NULL REFERENCES instruments(symbol),
+    trade_date TEXT NOT NULL,
+    open_price TEXT,
+    high_price TEXT,
+    low_price TEXT,
+    close_price TEXT NOT NULL,
+    adjusted_close_price TEXT,
+    price_change TEXT,
+    volume_shares INTEGER NOT NULL,
+    trade_value INTEGER NOT NULL,
+    transactions INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES collection_runs(run_id),
+    raw_payload_id INTEGER NOT NULL REFERENCES raw_payloads(id),
+    ex_rights_marker INTEGER,
+    PRIMARY KEY (symbol, trade_date, source, fetched_at)
+"""
+
+DAILY_PRICES_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_daily_prices_trade_date
+ON daily_prices(trade_date);
+
+CREATE INDEX IF NOT EXISTS idx_daily_prices_source_date
+ON daily_prices(source, trade_date, symbol);
+"""
+
+# 版本內容欄位：這些欄位全部相同就視為同一版本，不另新增列。
+PRICE_CONTENT_FIELDS = (
+    "open_price",
+    "high_price",
+    "low_price",
+    "close_price",
+    "adjusted_close_price",
+    "price_change",
+    "volume_shares",
+    "trade_value",
+    "transactions",
+    "ex_rights_marker",
+)
+
+# 抓取時間允許的時鐘誤差；超過即視為未來時間拒絕。
+FETCHED_AT_FUTURE_TOLERANCE = timedelta(minutes=5)
+
+DAILY_PRICE_VERSIONS_SCHEMA_VERSION = 10
+
+
+def _same_value(stored: object, incoming: object) -> bool:
+    if stored is None or incoming is None:
+        return stored is None and incoming is None
+    return str(stored) == str(incoming)
 
 
 SCHEMA = """
@@ -49,30 +112,10 @@ CREATE TABLE IF NOT EXISTS instruments (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS daily_prices (
-    symbol TEXT NOT NULL REFERENCES instruments(symbol),
-    trade_date TEXT NOT NULL,
-    open_price TEXT,
-    high_price TEXT,
-    low_price TEXT,
-    close_price TEXT NOT NULL,
-    adjusted_close_price TEXT,
-    price_change TEXT,
-    volume_shares INTEGER NOT NULL,
-    trade_value INTEGER NOT NULL,
-    transactions INTEGER NOT NULL,
-    source TEXT NOT NULL,
-    fetched_at TEXT NOT NULL,
-    run_id TEXT NOT NULL REFERENCES collection_runs(run_id),
-    raw_payload_id INTEGER NOT NULL REFERENCES raw_payloads(id),
-    PRIMARY KEY (symbol, trade_date, source)
-);
-
-CREATE INDEX IF NOT EXISTS idx_daily_prices_trade_date
-ON daily_prices(trade_date);
-
+CREATE TABLE IF NOT EXISTS daily_prices (%s);
+%s
 INSERT OR IGNORE INTO schema_versions(version) VALUES (1);
-"""
+""" % (DAILY_PRICES_COLUMNS_SQL, DAILY_PRICES_INDEXES_SQL)
 
 ANALYSIS_VIEW = """
 DROP VIEW IF EXISTS analysis_daily_prices;
@@ -106,7 +149,8 @@ FROM (
                 WHEN 'TWSE_STOCK_DAY_ALL' THEN 3
                 WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                 ELSE 9
-            END
+            END,
+            daily_prices.fetched_at DESC
         ) AS source_rank
     FROM daily_prices
     JOIN instruments USING(symbol)
@@ -331,6 +375,7 @@ class MarketDataDatabase:
                 connection.execute(
                     "ALTER TABLE daily_prices ADD COLUMN ex_rights_marker INTEGER"
                 )
+            self.migrate_daily_price_versions(connection)
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (2)"
             )
@@ -353,6 +398,89 @@ class MarketDataDatabase:
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (7)"
             )
             connection.executescript(ANALYSIS_VIEW)
+
+    @staticmethod
+    def daily_prices_versioned(connection: sqlite3.Connection) -> bool:
+        """daily_prices 主鍵是否已含 fetched_at（append-only 版本表）。"""
+        info = connection.execute("PRAGMA table_info(daily_prices)").fetchall()
+        return any(row["name"] == "fetched_at" and int(row["pk"]) > 0 for row in info)
+
+    @classmethod
+    def migrate_daily_price_versions(cls, connection: sqlite3.Connection) -> int:
+        """把舊的「每檔每日每來源一列、原地覆寫」結構改為 append-only 版本表。
+
+        既有每一列成為該（symbol, trade_date, source）的第一個版本，fetched_at 正規化為
+        UTC ISO 字串；缺時區的 fetched_at 直接失敗並回滾，不猜測。整個重建在同一交易內
+        完成，可重複執行：已遷移時只補記 schema 版本號並回傳 0。回傳搬移的列數。
+        """
+        if cls.daily_prices_versioned(connection):
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_versions(version) VALUES (?)",
+                (DAILY_PRICE_VERSIONS_SCHEMA_VERSION,),
+            )
+            return 0
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP VIEW IF EXISTS analysis_daily_prices")
+        connection.execute("DROP TABLE IF EXISTS daily_prices_versioned")
+        connection.execute(
+            "CREATE TABLE daily_prices_versioned (%s)" % DAILY_PRICES_COLUMNS_SQL
+        )
+        legacy_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(daily_prices)").fetchall()
+        }
+        rows = connection.execute(
+            "SELECT * FROM daily_prices ORDER BY symbol, trade_date, source"
+        ).fetchall()
+        moved = []
+        for row in rows:
+            fetched_at = parse_aware_time(row["fetched_at"], "daily_prices.fetched_at").isoformat()
+            moved.append(
+                (
+                    row["symbol"],
+                    row["trade_date"],
+                    row["open_price"],
+                    row["high_price"],
+                    row["low_price"],
+                    row["close_price"],
+                    row["adjusted_close_price"] if "adjusted_close_price" in legacy_columns else None,
+                    row["price_change"],
+                    row["volume_shares"],
+                    row["trade_value"],
+                    row["transactions"],
+                    row["source"],
+                    fetched_at,
+                    row["run_id"],
+                    row["raw_payload_id"],
+                    row["ex_rights_marker"] if "ex_rights_marker" in legacy_columns else None,
+                )
+            )
+        connection.executemany(
+            """
+            INSERT INTO daily_prices_versioned(
+                symbol, trade_date, open_price, high_price, low_price, close_price,
+                adjusted_close_price, price_change, volume_shares, trade_value, transactions,
+                source, fetched_at, run_id, raw_payload_id, ex_rights_marker
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            moved,
+        )
+        copied = int(
+            connection.execute("SELECT COUNT(*) FROM daily_prices_versioned").fetchone()[0]
+        )
+        if copied != len(rows):
+            raise ValueError("daily_prices 遷移列數不符：%d → %d" % (len(rows), copied))
+        connection.execute("DROP TABLE daily_prices")
+        connection.execute("ALTER TABLE daily_prices_versioned RENAME TO daily_prices")
+        for statement in DAILY_PRICES_INDEXES_SQL.strip().split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_versions(version) VALUES (?)",
+            (DAILY_PRICE_VERSIONS_SCHEMA_VERSION,),
+        )
+        return copied
 
     @staticmethod
     def upsert_instruments(
@@ -436,7 +564,26 @@ class MarketDataDatabase:
         return int(cursor.lastrowid)
 
     @staticmethod
-    def upsert_prices(
+    def price_content(price: DailyPrice) -> Dict[str, object]:
+        """版本比對用的內容欄位，與資料表保存格式一致。"""
+        return {
+            "open_price": str(price.open_price) if price.open_price is not None else None,
+            "high_price": str(price.high_price) if price.high_price is not None else None,
+            "low_price": str(price.low_price) if price.low_price is not None else None,
+            "close_price": str(price.close_price),
+            "adjusted_close_price": (
+                str(price.adjusted_close) if price.adjusted_close is not None else None
+            ),
+            "price_change": str(price.change) if price.change is not None else None,
+            "volume_shares": int(price.volume_shares),
+            "trade_value": int(price.trade_value),
+            "transactions": int(price.transactions),
+            "ex_rights_marker": None if price.ex_rights is None else int(price.ex_rights),
+        }
+
+    @classmethod
+    def store_prices(
+        cls,
         connection: sqlite3.Connection,
         prices: Iterable[DailyPrice],
         source: str,
@@ -444,52 +591,89 @@ class MarketDataDatabase:
         run_id: str,
         raw_payload_id: int,
     ) -> int:
+        """append-only 寫入日線版本；回傳本次處理（新增或確認未變）的列數。
+
+        - 同一（symbol, trade_date, source）內容與最新版本相同時不新增版本；但非官方來源
+          的最新版本若在該日定案時間前抓取、本次已在定案後抓取，仍新增版本以記錄定案。
+        - 內容不同時新增版本，且 fetched_at 必須晚於最新版本（版本依抓取時間遞增）。
+        - fetched_at 缺時區、是未來時間或早於 trade_date 當天一律拒絕，不寫入任何列。
+        """
+        fetched = parse_aware_time(fetched_at, "fetched_at")
+        now = datetime.now(timezone.utc)
+        if fetched > now + FETCHED_AT_FUTURE_TOLERANCE:
+            raise ValueError("fetched_at %s 晚於現在時間，拒絕寫入日線" % fetched_at)
+        fetched_iso = fetched.isoformat()
         rows = list(prices)
-        connection.executemany(
-            """
-            INSERT INTO daily_prices(
-                symbol, trade_date, open_price, high_price, low_price, close_price,
-                adjusted_close_price, price_change, volume_shares, trade_value, transactions, source,
-                fetched_at, run_id, raw_payload_id, ex_rights_marker
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(symbol, trade_date, source) DO UPDATE SET
-                open_price = excluded.open_price,
-                high_price = excluded.high_price,
-                low_price = excluded.low_price,
-                close_price = excluded.close_price,
-                adjusted_close_price = excluded.adjusted_close_price,
-                price_change = excluded.price_change,
-                volume_shares = excluded.volume_shares,
-                trade_value = excluded.trade_value,
-                transactions = excluded.transactions,
-                fetched_at = excluded.fetched_at,
-                run_id = excluded.run_id,
-                raw_payload_id = excluded.raw_payload_id,
-                ex_rights_marker = excluded.ex_rights_marker
-            """,
-            [
+        for price in rows:
+            content = cls.price_content(price)
+            try:
+                trade_day = date.fromisoformat(str(price.trade_date))
+            except ValueError as error:
+                raise ValueError("trade_date 無法解析：%s" % price.trade_date) from error
+            day_start = datetime.combine(trade_day, datetime.min.time(), tzinfo=TAIPEI_TIMEZONE)
+            if fetched < day_start:
+                raise ValueError(
+                    "%s %s 的 fetched_at %s 早於交易日，拒絕寫入"
+                    % (price.symbol, price.trade_date, fetched_at)
+                )
+            latest = connection.execute(
+                """
+                SELECT %s, fetched_at FROM daily_prices
+                WHERE symbol = ? AND trade_date = ? AND source = ?
+                ORDER BY fetched_at DESC LIMIT 1
+                """
+                % ", ".join(PRICE_CONTENT_FIELDS),
+                (price.symbol, price.trade_date, source),
+            ).fetchone()
+            if latest is not None:
+                latest_fetched = parse_aware_time(latest["fetched_at"], "daily_prices.fetched_at")
+                unchanged = all(
+                    _same_value(latest[field], content[field]) for field in PRICE_CONTENT_FIELDS
+                )
+                if unchanged:
+                    finalized_at = price_finalized_at(price.trade_date)
+                    confirms_finality = (
+                        requires_finalized_fetch(source)
+                        and latest_fetched < finalized_at <= fetched
+                    )
+                    if not confirms_finality:
+                        continue
+                if fetched <= latest_fetched:
+                    raise ValueError(
+                        "%s %s %s 已有 %s 抓取的版本，內容不同的 %s 不得寫入（版本必須依抓取時間遞增）"
+                        % (price.symbol, price.trade_date, source, latest["fetched_at"], fetched_iso)
+                    )
+            connection.execute(
+                """
+                INSERT INTO daily_prices(
+                    symbol, trade_date, open_price, high_price, low_price, close_price,
+                    adjusted_close_price, price_change, volume_shares, trade_value, transactions,
+                    source, fetched_at, run_id, raw_payload_id, ex_rights_marker
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     price.symbol,
                     price.trade_date,
-                    str(price.open_price) if price.open_price is not None else None,
-                    str(price.high_price) if price.high_price is not None else None,
-                    str(price.low_price) if price.low_price is not None else None,
-                    str(price.close_price),
-                    str(price.adjusted_close) if price.adjusted_close is not None else None,
-                    str(price.change) if price.change is not None else None,
-                    price.volume_shares,
-                    price.trade_value,
-                    price.transactions,
+                    content["open_price"],
+                    content["high_price"],
+                    content["low_price"],
+                    content["close_price"],
+                    content["adjusted_close_price"],
+                    content["price_change"],
+                    content["volume_shares"],
+                    content["trade_value"],
+                    content["transactions"],
                     source,
-                    fetched_at,
+                    fetched_iso,
                     run_id,
                     raw_payload_id,
-                    None if price.ex_rights is None else int(price.ex_rights),
-                )
-                for price in rows
-            ],
-        )
+                    content["ex_rights_marker"],
+                ),
+            )
         return len(rows)
+
+    # 舊名稱；語意已是 append-only 版本寫入。
+    upsert_prices = store_prices
 
     def latest_trade_date(self) -> Optional[str]:
         with self.connect() as connection:
@@ -570,7 +754,8 @@ class MarketDataDatabase:
             rows = connection.execute(
                 """
                 SELECT symbol, source, MIN(trade_date) AS first_date,
-                       MAX(trade_date) AS last_date, COUNT(*) AS row_count
+                       MAX(trade_date) AS last_date,
+                       COUNT(DISTINCT trade_date) AS row_count
                 FROM daily_prices
                 WHERE source IN (%s)
                 GROUP BY symbol, source

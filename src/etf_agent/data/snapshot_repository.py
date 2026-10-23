@@ -7,6 +7,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
+from .price_finality import finalized_rows_sql
 from .yfinance_history import BASIS_TOLERANCE
 
 
@@ -20,6 +21,13 @@ _SOURCE_PRIORITY_SQL = """CASE daily_prices.source
                                WHEN 'TPEX_MAINBOARD_QUOTES' THEN 3
                                ELSE 9
                            END"""
+
+# daily_prices 是 append-only 版本表：同一（symbol, trade_date, source）可能有多個版本，
+# 所有查詢都只看 fetched_at ≤ cutoff 的列，並在來源優先序之後以 fetched_at DESC 取最新版本。
+_VERSION_ORDER_SQL = "%s, daily_prices.fetched_at DESC" % _SOURCE_PRIORITY_SQL
+
+# 非官方來源（Yahoo）盤中就有當日日線，只有在該日定案時間後抓到的版本才能進 Snapshot。
+_FINALIZED_SQL = finalized_rows_sql("daily_prices")
 
 class SnapshotRepository:
     """集中管理快照查詢與不可變版本關聯。"""
@@ -75,12 +83,13 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date <= ?
                   AND daily_prices.fetched_at <= ?
+                  AND %s
                 GROUP BY daily_prices.trade_date
             )
             SELECT MAX(trade_date) AS value
             FROM covered_dates
             WHERE symbol_count = (SELECT size FROM universe)
-            """,
+            """ % _FINALIZED_SQL,
             (price_date_limit, cutoff),
         ).fetchone()
         if row and row["value"]:
@@ -94,7 +103,8 @@ class SnapshotRepository:
             WHERE instruments.in_competition_universe = 1
               AND daily_prices.trade_date <= ?
               AND daily_prices.fetched_at <= ?
-            """,
+              AND %s
+            """ % _FINALIZED_SQL,
             (price_date_limit, cutoff),
         ).fetchone()
         return str(row["value"]) if row and row["value"] else None
@@ -118,6 +128,7 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date = ?
                   AND daily_prices.fetched_at <= ?
+                  AND %s
             ), official AS (
                 -- 決策與帳本用價：同日官方原價（不含 Yahoo，其 Close 可能被事後調整）。
                 SELECT daily_prices.symbol, daily_prices.close_price,
@@ -146,7 +157,7 @@ class SnapshotRepository:
                    ON execution_payloads.id = official.raw_payload_id
             WHERE source_rank = 1
             ORDER BY ranked.symbol
-            """ % (_SOURCE_PRIORITY_SQL, _SOURCE_PRIORITY_SQL),
+            """ % (_VERSION_ORDER_SQL, _FINALIZED_SQL, _VERSION_ORDER_SQL),
             (trade_date, cutoff, trade_date, cutoff),
         ).fetchall()
 
@@ -175,6 +186,7 @@ class SnapshotRepository:
                 WHERE instruments.in_competition_universe = 1
                   AND daily_prices.trade_date < ?
                   AND daily_prices.fetched_at <= ?
+                  AND %s
             ), recent AS (
                 SELECT ranked.*,
                        ROW_NUMBER() OVER (
@@ -189,7 +201,7 @@ class SnapshotRepository:
             FROM recent
             WHERE recency <= ?
             ORDER BY symbol, trade_date
-            """ % _SOURCE_PRIORITY_SQL,
+            """ % (_VERSION_ORDER_SQL, _FINALIZED_SQL),
             (before_date, cutoff, bars_per_symbol),
         ).fetchall()
         return _rebase_official_gaps(connection, [dict(row) for row in rows], before_date, cutoff)
@@ -357,6 +369,8 @@ def _rebase_official_gaps(
     # Yahoo Close 遇配股、分割、減資會被事後改寫，不是交易所原價；還原係數必須以
     # 同日官方原價為分母（Yahoo adj ÷ 官方 close）。同日沒有官方原價的 Yahoo 列
     # 無法確認基準，不作為參考。同日多個官方來源時以來源優先序最高者為準。
+    # 版本表：每個（symbol, trade_date, source）只取 cutoff 前最新版本；來源優先序低者先寫、
+    # 高者後寫覆蓋，同來源舊版本先寫、新版本後寫覆蓋。
     official_closes: Dict[Tuple[str, str], Decimal] = {}
     for row in connection.execute(
         """
@@ -364,7 +378,7 @@ def _rebase_official_gaps(
         FROM daily_prices
         WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
           AND symbol IN (%s)
-        ORDER BY %s DESC
+        ORDER BY %s DESC, daily_prices.fetched_at ASC
         """ % (placeholders, _SOURCE_PRIORITY_SQL),
         (before_date, cutoff, *gap_symbols),
     ).fetchall():
@@ -372,13 +386,21 @@ def _rebase_official_gaps(
     references: Dict[str, Tuple[List[str], List[Decimal]]] = {}
     for row in connection.execute(
         """
+        WITH versions AS (
+            SELECT symbol, trade_date, adjusted_close_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY symbol, trade_date ORDER BY fetched_at DESC
+                   ) AS version_rank
+            FROM daily_prices
+            WHERE source = 'YAHOO_FINANCE'
+              AND trade_date <= ? AND fetched_at <= ? AND %s
+              AND symbol IN (%s)
+        )
         SELECT symbol, trade_date, adjusted_close_price
-        FROM daily_prices
-        WHERE source = 'YAHOO_FINANCE' AND adjusted_close_price IS NOT NULL
-          AND trade_date <= ? AND fetched_at <= ?
-          AND symbol IN (%s)
+        FROM versions
+        WHERE version_rank = 1 AND adjusted_close_price IS NOT NULL
         ORDER BY symbol, trade_date
-        """ % placeholders,
+        """ % (_FINALIZED_SQL, placeholders),
         (before_date, cutoff, *gap_symbols),
     ).fetchall():
         dates, ratios = references.setdefault(str(row["symbol"]), ([], []))
@@ -391,10 +413,18 @@ def _rebase_official_gaps(
     markers: Dict[str, Dict[str, Optional[int]]] = {}
     for row in connection.execute(
         """
+        WITH versions AS (
+            SELECT symbol, trade_date, ex_rights_marker,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY symbol, trade_date, source ORDER BY fetched_at DESC
+                   ) AS version_rank
+            FROM daily_prices
+            WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
+              AND symbol IN (%s)
+        )
         SELECT symbol, trade_date, MAX(ex_rights_marker) AS marker
-        FROM daily_prices
-        WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
-          AND symbol IN (%s)
+        FROM versions
+        WHERE version_rank = 1
         GROUP BY symbol, trade_date
         """ % placeholders,
         (before_date, cutoff, *gap_symbols),

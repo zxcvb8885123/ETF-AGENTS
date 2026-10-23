@@ -171,8 +171,17 @@ class DailyPipelineTests(unittest.TestCase):
             run_dir = DecisionRepository(world.repository).verify("decision-fixture")
             team = json.loads((run_dir / "team_inputs.json").read_text(encoding="utf-8"))
             self.assertEqual(team["cash_stance"]["level"], "neutral")
-            self.assertEqual(team["schema_version"], "2.1")
+            self.assertEqual(team["schema_version"], "2.2")
             self.assertNotIn("research_result", team)
+            # 決策庫沒有更早的 run：前次決策背景為 unavailable，仍存進 team_inputs 供重建。
+            prior = team["prior_decision_context"]
+            self.assertEqual(prior["status"], "unavailable")
+            self.assertEqual(prior["reason"], "NO_PRIOR_DECISION_RUN")
+            self.assertFalse(prior["citable"])
+            self.assertEqual(json.loads((world.run_dir / "prior_decision_context.json").read_text(encoding="utf-8")), prior)
+            trader_brief = json.loads((world.run_dir / "brief_trader_b0.json").read_text(encoding="utf-8"))
+            self.assertEqual(trader_brief["prior_decision_background"]["status"], "unavailable")
+            self.assertTrue(all(row["prior_decision"] is None for row in trader_brief["symbols"]))
             event_report = json.loads((world.run_dir / "analyst_event.json").read_text(encoding="utf-8"))
             self.assertEqual(event_report["schema_version"], "2.2")
             self.assertEqual(event_report["market_sentiment"]["outlook"], "unknown")

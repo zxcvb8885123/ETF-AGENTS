@@ -62,7 +62,7 @@ flowchart TD
 macOS `launchd` 排程樣板（`.plist.template`）。
 
 - 啟用：把 `__PROJECT_ROOT__`、`__HOME__` 換成實際路徑，複製到 `~/Library/LaunchAgents/` 後 `launchctl load`。
-- 日誌寫到 `artifacts/daily/`。
+- 日誌：`data`、`finmind-news` 寫到 `artifacts/daily/`；`daily` 的 stdout／stderr 寫到 `var/logs/launchd.log`（安裝前先 `mkdir -p var/logs`），`run_daily_pipeline.py` 自己的訊息另存 `var/logs/daily-<YYYY-MM-DD>.log`（台北日期一天一檔，保留 30 天）。
 - 樣板設定週一到週五執行。
 
 | 樣板 | Label | 時間（Asia/Taipei） | 執行內容 | 備註 |

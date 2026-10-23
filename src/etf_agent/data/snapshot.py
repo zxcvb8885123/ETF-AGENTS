@@ -4,13 +4,14 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
 
 from .contracts import SourceEvidence
 
 from .database import MarketDataDatabase
 from .evidence import TAIPEI_TIMEZONE, SourceEvidenceBuilder
+from .price_finality import MARKET_CLOSE_TIME
 from .snapshot_repository import SnapshotRepository
 
 
@@ -532,9 +533,14 @@ def _normalize_cutoff(value: str) -> str:
 
 
 def _price_date_limit(cutoff: str) -> str:
+    """cutoff 最多能納入的交易日：收盤（13:30 台北）前只到前一天。
+
+    非官方來源的當日日線另須在定案時間（15:00）後抓取才算數，由 SnapshotRepository 的
+    查詢條件把關（見 price_finality）。
+    """
     local_cutoff = datetime.fromisoformat(cutoff).astimezone(TAIPEI_TIMEZONE)
     price_date = local_cutoff.date()
-    if local_cutoff.time() < time(hour=13, minute=30):
+    if local_cutoff.time() < MARKET_CLOSE_TIME:
         price_date -= timedelta(days=1)
     return price_date.isoformat()
 

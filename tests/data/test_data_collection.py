@@ -29,6 +29,20 @@ class FixtureProvider(TwseDailyProvider):
         return FIXTURE.read_text(encoding="utf-8"), "2026-09-11T06:00:00+00:00"
 
 
+class RevisedFixtureProvider(TwseDailyProvider):
+    """同一交易日稍後重抓，官方修正了台積電收盤價。"""
+
+    def __init__(self):
+        super().__init__("fixture://twse")
+
+    def fetch(self):
+        rows = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        for row in rows:
+            if row["Code"] == "2330":
+                row["ClosingPrice"] = "1256.00"
+        return json.dumps(rows, ensure_ascii=False), "2026-09-11T08:00:00+00:00"
+
+
 class TpexFixtureProvider(TpexDailyProvider):
     def __init__(self):
         super().__init__("fixture://tpex")
@@ -128,17 +142,40 @@ class DataCollectionTests(unittest.TestCase):
             self.assertEqual(link["source"], "TWSE_STOCK_DAY_ALL")
             self.assertGreater(locked_raw_payload_id, 0)
 
+            # 內容相同的重抓不新增版本：原始回應照存，但日線仍指向建立該內容的回應。
             DailyPriceCollector(database, FixtureProvider()).collect(universe)
             with database.connect() as connection:
                 locked_after_refresh = connection.execute(
                     "SELECT raw_payload_id FROM snapshot_prices WHERE snapshot_id = ?",
                     (snapshot.snapshot_id,),
                 ).fetchone()["raw_payload_id"]
-                current_raw_payload_id = connection.execute(
+                versions = connection.execute(
                     "SELECT raw_payload_id FROM daily_prices WHERE symbol = '2330.TW'"
-                ).fetchone()["raw_payload_id"]
+                ).fetchall()
+                raw_count = connection.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0]
             self.assertEqual(locked_after_refresh, locked_raw_payload_id)
-            self.assertNotEqual(current_raw_payload_id, locked_raw_payload_id)
+            self.assertEqual([row["raw_payload_id"] for row in versions], [locked_raw_payload_id])
+            self.assertEqual(raw_count, 2)
+
+            # 內容改變才新增版本；舊 Snapshot 鎖定的版本不變，依原 cutoff 重放仍拿到舊版本。
+            DailyPriceCollector(database, RevisedFixtureProvider()).collect(universe)
+            replayed = service.build_snapshot(
+                "2026-09-11T06:00:01+00:00", require_universe_validation=False
+            )
+            latest = service.build_snapshot(
+                "2026-09-11T09:00:00+00:00", require_universe_validation=False
+            )
+            with database.connect() as connection:
+                versions = connection.execute(
+                    "SELECT raw_payload_id, close_price FROM daily_prices "
+                    "WHERE symbol = '2330.TW' ORDER BY fetched_at"
+                ).fetchall()
+            self.assertEqual(len(versions), 2)
+            self.assertEqual(versions[0]["raw_payload_id"], locked_raw_payload_id)
+            self.assertEqual(replayed.latest_prices[0].close_price, "1255.00")
+            self.assertEqual(replayed.latest_prices[0].source_evidence_id, evidence_id)
+            self.assertEqual(latest.latest_prices[0].close_price, "1256.00")
+            self.assertNotEqual(latest.latest_prices[0].source_evidence_id, evidence_id)
 
     def test_parses_and_collects_tpex_latest_price(self):
         prices, warnings = TpexDailyProvider.parse(

@@ -143,7 +143,9 @@ class HistoricalPriceCollector:
         retries: int = 3,
         retry_delay_seconds: float = 0.5,
         progress: Optional[Callable[[str], None]] = None,
+        in_competition_universe: bool = True,
     ):
+        """``in_competition_universe=False`` 時只保存行情，不把標的標成交易池成員（基準標的用）。"""
         if max_workers < 1 or max_workers > 8:
             raise ValueError("max_workers 必須介於 1 與 8")
         self.database = database
@@ -152,6 +154,7 @@ class HistoricalPriceCollector:
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
         self.progress = progress
+        self.in_competition_universe = in_competition_universe
 
     def collect(
         self, universe: Sequence[Instrument], start: date, end: date
@@ -164,7 +167,7 @@ class HistoricalPriceCollector:
         source = "TWSE_HISTORICAL"
         self.database.initialize()
         with self.database.connect() as connection:
-            self.database.upsert_instruments(connection, universe, True)
+            self.database.upsert_instruments(connection, universe, self.in_competition_universe)
             connection.execute(
                 "INSERT INTO collection_runs(run_id, source, started_at, status) VALUES (?, ?, ?, 'running')",
                 (run_id, source, started_at),

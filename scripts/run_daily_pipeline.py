@@ -69,10 +69,79 @@ RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未
 DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
 TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
 RECENT_RUN_WINDOW = timedelta(hours=1)  # 同時段的 run 在此時間內完成才略過；更早的（例如半夜手動跑）照常重做
+LOG_RETENTION_DAYS = 30  # var/logs/daily-YYYY-MM-DD.log（台北日期，一天一檔）的保留天數
+DAILY_LOG_PATTERN = re.compile(r"daily-(\d{4}-\d{2}-\d{2})\.log")
+_log_file = None  # open_daily_log() 開啟後，log() 同時寫終端與此檔
+
+
+def daily_logs_root() -> Path:
+    """本腳本自己的日誌資料夾（`.gitignore` 已排除 `var/logs/`）；launchd 的 stdout／stderr 也由樣板導到這裡。"""
+    return ROOT / "var" / "logs"
 
 
 def log(message: str) -> None:
-    print("[%s] %s" % (datetime.now(TAIPEI_TIMEZONE).strftime("%H:%M:%S"), message), flush=True)
+    line = "[%s] %s" % (datetime.now(TAIPEI_TIMEZONE).strftime("%H:%M:%S"), message)
+    print(line, flush=True)
+    if _log_file is not None:
+        try:
+            _log_file.write(line + "\n")
+            _log_file.flush()
+        except (OSError, ValueError):
+            pass  # 日誌檔寫不進去不影響決策流程；終端／launchd 仍有輸出
+
+
+def open_daily_log(logs_root: Path, now: datetime):
+    """開啟 ``logs_root/daily-<台北日期>.log``（附加模式）讓 ``log()`` 同步寫入；回傳路徑，開不了時回 None 並只印到終端。
+
+    跨午夜的 run 仍寫在開始當天的檔案；``start.sh daily`` 等子程序的輸出不經過 ``log()``，仍只到終端或 launchd 日誌。"""
+    global _log_file
+    close_daily_log()
+    path = logs_root / ("daily-%s.log" % now.astimezone(TAIPEI_TIMEZONE).strftime("%Y-%m-%d"))
+    try:
+        logs_root.mkdir(parents=True, exist_ok=True)
+        _log_file = path.open("a", encoding="utf-8")
+    except OSError as error:
+        _log_file = None
+        print("[日誌] 無法開啟 %s，只輸出到終端：%s" % (path, error), flush=True)
+        return None
+    return path
+
+
+def close_daily_log() -> None:
+    global _log_file
+    if _log_file is not None:
+        try:
+            _log_file.close()
+        except OSError:
+            pass
+        _log_file = None
+
+
+def prune_daily_logs(logs_root: Path, now: datetime, keep_days: int = LOG_RETENTION_DAYS) -> list:
+    """刪除檔名完全符合 ``daily-YYYY-MM-DD.log`` 且日期早於保留天數的舊日誌；其他檔案（含 launchd.log）一律不動。"""
+    if isinstance(keep_days, bool) or not isinstance(keep_days, int) or keep_days < 0:
+        raise ValueError("keep_days 必須是非負整數")
+    cutoff = now.astimezone(TAIPEI_TIMEZONE).date() - timedelta(days=keep_days)
+    removed = []
+    try:
+        candidates = sorted(logs_root.iterdir())
+    except OSError:
+        return removed
+    for path in candidates:
+        match = DAILY_LOG_PATTERN.fullmatch(path.name)
+        if match is None or not path.is_file() or path.is_symlink():
+            continue
+        try:
+            day = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if day < cutoff:
+            try:
+                path.unlink()
+                removed.append(path.name)
+            except OSError:
+                continue
+    return removed
 
 
 def write_json(path: Path, payload) -> None:
@@ -344,16 +413,21 @@ def completed_run_for_session(runs_root: Path, run_id: str, session_start, now: 
 ROLLBACK_SNAPSHOT = "rollback_research_snapshot.json"  # 重跑前的 Snapshot 副本，還原時放回 latest
 
 
-def session_deadline_passed(session, now: datetime) -> bool:
-    """目標時段當天的交件期限（08:55）是否已過；缺少或無法解析開盤時間時視為已過（fail-closed）。"""
+def session_deadline(session):
+    """目標時段當天的交件期限（08:55，含時區）；缺少或無法解析開盤時間時回 None。"""
     try:
         start = datetime.fromisoformat(str((session or {}).get("start")))
     except ValueError:
-        return True
+        return None
     if start.tzinfo is None:
-        return True
-    deadline = datetime.combine(start.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
-    return now >= deadline
+        return None
+    return datetime.combine(start.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
+
+
+def session_deadline_passed(session, now: datetime) -> bool:
+    """目標時段當天的交件期限（08:55）是否已過；缺少或無法解析開盤時間時視為已過（fail-closed）。"""
+    deadline = session_deadline(session)
+    return deadline is None or now >= deadline
 
 
 def refuse_late_decision(summary: dict, session, decision_run_id: str, now: datetime) -> None:
@@ -517,6 +591,18 @@ def main() -> int:
         parser.error("--max-budget-usd 只適用 Claude CLI")
     if args.max_budget_usd is not None and (not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0):
         parser.error("--max-budget-usd 必須是大於 0 的有限數值")
+    # 參數檢查通過後才開日誌檔：之後所有 log() 同時寫終端與 var/logs/daily-<日期>.log，並清掉超過保留天數的舊檔。
+    open_daily_log(daily_logs_root(), datetime.now(TAIPEI_TIMEZONE))
+    removed_logs = prune_daily_logs(daily_logs_root(), datetime.now(TAIPEI_TIMEZONE))
+    if removed_logs:
+        log("[日誌] 已刪除超過 %d 天的舊日誌：%s" % (LOG_RETENTION_DAYS, "、".join(removed_logs)))
+    try:
+        return _main(args)
+    finally:
+        close_daily_log()
+
+
+def _main(args) -> int:
     if args.delivery_only:
         try:
             delivery = deliver_saved_run(ROOT, args.delivery_only)
@@ -714,6 +800,8 @@ def main() -> int:
             analyst_runner=analyst_runner,
             technical_gate=args.technical_gate,
             max_workers=args.max_workers,
+            # 子 Agent 暫時性失敗（逾時、非零結束、輸出不是 JSON）再試一次，但不拖過目標時段的交件期限。
+            retry_deadline=session_deadline(session),
         )
         result = pipeline.run(
             snapshot_path, account_path, trading_status_path,
@@ -725,6 +813,7 @@ def main() -> int:
             fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
             market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
             nav_history=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).nav_history(),
+            applied_decision_run_ids=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).applied_decision_run_ids(),
         )
         summary.update(
             {

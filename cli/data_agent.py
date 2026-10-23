@@ -63,6 +63,8 @@ class DataAgentApplication:
             return self.collect_prices(args.database, args.universe, args.config)
         if args.command == "snapshot":
             return self.build_snapshot(args)
+        if args.command == "migrate":
+            return self.migrate_database(args.database)
         return self.show_status(args.database)
 
     def build_parser(self) -> argparse.ArgumentParser:
@@ -118,6 +120,12 @@ class DataAgentApplication:
 
         status = commands.add_parser("status", help="顯示 Data Agent 資料狀態")
         self.add_shared_arguments(status)
+
+        migrate = commands.add_parser(
+            "migrate",
+            help="套用資料庫結構遷移（daily_prices 改為 append-only 版本表）；可重複執行",
+        )
+        self.add_shared_arguments(migrate)
         return parser
 
     def add_shared_arguments(self, parser: argparse.ArgumentParser) -> None:
@@ -252,6 +260,44 @@ class DataAgentApplication:
         for flag in snapshot.quality_flags:
             print("QUALITY  " + flag)
         return 0 if snapshot.usable else 2
+
+    @staticmethod
+    def migrate_database(database_path: Path) -> int:
+        """以 initialize() 套用全部結構遷移；daily_prices 版本化只在尚未遷移時重建一次。"""
+        if not database_path.exists():
+            print("資料庫尚未建立：%s" % database_path, file=sys.stderr)
+            return 1
+        try:
+            database = MarketDataDatabase(database_path)
+            with database.connect() as connection:
+                before = database.daily_prices_versioned(connection)
+                rows_before = int(
+                    connection.execute("SELECT COUNT(*) FROM daily_prices").fetchone()[0]
+                )
+            database.initialize()
+            with database.connect() as connection:
+                after = database.daily_prices_versioned(connection)
+                rows_after = int(
+                    connection.execute("SELECT COUNT(*) FROM daily_prices").fetchone()[0]
+                )
+                versions = [
+                    int(row[0])
+                    for row in connection.execute(
+                        "SELECT version FROM schema_versions ORDER BY version"
+                    )
+                ]
+        except Exception as error:
+            print("遷移失敗：%s" % error, file=sys.stderr)
+            return 1
+        print(
+            "daily_prices 版本表：%s → %s；列數 %d → %d"
+            % ("已是" if before else "尚未", "已是" if after else "尚未", rows_before, rows_after)
+        )
+        print("schema 版本：%s" % ", ".join(str(item) for item in versions))
+        if not after or rows_after != rows_before:
+            print("遷移結果不符預期", file=sys.stderr)
+            return 1
+        return 0
 
     @staticmethod
     def show_status(database_path: Path) -> int:

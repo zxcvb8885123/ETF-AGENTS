@@ -18,6 +18,7 @@
 | [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 否，尚未接 Snapshot |
 | [個股新聞線索](#個股新聞線索) | FinMind `TaiwanStockNews` | `scripts/collect_supplemental_sources.py finmind-news` | **否**，授權未驗證 |
 | [正式帳本價量](#正式帳本價量) | TWSE／TPEx 官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
+| [基準標的](#基準標的) | TWSE 官方個股日成交資訊（0050） | `cli/benchmark.py collect` | 只供績效比較，不進交易池、不進決策 |
 | [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV × 7、TWSE 開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
 | [交易池](#交易池) | 主辦方名單 | `data/universe.py` | 可，一次性版本化輸入 |
 | [台股恐懼貪婪指標](market_fear_greed.md) | 期交所 VIX 月檔、期交所 Put/Call 開放資料、FinMind `TaiwanStockTotalMarginPurchaseShortSale` | `cli/market_fear_greed.py capture` | 可，作全市場情緒；核准見[來源核對](source_audit/2026-10-23_market_fear_greed_sources.md)（VIX 為使用者決定） |
@@ -38,6 +39,15 @@
 3. **停抓超過 7 天**：重疊區間已看不到停抓期間被改寫的舊列，該檔自動整段重抓（2026-10-23 起）。
 
 **已知限制**：Yahoo 的 Close 在這類事件前，不是交易所原價；若 Yahoo 延遲超過 7 天才改寫，每日重疊比對仍可能看不到。決策與帳本用價一律是官方原價，不受影響。
+
+### 定案與版本（2026-10-23 起）
+
+- **定案時間**：Yahoo 盤中就會回傳當日那根日線，收盤價與成交量尚未定案。`data/price_finality.py` 統一定義台北 15:00（`PRICE_FINALIZED_TIME`）為非官方日線的定案時間，13:30（`MARKET_CLOSE_TIME`）為收盤。
+  - 收集端：`YFinanceHistoryCollector` 抓取時間早於該日 15:00 的日線不寫入資料庫，只記警告；`scripts/collect_history.py` 預設 `--end` 是最近已定案日期（15:00 前為前一天）。
+  - 讀取端：`SnapshotRepository` 與事件研究的價格特徵只採用 `fetched_at ≥ 該 trade_date 15:00` 的 Yahoo 列；該日沒有定案版本時改用同日官方價，官方價也沒有就不納入該日。官方來源只在收盤後公布，不受此限制。
+- **版本**：`daily_prices` 是 append-only 版本表（主鍵 `symbol, trade_date, source, fetched_at`）。重抓時內容與最新版本相同就不新增列（原始回應仍照存）；內容改變才新增版本，且 `fetched_at` 必須遞增、含時區、不得是未來時間。唯一例外：Yahoo 最新版本在定案前抓、本次已在定案後抓到相同內容，仍新增一版記錄定案。
+  - 所有查詢取「`fetched_at ≤ cutoff` 的最新版本」，事後用舊 cutoff 重建 Snapshot 或歷史 K 線會拿到當時的版本，不再被後來的重抓覆蓋。
+  - 既有資料庫由 `cli/data_agent.py migrate --database var/etf_agent.db` 遷移（任何 `initialize()` 也會自動執行一次，可重複執行）；遷移前的每列成為第一個版本，遷移前已被覆寫掉的歷史版本無法還原。
 
 ### 使用方式
 
@@ -154,6 +164,15 @@
 - 主辦方要求：以交易所前日收盤價推導委託股數，以當日成交金額 ÷ 股數結算。
 - 歷史補抓保留原始回應、實際抓取時間與來源。
 - 缺官方價量時等待，**不以 Yahoo 代替**。
+
+## 基準標的
+
+- **用途**：讓虛擬帳戶績效與「0050 買入持有」、「150 檔交易池等權買入持有」比較（儀表板「與基準比較」、`cli/benchmark.py compare`）。口徑見 [benchmark/README.md](../src/etf_agent/benchmark/README.md)：同本金、開帳後第一個可成交交易日以官方成交均價整張買進、同一套費稅（`config/decision_rules.json`）、官方未還原收盤價估值、不計股利。
+- **來源**：`config/benchmarks.json` 列出基準與 `license_status`。0050 用與正式帳本價量相同的證交所個股日成交資訊端點（`TWSE_STOCK_DAY`，`config/data_sources.json` 的 `historical_daily.twse_url`），授權沿用「正式帳本價量」的核准；150 檔等權直接用交易池既有官方價量。2026-10-23 前資料庫只有 0050 的一筆 `TWSE_STOCK_DAY_ALL` 列（早期全市場抓取殘留），須以 `cli/benchmark.py collect` 補抓。
+- **不用 Yahoo**：授權只供研究，且沒有成交金額，算不出與帳本同口徑的成交均價；設定成 `YAHOO_FINANCE` 來源或非 `approved` 的基準一律顯示 unavailable。
+- **不污染交易池**：收集時以 `HistoricalPriceCollector(in_competition_universe=False)` 保存（`YFinanceHistoryCollector` 有同樣開關），`instruments.in_competition_universe` 維持 0；`SnapshotRepository`、交易池驗證、`analysis_daily_prices` 與 `prices_current` 都只看交易池成員，不會因此多一檔。帳本結算的 `OfficialCloseMarket` 只要求所需標的存在，多出的基準列不影響。
+- **時點**：比較只採用 `fetched_at ≤ as_of` 且收盤 ≤ as_of 的官方日線版本；`collect` 補抓的歷史列以實際抓取時間為可得時間，不回填到更早的 as-of。
+- **限制**：等權基準每檔預算為本金 ÷ 150，股價高於預算（整張買不起）的股票留現金並列在 `unaffordable_symbols`；基準不計現金股利與配股（帳本亦只在提供公司行動時入帳）。
 
 ## 交易限制與日曆
 

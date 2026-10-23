@@ -118,14 +118,14 @@ def seed_latest_price(database, instrument, source, trade_date="2026-09-17"):
         run_id = "seed-%s-%s-%s" % (source, instrument.symbol, trade_date)
         connection.execute(
             "INSERT INTO collection_runs(run_id, source, started_at, status) VALUES (?, ?, ?, 'success')",
-            (run_id, source, "%sT06:00:00+00:00" % trade_date),
+            (run_id, source, "%sT08:00:00+00:00" % trade_date),
         )
         payload_id = database.insert_raw_payload(
             connection,
             run_id,
             source,
             "fixture://latest/%s" % instrument.symbol,
-            "%sT06:00:00+00:00" % trade_date,
+            "%sT08:00:00+00:00" % trade_date,
             "{}",
         )
         database.upsert_prices(
@@ -147,7 +147,7 @@ def seed_latest_price(database, instrument, source, trade_date="2026-09-17"):
                 )
             ],
             source,
-            "%sT06:00:00+00:00" % trade_date,
+            "%sT08:00:00+00:00" % trade_date,
             run_id,
             payload_id,
         )

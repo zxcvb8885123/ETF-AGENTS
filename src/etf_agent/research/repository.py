@@ -9,6 +9,7 @@ from typing import Dict, List, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from etf_agent.data import MarketDataDatabase
+from etf_agent.data.price_finality import finalized_rows_sql
 from .contracts import ResearchToolError, _decimal, _parse_time
 
 
@@ -34,6 +35,8 @@ class HistoricalPriceFeatureRepository:
             rows = connection.execute(
                 """
                 WITH eligible AS (
+                    -- daily_prices 是版本表：來源優先序之後以 fetched_at DESC 取 cutoff 前最新版本；
+                    -- Yahoo 列另須在該日定案時間後抓取（price_finality）。
                     SELECT daily_prices.*,
                            ROW_NUMBER() OVER (
                                PARTITION BY symbol, trade_date
@@ -44,18 +47,20 @@ class HistoricalPriceFeatureRepository:
                                    WHEN 'TPEX_MAINBOARD_QUOTES' THEN 2
                                    WHEN 'YAHOO_FINANCE' THEN 3
                                    ELSE 9
-                               END
+                               END,
+                               daily_prices.fetched_at DESC
                            ) AS source_rank
                     FROM daily_prices
                     WHERE symbol = ?
                       AND trade_date <= ?
                       AND fetched_at <= ?
+                      AND %s
                 )
                 SELECT * FROM eligible
                 WHERE source_rank = 1
                 ORDER BY trade_date DESC
                 LIMIT 80
-                """,
+                """ % finalized_rows_sql("daily_prices"),
                 (symbol.upper(), latest_trade_date, cutoff),
             ).fetchall()
         if not rows:

@@ -65,6 +65,14 @@ from .finalization import (
     DecisionRepository,
     DecisionResultValidator,
 )
+from .prior_decision import (
+    PRIOR_DECISION_VERSION,
+    PriorDecisionContextValidator,
+    build_prior_decision_context,
+    find_prior_decision_run,
+    prior_decision_brief,
+    read_decision_run,
+)
 from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
 from .service import PortfolioDecisionApplicationService
 
@@ -126,6 +134,12 @@ __all__ = [
     "build_team_inputs",
     "DecisionResultValidator",
     "DecisionRepository",
+    "PRIOR_DECISION_VERSION",
+    "PriorDecisionContextValidator",
+    "build_prior_decision_context",
+    "find_prior_decision_run",
+    "prior_decision_brief",
+    "read_decision_run",
     "RevisionHistoryBuilder",
     "RevisionHistoryValidator",
     "PortfolioDecisionApplicationService",

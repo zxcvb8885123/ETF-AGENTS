@@ -16,6 +16,14 @@ class DailyPipelineError(RuntimeError):
     """每日決策鏈無法安全繼續。"""
 
 
+class TransientAgentError(DailyPipelineError):
+    """子 Agent CLI 的暫時性失敗：逾時、無法啟動、非零結束、輸出不是 JSON 或沒有結構化輸出。
+
+    ``PipelineBase.agent_step`` 只對此類錯誤在時間預算內再試一次；秘密外洩、使用未核准工具
+    等安全拒絕與確定性驗證失敗仍是一般 ``DailyPipelineError``，不重試。
+    """
+
+
 def _strings(min_items: int = 0) -> Dict[str, object]:
     return {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": min_items}
 
@@ -30,6 +38,50 @@ def _object(properties: Mapping[str, object], required: Sequence[str]) -> Dict[s
 
 
 _TEXT = {"type": "string", "minLength": 1}
+
+# 子 Agent 一律不得讀取的檔案樣式；Claude 與 OpenCode 的拒讀規則都由此產生，避免兩邊不一致。
+SENSITIVE_READ_GLOBS = (".env", ".env.*", ".envrc", "*.pem", "*.key", "*credential*", "*secret*")
+_SECRET_FILES = (".env", ".envrc")
+_MIN_SECRET_LENGTH = 8
+
+
+def claude_read_deny_settings() -> str:
+    """``claude --settings`` 用的拒讀規則；``**/`` 前綴同時涵蓋專案根目錄與子目錄。"""
+    rules = ["Read(**/%s)" % pattern for pattern in SENSITIVE_READ_GLOBS]
+    return json.dumps({"permissions": {"deny": rules}}, ensure_ascii=False)
+
+
+def _opencode_read_permission() -> Dict[str, str]:
+    permission = {"*": "allow"}
+    permission.update({pattern if pattern.startswith("*") else "*" + pattern: "deny" for pattern in SENSITIVE_READ_GLOBS})
+    return permission
+
+
+def _secret_values(project_root: Path) -> list[str]:
+    values = []
+    for name in _SECRET_FILES:
+        try:
+            lines = (project_root / name).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            value = line.split("=", 1)[1].strip().strip("'\"")
+            if len(value) >= _MIN_SECRET_LENGTH:
+                values.append(value)
+    return values
+
+
+def reject_secret_leak(name: str, output: Mapping[str, object], project_root: Path) -> None:
+    """Agent 輸出含專案 ``.env``／``.envrc`` 的值時拒絕；錯誤訊息不帶出該值。
+
+    Codex 的唯讀沙箱不限制讀檔，這是所有 runner 共用的最後一道檢查。
+    """
+    text = json.dumps(output, ensure_ascii=False)
+    if any(value in text for value in _secret_values(project_root)):
+        raise DailyPipelineError("%s Agent 輸出包含本機秘密設定的值，已拒絕" % name)
 
 @dataclass(frozen=True)
 class AgentTask:
@@ -81,6 +133,7 @@ class ClaudeAgentRunner:
             "--json-schema", json.dumps(task.schema, ensure_ascii=False),
             "--tools", "Read",
             "--strict-mcp-config",  # 不載入使用者的 MCP 外掛；每次呼叫約少 4 萬 token 的固定開銷
+            "--settings", claude_read_deny_settings(),
             "--add-dir", str(run_dir),
             "--max-budget-usd", str(self.max_budget_usd),
         ]
@@ -92,16 +145,19 @@ class ClaudeAgentRunner:
                 timeout=self.timeout_seconds, check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise DailyPipelineError("%s Agent 執行失敗：%s" % (task.name, error)) from error
+            raise TransientAgentError("%s Agent 執行失敗：%s" % (task.name, error)) from error
         try:
             payload = json.loads(completed.stdout)
         except json.JSONDecodeError as error:
-            raise DailyPipelineError(
+            raise TransientAgentError(
                 "%s Agent 輸出不是 JSON（exit %d）：%s" % (task.name, completed.returncode, completed.stderr[-500:])
             ) from error
+        if not isinstance(payload, dict):
+            raise TransientAgentError("%s Agent 輸出不是 JSON 物件" % task.name)
         output = payload.get("structured_output")
         if payload.get("is_error") or not isinstance(output, dict):
-            raise DailyPipelineError("%s Agent 未產生結構化輸出：%s" % (task.name, str(payload.get("result"))[:500]))
+            raise TransientAgentError("%s Agent 未產生結構化輸出：%s" % (task.name, str(payload.get("result"))[:500]))
+        reject_secret_leak(task.name, output, self.project_root)
         return AgentCall(task.name, 0, output, float(payload.get("total_cost_usd") or 0.0), _claude_usage_tokens(payload))
 
 
@@ -156,18 +212,19 @@ class CodexAgentRunner:
                     capture_output=True, text=True, timeout=self.timeout_seconds, check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as error:
-                raise DailyPipelineError("%s Codex Agent 執行失敗：%s" % (task.name, error)) from error
+                raise TransientAgentError("%s Codex Agent 執行失敗：%s" % (task.name, error)) from error
             if completed.returncode != 0:
-                raise DailyPipelineError(
+                raise TransientAgentError(
                     "%s Codex Agent 失敗（exit %d）：%s" %
                     (task.name, completed.returncode, completed.stderr[-500:])
                 )
             try:
                 output = json.loads(output_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as error:
-                raise DailyPipelineError("%s Codex Agent 未產生有效 JSON：%s" % (task.name, error)) from error
+                raise TransientAgentError("%s Codex Agent 未產生有效 JSON：%s" % (task.name, error)) from error
             if not isinstance(output, dict):
-                raise DailyPipelineError("%s Codex Agent 輸出不是物件" % task.name)
+                raise TransientAgentError("%s Codex Agent 輸出不是物件" % task.name)
+            reject_secret_leak(task.name, output, self.project_root)
             return AgentCall(task.name, 0, output)
 
 
@@ -194,10 +251,7 @@ class OpenCodeAgentRunner:
                     "mode": "primary",
                     "permission": {
                         "*": "deny",
-                        "read": {
-                            "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.envrc": "deny",
-                            "*.pem": "deny", "*.key": "deny", "*credential*": "deny", "*secret*": "deny",
-                        },
+                        "read": _opencode_read_permission(),
                         "external_directory": "deny",
                     },
                 }
@@ -218,10 +272,10 @@ class OpenCodeAgentRunner:
             completed = subprocess.run(command, cwd=self.project_root, env=env,
                                        capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise DailyPipelineError("%s OpenCode Agent 執行失敗：%s" % (task.name, error)) from error
+            raise TransientAgentError("%s OpenCode Agent 執行失敗：%s" % (task.name, error)) from error
         if completed.returncode != 0:
-            raise DailyPipelineError("%s OpenCode Agent 失敗（exit %d）：%s" %
-                                     (task.name, completed.returncode, completed.stderr[-500:]))
+            raise TransientAgentError("%s OpenCode Agent 失敗（exit %d）：%s" %
+                                      (task.name, completed.returncode, completed.stderr[-500:]))
         messages: Dict[str, list[str]] = {}
         final_message = None
         usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0}
@@ -235,8 +289,11 @@ class OpenCodeAgentRunner:
                     raise ValueError("事件 part 格式錯誤")
                 if kind == "error":
                     raise ValueError("Agent 回報錯誤")
-                if kind == "tool_use" and (part.get("tool") != "read" or part.get("state", {}).get("status") != "completed"):
-                    raise ValueError("Agent 使用未核准工具或讀取失敗")
+                if kind == "tool_use" and part.get("tool") != "read":
+                    # 安全拒絕：不是暫時性失敗，不重試。
+                    raise DailyPipelineError("%s OpenCode Agent 使用未核准工具：%s" % (task.name, part.get("tool")))
+                if kind == "tool_use" and part.get("state", {}).get("status") != "completed":
+                    raise ValueError("Agent 讀取失敗")
                 if kind == "text":
                     message_id = part.get("messageID")
                     if not isinstance(message_id, str) or not isinstance(part.get("text"), str):
@@ -258,13 +315,14 @@ class OpenCodeAgentRunner:
                     cost += amount
                     final_message = part.get("messageID") if part.get("reason") == "stop" else None
         except (ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError) as error:
-            raise DailyPipelineError("%s OpenCode Agent JSONL 無效：%s" % (task.name, error)) from error
+            raise TransientAgentError("%s OpenCode Agent JSONL 無效：%s" % (task.name, error)) from error
         if not isinstance(final_message, str) or final_message not in messages:
-            raise DailyPipelineError("%s OpenCode Agent 未完成最終 JSON 回答" % task.name)
+            raise TransientAgentError("%s OpenCode Agent 未完成最終 JSON 回答" % task.name)
         try:
             output = json.loads("".join(messages[final_message]))
         except json.JSONDecodeError as error:
-            raise DailyPipelineError("%s OpenCode Agent 最終輸出不是 JSON" % task.name) from error
+            raise TransientAgentError("%s OpenCode Agent 最終輸出不是 JSON" % task.name) from error
         if not isinstance(output, dict):
-            raise DailyPipelineError("%s OpenCode Agent 輸出不是物件" % task.name)
+            raise TransientAgentError("%s OpenCode Agent 輸出不是物件" % task.name)
+        reject_secret_leak(task.name, output, self.project_root)
         return AgentCall(task.name, 0, output, cost, usage)

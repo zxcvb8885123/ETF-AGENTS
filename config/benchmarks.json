@@ -1,0 +1,31 @@
+{
+  "version": "benchmarks-2026-10-23",
+  "note": "虛擬帳戶績效的比較基準。基準標的只保存行情，不進 150 檔交易池（instruments.in_competition_universe 維持 0），Snapshot 與交易池驗證不受影響。只有 license_status=approved 的基準才進正式計算，其餘一律顯示 unavailable。價格一律用官方未還原價（TWSE_STOCK_DAY 等），不用 Yahoo（授權只供研究、也沒有成交金額可算成交均價）。",
+  "benchmarks": [
+    {
+      "benchmark_id": "0050_buy_and_hold",
+      "label": "0050 買入持有",
+      "kind": "single_instrument",
+      "symbol": "0050.TW",
+      "code": "0050",
+      "name": "元大台灣50",
+      "market": "TWSE",
+      "source": "TWSE_STOCK_DAY",
+      "license_status": "approved",
+      "terms_url": "https://www.twse.com.tw/zh/about/company/copyright.html",
+      "basis": "與正式帳本價量相同的證交所個股日成交資訊端點（config/data_sources.json historical_daily.twse_url），授權沿用 docs/data_sources_inventory.md「正式帳本價量」的核准；只作績效比較，不作交易標的。",
+      "reviewed_at": "2026-10-23T23:50:00+08:00",
+      "evidence": "docs/data_sources_inventory.md#基準標的"
+    },
+    {
+      "benchmark_id": "universe_equal_weight",
+      "label": "150 檔等權買入持有",
+      "kind": "universe_equal_weight",
+      "universe": "data/official_universe.csv",
+      "license_status": "approved",
+      "basis": "150 檔交易池的官方價量（TWSE_STOCK_DAY／TPEX_TRADING_STOCK 等），與帳本結算同一來源。",
+      "reviewed_at": "2026-10-23T23:50:00+08:00",
+      "evidence": "docs/data_sources_inventory.md#正式帳本價量"
+    }
+  ]
+}

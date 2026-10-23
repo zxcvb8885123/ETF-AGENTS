@@ -12,9 +12,11 @@ from typing import Dict, Iterable, Mapping, Tuple
 from etf_agent.core import parse_aware_time
 
 from .evidence import TAIPEI_TIMEZONE
+from .price_finality import PRICE_FINALIZED_TIME
 
 # 交易日 15:00 後當日行情才算齊全；Yahoo 盤中就會回傳當日那根日線，數值尚未定案。
-DATA_READY_TIME = time(15, 0)
+# 常數來源統一在 price_finality，這裡保留舊名稱。
+DATA_READY_TIME: time = PRICE_FINALIZED_TIME
 
 # 每個行情步驟寫入哪個來源（依股票後綴）；對應 start.sh 的三個行情步驟。
 STEP_SOURCES: Mapping[str, Mapping[str, str]] = {
@@ -27,7 +29,10 @@ STEP_SOURCES: Mapping[str, Mapping[str, str]] = {
 def prices_current(
     connection, symbols: Iterable[str], step: str, trade_date: date
 ) -> Tuple[bool, str]:
-    """交易池每檔在 trade_date 都有該步驟來源的行情，且都在當日 DATA_READY_TIME 之後抓取才算最新。"""
+    """交易池每檔在 trade_date 都有該步驟來源的行情，且最新版本在當日 DATA_READY_TIME 之後抓取才算最新。
+
+    daily_prices 是版本表：盤中抓到的舊版本不算數，只看每檔最後一個版本的抓取時間。
+    """
     if step not in STEP_SOURCES:
         raise ValueError("未知的行情步驟：%s" % step)
     ready_at = datetime.combine(trade_date, DATA_READY_TIME, tzinfo=TAIPEI_TIMEZONE)
@@ -41,7 +46,7 @@ def prices_current(
         fetched = {
             str(row["symbol"]): row["fetched_at"]
             for row in connection.execute(
-                "SELECT symbol, MIN(fetched_at) AS fetched_at FROM daily_prices "
+                "SELECT symbol, MAX(fetched_at) AS fetched_at FROM daily_prices "
                 "WHERE source = ? AND trade_date = ? GROUP BY symbol",
                 (source, trade_date.isoformat()),
             ).fetchall()

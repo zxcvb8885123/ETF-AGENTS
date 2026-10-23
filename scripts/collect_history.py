@@ -4,7 +4,7 @@
 import argparse
 import json
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +14,7 @@ from etf_agent.data import (  # noqa: E402
     MarketDataDatabase,
     UniverseLoader,
     YFinanceHistoryCollector,
+    latest_finalized_price_date,
 )
 
 
@@ -25,7 +26,7 @@ def main() -> int:
     parser.add_argument(
         "--end",
         type=date.fromisoformat,
-        help="預設使用 Asia/Taipei 當日；是否已有完整日線仍由覆蓋驗證判定",
+        help="預設為最近已定案的日期（台北 15:00 後是當天，否則前一天）；是否已有完整日線仍由覆蓋驗證判定",
     )
     parser.add_argument("--batch-size", type=int, default=30)
     args = parser.parse_args()
@@ -34,7 +35,8 @@ def main() -> int:
     try:
         database = MarketDataDatabase(args.database)
         database.initialize()
-        end = args.end or datetime.now(timezone(timedelta(hours=8))).date()
+        # 盤中（台北 15:00 前）Yahoo 已回傳當日未定案的日線；預設只抓到最近已定案的日期。
+        end = args.end or latest_finalized_price_date(datetime.now(timezone.utc))
         collector = YFinanceHistoryCollector(
             database,
             batch_size=args.batch_size,

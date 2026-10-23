@@ -7,7 +7,7 @@
 | git | 兩者都不進 git；`.gitignore` 排除 `artifacts/*`（留 `.gitkeep`）、`var/*.db*`、`var/logs/`、`var/*.json`（留 `.gitkeep`） |
 | 新環境 | 一開始是空的 |
 | 寫入者 | `./start.sh` 與每日管線 `scripts/run_daily_pipeline.py` |
-| Docker | `agent` 服務可寫 `./var`、`./artifacts`；`dashboard` 服務只讀 `./artifacts`（`compose.yaml`） |
+| Docker | `agent` 服務可寫 `./var`、`./artifacts`；`dashboard` 服務只讀 `./artifacts`、`./var`、`./config`、`./data`（基準比較需讀行情資料庫與設定；`compose.yaml`） |
 | 內容性質 | 真實執行產物，不是 fixture（測試資料在 `tests/fixtures/`） |
 | 建立時機 | 各資料夾在對應步驟第一次成功寫入時建立 |
 | 2026-10-22 本機實際存在 | `artifacts/` 的 `daily`、`data`、`debug`、`ledger`；其餘（`latest`、`decisions`、`reports`、`competition_d_plan`、`archive`）的說明來自程式 |
@@ -129,10 +129,10 @@ flowchart LR
 | `.../momentum.json`、`fundamental_metrics.json`、`analyst_data_availability.json` | 程式計算的動能、財務指標與資料可用性 | `DailyDecisionPipeline.save_artifact` | 確定性計算結果 |
 | `.../brief_<分析師>_b<N>.json` | 給子 Agent 的分批任務簡報（`technical_gate` 時含 `momentum_only_symbols`、`full_history_symbols`） | 同上 | 供審計當日餵給 Agent 的內容 |
 | `.../analyst_technical.json` 等 `analyst_<名稱>.json` | 分析師報告 | 同上 | 分析團隊輸出 |
-| `.../<task>_raw_<N>.json`（例如 `technical_b0_raw_1.json`） | 子 Agent 原始輸出；`pipeline.json` 的 `agent_calls` 另記每次呼叫耗時、用量，驗證失敗時記 `validation_errors` 與前三項錯誤 | `DailyDecisionPipeline`（第 276 行附近） | 續跑時以這些檔判定已完成的呼叫 |
+| `.../<task>_raw_<N>.json`（例如 `technical_b0_raw_1.json`） | 子 Agent 原始輸出；`pipeline.json` 的 `agent_calls` 另記每次呼叫耗時、用量，驗證失敗時記 `validation_errors` 與前三項錯誤；CLI 逾時、非零結束或輸出不是 JSON 的失敗嘗試另記一筆（`transient_error`、`transient_retry`，用量記 0、無原始輸出檔），之後間隔 30 秒再試一次 | `DailyDecisionPipeline`（第 276 行附近） | 續跑時以這些檔判定已完成的呼叫 |
 | `.../decision_chain.json` | 決策鏈摘要 | 同上 | |
 | 另有（視流程走到哪）：`perception_bundle.json`、`perception_result.json`、`policy_base.json`、`policy.json`、`<role>_stance.json`、`research_debate.json`、`trade_decision.json`、`cash_stance.json`、`proposal.json`、`scenario.json`、`guard.json`、`risk_review.json`、`revision_history.json`、`decision.json`、`team_inputs.json`、`trader_report.md`、`review_*_r<N>.json`、`<proposal／scenario／guard／sector_exposure／liquidity_exposure>_review_input_r<N>.json` | 多空研究、交易、風險與修正循環的中間檔 | `DailyDecisionPipeline` | 檔名來自 `save_artifact` 與第 650 行的 `trader_report.md`；目前實際目錄只走到分析師階段，這些檔案尚未出現 |
-| `daily/launchd.log`、`data-launchd.log`、`finmind-news-launchd.log` | launchd 排程的標準輸出 | `scripts/launchd/*.plist.template` 設定的 `StandardOutPath` | 只有安裝排程後才有 |
+| `daily/data-launchd.log`、`finmind-news-launchd.log` | `data` 與 `finmind-news` 排程的標準輸出（`daily` 排程已改寫到 `var/logs/launchd.log`，見第 3 節） | `scripts/launchd/*.plist.template` 設定的 `StandardOutPath` | 只有安裝排程後才有；舊的 `daily/launchd.log` 是改版前留下的，可刪 |
 | `decisions/<日期>/decision-<UTC時間>Z/` | 一次決策的封存：`decision_input`、`momentum`、`debate`、`intent`、`policy`、`proposal`、`scenario`、`guard`、`risk_review`、`revision_history`、`decision`、`team_inputs` 各一個 `.json`，加 `manifest.json` | `DecisionRepository.save`，必要名單在 `src/etf_agent/decision/service.py` 的 `required` | 雜湊封存，內容不得被修改；`ImmutableRunStore.verify` 會檢查檔案集合與 SHA-256 |
 
 ### 2.4 `artifacts/ledger/`、`artifacts/competition_d_plan/`、`artifacts/archive/`
@@ -176,19 +176,21 @@ flowchart LR
 | `artifacts/market_context_probes/` | `cli/market_context_probe.py` |
 | `artifacts/fundamental_repairs/` | `cli/fundamental_repair.py` |
 | `artifacts/evaluation/coverage_latest.json`、`suites/<名稱>.json`、`runs/eval-<UTC時間>/`（`manifest.json`、`report.json`、`report.md`、每份考卷每次重跑的 run 目錄與自己的 `decisions/`） | `cli/agent_eval.py` |
+| `artifacts/evaluation/replays/<replay_id>/`（不可變 run：`report.json`、每日 `dNN_policy`／`proposal`／`scenario`／`guard`／`decision`／`execution_market`／`close_market`／`execution`／`close`、`manifest.json`）、旁邊的 `<replay_id>.md` 與 `compare-<A>-vs-<B>.json/.md` | `cli/policy_replay.py` |
 
 ## 3. `var/` 逐項說明
 
 | 路徑 | 用途 | 誰寫入 | 進 git | 能刪嗎／刪了會怎樣 |
 | --- | --- | --- | --- | --- |
 | `var/.gitkeep` | 讓空資料夾存在於 git | 手動維護 | 是 | 不要刪 |
-| `var/etf_agent.db` | SQLite：行情、公司文件、財報事實、來源原文、快照與時間／版本。目前實際約 1.4 GB。資料表包含 `daily_prices`、`source_documents`、`raw_payloads`、`financial_statements`、`research_snapshots`、`snapshot_documents`、`snapshot_prices`、`finmind_news_candidates`、`market_news_captures`、`collection_runs`、`quality_issues` 等 | `scripts/init_db.py` 建表；`scripts/collect_*.py`、`collect_latest_prices.py`、`collect_official_history.py`、`collect_supplemental_sources.py`、`probe_data_sources.py`、`repair_pending_tpex_close.py`、`cli/data_agent.py`、`cli/news_sentiment.py` 等寫入 | 否 | 不要隨意刪。所有資料版本、來源原文與 `available_at` 都在這裡；刪了 Snapshot 與決策輸入無法依原時間點重建，歷史來源原文也不可能完全重抓還原 |
+| `var/etf_agent.db` | SQLite：行情、公司文件、財報事實、來源原文、快照與時間／版本。目前實際約 1.4 GB。資料表包含 `daily_prices`（append-only 版本表：主鍵含 `fetched_at`，同一檔同日同來源只在內容改變時新增版本，讀取端一律取 cutoff 前最新版本；schema 版本 10 由 `cli/data_agent.py migrate` 或任何 `initialize()` 自動遷移）、`source_documents`、`raw_payloads`、`financial_statements`、`research_snapshots`、`snapshot_documents`、`snapshot_prices`、`finmind_news_candidates`、`market_news_captures`、`collection_runs`、`quality_issues` 等 | `scripts/init_db.py` 建表；`scripts/collect_*.py`、`collect_latest_prices.py`、`collect_official_history.py`、`collect_supplemental_sources.py`、`probe_data_sources.py`、`repair_pending_tpex_close.py`、`cli/data_agent.py`、`cli/news_sentiment.py` 等寫入 | 否 | 不要隨意刪。所有資料版本、來源原文與 `available_at` 都在這裡；刪了 Snapshot 與決策輸入無法依原時間點重建，歷史來源原文也不可能完全重抓還原 |
 | `var/etf_agent.db-wal`、`-shm` | SQLite 的寫前日誌（`.gitignore` 已列入）；目前不存在 | SQLite 自動 | 否 | 資料庫使用中不要手動刪 |
 | `var/datapack/` | 人工從參賽者後台下載的主辦方資料包（`.gitignore` 已列入）；每日 `run` 依隊伍與交易日自動尋找，對帳副本存入該次 `artifacts/daily/<日期>/<run_id>/datapack.json` | 人工放入 | 否 | 可刪舊檔；當天的不要刪，續跑時會比對同一份 |
-| `var/logs/` | `.gitignore` 預留；`src/`、`scripts/`、`cli/` 沒有寫入它的程式 | 無 | 否 | 目前不存在 |
+| `var/logs/daily-<YYYY-MM-DD>.log` | `run_daily_pipeline.py` 自己的訊息（與終端相同內容），台北日期一天一檔，附加寫入；超過 30 天的舊檔由下一次執行自動刪除（只刪此命名格式） | `scripts/run_daily_pipeline.py`（`open_daily_log`／`prune_daily_logs`） | 否（`.gitignore` 排除 `var/logs/`） | 可刪；不含 `start.sh daily` 子程序的輸出 |
+| `var/logs/launchd.log` | `com.etf-agents.daily` 排程整個行程的 stdout／stderr（含子程序輸出與未捕捉例外）；launchd 只追加不輪替 | `scripts/launchd/com.etf-agents.daily.plist.template` 的 `StandardOutPath` | 否 | 只有安裝排程後才有；安裝前先 `mkdir -p var/logs`；變大時可清空 |
 | `var/yahoo_industries.json`、`var/current_price_snapshot.json`、`var/current_strategy_proposal.json` | 2026-09-13 的舊版遺留檔；`src/`、`scripts/`、`cli/`、`config/`、`docs/`、`tests/` 沒有引用 | 無 | 否（被 `var/*.json` 忽略） | 沒有程式使用，確認不需要後可刪 |
 
-`var/` 目前只有上述資料庫與三個舊 JSON，沒有其他快取檔。
+`var/` 目前只有上述資料庫、三個舊 JSON 與 `logs/` 日誌，沒有其他快取檔。
 
 ## 4. 真實目錄樹範例
 
@@ -294,7 +296,8 @@ artifacts/
 | --- | --- |
 | 今天最新的中文決策報告 | `artifacts/latest/latest.md`（人類易讀的日期副本在 `artifacts/reports/dated/<日期>/`） |
 | 今天流程成功還是失敗、為什麼 | `artifacts/daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json`；失敗時也看 `artifacts/latest/latest.md` 的失敗診斷 |
-| 排程（launchd）的輸出錯誤 | `artifacts/daily/launchd.log`、`data-launchd.log`、`finmind-news-launchd.log`（安裝排程後才有） |
+| 每日流程當天的訊息 | `var/logs/daily-<YYYY-MM-DD>.log`（台北日期一天一檔，保留 30 天） |
+| 排程（launchd）的輸出錯誤 | `daily` 排程：`var/logs/launchd.log`；`data`、`finmind-news` 排程：`artifacts/daily/data-launchd.log`、`finmind-news-launchd.log`（安裝排程後才有） |
 | 某個子 Agent 當時回了什麼原文 | `artifacts/daily/<日期>/<run>/<task>_raw_<N>.json`，餵給它的內容在 `brief_*.json` |
 | 分析師（技術／基本面／事件）的報告 | `artifacts/daily/<日期>/<run>/analyst_<名稱>.json` |
 | 最終決策、委託與風控修正紀錄 | `artifacts/decisions/<日期>/decision-<UTC時間>Z/decision.json`、`proposal.json`、`risk_review.json`、`revision_history.json` |

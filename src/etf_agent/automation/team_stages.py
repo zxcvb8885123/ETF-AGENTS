@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.decision import (
     AnalystReportValidator,
+    PriorDecisionContextValidator,
     ResearchDebateBundleValidator,
     StancePacketValidator,
     TradeDecisionValidator,
     build_analyst_brief,
+    build_prior_decision_context,
     build_research_debate,
     build_stance_brief,
     compute_fundamental_metrics,
+    find_prior_decision_run,
+    prior_decision_brief,
+    read_decision_run,
     render_trader_report,
     seal_report,
     seal_stance_packet,
@@ -21,6 +27,7 @@ from etf_agent.decision import (
     trade_decision_envelope,
 )
 from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_market_report
+from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.stance import STANCE_ROLES
 
 from .agent_runner import AgentTask, DailyPipelineError
@@ -34,6 +41,15 @@ from .agent_schemas import (
     _SHARED_RULES,
 )
 from .batching import merge_batch_items, universe_batches
+
+
+# 前次決策背景只給交易 Agent 核對一致性；它不是本次證據，Validator 會拒絕文字欄位出現其識別碼。
+_PRIOR_RULES = (
+    "輸入的 prior_decision_background 與各股 prior_decision 是前次已封存決策對目前持股的意圖、信心與重估條件，"
+    "只供你檢查這次判斷是否與前次一致、前次寫的重估條件是否已由本次多空論點證實；它不是本次事實或證據，"
+    "不得寫進 rationale、unresolved_questions 或 invalidation_conditions，也不得只因前次曾買進就續抱或加碼；"
+    "延續或改變行動都必須由本次採納的 claim 支持。沒有附前次決策的股票，照一般方式判斷。"
+)
 
 
 class TeamStagesMixin:
@@ -213,6 +229,40 @@ class TeamStagesMixin:
         return [make_job(batch) for batch in batches]
 
     # ------------------------------------------------------------------ trader
+    def load_prior_decision_context(
+        self, bundle: Mapping[str, object], applied_run_ids: Optional[Sequence[str]] = None,
+    ) -> Dict[str, object]:
+        """前次決策背景：從決策庫找同帳戶、**目標交易時段更早**、approved／no_trade 的封存 run（同一時段有多個時優先
+        帳本結算記錄的 ``applied_run_ids``，否則取該時段 cutoff 最新者），整理目前持股的前次意圖與重估條件；找不到或本次
+        沒有目標時段時 unavailable。續跑時沿用本 run 已存且仍通過驗證的版本，避免決策庫變動改變輸入。"""
+        path = self._path("prior_decision_context")
+        validator = PriorDecisionContextValidator(bundle)
+        if self.resume and path.exists():
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if not validator.validate(saved):
+                self.log("  [前次決策] 沿用已驗證的 prior_decision_context.json")
+                return saved
+        if not ((bundle.get("trading_status_bundle") or {}).get("target_session") or {}).get("start"):
+            found, prior, reason = None, None, NO_SESSION_REASON
+        else:
+            found = find_prior_decision_run(self.decision_repository, bundle, applied_run_ids)
+            prior = read_decision_run(self.decision_repository, found["run_id"]) if found else None
+            reason = None
+        context = build_prior_decision_context(
+            bundle, prior, reason=reason, selection=found["selection"] if found else "latest_cutoff")
+        errors = validator.validate(context)
+        if errors:
+            raise DailyPipelineError("PriorDecisionContext 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("prior_decision_context", context)
+        if context["status"] == "available":
+            self.log("  [前次決策] 來源 %s（時段 %s，cutoff %s，%s，挑法 %s），持股 %d 檔有前次意圖、%d 檔沒有；只作背景、不可引用" % (
+                found["run_id"], context["source"]["target_session_start"], context["source"]["decision_cutoff"],
+                "跨 Snapshot 例外" if context["cross_snapshot_exception"] else "同 Snapshot", found["selection"],
+                len(context["items"]), len(context["uncovered_symbols"])))
+        else:
+            self.log("  [前次決策] 無可用的前次 Decision run（%s），背景為 unavailable" % context["reason"])
+        return context
+
     def run_trader(
         self,
         bundle: Mapping[str, object],
@@ -220,9 +270,13 @@ class TeamStagesMixin:
         analyst_reports: Mapping[str, Mapping[str, object]],
         debate: Mapping[str, object],
         run_id: str,
+        prior_context: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
-        """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。"""
+        """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
+
+        ``prior_context`` 是 ``load_prior_decision_context`` 的結果：只放進 brief 當背景，Validator 禁止引用。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
+        background, prior_by_symbol = prior_decision_brief(prior_context) if prior_context is not None else (None, {})
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
         momentum_status = {str(item.get("symbol", "")).upper(): item.get("status") for item in momentum.get("items", [])}
         tradability = {
@@ -251,6 +305,7 @@ class TeamStagesMixin:
                         "position_count": len(held),
                     },
                     "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
+                    **({"prior_decision_background": background} if background is not None else {}),
                     "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                     "symbols": [
                         {
@@ -261,12 +316,13 @@ class TeamStagesMixin:
                             "analyst_outlooks": {analyst: values.get(symbol) for analyst, values in outlooks.items()},
                             "bull": {key: stances["bull"][symbol][key] for key in ("strength", "claims", "invalidation_conditions")},
                             "bear": {key: stances["bear"][symbol][key] for key in ("strength", "claims", "invalidation_conditions")},
+                            **({"prior_decision": prior_by_symbol.get(symbol)} if background is not None else {}),
                         }
                         for symbol in batch["symbols"]
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"])
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
@@ -275,10 +331,11 @@ class TeamStagesMixin:
                 "rationale 只寫整合後的判斷，不逐條重貼多空報告或論點全文；論點識別碼保留在採納／否決陣列供程式核對。"
                 "理由用簡短繁體中文分段：先寫主導決定的理由，再寫主要風險為何改變或沒有改變行動；"
                 "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
-                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s"
+                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
-                    len(batch["symbols"]), "、".join(batch["symbols"]), _SHARED_RULES,
+                    len(batch["symbols"]), "、".join(batch["symbols"]),
+                    _PRIOR_RULES if background is not None else "", _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
             )
@@ -290,7 +347,7 @@ class TeamStagesMixin:
         partials = self._run_jobs([make_job(batch) for batch in batches])
         outputs: List[List[Dict[str, object]]] = [partial["items"] for partial in partials]
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
-        errors = TradeDecisionValidator(bundle, momentum, debate).validate(decision)
+        errors = TradeDecisionValidator(bundle, momentum, debate, prior_context=prior_context).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("trade_decision", decision)

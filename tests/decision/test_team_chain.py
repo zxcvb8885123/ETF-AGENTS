@@ -193,6 +193,8 @@ class TeamChainDownstreamTests(unittest.TestCase):
                 "quotes": {symbol: {"close_price": price} for symbol, price in quotes.items()},
             }), encoding="utf-8")
             applied = service.apply_decision(root / "decisions", "team-decision", execution, close, "2026-09-22", "close-team")
+            # 帳本 close 狀態記錄實際結算的 Decision run，供下一時段挑前次決策背景。
+            self.assertEqual(service.repository.applied_decision_run_ids(), ["team-decision"])
 
         self.assertTrue(applied["transition"]["execution"]["fills"])
         self.assertEqual([item["symbol"] for item in applied["state"]["positions"]], ["2317.TW"])

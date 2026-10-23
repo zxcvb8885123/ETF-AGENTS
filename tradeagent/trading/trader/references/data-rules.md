@@ -15,9 +15,20 @@
 | momentum_status | 程式計算的動能資料是否可用。available 表示通過資料可用性檢查。 | available 不是買進訊號，只是 buy／add 的必要資料條件。 |
 | tradability_state | 官方交易狀態的核對結果。 | 判斷行動是否受限制；最終由 Guard 檢查，不能自行忽略限制。 |
 
-整體背景包括 regime_assessment（程式判定的市場狀態）、account（現金、淨值、持股代號與檔數）及 rules（競賽限制）；本批各股票的 `held_shares` 另列於逐股輸入。完整帳戶與每檔股數仍在同 Snapshot 的原始決策輸入供 Validator 重建，不需在每批 brief 重貼。這些欄位幫助你理解交易條件，不替你決定哪方論點成立。
+| prior_decision | 可能沒有。上一份已封存決策對這檔持股的 intent、conviction 與 invalidation_conditions；只有目前持股且前次有裁決的股票才有。 | 只用來檢查一致性與前次重估條件是否已出現；不是證據，不得引用（見下）。 |
+
+整體背景包括 regime_assessment（程式判定的市場狀態）、account（現金、淨值、持股代號與檔數）、rules（競賽限制）及可能的 prior_decision_background（前次決策的狀態、cutoff、snapshot 是否相同與說明）；本批各股票的 `held_shares` 另列於逐股輸入。完整帳戶與每檔股數仍在同 Snapshot 的原始決策輸入供 Validator 重建，不需在每批 brief 重貼。這些欄位幫助你理解交易條件，不替你決定哪方論點成立。
 
 公司事件與全市場情緒是不同範圍。analyst_outlooks 裡的 event 表示該公司事件，不表示整體台股情緒；不能用公司結果補出全市場看法。目前事件已由第三位分析師整合，不另跑事件四子 Agent。
+
+### 前次決策背景不是證據
+
+prior_decision_background 與各股 prior_decision 來自上一個交易時段已封存、實際交出的決策（同一時段的晚間備案不算）（通常是不同 Snapshot，程式標為 cross_snapshot_exception）。程式只核對它的來源與雜湊，沒有給它 evidence ID，`citable` 永遠是 false。使用規則：
+
+- 可以做的：比對這次判斷與前次是否一致；檢查前次寫的重估條件是否已由今天的多空論點證實；不一致時用今天的論點說明為什麼改變。
+- 不能做的：把前次行動、信心或條件當成支持或反對的理由；只因前次買進就續抱或加碼；在 rationale、unresolved_questions、invalidation_conditions 寫入前次決策的內容或識別碼。
+- 程式檢查：文字欄位出現前次決策的 run_id、decision_id 或「prior_decision」字樣就拒絕整批；buy／add 仍必須採納今天的多頭論點，trim／exit 仍必須採納今天的空頭論點。
+- 狀態為 unavailable（沒有前次決策、新帳戶或評測重跑）時，所有股票都沒有 prior_decision，照一般方式判斷。
 
 ## 2. 如何處理兩方的每個論點
 
@@ -111,7 +122,7 @@ conviction 表示整合後對此次 buy／add 的支持程度，不是勝率、�
 
 ## 8. 程式會檢查什麼
 
-Validator 會檢查股票是否全批覆蓋、欄位是否符合白名單、每個既有論點是否恰好處理一次、是否引用其他股票或不存在的論點、意圖是否符合持股狀態，以及信心欄位與動能資料條件。封存後也會重算內容雜湊。
+Validator 會檢查股票是否全批覆蓋、欄位是否符合白名單、每個既有論點是否恰好處理一次、是否引用其他股票或不存在的論點、意圖是否符合持股狀態、信心欄位與動能資料條件，以及文字欄位沒有引用前次決策背景。封存後也會重算內容雜湊。
 
 Guard 另外檢查程式計算出的持股數、現金比例、集中度、交易狀態等硬性限制。交易 Agent 不為了湊檔數採納沒有證據的理由，也不自行放寬規則。
 
