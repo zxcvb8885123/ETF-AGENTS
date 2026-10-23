@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import shutil
 import sqlite3
@@ -13,7 +14,10 @@ from etf_agent.dashboard import build_performance_summary
 from etf_agent.data import TradingCalendar, TradingCalendarError
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService
 from etf_agent.ledger import ExecutionSimulator, LedgerError
-from etf_agent.virtual_account.daily import DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price, supersede_decision_runs
+from etf_agent.virtual_account.daily import (
+    DailyAccountRunner, OfficialCloseMarket, add_business_days, average_price, pending_decision,
+    restore_superseded_decision, supersede_decision_runs,
+)
 from test_virtual_account import prepare_and_decide
 
 
@@ -294,8 +298,8 @@ class DailyAccountRunnerTests(unittest.TestCase):
         self.assertEqual(execution["execution_at"], "2026-09-21T13:30:00+08:00")
 
 
-class SupersedeBeforeSessionTests(unittest.TestCase):
-    """晚上已有待成交決策，隔天交件期限（08:55）前用新資料重跑可取代；過期限、已開盤或收盤價晚到仍阻擋。"""
+class PendingDecisionFixture:
+    """帳本已有一份目標時段為 9/21 的待成交決策。"""
 
     SESSION_START = "2026-09-21T09:00:00+08:00"
 
@@ -330,6 +334,10 @@ class SupersedeBeforeSessionTests(unittest.TestCase):
         runner = DailyAccountRunner(self.repository, self.database, self.decisions, archive_root=self.archive)
         with mock.patch("etf_agent.virtual_account.daily.DecisionRepository.verify", return_value=self.patched):
             return runner.run(path, "prepare-morning", self.root / "account.json")
+
+
+class SupersedeBeforeSessionTests(PendingDecisionFixture, unittest.TestCase):
+    """晚上已有待成交決策，隔天交件期限（08:55）前用新資料重跑可取代；過期限、已開盤或收盤價晚到仍阻擋。"""
 
     def test_cutoff_before_session_start_archives_decision_and_prepares(self):
         result = self.rerun("2026-09-21T07:30:00+08:00")
@@ -370,6 +378,155 @@ class SupersedeBeforeSessionTests(unittest.TestCase):
             self.rerun("2026-09-21T07:30:00+08:00")
         self.assertEqual(self.repository.latest()["run_id"], self.before)
         self.assertTrue(self.original.exists())
+
+
+class RestoreSupersededDecisionTests(PendingDecisionFixture, unittest.TestCase):
+    """早上重跑取代了晚上的決策卻沒產生新 D-Plan：帳本與決策還原成重跑前，全部只搬移不刪除。"""
+
+    def setUp(self):
+        super().setUp()
+        self.pending = pending_decision(self.repository, self.decisions)
+        self.account_output = self.root / "account.json"
+
+    def restore(self, pending=None, discard=None):
+        return restore_superseded_decision(
+            self.repository, self.decisions, self.archive, pending or self.pending, self.account_output,
+            discard_decision_run_id=discard,
+        )
+
+    def test_pending_decision_is_found_before_rerun(self):
+        self.assertEqual(self.pending, {"account_run_id": self.before, "decision_run_id": "decision-1"})
+
+    def test_restore_puts_ledger_and_decision_back(self):
+        before_snapshot = self.repository.latest()["state"]["provenance"]["account_snapshot"]
+        self.rerun("2026-09-21T07:30:00+08:00")
+        # 本次重跑已封存的新決策也一併移走，不留在決策庫。
+        fresh = self.original.parent / "decision-2"
+        fresh.mkdir()
+        result = self.restore(discard="decision-2")
+        self.assertEqual(self.repository.latest()["run_id"], self.before)
+        self.assertTrue((self.original / "decision.json").exists())
+        self.assertFalse((self.archive / self.original.parent.name / "decision-1").exists())
+        self.assertFalse(fresh.exists())
+        self.assertTrue((self.archive / self.original.parent.name / "decision-2").is_dir())
+        rolled_back = self.repository.root / "rolled_back" / "prepare-morning"
+        self.assertEqual(Path(result["rolled_back_account_run"]), rolled_back)
+        self.assertTrue((rolled_back / "state.json").exists())
+        self.assertFalse((self.repository.runs / "prepare-morning").exists())
+        self.assertEqual(json.loads(self.account_output.read_text(encoding="utf-8")), before_snapshot)
+        self.assertEqual(pending_decision(self.repository, self.decisions), self.pending)
+
+    def test_restore_refused_when_nothing_was_superseded(self):
+        with self.assertRaisesRegex(VirtualAccountError, "仍在決策庫"):
+            self.restore()
+        self.assertEqual(self.repository.latest()["run_id"], self.before)
+
+    def test_restore_refused_when_archived_decision_is_missing(self):
+        self.rerun("2026-09-21T07:30:00+08:00")
+        shutil.rmtree(self.archive / self.original.parent.name / "decision-1")
+        with self.assertRaisesRegex(VirtualAccountError, "封存區找不到"):
+            self.restore()
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-morning")
+
+    def test_restore_refused_when_ledger_is_not_the_rerun(self):
+        self.rerun("2026-09-21T07:30:00+08:00")
+        with self.assertRaisesRegex(VirtualAccountError, "拒絕還原"):
+            self.restore(dict(self.pending, account_run_id="prepare-other"))
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-morning")
+        self.assertTrue((self.archive / self.original.parent.name / "decision-1").exists())
+
+    def run_script(self, supersede=True, fail_prepare=False):
+        """以 run_daily_pipeline.main 重現 10/23 02:06：資料階段取代決策後，DataPack 階段失敗。"""
+        spec = importlib.util.spec_from_file_location(
+            "run_daily_pipeline_rollback", Path(__file__).resolve().parents[2] / "scripts" / "run_daily_pipeline.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        app = self.root / "app"
+        artifacts = app / "artifacts"
+        (artifacts / "data").mkdir(parents=True)
+        (artifacts / "archive").mkdir()
+        shutil.move(str(self.root / "accounts"), str(artifacts / "ledger"))
+        shutil.move(str(self.decisions), str(artifacts / "decisions"))
+        self.original = next((artifacts / "decisions").glob("*/decision-1"))
+        evening = {"usable": True, "decision_cutoff": "2026-09-20T18:00:00+08:00"}
+        latest_snapshot = artifacts / "data" / "research_snapshot_latest.json"
+        latest_snapshot.write_text(json.dumps(evening), encoding="utf-8")
+        repository = VirtualAccountRepository(artifacts / "ledger", "cup-test")
+
+        def fake_data_stage(_account_id, prepare_run_id, _history_end=None):
+            if not supersede:
+                return
+            path = self.root / "next.json"
+            path.write_text(json.dumps(dict(self.snapshot, decision_cutoff="2026-09-21T07:30:00+08:00")), encoding="utf-8")
+            runner = DailyAccountRunner(repository, self.database, artifacts / "decisions",
+                                        archive_root=artifacts / "archive" / "superseded_decisions")
+            with mock.patch("etf_agent.virtual_account.daily.DecisionRepository.verify", return_value=self.patched):
+                if fail_prepare:
+                    # 決策已封存後，建立新 prepare 才失敗（例如持股缺官方價）。
+                    with mock.patch.object(runner.service, "prepare_day", side_effect=VirtualAccountError("缺少持股官方價（測試）")):
+                        runner.run(path, prepare_run_id, artifacts / "ledger" / "cup-test" / "account_snapshot_latest.json")
+                runner.run(path, prepare_run_id, artifacts / "ledger" / "cup-test" / "account_snapshot_latest.json")
+            latest_snapshot.write_text(json.dumps(dict(evening, decision_cutoff="2026-09-21T07:30:00+08:00")), encoding="utf-8")
+
+        def missing_datapack(*_args):
+            raise RuntimeError("找不到 DataPack（測試）")
+
+        with mock.patch.object(module, "ROOT", app), \
+                mock.patch.object(module, "run_preflight", lambda *_a, **_k: []), \
+                mock.patch.object(module, "run_data_stage", fake_data_stage), \
+                mock.patch.object(module, "capture_trading_sources", lambda *_a: {}), \
+                mock.patch.object(module, "refresh_inferred_closures", lambda *_a: None), \
+                mock.patch.object(module, "expected_latest_trade_date", lambda *_a: date(2026, 9, 18)), \
+                mock.patch.object(module, "data_already_fetched", lambda *_a: False), \
+                mock.patch.object(module, "latest_capture_before", missing_datapack), \
+                mock.patch.object(module, "save_failure", lambda *_a, **_k: {"report_status": "failed", "report_path": "x"}), \
+                mock.patch.object(module, "record_calibration", lambda: {}), \
+                mock.patch.object(module, "notify", lambda *_a, **_k: None), \
+                mock.patch("sys.argv", ["run_daily_pipeline.py", "--force", "--account-id", "cup-test"]):
+            code = module.main()
+        summary = json.loads(next((artifacts / "daily").glob("*/daily-*/pipeline.json")).read_text(encoding="utf-8"))
+        return code, summary, repository, latest_snapshot, evening
+
+    def test_failed_rerun_through_script_restores_evening_backup(self):
+        before_index = (self.repository.root / "latest.json").read_text(encoding="utf-8")
+        code, summary, repository, latest_snapshot, evening = self.run_script()
+        self.assertEqual(code, 1)
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["superseded_pending"], self.pending)
+        self.assertEqual(summary["rolled_back"]["decision_run_id"], "decision-1")
+        self.assertNotIn("rollback_error", summary)
+        self.assertEqual((repository.root / "latest.json").read_text(encoding="utf-8"), before_index)
+        self.assertTrue((self.original / "decision.json").exists())
+        self.assertEqual(json.loads(latest_snapshot.read_text(encoding="utf-8")), evening)
+        self.assertEqual(pending_decision(repository, self.original.parents[1]), self.pending)
+
+    def test_decision_restored_when_ledger_step_fails_after_archiving(self):
+        before_index = (self.repository.root / "latest.json").read_text(encoding="utf-8")
+        code, summary, repository, _, _ = self.run_script(fail_prepare=True)
+        self.assertEqual(code, 1)
+        self.assertIn("缺少持股官方價", summary["error"])
+        self.assertEqual(summary["rolled_back"]["decision_run_id"], "decision-1")
+        self.assertIsNone(summary["rolled_back"]["rolled_back_account_run"])
+        self.assertEqual((repository.root / "latest.json").read_text(encoding="utf-8"), before_index)
+        self.assertTrue((self.original / "decision.json").exists())
+        self.assertFalse((repository.root / "rolled_back").exists())
+
+    def test_failed_run_without_supersede_does_not_roll_back(self):
+        code, summary, repository, _, _ = self.run_script(supersede=False)
+        self.assertEqual(code, 1)
+        self.assertNotIn("superseded_pending", summary)
+        self.assertNotIn("rolled_back", summary)
+        self.assertEqual(repository.latest()["run_id"], self.before)
+        self.assertTrue(self.original.exists())
+
+    def test_rollback_latest_refuses_when_latest_moved(self):
+        self.rerun("2026-09-21T07:30:00+08:00")
+        with self.assertRaisesRegex(VirtualAccountError, "已不是"):
+            self.repository.rollback_latest("prepare-other", self.before)
+        with self.assertRaisesRegex(VirtualAccountError, "直接父狀態"):
+            self.repository.rollback_latest("prepare-morning", "genesis")
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-morning")
+        self.assertFalse((self.repository.root / "rolled_back").exists())
 
 
 if __name__ == "__main__":

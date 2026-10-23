@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256
-from etf_agent.core.run_layout import list_run_dirs
+from etf_agent.core.run_layout import find_run_dir, list_run_dirs
 from etf_agent.data.trading_calendar import CALENDAR_BASIS, DECISION_DEADLINE, TradingCalendar
 from etf_agent.decision.finalization import DecisionRepository
 
@@ -103,6 +103,70 @@ def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive
             shutil.move(str(run_dir), str(target / run_dir.name))
             superseded.append(run_dir.name)
     return superseded
+
+
+def pending_decision(repository: VirtualAccountRepository, decision_repository: Path) -> Optional[Dict[str, str]]:
+    """最新狀態是已有決策、尚未結算的 prepare 時，回傳帳本 run 與 Decision run；否則回 None。"""
+    current = repository.latest(optional=True)
+    if current is None:
+        return None
+    provenance = current["state"].get("provenance", {})
+    if provenance.get("type") != "prepared":
+        return None
+    decision_run_id = find_decision_run(decision_repository, provenance.get("account_snapshot"))
+    if decision_run_id is None:
+        return None
+    return {"account_run_id": current["run_id"], "decision_run_id": decision_run_id}
+
+
+def restore_superseded_decision(
+    repository: VirtualAccountRepository,
+    decision_repository: Path,
+    archive_root: Path,
+    pending: Mapping[str, str],
+    account_output: Path,
+    discard_decision_run_id: Optional[str] = None,
+) -> Dict[str, object]:
+    """開盤前重跑取代了 ``pending`` 卻沒產生新 D-Plan 時，把帳本與決策還原成重跑前。
+
+    帳本已前進時 latest 指回原 prepare，重跑建立的 prepare 移到 ``rolled_back/``；被取代的決策從封存區搬回
+    決策庫；本次重跑已封存的新決策（``discard_decision_run_id``）改移到封存區。全部檔案只搬移、不刪除。
+    帳本已被其他執行推進、原決策不在封存區或決策庫已有同名 run 時，在修改任何檔案前拒絕。
+    """
+    decisions = DecisionRepository(decision_repository)
+    decision_run_id = pending["decision_run_id"]
+    if decisions.run_dir(decision_run_id) is not None:
+        raise VirtualAccountError("被取代的決策仍在決策庫，不需還原：%s" % decision_run_id)
+    archived = find_run_dir(Path(archive_root), decision_run_id, VirtualAccountError)
+    if archived is None:
+        raise VirtualAccountError("封存區找不到被取代的決策：%s" % decision_run_id)
+    restored_dir = Path(decision_repository) / archived.parent.name / decision_run_id
+    current = repository.latest()
+    # 決策已封存但新 prepare 建立失敗時，帳本仍停在原 prepare，只需搬回決策。
+    ledger_moved = current["run_id"] != pending["account_run_id"]
+    if ledger_moved and current["state"].get("provenance", {}).get("parent_run_id") != pending["account_run_id"]:
+        raise VirtualAccountError("帳本最新狀態不是接在 %s 之後的重跑，拒絕還原" % pending["account_run_id"])
+    discard_dir = decisions.run_dir(discard_decision_run_id) if discard_decision_run_id else None
+    discard_target = Path(archive_root) / discard_dir.parent.name / discard_dir.name if discard_dir else None
+    if discard_target is not None and discard_target.exists():
+        raise VirtualAccountError("封存區已有同名 Decision run：%s" % discard_target)
+    rolled_back = repository.rollback_latest(current["run_id"], pending["account_run_id"]) if ledger_moved else None
+    if discard_dir is not None:
+        discard_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(discard_dir), str(discard_target))
+    restored_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(archived), str(restored_dir))
+    decisions.verify(decision_run_id)
+    restored = repository.latest()
+    account_output = Path(account_output)
+    account_output.parent.mkdir(parents=True, exist_ok=True)
+    account_output.write_text(
+        json.dumps(restored["state"]["provenance"]["account_snapshot"], ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {"account_run_id": restored["run_id"], "decision_run_id": decision_run_id,
+            "rolled_back_account_run": str(rolled_back) if rolled_back else None,
+            "discarded_decision_run": str(discard_target) if discard_target else None}
 
 
 class OfficialCloseMarket:

@@ -53,6 +53,18 @@ class NamedResumeTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, message):
                     self.module.named_resumable_run(root, name)
 
+    def test_rolled_back_run_cannot_be_resumed(self):
+        # 還原後 Agent 輸出綁定的帳本狀態已移走，續跑會配錯帳戶快照。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = self.make_run(root, "daily-20261023-070000", "failed")
+            summary = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8"))
+            summary["rolled_back"] = {"decision_run_id": "decision-1"}
+            (run_dir / "pipeline.json").write_text(json.dumps(summary), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "--force"):
+                self.module.named_resumable_run(root, "daily-20261023-070000")
+            self.assertIsNone(self.module.latest_resumable_run(root, "daily-20261023"))
+
     def test_resumable_cli_comes_from_selected_run(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -330,41 +342,62 @@ class DataReuseTests(unittest.TestCase):
         self.assertFalse(self.refresh(evening, "2026-10-22T07:30:00+08:00", calendar=False))
         self.assertFalse(self.refresh(None, "2026-10-22T07:30:00+08:00"))
 
-    def write_run(self, runs_root, name, status, session_start=None):
+    def write_run(self, runs_root, name, status, session_start=None, finished_at=None):
         run_dir = runs_root / "2026-10-22" / name
         run_dir.mkdir(parents=True)
         summary = {"run_id": name, "status": status}
         if session_start:
             summary["target_session"] = {"start": session_start}
+        if finished_at:
+            summary["finished_at"] = finished_at
         (run_dir / "pipeline.json").write_text(json.dumps(summary), encoding="utf-8")
 
     def test_same_day_run_for_another_session_is_not_a_duplicate(self):
         # 早上的 run 為 10/22 時段；晚上的 run 為 10/23 時段，不能被當成「當日已完成」。
         morning, tomorrow = "2026-10-22T09:00:00+08:00", "2026-10-23T09:00:00+08:00"
+        now = datetime.fromisoformat("2026-10-22T18:30:00+08:00")
         with tempfile.TemporaryDirectory() as directory:
             runs = Path(directory)
-            self.write_run(runs, "daily-20261022", "completed", morning)
+            self.write_run(runs, "daily-20261022", "completed", morning, "2026-10-22T18:00:00+08:00")
             find = self.module.completed_run_for_session
-            self.assertIsNone(find(runs, "daily-20261022", tomorrow))
-            self.assertEqual(find(runs, "daily-20261022", morning)[0], "daily-20261022")
+            self.assertIsNone(find(runs, "daily-20261022", tomorrow, now))
+            self.assertEqual(find(runs, "daily-20261022", morning, now)[0], "daily-20261022")
             # 晚上的 run 完成後，再次觸發同一時段就略過。
-            self.write_run(runs, "daily-20261022-180000", "completed", tomorrow)
-            self.assertEqual(find(runs, "daily-20261022", tomorrow)[0], "daily-20261022-180000")
+            self.write_run(runs, "daily-20261022-180000", "completed", tomorrow, "2026-10-22T18:20:00+08:00")
+            self.assertEqual(find(runs, "daily-20261022", tomorrow, now)[0], "daily-20261022-180000")
+
+    def test_only_recently_finished_run_skips_schedule(self):
+        # 半夜 04:36 手動跑完，07:00 排程照常重做；06:30 跑完則 07:00 略過。
+        session = "2026-10-23T09:00:00+08:00"
+        seven = datetime.fromisoformat("2026-10-23T07:00:00+08:00")
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            find = self.module.completed_run_for_session
+            self.write_run(runs, "daily-20261023", "completed", session, "2026-10-23T04:36:00+08:00")
+            self.assertIsNone(find(runs, "daily-20261023", session, seven))
+            self.write_run(runs, "daily-20261023-060000", "completed", session, "2026-10-23T06:30:00+08:00")
+            self.assertEqual(find(runs, "daily-20261023", session, seven)[0], "daily-20261023-060000")
+            # 剛好一小時仍算剛完成。
+            self.assertIsNotNone(find(runs, "daily-20261023", session, datetime.fromisoformat("2026-10-23T07:30:00+08:00")))
+            self.assertIsNone(find(runs, "daily-20261023", session, datetime.fromisoformat("2026-10-23T07:31:00+08:00")))
 
     def test_unknown_session_or_legacy_run_keeps_skip(self):
+        now = datetime.fromisoformat("2026-10-22T18:30:00+08:00")
         with tempfile.TemporaryDirectory() as directory:
             runs = Path(directory)
+            # 舊 run 沒有時段也沒有完成時間：保守視為剛完成，維持略過。
             self.write_run(runs, "daily-20261022", "completed")
             find = self.module.completed_run_for_session
-            self.assertIsNotNone(find(runs, "daily-20261022", "2026-10-23T09:00:00+08:00"))
-            self.assertIsNotNone(find(runs, "daily-20261022", None))
-            self.assertIsNone(find(runs, "daily-20261021", None))
+            self.assertIsNotNone(find(runs, "daily-20261022", "2026-10-23T09:00:00+08:00", now))
+            self.assertIsNotNone(find(runs, "daily-20261022", None, now))
+            self.assertIsNone(find(runs, "daily-20261021", None, now))
 
     def test_failed_run_is_not_counted_as_completed(self):
+        now = datetime.fromisoformat("2026-10-22T18:30:00+08:00")
         with tempfile.TemporaryDirectory() as directory:
             runs = Path(directory)
-            self.write_run(runs, "daily-20261022", "failed", "2026-10-23T09:00:00+08:00")
-            self.assertIsNone(self.module.completed_run_for_session(runs, "daily-20261022", None))
+            self.write_run(runs, "daily-20261022", "failed", "2026-10-23T09:00:00+08:00", "2026-10-22T18:20:00+08:00")
+            self.assertIsNone(self.module.completed_run_for_session(runs, "daily-20261022", None, now))
 
     def test_run_rebuilds_snapshot_before_deadline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -374,6 +407,52 @@ class DataReuseTests(unittest.TestCase):
                 self.assertEqual(self.run_main(root, "--force"), [False])
             with patch.object(self.module, "refresh_before_deadline", lambda *_a: False):
                 self.assertEqual(self.run_main(root, "--force"), [True])
+
+    def scheduled_main(self, root, at):
+        """不帶 --force 在指定台北時間觸發 main，回傳 (exit code, 是否走到預檢)。"""
+        fixed = datetime.fromisoformat(at)
+        real_datetime = datetime
+
+        class FixedDatetime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+        seen = []
+
+        def fake_preflight(_root, _account_id, skip_data, **_kwargs):
+            seen.append(skip_data)
+            return [self.module.PreflightCheck("fake", False, "測試用預檢失敗")]
+
+        with patch.object(self.module, "datetime", FixedDatetime), \
+                patch.object(self.module, "run_preflight", fake_preflight), \
+                patch.object(self.module, "notify", lambda *_a, **_k: None), \
+                patch.object(self.module, "ensure_calendar_capture", lambda *_a: None), \
+                patch.object(self.module, "refresh_inferred_closures", lambda *_a: None), \
+                patch.object(self.module, "trading_day_check", lambda *_a: True), \
+                patch.object(self.module, "upcoming_session_start", lambda *_a: "2026-10-23T09:00:00+08:00"), \
+                patch.object(self.module, "expected_latest_trade_date", lambda *_a: date(2026, 10, 22)), \
+                patch.object(self.module, "refresh_before_deadline", lambda *_a: False), \
+                patch.object(self.module, "ROOT", root), \
+                patch("sys.argv", ["run_daily_pipeline.py"]):
+            return self.module.main(), bool(seen)
+
+    def test_schedule_skips_only_after_recent_run_and_stamps_every_folder(self):
+        session = "2026-10-23T09:00:00+08:00"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_data(root)
+            runs = root / "artifacts" / "daily"
+            # 半夜 04:36 手動跑完：07:00 照跑，另開帶時間的新目錄，舊目錄保留。
+            self.write_run(runs, "daily-20261023", "completed", session, "2026-10-23T04:36:00+08:00")
+            self.assertEqual(self.scheduled_main(root, "2026-10-23T07:00:00+08:00"), (1, True))
+            day = runs / "2026-10-23"
+            self.assertEqual(sorted(path.name for path in day.iterdir()), ["daily-20261023-070000"])
+            self.assertTrue((runs / "2026-10-22" / "daily-20261023" / "pipeline.json").exists())
+            # 06:30 跑完：07:00 略過，不建立新目錄。
+            self.write_run(runs, "daily-20261023-060000", "completed", session, "2026-10-23T06:30:00+08:00")
+            self.assertEqual(self.scheduled_main(root, "2026-10-23T07:00:00+08:00"), (0, False))
+            self.assertEqual(sorted(path.name for path in day.iterdir()), ["daily-20261023-070000"])
 
 
 if __name__ == "__main__":

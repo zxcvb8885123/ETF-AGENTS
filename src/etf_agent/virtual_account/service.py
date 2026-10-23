@@ -8,10 +8,11 @@ import os
 import re
 import shutil
 import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, Iterator, List, Mapping, Optional
 
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time, parse_decimal
 from etf_agent.decision.contracts import DecisionInputValidator
@@ -54,7 +55,8 @@ class VirtualAccountRepository:
         self.root = Path(root).resolve() / account_id
         self.runs = self.root / "runs"
 
-    def save(self, run_id: str, artifacts: Mapping[str, object], state: Mapping[str, object]) -> Path:
+    @contextmanager
+    def _write_lock(self) -> Iterator[None]:
         self.root.mkdir(parents=True, exist_ok=True)
         lock_path = self.root / ".write.lock"
         try:
@@ -62,13 +64,54 @@ class VirtualAccountRepository:
         except FileExistsError as error:
             raise VirtualAccountError("另一個執行正在更新此虛擬帳戶") from error
         try:
-            return self._save_locked(run_id, artifacts, state)
+            yield
         finally:
             os.close(lock_fd)
             try:
                 lock_path.unlink()
             except FileNotFoundError:
                 pass
+
+    def save(self, run_id: str, artifacts: Mapping[str, object], state: Mapping[str, object]) -> Path:
+        with self._write_lock():
+            return self._save_locked(run_id, artifacts, state)
+
+    def _write_latest(self, run_id: str, state_sha256: object) -> None:
+        index_path = self.root / "latest.json"
+        fd, temporary = tempfile.mkstemp(prefix=".latest-", dir=str(self.root))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump({"run_id": run_id, "state_sha256": state_sha256}, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+            os.replace(temporary, index_path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+    def rollback_latest(self, expected_run_id: str, restore_run_id: str) -> Path:
+        """latest 仍指向 expected_run_id 且其父狀態為 restore_run_id 時，latest 改指回父狀態。
+
+        expected_run_id 整個移到 ``rolled_back/``（不刪除），runs/ 仍維持單一直線的 sequence。
+        latest 已被其他執行推進、父子不相接或封存區已有同名 run 時一律拒絕，不做任何修改。
+        """
+        with self._write_lock():
+            current = self.latest()
+            if current["run_id"] != expected_run_id:
+                raise VirtualAccountError("帳本 latest 已不是 %s（目前 %s），拒絕還原" % (expected_run_id, current["run_id"]))
+            restore_state = _read(self.verify(restore_run_id) / "state.json", "state")
+            if current["state"].get("parent_state_id") != restore_state.get("state_id"):
+                raise VirtualAccountError("%s 不是 %s 的直接父狀態，拒絕還原" % (restore_run_id, expected_run_id))
+            target = self.root / "rolled_back" / expected_run_id
+            if target.exists():
+                raise VirtualAccountError("rolled_back 已有同名 run：%s" % target)
+            self._write_latest(restore_run_id, restore_state["content_sha256"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(self.runs / expected_run_id), str(target))
+        self.latest()
+        return target
 
     def _save_locked(self, run_id: str, artifacts: Mapping[str, object], state: Mapping[str, object]) -> Path:
         if not RUN_RE.fullmatch(run_id):
@@ -114,19 +157,7 @@ class VirtualAccountRepository:
         self.verify(run_id)
         current = self.latest(optional=True)
         if current is None or int(state["sequence"]) > int(current["state"]["sequence"]):
-            index_path = self.root / "latest.json"
-            fd, temporary = tempfile.mkstemp(prefix=".latest-", dir=str(self.root))
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump({"run_id": run_id, "state_sha256": state["content_sha256"]}, stream, ensure_ascii=False, indent=2)
-                    stream.write("\n")
-                os.replace(temporary, index_path)
-            except Exception:
-                try:
-                    os.unlink(temporary)
-                except OSError:
-                    pass
-                raise
+            self._write_latest(run_id, state["content_sha256"])
         return final
 
     def verify(self, run_id: str) -> Path:

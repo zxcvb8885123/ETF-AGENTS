@@ -27,7 +27,7 @@ uv python install 3.12
 | 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板；不更新資料 |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
-| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日）且已過下一時段的交件期限（08:55），會自動沿用 Snapshot、不重抓；仍在期限前（例如前一晚已跑、早上再跑）則重建 Snapshot，cutoff 改為此刻，帳本把同時段尚未執行的舊決策移到 `artifacts/archive/superseded_decisions/`。資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
+| 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日）且已過下一時段的交件期限（08:55），會自動沿用 Snapshot、不重抓；仍在期限前（例如前一晚已跑、早上再跑）則重建 Snapshot，cutoff 改為此刻，帳本把同時段尚未執行的舊決策移到 `artifacts/archive/superseded_decisions/`；這次沒產生新 D-Plan 時自動還原舊決策（見[每日排程](#每日排程晚上備案早上重做)）。資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
 首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
@@ -58,9 +58,9 @@ uv python install 3.12
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。 |
+| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020-180000`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。已還原成重跑前狀態的 run（`pipeline.json` 有 `rolled_back`）不能續跑，改用 `--force`。 |
 | `--skip-data` | 關 | 一律沿用既有 Snapshot 與帳戶快照，不重新執行資料更新，不看更新時間。續跑、或 Snapshot 已含應有的最新交易日資料（150 檔齊全，且是該日 15:00 後建立）時會自動套用，通常不用手動加。 |
-| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期、同一目標時段已完成就不重跑（早上為當天時段、晚上為隔天時段，兩者不算重複）。 |
+| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期、同一目標時段在 1 小時內已完成就不重跑（早上為當天時段、晚上為隔天時段，兩者不算重複）；更早完成的（例如半夜手動跑）照常重跑，舊 run 目錄與 D-Plan 版本都保留。 |
 | `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
 
 ### 檢查與輸入
@@ -82,7 +82,7 @@ uv python install 3.12
 ```bash
 ./start.sh run --preflight-only --skip-data                  # 不耗用量，先確認環境
 ./start.sh run --resume                                      # 撞到用量上限後，續跑今天未完成的 run
-./start.sh run --resume daily-20261020                       # 跨午夜後，續跑指定的 run
+./start.sh run --resume daily-20261020-180000                # 跨午夜後，續跑指定的 run
 ./start.sh run --no-technical-gate --analyst-model inherit   # 回到最保守的完整輸入、單一模型
 ./start.sh run --delivery-only daily-20261020-213724         # 只重建報告
 ```
@@ -251,6 +251,24 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 輸出只是供人工檢查的候選檔，不會自動送件，也不代表已通過主辦方平台驗證。
 
+### 每日排程：晚上備案、早上重做
+
+排程（`scripts/launchd/`）平日 18:00、07:00 各跑一次 `run`：
+
+- **18:00 備案**：用當天收盤資料做下一個交易日的決策與 D-Plan。早上出事時，手上仍有一份能交。
+- **07:00 重做**：在 08:55 交件期限前，用晚上到早上的新事件、新聞與情緒重做，取代晚上那份。
+- **何時略過**：同一目標時段在 1 小時內已有完成的 run 才略過（例如 06:30 手動跑完，07:00 不跑）。半夜手動跑的不算，07:00 照常重做。
+- **每次都保留**：run 目錄一律帶台北時間（`daily-<YYYYMMDD>-<HHMMSS>`）。每份 D-Plan 另存在 `artifacts/competition_d_plan/versions/`，檔名結尾是決策時間（台北）；主檔 `D-Plan_<team_id>_<交易日>.json` 永遠是最新一份。
+- **重做失敗時自動還原**：早上重做沒產生新 D-Plan（失敗、被擋或決策被拒），程式把帳本、晚上的決策與 Snapshot 還原成重做前，重做建立的帳本狀態移到 `artifacts/ledger/<account_id>/rolled_back/`（不刪除）。通知會寫「已還原重跑前的備案決策」。
+
+還原之後：
+
+1. **上傳原本的 D-Plan 主檔**，它和帳本對得上。`artifacts/latest/latest.md` 仍是重做那次的報告或失敗診斷，上傳時以 D-Plan 主檔為準。
+2. **該 run 不能 `--resume`**。若還想重做，08:30 前執行 `./start.sh run --force`（整條重跑，約 20 分鐘）。
+3. **查原因**：排程輸出在 `artifacts/daily/launchd.log`，該次 `pipeline.json` 有 `superseded_pending`、`rolled_back`；還原本身失敗時記 `rollback_error`，需人工檢查帳本。
+
+如果先手動跑並上傳了，之後 07:00 又重做成功，主檔會換成新的一份，請**重新上傳主檔**。否則帳本記的是新決策，交出去的是舊的，隔天和資料包對帳會對不上。
+
 ### 主辦方資料包（DataPack）
 
 資料包是主辦方每天提供的結算結果（現金、持股、前日委託結果、違規紀錄），比賽以它為準。每天跑 `run` 前，到參賽者後台「文件繳交」頁下載資料包，放進 `var/datapack/`（不進 git，檔名不限）。
@@ -289,7 +307,8 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 | `artifacts/ledger/` | 虛擬帳本與帳戶快照 |
 | `var/datapack/` | 人工下載的主辦方資料包（不進 git）；每次 run 的對帳副本在 `artifacts/daily/<日期>/<run_id>/datapack.json` |
 | `config/active_account.json` | 使用中的帳戶 ID |
-| `artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` | 可人工上傳的 D-Plan v4.3 候選 |
+| `artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` | 可人工上傳的 D-Plan v4.3 候選（同交易日永遠是最新一份） |
+| `artifacts/competition_d_plan/versions/` | 每份 D-Plan 的帶時間副本，查得到交過哪一版；不刪不覆蓋 |
 | `artifacts/competition_d_plan/contexts/` | D-Plan 內部 context 稽核檔；不是主辦方繳交檔 |
 
 ## 常見問題

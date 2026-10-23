@@ -176,7 +176,7 @@ class DPlanExportServiceTests(unittest.TestCase):
             }
             service = DPlanExportService(root)
             results = []
-            for decision_id, plan in (("decision-1", {"fixture": "old"}), ("decision-2", {"fixture": "new"})):
+            for decision_id, plan in (("decision-20261019T100000Z", {"fixture": "old"}), ("decision-20261019T110000Z", {"fixture": "new"})):
                 with patch("etf_agent.competition.service.load_decision_run", return_value={}), \
                         patch("etf_agent.competition.service.DPlanContextBuilder.build", return_value={"id": decision_id}), \
                         patch("etf_agent.competition.service.verify_account_binding", return_value={"run_id": "prepare-1"}), \
@@ -195,6 +195,39 @@ class DPlanExportServiceTests(unittest.TestCase):
             self.assertTrue(results[1]["replaced_existing_output"])
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"fixture": "new"})
             self.assertEqual(sorted(path.name for path in output.parent.glob("*.json")), [output.name])
+            # 每版另存帶台北時間的檔案，舊版不會被取代。
+            versions = output.parent / "versions"
+            old_version = versions / ("%s_20261019-180000.json" % output.stem)
+            self.assertEqual(Path(results[0]["version_output"]), old_version)
+            self.assertEqual(json.loads(old_version.read_text(encoding="utf-8")), {"fixture": "old"})
+            self.assertEqual(sorted(path.name for path in versions.glob("*.json")),
+                             [old_version.name, "%s_20261019-190000.json" % output.stem])
+
+    def test_export_refuses_to_overwrite_existing_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "artifacts" / "competition_d_plan" / "D-Plan_TEAM_2026-10-20.json"
+            version = DPlanExportService.version_path(output, "decision-20261019T100000Z")
+            version.parent.mkdir(parents=True)
+            version.write_text("{}", encoding="utf-8")
+            self.assertEqual(version.name, "D-Plan_TEAM_2026-10-20_20261019-180000.json")
+            self.assertEqual(DPlanExportService.version_path(output, "decision-x").name, "D-Plan_TEAM_2026-10-20_decision-x.json")
+            profile = root / "profile.json"
+            profile.write_text(json.dumps(approved_profile()), encoding="utf-8")
+            daily = {"target_session": {"start": "2026-10-20T09:00:00+08:00"}, "datapack": {"status": "skipped"}}
+            service = DPlanExportService(root)
+            with patch("etf_agent.competition.service.load_decision_run", return_value={}), \
+                    patch("etf_agent.competition.service.DPlanContextBuilder.build", return_value={}), \
+                    patch("etf_agent.competition.service.verify_account_binding", return_value={}), \
+                    patch("etf_agent.competition.service.DPlanExporter.build", return_value={}), \
+                    patch.object(service, "code_version", return_value="git:test"):
+                with self.assertRaises(DPlanError):
+                    service.export(
+                        decision_repository=root / "decisions", decision_run_id="decision-20261019T100000Z",
+                        daily_run=daily, profile_path=profile, account_id="ai-cup-2026", account_run_id="prepare-1",
+                        output=output,
+                    )
+            self.assertFalse(output.exists())
 
     def _export(self, root, daily, plan):
         profile = root / "profile.json"
@@ -260,6 +293,28 @@ class DPlanExportServiceTests(unittest.TestCase):
                 account_id="ai-cup-2026",
                 account_run_id="prepare-1",
             )
+
+    def test_export_latest_skips_rolled_back_run(self):
+        # 早上重跑被還原：決策已移到封存區，要匯出的是前一個仍有效的 run。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, decision_id, finished, rolled_back in (
+                ("daily-20261022-180000", "decision-evening", "2026-10-22T18:30:00+08:00", False),
+                ("daily-20261023-070000", "decision-morning", "2026-10-23T07:30:00+08:00", True),
+            ):
+                run_dir = root / "artifacts" / "daily" / ("%s-%s-%s" % (name[6:10], name[10:12], name[12:14])) / name
+                run_dir.mkdir(parents=True)
+                daily = {"run_id": name, "status": "completed", "decision_status": "approved",
+                         "decision_run_id": decision_id, "finished_at": finished,
+                         "target_session": {"start": "2026-10-23T09:00:00+08:00"}}
+                if rolled_back:
+                    daily["rolled_back"] = {"decision_run_id": "decision-evening"}
+                (run_dir / "pipeline.json").write_text(json.dumps(daily), encoding="utf-8")
+            service = DPlanExportService(root)
+            with patch.object(service, "current_account_run_id", return_value="prepare-1"), \
+                    patch.object(service, "export", return_value={"status": "ready"}) as export:
+                service.export_latest()
+            self.assertEqual(export.call_args.kwargs["decision_run_id"], "decision-evening")
 
 
 class DPlanAdditionalContractTests(unittest.TestCase):
