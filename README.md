@@ -24,7 +24,8 @@ uv python install 3.12
 
 | 用途 | 指令 | 執行內容 |
 | --- | --- | --- |
-| 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板；不更新資料 |
+| 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板（含帳戶對 0050 買入持有、150 檔等權買入持有的基準比較）；不更新資料 |
+| 補抓基準、比較績效 | `.venv/bin/python cli/benchmark.py collect`／`compare` | `collect` 以官方個股月行情補抓 `config/benchmarks.json` 內已核准的基準標的（如 0050），只存行情、不進交易池；`compare` 唯讀計算帳戶對基準的 NAV、累積報酬、超額報酬、最大回撤與相對回撤，資料不足顯示 unavailable（口徑見 [benchmark/README.md](src/etf_agent/benchmark/README.md)） |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
 | 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日）且已過下一時段的交件期限（08:55），會自動沿用 Snapshot、不重抓；沿用的 Snapshot 若仍排到已過交件期限的時段（例如當天 08:55 到 15:00 之間再跑），流程在呼叫 Agent 前停止，不會取代已上傳那份決策；仍在期限前（例如前一晚已跑、早上再跑）則重建 Snapshot，cutoff 改為此刻，帳本把同時段尚未執行的舊決策移到 `artifacts/archive/superseded_decisions/`；這次沒產生新 D-Plan 時自動還原舊決策（見[每日排程](#每日排程晚上備案早上重做)）。資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
@@ -102,6 +103,7 @@ uv python install 3.12
 - **分工**：Agent 提出有證據的市場解讀與買賣意圖；指標、權重、股數、費稅及競賽限制由 Python 計算與驗證。
 - **時間一致**：所有下游輸入必須與研究快照的截止時間、資料版本一致，並以當時可得時間防止未來資訊洩漏。
 - **失敗處理**：資料不足或風控失敗時停止或明確降級。
+- **前次決策只是背景**：交易 Agent 會看到上一個交易時段實際交出的決策對目前持股的意圖、信心與重估條件（目標時段與 cutoff 都必須更早，同一時段的晚間備案不算；跨 Snapshot 明確標為例外），用來檢查這次判斷是否一致、前次寫的重估條件是否出現；它不是證據，不能寫進理由，行動仍須由當天的多空論點支持；沒有前次決策時標為無資料。
 
 ### 對應參賽策略文件
 
@@ -168,8 +170,9 @@ ETF_AGENTS/
 │   ├── fundamentals/        #   財務比率計算
 │   ├── research/            #   事件研究（獨立流程與舊封存）
 │   ├── dashboard/           #   績效儀表板
+│   ├── benchmark/           #   帳戶對 0050／交易池等權買入持有的基準比較（同本金、同費稅、官方價）
 │   ├── calibration/         #   校準旁觀者：信心等級事後對答案、決策價與成交均價偏離（不入決策鏈）
-│   ├── evaluation/          #   Agent 評測：資料抓齊率、評測集重跑、與當時結論一致度和重跑穩定度（不入決策鏈）
+│   ├── evaluation/          #   Agent 評測：資料抓齊率、評測集重跑、一致度／穩定度，以及零 token 的多日 Policy 回放（不入決策鏈）
 │   └── core/                #   共用的雜湊、時間、數值工具
 │
 ├── cli/                     # 單步命令入口：只解析參數並呼叫 src/，不放邏輯（見 cli/README.md）
@@ -182,6 +185,7 @@ ETF_AGENTS/
 │   ├── decision_rules.json       # 決策規則（含 minimum_active_share）
 │   ├── decision_policy.json      # 權重、情境與滑價參數
 │   ├── data_sources.json         # 資料來源網址
+│   ├── benchmarks.json           # 績效比較基準（0050、150 檔等權）與授權狀態
 │   ├── trading_status_approvals.json  # 已核准的交易狀態來源
 │   └── competition_profile.json  # D-Plan 的隊伍設定
 ├── data/                    # 靜態輸入
@@ -233,7 +237,7 @@ ETF_AGENTS/
 | `artifacts/data/` | 最新 Snapshot、財報、產業分類、交易狀態 CSV | 否（`trading_status/` 依日期） | 多數可刪，下次收集重建 |
 | `artifacts/debug/` | 來源原始抓取與探測 | 是 | 可刪 |
 | `artifacts/archive/` | 舊實驗、被取代的決策 | 手動整理 | 可刪 |
-| `artifacts/evaluation/` | 資料抓齊率、評測集清單、評測重跑與報告 | 否 | 可刪；評測集清單刪了要重建 |
+| `artifacts/evaluation/` | 資料抓齊率、評測集清單、評測重跑與報告、`replays/` 多日 Policy 回放 | 否 | 可刪；評測集清單刪了要重建 |
 
 規則：
 
@@ -251,6 +255,7 @@ ETF_AGENTS/
 - **過程**：報告列出每次呼叫的重試、驗證失敗與用量。
 
 - **準不準**：考卷的答案是之後真正的官方成交均價。看好的有沒有贏交易池平均、看壞的有沒有輸；價格還沒出來標「待答案」，累積到 20 個決策日才給命中率。之後再跑 `report --eval-id 編號` 就會更新。
+- **換 Policy 會怎樣（便宜版回測，不花用量）**：`cli/policy_replay.py run --policy config/decision_policy.json --start 起日 --end 迄日 [--compare-policy 另一份樣板]` 逐日讀封存 run 的 Agent 輸出，用指定樣板重算權重、張數與訂單，依帳本口徑以下一交易日官方均價成交並結轉到下一天（回放自己的模擬帳本）。報告在 `artifacts/evaluation/replays/`，記錄樣板雜湊、`tradeagent/` 雜湊、git commit 與使用的 run；`verify --replay-id 編號` 整段重算驗證。缺日、缺價、前視價格與封存驗證失敗一律停止或標示；成交日少於 20 天的結果沒有統計意義。
 
 ## 目前狀態與限制
 
@@ -289,7 +294,7 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 1. **上傳原本的 D-Plan 主檔**，它和帳本對得上。`artifacts/latest/latest.md` 仍是重做那次的報告或失敗診斷，上傳時以 D-Plan 主檔為準。
 2. **該 run 不能 `--resume`**。若還想重做，08:30 前執行 `./start.sh run --force`（整條重跑，約 20 分鐘）。
-3. **查原因**：排程輸出在 `artifacts/daily/launchd.log`，該次 `pipeline.json` 有 `superseded_pending`、`rolled_back`；還原本身失敗時記 `rollback_error`，需人工檢查帳本。
+3. **查原因**：腳本訊息一天一檔在 `var/logs/daily-<YYYY-MM-DD>.log`（台北日期，保留 30 天），launchd 的完整 stdout／stderr（含 `start.sh daily` 子程序輸出）在 `var/logs/launchd.log`；該次 `pipeline.json` 有 `superseded_pending`、`rolled_back`；還原本身失敗時記 `rollback_error`，需人工檢查帳本。子 Agent 逾時、CLI 非零結束或輸出不是 JSON 時會自動再試一次（間隔 30 秒，不拖過 08:55），`agent_calls` 中帶 `transient_error` 的那筆就是失敗的嘗試。
 
 如果先手動跑並上傳了，之後 07:00 又重做成功，主檔會換成新的一份，請**重新上傳主檔**。否則帳本記的是新決策，交出去的是舊的，隔天和資料包對帳會對不上。
 
@@ -372,6 +377,7 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 - [每日決策架構](docs/architecture.md)、[資料來源與授權限制](docs/data_sources_inventory.md)
 - [事件與市場情緒邊界](docs/event_market_scope.md)、[事件研究整合](docs/integrated_event_analysis.md)、[技術分析歷史輸入](docs/technical_trend_history.md)
 - [開發規則與測試要求](AGENTS.md)：核心程式在 `src/etf_agent/`，命令入口在 `cli/`／`scripts/`，Agent Skill 在 `tradeagent/`。
+- 持續整合：每次 push 與 pull request 由 GitHub Actions（`.github/workflows/ci.yml`）在 Python 3.12 執行 pytest、`compileall` 與 `git diff --check`，說明見 [tests/README.md](tests/README.md)。
 
 ## 參與專案
 

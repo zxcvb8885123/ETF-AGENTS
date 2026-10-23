@@ -8,10 +8,11 @@ import time
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
-from .agent_runner import AgentRunner, AgentTask, DailyPipelineError
+from .agent_runner import AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError
 
 
 def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dict[str, object]:
@@ -58,6 +59,8 @@ class PipelineResult:
 
 ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event"})
 MAX_PARALLEL_WORKERS = 8
+DEFAULT_TRANSIENT_RETRIES = 1  # 暫時性失敗（逾時、非零結束、輸出不是 JSON）最多再試的次數
+DEFAULT_RETRY_DELAY_SECONDS = 30.0
 _Job = TypeVar("_Job")
 
 
@@ -76,13 +79,26 @@ class PipelineBase:
         analyst_runner: Optional[AgentRunner] = None,
         technical_gate: bool = False,
         max_workers: int = 1,
+        transient_retries: int = DEFAULT_TRANSIENT_RETRIES,
+        retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+        retry_deadline: Optional[datetime] = None,
+        sleep: Optional[Callable[[float], None]] = None,
     ):
         """``analyst_runner`` 只負責技術／基本面／事件分析師批次，未提供時全部沿用 ``runner``。
         ``resume=True`` 時，同一 run 目錄中先前已通過驗證的 Agent 輸出會以目前的
         Validator 重驗後沿用，不再呼叫 Agent；輸入改變時 envelope 對不上，自然重跑。
-        ``max_workers`` 是分析師與多空研究階段同時執行的 Agent 呼叫數上限；預設 1 為串行。"""
+        ``max_workers`` 是分析師與多空研究階段同時執行的 Agent 呼叫數上限；預設 1 為串行。
+        ``transient_retries`` 是單次 Agent 呼叫遇到 ``TransientAgentError`` 時最多再試的次數，兩次之間等待
+        ``retry_delay_seconds``；``retry_deadline``（含時區，通常是交件期限）存在時，等待加上失敗那次的耗時
+        會超過期限就不再試。``sleep`` 供測試注入，預設等待可被平行任務的失敗提前喚醒。"""
         if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= MAX_PARALLEL_WORKERS:
             raise ValueError("max_workers 必須介於 1 與 %d" % MAX_PARALLEL_WORKERS)
+        if isinstance(transient_retries, bool) or not isinstance(transient_retries, int) or transient_retries < 0:
+            raise ValueError("transient_retries 必須是非負整數")
+        if not isinstance(retry_delay_seconds, (int, float)) or isinstance(retry_delay_seconds, bool) or retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds 必須是非負數")
+        if retry_deadline is not None and retry_deadline.tzinfo is None:
+            raise ValueError("retry_deadline 必須含時區")
         self.root = project_root
         self.run_dir = run_dir
         self.runner = runner
@@ -93,9 +109,15 @@ class PipelineBase:
         self.log = log
         self.resume = resume
         self.max_workers = max_workers
+        self.transient_retries = transient_retries
+        self.retry_delay_seconds = float(retry_delay_seconds)
+        self.retry_deadline = retry_deadline
         self.calls: List[Dict[str, object]] = []
         self.stage_durations: Dict[str, float] = {}
         self._calls_lock = threading.Lock()
+        # 平行任務有一個已確定失敗時設定；其他任務不再進入暫時性重試，等待中的也立即醒來。
+        self._abort = threading.Event()
+        self._sleep = sleep or self._abort.wait
     # ------------------------------------------------------------------ helpers
     @contextmanager
     def _timed(self, stage: str) -> Iterator[None]:
@@ -114,6 +136,8 @@ class PipelineBase:
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(jobs))) as pool:
             futures = [pool.submit(job) for _, job in jobs]
             wait(futures, return_when=FIRST_EXCEPTION)
+            if any(not future.cancelled() and future.done() and future.exception() is not None for future in futures):
+                self._abort.set()
             for future in futures:
                 future.cancel()
         position = {name: index for index, (name, _) in enumerate(jobs)}
@@ -162,15 +186,7 @@ class PipelineBase:
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             runner = self.analyst_runner if task.name.split("_", 1)[0] in ANALYST_TASK_PREFIXES else self.runner
-            started = time.monotonic()
-            call = runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
-            item = {
-                "name": task.name, "attempt": attempt, "estimated_usage_usd": call.estimated_usage_usd,
-                "duration_seconds": round(time.monotonic() - started, 1),
-            }
-            model = getattr(runner, "model", None)
-            if model:
-                item["model"] = model
+            call, item = self._call_agent(runner, task, prompt, attempt)
             if call.usage_tokens is not None:
                 item["usage_tokens"] = call.usage_tokens
             with self._calls_lock:
@@ -190,3 +206,56 @@ class PipelineBase:
                 + "\n- ".join(errors[:40])
             )
         raise DailyPipelineError("%s Agent 輸出驗證失敗：%s" % (task.name, "；".join(errors[:10])))
+
+    def _call_agent(
+        self, runner: AgentRunner, task: AgentTask, prompt: str, attempt: int,
+    ) -> Tuple[AgentCall, Dict[str, object]]:
+        """呼叫一次 Agent；``TransientAgentError`` 在重試次數與時間預算內再試。
+
+        每次失敗的嘗試也記入 ``self.calls``（``transient_error``、``transient_retry``、耗時；用量無法取得記 0），
+        成功那次另記一筆，所以耗時不遺失、用量不重複。只有 ``TransientAgentError`` 會重試，安全拒絕與其他
+        ``DailyPipelineError`` 直接往上拋。"""
+        for retry in range(self.transient_retries + 1):
+            started = time.monotonic()
+            try:
+                call = runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
+            except TransientAgentError as error:
+                duration = round(time.monotonic() - started, 1)
+                failed = self._call_item(runner, task, attempt, 0.0, duration)
+                failed.update({"transient_error": str(error)[:200], "transient_retry": retry})
+                with self._calls_lock:
+                    self.calls.append(failed)
+                blocker = self._retry_blocker(retry, duration)
+                if blocker is not None:
+                    self.log("  [agent] %s 暫時性失敗，%s：%s" % (task.name, blocker, error))
+                    raise TransientAgentError("%s（%s）" % (error, blocker)) from error
+                self.log("  [agent] %s 暫時性失敗，%.0f 秒後重試（第 %d 次重試）：%s" % (
+                    task.name, self.retry_delay_seconds, retry + 1, error))
+                self._sleep(self.retry_delay_seconds)
+                if self._abort.is_set():
+                    raise TransientAgentError("%s（其他平行任務已失敗，不再重試）" % error) from error
+                continue
+            return call, self._call_item(runner, task, attempt, call.estimated_usage_usd, round(time.monotonic() - started, 1))
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _call_item(self, runner: AgentRunner, task: AgentTask, attempt: int, usage_usd: float, duration: float) -> Dict[str, object]:
+        item: Dict[str, object] = {
+            "name": task.name, "attempt": attempt, "estimated_usage_usd": usage_usd, "duration_seconds": duration,
+        }
+        model = getattr(runner, "model", None)
+        if model:
+            item["model"] = model
+        return item
+
+    def _retry_blocker(self, retry: int, failed_duration: float) -> Optional[str]:
+        """不該再試的原因；可以再試時回 None。"""
+        if retry >= self.transient_retries:
+            return "已重試 %d 次仍失敗" % self.transient_retries if self.transient_retries else "未啟用重試"
+        if self._abort.is_set():
+            return "其他平行任務已失敗，不再重試"
+        if self.retry_deadline is not None:
+            # 以失敗那次的耗時估計重試需要的時間；等待加上重跑會超過交件期限就不再試，避免拖過 08:55 才失敗。
+            needed = timedelta(seconds=self.retry_delay_seconds + failed_duration)
+            if datetime.now(self.retry_deadline.tzinfo) + needed >= self.retry_deadline:
+                return "距交件期限 %s 不足以重試" % self.retry_deadline.strftime("%H:%M")
+        return None

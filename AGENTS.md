@@ -41,13 +41,14 @@
 - 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師只處理查詢視窗內有重大訊息的股票，沒有重大訊息者由程式直接輸出 `unknown`（最終報告仍覆蓋全部交易池）；標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 作為多頭／空頭研究的整合者，先說明兩方論點的取捨，再逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
-- Decision run 必須另存 `team_inputs`（2.1 為三份分析報告與現金姿態；舊 2.0 的三／四份分析報告及事件研究保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
+- Decision run 必須另存 `team_inputs`（2.2 為三份分析報告、現金姿態與前次決策背景 `prior_decision_context`；舊 2.1 無前次決策背景，舊 2.0 的三／四份分析報告及事件研究保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
+- 前次決策背景只給交易 Agent、只當背景：來源必須是決策庫中同帳戶、`approved`／`no_trade`、通過 manifest 驗證、**目標交易時段嚴格早於本次**的 run（同一時段的 21:00 備案不算前次；同一前次時段多個 run 時優先帳本結算記錄的，否則取 cutoff 最新者），記錄 run_id、時段、挑法與內容雜湊，snapshot 不同時標 `cross_snapshot_exception`；`citable=false`、沒有 evidence_id，交易 Agent 文字欄位出現其識別碼即拒絕，行動仍須由本次 claim 支持；沒有前次 run 時輸出 `unavailable`，不是錯誤。多頭／空頭研究員不讀它。
 - 子 Agent 只輸出市場狀態解讀、多空論點、買賣意圖與信心分級、現金姿態或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
 - 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
 - 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
 - 單股硬性權重上限的減碼一律由程式執行（不依 Policy 的 `stock_weight_fit` 版本欄位開關）；因風控減碼產生的賣單，意圖由程式標為 `trim`（仍有持股）或 `exit`（減至零），不改寫交易 Agent 的原意圖，並留下 `RISK_STOCK_WEIGHT` 旗標。
-- 技術分析師啟用 `technical_gate` 時，分批 brief 只記錄該批股票的 `momentum_only_symbols` 與 `full_history_symbols`；每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。OpenCode 的 read 權限須拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案。
+- 技術分析師啟用 `technical_gate` 時，分批 brief 只記錄該批股票的 `momentum_only_symbols` 與 `full_history_symbols`；每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。Claude 與 OpenCode 的 read 權限須拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案（兩者共用 `agent_runner.SENSITIVE_READ_GLOBS`）；Codex 唯讀沙箱無法限制讀檔，因此所有 runner 的輸出含專案 `.env`／`.envrc` 的值時一律拒絕。子 Agent CLI 的逾時、非零結束、輸出不是 JSON 或沒有結構化輸出屬 `TransientAgentError`，`agent_step` 只對它在交件期限內再試一次並把失敗嘗試記入 `agent_calls`；秘密外洩、未核准工具等安全拒絕與驗證失敗不得重試。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 
 ### Research Report V0

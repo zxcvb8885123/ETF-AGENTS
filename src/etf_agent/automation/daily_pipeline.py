@@ -41,6 +41,7 @@ from .agent_runner import (  # noqa: F401 — 對外仍由本模組匯出
     CodexAgentRunner,
     OpenCodeAgentRunner,
     DailyPipelineError,
+    TransientAgentError,
     _TEXT,
     _object,
     _strings,
@@ -97,7 +98,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         fear_greed_approvals_path: Optional[Path] = None,
         market_news_root: Optional[Path] = None,
         nav_history: Optional[Sequence[Mapping[str, object]]] = None,
+        applied_decision_run_ids: Optional[Sequence[str]] = None,
     ) -> PipelineResult:
+        """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
+        挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。"""
         result = PipelineResult(status="failed")
         try:
             self._run(
@@ -105,6 +109,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 rules_path, database_path, policy_template_path, sector_path, decision_run_id,
                 perception_bundle_path, perception_result_path,
                 fear_greed_root, fear_greed_approvals_path, market_news_root, nav_history,
+                applied_decision_run_ids,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -121,6 +126,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         fear_greed_root: Optional[Path] = None, fear_greed_approvals_path: Optional[Path] = None,
         market_news_root: Optional[Path] = None,
         nav_history: Optional[Sequence[Mapping[str, object]]] = None,
+        applied_decision_run_ids: Optional[Sequence[str]] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -162,7 +168,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             pair = bundle["perception_inputs"][0]
             self.save_artifact("perception_bundle", pair["bundle"])
             self.save_artifact("perception_result", pair["result"])
-        self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id, nav_history)
+        self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id, nav_history,
+                     applied_decision_run_ids=applied_decision_run_ids)
 
     def run_from_bundle(
         self,
@@ -173,6 +180,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         decision_run_id: str,
         nav_history: Optional[Sequence[Mapping[str, object]]] = None,
         stop_after: Optional[str] = None,
+        applied_decision_run_ids: Optional[Sequence[str]] = None,
     ) -> PipelineResult:
         """從已封存的 DecisionInputBundle 重跑決策鏈（評測用）；不抓資料、不碰帳本，Bundle 先重新驗證。
 
@@ -189,7 +197,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(errors))
             self.save_artifact("decision_input", bundle)
             self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id,
-                         nav_history, stop_after)
+                         nav_history, stop_after, applied_decision_run_ids)
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
             result.errors.append(str(error))
@@ -201,6 +209,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self, result: PipelineResult, bundle: Mapping[str, object], database_path: Path,
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
         nav_history: Optional[Sequence[Mapping[str, object]]] = None, stop_after: Optional[str] = None,
+        applied_decision_run_ids: Optional[Sequence[str]] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         decision = service(bundle)
@@ -222,9 +231,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         with self._timed("research"):
             debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
 
-        self.log("[decision 5] 交易 Agent：整合多頭與空頭研究")
+        self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
+        prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
         with self._timed("trader"):
-            trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id)
+            trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id, prior_context)
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         base_policy = build_decision_policy(
@@ -277,7 +287,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.stage_durations["allocation_review"] = round(time.monotonic() - review_started, 1)
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
-        team = build_team_inputs(analysts, None, stance)
+        team = build_team_inputs(analysts, None, stance, prior_context)
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team).run(
             proposal, scenario, guard, review, history
         )

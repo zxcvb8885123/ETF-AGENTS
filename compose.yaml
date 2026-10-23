@@ -39,6 +39,9 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./cli:/app/cli:ro
+      - ./config:/app/config:ro
+      - ./data:/app/data:ro
+      - ./var:/app/var:ro
       - ./artifacts:/app/artifacts:ro
     read_only: true
     tmpfs:

@@ -59,7 +59,7 @@ docker compose version
 - Yahoo 當日缺檔，不會跳過其他來源，最後以非零狀態回報。
 - 缺 FinMind 憑證，或候選來源失敗，也會回報「降級」。
 
-**macOS 排程**（樣板在 `scripts/launchd/`，日誌在 `artifacts/daily/`）
+**macOS 排程**（樣板在 `scripts/launchd/`；`data`、`finmind-news` 的 launchd 日誌在 `artifacts/daily/`，`daily` 排程的在 `var/logs/launchd.log`，每日流程自己的訊息另存 `var/logs/daily-<YYYY-MM-DD>.log`）
 
 | 排程 | 時間（台北） | 作用 |
 | --- | --- | --- |
@@ -98,7 +98,7 @@ docker compose version
 | --- | --- |
 | Codex | 已完成真實資料端到端執行。ChatGPT.app 內附 Codex CLI 的 macOS 路徑，`start.sh` 會在非互動 shell 自動加入 PATH（互動 zsh 亦已設定） |
 | OpenCode | 目前只有小型唯讀煙霧測試與模擬 CLI 測試。執行時禁用插件，唯讀，不允許 `.env` 與外部目錄。預檢只回報是否有憑證，不保存帳號 |
-| 共通 | 重試與續跑仍檢查 Snapshot、cutoff、執行器與來源。CLI 回報的用量不是訂閱帳單 |
+| 共通 | 重試與續跑仍檢查 Snapshot、cutoff、執行器與來源。Claude／OpenCode 拒讀 `.env` 等敏感檔；Codex 無法拒讀，只靠輸出不得含 `.env` 值的檢查。CLI 回報的用量不是訂閱帳單 |
 
 **`run` 的其他參數**
 

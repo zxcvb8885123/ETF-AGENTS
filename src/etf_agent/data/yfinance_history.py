@@ -14,6 +14,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
 from .historical import HistoryRefreshBatch, plan_history_refresh, rolling_start
+from .price_finality import price_finalized_at
 from .twse import DailyPrice
 from .universe import Instrument
 
@@ -55,10 +56,19 @@ def stale_basis_symbols(connection, source: str, symbols: Sequence[str]) -> List
     """
     stale: List[str] = []
     for symbol in symbols:
+        # 版本表：每個交易日只看最新版本，舊版本的比值不代表目前序列。
         rows = connection.execute(
             """
-            SELECT close_price, adjusted_close_price FROM daily_prices
-            WHERE symbol = ? AND source = ? AND adjusted_close_price IS NOT NULL
+            WITH versions AS (
+                SELECT trade_date, close_price, adjusted_close_price,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY trade_date ORDER BY fetched_at DESC
+                       ) AS version_rank
+                FROM daily_prices
+                WHERE symbol = ? AND source = ?
+            )
+            SELECT close_price, adjusted_close_price FROM versions
+            WHERE version_rank = 1 AND adjusted_close_price IS NOT NULL
             ORDER BY trade_date
             """,
             (symbol, source),
@@ -82,9 +92,11 @@ def stored_closes(
     """讀取已存的 Yahoo 原始 Close，供重抓前後比對 Yahoo 是否改了原價基準。"""
     result: Dict[Tuple[str, str], Decimal] = {}
     for symbol in symbols:
+        # 版本表：同一交易日舊版本先讀、最新版本最後覆蓋。
         for row in connection.execute(
             "SELECT trade_date, close_price FROM daily_prices "
-            "WHERE symbol = ? AND source = ? AND trade_date >= ?",
+            "WHERE symbol = ? AND source = ? AND trade_date >= ? "
+            "ORDER BY trade_date, fetched_at",
             (symbol, source, start.isoformat()),
         ).fetchall():
             result[(symbol, str(row["trade_date"]))] = Decimal(str(row["close_price"]))
@@ -130,13 +142,16 @@ class YFinanceHistoryCollector:
         batch_size: int = 30,
         retries: int = 2,
         progress: Optional[Callable[[str], None]] = None,
+        in_competition_universe: bool = True,
     ):
+        """``in_competition_universe=False`` 時只保存行情，不把標的標成交易池成員（研究用基準）。"""
         if batch_size < 1 or batch_size > 100:
             raise ValueError("batch_size 必須介於 1 與 100")
         self.database = database
         self.batch_size = batch_size
         self.retries = retries
         self.progress = progress
+        self.in_competition_universe = in_competition_universe
 
     def refresh(
         self,
@@ -269,7 +284,7 @@ class YFinanceHistoryCollector:
         started_at = datetime.now(timezone.utc).isoformat()
         self.database.initialize()
         with self.database.connect() as connection:
-            self.database.upsert_instruments(connection, universe, True)
+            self.database.upsert_instruments(connection, universe, self.in_competition_universe)
             connection.execute(
                 "INSERT INTO collection_runs(run_id, source, started_at, status) VALUES (?, ?, ?, 'running')",
                 (run_id, self.source, started_at),
@@ -331,28 +346,38 @@ class YFinanceHistoryCollector:
                         missing.remove(symbol)
 
             stored_rows = 0
+            unfinalized: Dict[str, List[str]] = {}
             with self.database.connect() as connection:
                 for symbol, frame in frames.items():
-                    prices, payload, row_warnings = self._convert_frame(
-                        by_symbol[symbol], frame, start, end
+                    # 同一檔的原始回應與日線版本共用同一抓取時間，供稽核與定案判斷。
+                    fetched_at = datetime.now(timezone.utc)
+                    prices, payload, row_warnings, skipped = self._convert_frame(
+                        by_symbol[symbol], frame, start, end, fetched_at
                     )
                     warnings.extend(row_warnings)
+                    for trade_date in skipped:
+                        unfinalized.setdefault(trade_date, []).append(symbol)
                     payload_id = self.database.insert_raw_payload(
                         connection,
                         run_id,
                         self.source,
                         "yfinance://download/%s?start=%s&end=%s"
                         % (symbol, start.isoformat(), end.isoformat()),
-                        datetime.now(timezone.utc).isoformat(),
+                        fetched_at.isoformat(),
                         payload,
                     )
-                    stored_rows += self.database.upsert_prices(
+                    stored_rows += self.database.store_prices(
                         connection,
                         prices,
                         self.source,
-                        datetime.now(timezone.utc).isoformat(),
+                        fetched_at.isoformat(),
                         run_id,
                         payload_id,
+                    )
+                for trade_date, symbols_skipped in sorted(unfinalized.items()):
+                    warnings.append(
+                        "%s 的 Yahoo 日線在定案時間（台北 15:00）前抓取，尚未定案，略過 %d 檔不寫入"
+                        % (trade_date, len(symbols_skipped))
                     )
                 connection.execute(
                     """
@@ -405,11 +430,25 @@ class YFinanceHistoryCollector:
 
     @staticmethod
     def _convert_frame(
-        instrument: Instrument, frame, start: date, end: date
-    ) -> Tuple[List[DailyPrice], str, List[str]]:
+        instrument: Instrument,
+        frame,
+        start: date,
+        end: date,
+        fetched_at: Optional[datetime] = None,
+    ) -> Tuple[List[DailyPrice], str, List[str], List[str]]:
+        """把 Yahoo 回應轉成日線；回傳 (日線, 原始紀錄 JSON, 警告, 因尚未定案而略過的日期)。
+
+        Yahoo 盤中就會回傳當日那根日線；抓取時間早於該日定案時間（台北 15:00）的列
+        不寫入資料庫，否則未定案的收盤價與成交量會以正式日線身分進入 Snapshot。
+        """
+        if fetched_at is None:
+            fetched_at = datetime.now(timezone.utc)
+        if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
+            raise ValueError("fetched_at 必須包含時區")
         prices: List[DailyPrice] = []
         records: List[Dict[str, object]] = []
         warnings: List[str] = []
+        skipped: List[str] = []
         previous_close: Optional[Decimal] = None
         for timestamp, row in frame.sort_index().iterrows():
             trade_date = timestamp.date()
@@ -419,6 +458,9 @@ class YFinanceHistoryCollector:
             if close is None:
                 # Multi-symbol downloads share one date index. A stock that was
                 # not yet listed or did not trade has an expected all-NaN row.
+                continue
+            if fetched_at < price_finalized_at(trade_date):
+                skipped.append(trade_date.isoformat())
                 continue
             adjusted = _decimal(row.get("Adj Close"))
             volume_decimal = _decimal(row.get("Volume"))
@@ -452,4 +494,4 @@ class YFinanceHistoryCollector:
                     "volume": price.volume_shares,
                 }
             )
-        return prices, json.dumps(records, ensure_ascii=False), warnings
+        return prices, json.dumps(records, ensure_ascii=False), warnings, skipped

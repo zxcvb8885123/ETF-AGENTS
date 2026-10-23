@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONPYCACHEPREFIX: /tmp/etf-agent-pycache
+
+jobs:
+  test:
+    name: pytest / compileall / diff --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 完整歷史：PR 需比對 base 分支，push 需比對上一個 commit。
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      - name: Run pytest
+        run: python -m pytest
+
+      - name: Compile sources
+        run: python -m compileall -q src tradeagent tests
+
+      - name: Check whitespace errors (git diff --check)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "$BASE_REF"
+            base="$(git merge-base "origin/$BASE_REF" HEAD)"
+          elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+            base="HEAD~1"
+          else
+            # 根 commit：與空樹比對。
+            base="$(git hash-object -t tree /dev/null)"
+          fi
+          echo "git diff --check $base HEAD"
+          git diff --check "$base" HEAD

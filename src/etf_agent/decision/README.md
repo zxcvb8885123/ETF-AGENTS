@@ -46,6 +46,7 @@ flowchart TD
 | `event_sentiment_report.py` | 將已驗證的合併分析報告呈現為繁體中文，不新增結論 | `render_event_sentiment_report` |
 | `stance.py` | 研究團隊：多頭／空頭研究員的隔離輸入、`StancePacket`、`ResearchDebateBundle` | `shared_input_sha256`、`stance_role_input_sha256`、`build_stance_brief`、`seal_stance_packet`、`StancePacketValidator`、`build_research_debate`、`ResearchDebateBundleValidator`、`stance_envelope` |
 | `trader.py` | 交易 Agent：權衡多空論點的 `TradeDecision` 與確定性配置轉接 | `TradeDecisionValidator`、`seal_trade_decision`、`trade_decision_envelope`、`apply_trade_decision`、`claims_by_symbol`、`support_by_symbol` |
+| `prior_decision.py` | 前次決策背景：從決策庫找同帳戶、目標交易時段更早、approved／no_trade 的封存 run（同時段多個時優先帳本結算記錄），整理持股的前次意圖與重估條件為不可引用的 `PriorDecisionContext`，並重建驗證 | `find_prior_decision_run`、`read_decision_run`、`build_prior_decision_context`、`prior_decision_brief`、`prior_reference_tokens`、`PriorDecisionContextValidator` |
 | `trader_report.py` | 以已驗證 `TradeDecision` 呈現交易整合結果，不重貼多空全文 | `render_trader_report` |
 | `sizing.py` | conviction 等級、現金姿態，及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`conviction_weights` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
@@ -84,7 +85,7 @@ flowchart TD
 - 單股硬性權重上限的減碼一律由程式執行。
 - 減碼賣單意圖由程式標為 `trim` 或 `exit`，並留下 `RISK_STOCK_WEIGHT` 旗標。
 - 產業權重在任一情境超過 `max_sector_weight` 時，`_fit_sector_weights` 同樣在 Guard 前按整張減碼（先減買單、再賣持股；同產業先減低信心、大市值），留下 `RISK_SECTOR_WEIGHT` 旗標；上限為 1 時不動作。
-- Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。
+- Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。2.2 另含 `prior_decision_context`，交易 Agent 的文字欄位引用它即拒絕。
 - 舊版 1.0 debate 已移除，Finalizer 與 Validator 遇到一律拒絕。
 - Decision artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - Snapshot、研究結果與決策的 `snapshot_id`、cutoff 與資料版本必須一致。

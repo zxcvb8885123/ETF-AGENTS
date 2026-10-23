@@ -20,6 +20,7 @@ from .contracts import (
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, EVENT_MARKET_VERSION
+from .prior_decision import PriorDecisionContextValidator
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
@@ -29,21 +30,43 @@ DECISION_ENGINE_VERSION = "1.0.0"
 TEAM_INPUT_FIELDS = {"schema_version", "analyst_reports", "research_result", "cash_stance"}
 INTEGRATED_TEAM_VERSION = "2.1"
 INTEGRATED_TEAM_FIELDS = {"schema_version", "analyst_reports", "cash_stance"}
+MEMORY_TEAM_VERSION = "2.2"
+MEMORY_TEAM_FIELDS = INTEGRATED_TEAM_FIELDS | {"prior_decision_context"}
+TEAM_FIELDS_BY_VERSION = {
+    STANCE_SCHEMA_VERSION: TEAM_INPUT_FIELDS,
+    INTEGRATED_TEAM_VERSION: INTEGRATED_TEAM_FIELDS,
+    MEMORY_TEAM_VERSION: MEMORY_TEAM_FIELDS,
+}
 
 
 def build_team_inputs(
     analyst_reports: Mapping[str, Mapping[str, object]],
     research_result: Optional[Mapping[str, object]],
     cash_stance: Mapping[str, object],
+    prior_decision_context: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
-    """Decision run 的 team_inputs artifact：重建多空辯論與現金姿態所需的全部輸入。"""
+    """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
+
+    2.0：舊封存，另含事件研究 ``research_result``；2.1：三份分析報告與現金姿態；
+    2.2：再加交易 Agent 看到的前次決策背景 ``prior_decision_context``（available 或 unavailable 都要存）。
+    """
+    if prior_decision_context is not None and research_result is not None:
+        raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
+    if prior_decision_context is not None:
+        version = MEMORY_TEAM_VERSION
+    elif research_result is None:
+        version = INTEGRATED_TEAM_VERSION
+    else:
+        version = STANCE_SCHEMA_VERSION
     team = {
-        "schema_version": INTEGRATED_TEAM_VERSION if research_result is None else STANCE_SCHEMA_VERSION,
+        "schema_version": version,
         "analyst_reports": {name: dict(analyst_reports[name]) for name in analyst_report_names(analyst_reports)},
         "cash_stance": dict(cash_stance),
     }
     if research_result is not None:
         team["research_result"] = dict(research_result)
+    if prior_decision_context is not None:
+        team["prior_decision_context"] = dict(prior_decision_context)
     return team
 
 
@@ -160,12 +183,20 @@ class DecisionFinalizer:
         if team is None:
             return ["決策鏈需要 team_inputs（分析報告與現金姿態；舊封存另含事件研究）才能重建驗證"]
         errors: List[str] = []
-        integrated = team.get("schema_version") == INTEGRATED_TEAM_VERSION
-        fields = INTEGRATED_TEAM_FIELDS if integrated else TEAM_INPUT_FIELDS
+        version = team.get("schema_version")
+        fields = TEAM_FIELDS_BY_VERSION.get(str(version))
+        if fields is None:
+            return ["team_inputs.schema_version 必須為 2.0（舊封存）、2.1（事件併入分析團隊）或 2.2（附前次決策背景）"]
         if set(team) != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
-        if team.get("schema_version") not in (STANCE_SCHEMA_VERSION, INTEGRATED_TEAM_VERSION):
-            return ["team_inputs.schema_version 必須為 2.0（舊封存）或 2.1（事件併入分析團隊）"]
+        integrated = version != STANCE_SCHEMA_VERSION
+        # 2.2 的前次決策背景先自行重建驗證，再交給 TradeDecisionValidator 檢查交易 Agent 沒有引用它。
+        prior = team.get("prior_decision_context") if version == MEMORY_TEAM_VERSION else None
+        if version == MEMORY_TEAM_VERSION:
+            errors.extend(
+                "team_inputs.prior_decision_context：%s" % error
+                for error in PriorDecisionContextValidator(self.bundle).validate(prior)
+            )
         reports = team.get("analyst_reports")
         research = {} if integrated else team.get("research_result")
         if not isinstance(reports, Mapping) or not isinstance(research, Mapping):
@@ -188,7 +219,9 @@ class DecisionFinalizer:
             )
         except DecisionToolError as error:
             errors.append(str(error))
-        errors.extend(TradeDecisionValidator(self.bundle, self.momentum, self.debate).validate(self.intent))
+        errors.extend(
+            TradeDecisionValidator(self.bundle, self.momentum, self.debate, prior_context=prior).validate(self.intent)
+        )
         stance = team.get("cash_stance")
         validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors)
         sizing = self.policy.get("position_sizing")

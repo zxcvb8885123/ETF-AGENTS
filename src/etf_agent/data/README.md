@@ -39,15 +39,17 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `__init__.py` | 匯出公開介面 | 見下方「對外介面」 |
 | `contracts.py` | Data Agent 工具與快照共用的穩定 JSON 契約 | `SourceEvidence`、`SourceProbeResult`、`SourceFeasibilityReport`、`UniverseInstrumentStatus`、`UniverseValidationResult` |
 | `universe.py` | 載入 150 檔官方交易池 CSV | `Instrument`、`UniverseLoader`、`load_universe`、`normalize_symbol` |
-| `database.py` | SQLite 資料庫（schema、價格、文件、營收、財報、快照、交易狀態 bundle 等表） | `MarketDataDatabase` |
+| `database.py` | SQLite 資料庫（schema、價格、文件、營收、財報、快照、交易狀態 bundle 等表）；`daily_prices` 為 append-only 版本表，`store_prices` 內容改變才新增版本，`migrate_daily_price_versions` 可重複執行 | `MarketDataDatabase` |
+| `price_finality.py` | 收盤（13:30）與非官方日線定案（15:00）時間常數；Snapshot、Yahoo 收集、新鮮度判斷與版本寫入共用 | `MARKET_CLOSE_TIME`、`PRICE_FINALIZED_TIME`、`price_finalized_at`、`is_price_finalized`、`latest_finalized_price_date`、`finalized_rows_sql` |
 | `twse.py` | TWSE 每日行情 Provider 與解析 | `DailyPrice`、`TwseDailyProvider`、`parse_roc_date`、`parse_decimal`、`parse_integer` |
 | `tpex.py` | TPEx 最新上櫃行情 Provider | `TpexDailyProvider`、`parse_optional_decimal` |
 | `tpex_history.py` | 按指定成交日補取 TPEx 官方全市場歷史價量，供帳本結算 | `parse_quotes`、`collect_quotes` |
 | `collector.py` | 每日行情收集協調與結果 | `CollectionResult`、`DailyPriceProvider`、`DailyPriceCollector` |
 | `latest.py` | 官方 TWSE＋TPEx 最新價合併收集 | `LatestPriceCollectionResult`、`LatestPriceProviderFactory`、`LatestPriceCollector`、`latest_price_providers`、`collect_latest_prices` |
 | `historical.py` | TWSE 上市股票歷史月行情 Provider、節流與刷新規劃 | `HistoricalResponse`、`HistoryRefreshBatch`、`HistoricalPriceProvider`、`RequestGate`、`SourceThrottledError`、`SourceBlockedError`、`rolling_start`、`plan_history_refresh`、`month_starts` |
-| `historical_collector.py` | 有界並行的月歷史回應批次保存、官方歷史刷新 | `HistoricalPriceCollector`、`OfficialHistoricalRefreshService`、`HistoricalCollectionResult`、`HistoricalCollectionError`、`OfficialHistoryBatchResult`、`OfficialHistoryCoverage`、`OfficialHistoryRefreshResult` |
-| `yfinance_history.py` | 透過 yfinance 收集上市／上櫃兩年 OHLCV（研究用調整價） | `YFinanceHistoryCollector`、`YFinanceCollectionResult`、`YFinanceRefreshResult`、`stale_basis_symbols`、`stored_closes`、`close_rebased_symbols` |
+| `historical_collector.py` | 有界並行的月歷史回應批次保存、官方歷史刷新；`HistoricalPriceCollector(in_competition_universe=False)` 只存行情、不把標的標成交易池成員 | `HistoricalPriceCollector`、`OfficialHistoricalRefreshService`、`HistoricalCollectionResult`、`HistoricalCollectionError`、`OfficialHistoryBatchResult`、`OfficialHistoryCoverage`、`OfficialHistoryRefreshResult` |
+| `yfinance_history.py` | 透過 yfinance 收集上市／上櫃兩年 OHLCV（研究用調整價）；同樣提供 `in_competition_universe` 開關 | `YFinanceHistoryCollector`、`YFinanceCollectionResult`、`YFinanceRefreshResult`、`stale_basis_symbols`、`stored_closes`、`close_rebased_symbols` |
+| `benchmarks.py` | 讀 `config/benchmarks.json`（基準清單與 `license_status`），以官方個股月行情收集已核准的基準標的（如 0050）；`in_competition_universe=False`，交易池、Snapshot 與 `analysis_daily_prices` 不受影響 | `BenchmarkDefinition`、`BenchmarkConfigError`、`load_benchmarks`、`parse_benchmarks`、`benchmark_instruments`、`collect_benchmark_history` |
 | `price_freshness.py` | 判斷資料庫是否已有某交易日收盤後定案行情，供 `start.sh` 略過重複抓取 | `prices_current` |
 | `corporate.py`（轉出層）、`corporate_contracts.py`、`corporate_parsing.py`、`corporate_provider.py`、`corporate_collector.py` | 官方公司資料（重大訊息、月營收、財報）：契約、解析、Provider、收集與保存分檔，`corporate.py` 維持舊 import 路徑 | `SourceDocument`、`MonthlyRevenue`、`FinancialStatementFact`、`FinancialStatement`、`CorporateRecord`、`CorporateResponse`、`OfficialCorporateProvider`、`OfficialCorporateProviderFactory`、`CorporateDataCollector`、`CorporateCollectionResult` |
 | `financial.py` | 官方財報彙總資料的請求、覆蓋驗收與來源可行性結果 | `FinancialStatementRequest`、`FinancialCoverageGap`、`FinancialCollectionResult`、`FinancialStatementCollector`、`latest_due_quarter` |
@@ -87,7 +89,7 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 
 `__init__.py` 匯出（節錄）：資料庫與交易池（`MarketDataDatabase`、`Instrument`、`UniverseLoader`、`load_universe`）、行情 Provider 與收集器（`TwseDailyProvider`、`TpexDailyProvider`、`HistoricalPriceProvider`、`DailyPriceCollector`、`HistoricalPriceCollector`、`OfficialHistoricalRefreshService`、`LatestPriceCollector`、`collect_latest_prices`、`YFinanceHistoryCollector`）、公司資料（`CorporateDataCollector`、`OfficialCorporateProvider`、`FinancialStatementCollector`）、快照（`SnapshotBuilder`、`ResearchSnapshot`、`DataAgentService`、`SnapshotRepository`、`SnapshotQualityPolicy`）、交易狀態與日曆（`TradingStatusBundleBuilder`、`TradingStatusBundleValidator`、`TradingStatusCollector`、`TradingStatusRepository`、`TradingCalendar`、`OgdTradingStatusMapper`、`build_trading_status_from_capture`、`calendar_from_capture`）、產業分類（`SectorClassificationBuilder`、`capture_sector_sources`）、來源健康與狀態（`UniverseValidator`、`SourceHealthProbe`、`DataAgentStatusRepository`）。完整清單見 `data/__init__.py` 的 `__all__`。
 
-未在 `__init__.py` 匯出、須從子模組匯入的：`supplemental_sources`、`finmind_schedule`、`fundamental_repair`、`news_content`、`price_freshness`、`tpex_history`、`source_capture`、`source_audit`、`ogd_candidate_facts`、`analyst_availability`、`evidence`、`market_probe`。
+未在 `__init__.py` 匯出、須從子模組匯入的：`supplemental_sources`、`finmind_schedule`、`fundamental_repair`、`news_content`、`price_freshness`、`tpex_history`、`source_capture`、`source_audit`、`ogd_candidate_facts`、`analyst_availability`、`evidence`、`market_probe`、`benchmarks`。
 
 ## 上下游
 
@@ -98,11 +100,11 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 
 ## 對應的 CLI／scripts／測試
 
-- CLI：`cli/data_agent.py`（資料狀態、收集、快照）、`cli/trading_status.py`、`cli/fundamental_repair.py`、`cli/market_context_probe.py`。
+- CLI：`cli/data_agent.py`（資料狀態、收集、快照）、`cli/trading_status.py`、`cli/fundamental_repair.py`、`cli/market_context_probe.py`、`cli/benchmark.py collect`（基準標的官方行情）。
 - scripts（收集）：`init_db.py`、`collect_twse.py`、`collect_latest_prices.py`、`collect_history.py`、`collect_official_history.py`、`collect_financial_statements.py`、`collect_supplemental_sources.py`、`collect_sector_classification.py`、`collect_cash_flow.py`。
 - scripts（排程與狀態）：`finmind_schedule.py`、`prices_current.py`、`data_status.py`、`run_daily_pipeline.py`（`./start.sh auto`／`daily`／`run` 串接）。
 - scripts（來源與交易狀態）：`probe_data_sources.py`、`capture_trading_status_candidates.py`、`normalize_trading_status_candidates.py`、`verify_ogd_crosscheck.py`、`repair_pending_tpex_close.py`。
-- 測試：`tests/data/`（`test_data_agent.py`、`test_data_collection.py`、`test_historical.py`、`test_financial_statements.py`、`test_finmind_schedule.py`、`test_fundamental_repair.py`、`test_cash_flow.py`、`test_trading_status.py`、`test_ogd_trading_status.py`、`test_trading_calendar.py`、`test_inferred_closures.py` 等）；`tests/fixtures/` 有小型行情 fixture。
+- 測試：`tests/data/`（`test_data_agent.py`、`test_data_collection.py`、`test_historical.py`、`test_financial_statements.py`、`test_finmind_schedule.py`、`test_fundamental_repair.py`、`test_cash_flow.py`、`test_trading_status.py`、`test_ogd_trading_status.py`、`test_trading_calendar.py`、`test_inferred_closures.py` 等）、`tests/benchmark/test_benchmark_collection.py`（基準收集不污染交易池）；`tests/fixtures/` 有小型行情 fixture。
 - 相關文件：[docs/data_sources_inventory.md](../../../docs/data_sources_inventory.md)、[docs/fundamental_data_repair.md](../../../docs/fundamental_data_repair.md)。
 
 ## 規則與邊界

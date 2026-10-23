@@ -22,7 +22,7 @@
 | 資料 | 無投資判斷 | 保存來源、原始回應、`available_at`、版本與不可變 Snapshot；依 cutoff 排除未來資料 |
 | 三位分析師 | 全池逐檔輸出 outlook、事件重大性與有證據的發現；全市場情緒只輸出一次 | 計算指標與財務比率、分批與覆蓋驗證；市場情緒由程式依全市場新聞或恐懼貪婪指標重建，兩者都不可用時輸出 `unavailable` |
 | 多頭／空頭 | 同一共同輸入、互相隔離，逐檔提出有證據的 claims 與強度 | 核對 `shared_input_sha256`、引用歸屬、全池覆蓋、`peer_packet_ids` 為空 |
-| 交易 | 逐檔取捨每個多空 claim，給買賣意圖與 buy／add 信心等級 | 驗證每個 claim 剛好被採納或否決一次；依 Policy、ATR 與風險現金姿態計算權重與張數 |
+| 交易 | 逐檔取捨每個多空 claim，給買賣意圖與 buy／add 信心等級；可看前次決策對持股的意圖與重估條件，但只當背景 | 驗證每個 claim 剛好被採納或否決一次、文字欄位沒有引用前次決策；依 Policy、ATR 與風險現金姿態計算權重與張數 |
 | 風險 | 配置前給現金姿態；配置後審查並提出受限修正 | 從帳本 NAV 歷史算峰值回撤並強制姿態下限；提供整體市場情緒與每筆委託佔 20 日均量比例；重算費稅、現金、情境與競賽限制；硬性規則失敗即拒絕，修正循環最多 3 次 |
 
 ## 持股檔數上限的取捨順序
@@ -119,7 +119,7 @@
   | 合計 | 928.7 秒 | 601.0 秒 |
   | 呼叫數／重試 | 27／0 | 28／1（`event_b9` 驗證重試） |
 
-  - 兩次都 `approved`、30 筆委託，沒有撞到用量上限。`agent_step` 只在輸出驗證失敗時重試；用量或執行錯誤會直接失敗，所以那次重試是輸出驗證問題，不是限流。
+  - 兩次都 `approved`、30 筆委託，沒有撞到用量上限。實測當時 `agent_step` 只在輸出驗證失敗時重試；用量或執行錯誤會直接失敗，所以那次重試是輸出驗證問題，不是限流。（之後新增：CLI 逾時、無法啟動、非零結束、輸出不是 JSON 或沒有結構化輸出屬 `TransientAgentError`，會間隔 30 秒再試一次，失敗嘗試記在 `agent_calls` 的 `transient_error`／`transient_retry`，用量記 0、耗時保留；秘密外洩、使用未核准工具與驗證失敗不重試；平行任務有一個已失敗時不再重試；等待加重跑會超過交件期限 08:55 時也不重試。）
   - 每種設定只跑一次，LLM 本身有變異，不能當嚴格的加速比；8 尚未實測。
   - 實測當時的程式尚未包含 #69 的事件調整（當時事件分析師 10 批、分析師共 16 次呼叫）；之後無重大訊息的股票改由程式輸出，事件批次會減少，數字需重新量測。
 
@@ -167,7 +167,8 @@
 
 | 版本 | 內容 |
 | --- | --- |
-| 2.1（目前） | 三份分析報告與現金姿態 |
+| 2.2（目前） | 三份分析報告、現金姿態，以及交易 Agent 看到的前次決策背景 `prior_decision_context`（available 或 unavailable 都要存） |
+| 2.1（舊封存） | 三份分析報告與現金姿態 |
 | 2.0（舊封存） | 依原始分析報告與事件研究輸入重建 |
 
 Finalizer 與下游驗證遇到以下情況一律拒絕：
@@ -178,6 +179,17 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 - 數值被改寫
 
 1.0 的 Buy／Sell 舊決策鏈不再接受。
+
+### 前次決策背景（記憶的最小版本）
+
+交易 Agent 每天為持股寫 `invalidation_conditions`，但過去沒有人讀；現在由程式把**上一份**已封存決策對目前持股的 `intent`／`conviction`／`invalidation_conditions` 整理成 `prior_decision_context`，只給交易 Agent、只當背景：
+
+- 來源：`artifacts/decisions/` 中同帳戶、狀態 `approved`／`no_trade`、**目標交易時段（`trading_status_bundle.target_session.start`）嚴格早於本次**且 cutoff 更早的 run。排程是 21:00 做隔天時段的備案、07:00 重做同一時段，所以依時段而不是 cutoff 排序，07:00 重做不會拿到幾小時前的備案。最新的前一時段有多個 run 時，優先取帳本 close 狀態實際結算的那個（`applied_decision_run_ids`，由 `run_daily_pipeline.py` 從 `VirtualAccountRepository.applied_decision_run_ids()` 傳入；`source.selection=ledger_applied`），否則取該時段 cutoff 最新者（`latest_cutoff`）；仍相同才拒絕。整個 run 先過 manifest 驗證，再記錄 `run_id`、時段、挑法、decision／intent 內容雜湊與 manifest 雜湊。
+- 時間：前次 cutoff 必須早於本次 cutoff（含時區）；snapshot 幾乎一定不同，所以明確標 `cross_snapshot_exception=true`，表示它不是本次 Snapshot 的事實。
+- 不可引用：沒有 evidence_id，`citable=false`。交易 Agent 的 `rationale`／`unresolved_questions`／`invalidation_conditions` 出現其 run_id、decision_id 或 `prior_decision` 字樣即被 `TradeDecisionValidator` 拒絕；延續或改變行動仍必須由本次採納的多空 claim 支持（buy／add 需多頭 claim、trim／exit 需空頭 claim 的規則不變）。多頭／空頭研究員看不到它。
+- 沒有前次 run（新帳戶、評測重跑、決策庫為空）或本次沒有目標交易時段時輸出 `status=unavailable`（`reason` 說明），不是錯誤。
+- 續跑沿用本 run 已存的 `prior_decision_context.json`（仍須通過驗證），避免決策庫變動改變輸入。
+- 實作：`src/etf_agent/decision/prior_decision.py`；`team_inputs` 2.2 由 Finalizer 以 `PriorDecisionContextValidator` 重建驗證，2.1／2.0 舊封存照舊。
 
 ## 校準旁觀者
 
@@ -199,6 +211,12 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 | Codex | 已完成真實 150 檔每日鏈 |
 | OpenCode | 已通過本機唯讀、JSONL、預檢煙霧測試。**尚未**執行真實 150 檔端到端驗收 |
 | Claude | 每日鏈使用中 |
+
+讀檔邊界（三者共通）：
+
+- 拒讀樣式集中在 `agent_runner.SENSITIVE_READ_GLOBS`（`.env`、`.env.*`、`.envrc`、`*.pem`、`*.key`、`*credential*`、`*secret*`）。Claude 以 `--settings` 的 `permissions.deny` 套用（已用本機 `claude -p` 實測擋下根目錄與子目錄的 `.env`、`.key`），OpenCode 以 read 權限套用。
+- Codex 的 `--sandbox read-only` 只禁止寫入，**不能**限制讀檔；這條路徑只靠下一條的輸出檢查。
+- 所有 runner 的輸出若含專案 `.env`／`.envrc` 中長度 8 以上的值，一律拒絕，錯誤訊息不帶出該值。
 
 OpenCode 的限制：
 

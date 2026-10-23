@@ -18,6 +18,7 @@ from .contracts import (
     string_list,
 )
 from .drawdown import stance_meets_floor
+from .prior_decision import prior_reference_tokens
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -76,11 +77,15 @@ class TradeDecisionValidator:
         momentum: Mapping[str, object],
         debate: Mapping[str, object],
         symbols: Optional[Sequence[str]] = None,
+        prior_context: Optional[Mapping[str, object]] = None,
     ):
+        """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
+        交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。"""
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.debate = dict(debate)
         self.claims = claims_by_symbol(debate)
+        self.prior_tokens = prior_reference_tokens(prior_context)
         self.available = {
             str(item.get("symbol", "")).upper()
             for item in momentum.get("items", [])
@@ -147,14 +152,20 @@ class TradeDecisionValidator:
         elif "conviction" in item and item.get("conviction") is not None:
             errors.append("%s 只有 buy／add 可以給 conviction" % prefix)
         try:
-            required_string(item, "rationale")
+            rationale = required_string(item, "rationale")
             adopted = string_list(item, "adopted_claim_ids")
             rejected = string_list(item, "rejected_claim_ids")
-            string_list(item, "unresolved_questions")
-            string_list(item, "invalidation_conditions")
+            questions = string_list(item, "unresolved_questions")
+            conditions = string_list(item, "invalidation_conditions")
         except DecisionToolError as error:
             errors.append("%s.%s" % (prefix, error))
             return
+        cited = sorted(
+            token for token in self.prior_tokens
+            if any(token in text for text in (rationale, *questions, *conditions))
+        )
+        if cited:
+            errors.append("%s 不得引用前次決策背景（%s）；它不是本次證據" % (prefix, ", ".join(cited)))
         available = self.claims.get(symbol, {})
         both = set(adopted) & set(rejected)
         if both:

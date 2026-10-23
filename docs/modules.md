@@ -1,10 +1,10 @@
 # 模組總覽
 
-`src/etf_agent/` 下 14 個子套件的職責、相依關係與各自 README 的索引。每日決策鏈的流程與契約見 [architecture.md](architecture.md)；開發規則見 [AGENTS.md](../AGENTS.md)。
+`src/etf_agent/` 下 15 個子套件的職責、相依關係與各自 README 的索引。每日決策鏈的流程與契約見 [architecture.md](architecture.md)；開發規則見 [AGENTS.md](../AGENTS.md)。
 
 ## 依賴圖
 
-箭頭 `A --> B` 表示 A 的程式 import B（含函式內的延遲 import；以 AST 掃描 `src/etf_agent/` 全部 `.py` 的結果為準）。為避免版面雜亂，圖中省略對 `core` 的箭頭：除 `dashboard` 外，其餘 12 個子套件都 import `core`，`core` 本身不依賴其他子套件。
+箭頭 `A --> B` 表示 A 的程式 import B（含函式內的延遲 import；以 AST 掃描 `src/etf_agent/` 全部 `.py` 的結果為準）。為避免版面雜亂，圖中省略對 `core` 的箭頭：除 `dashboard` 外，其餘 13 個子套件都 import `core`，`core` 本身不依賴其他子套件。
 
 ```mermaid
 flowchart TD
@@ -19,6 +19,12 @@ flowchart TD
 
     dashboard --> decision
     dashboard --> virtual_account
+    dashboard --> benchmark
+
+    benchmark --> dashboard
+    benchmark --> data
+    benchmark --> ledger
+    benchmark --> virtual_account
 
     decision --> data
     decision --> fundamentals
@@ -48,6 +54,7 @@ flowchart TD
 - `data`、`fundamentals`、`ledger`、`reporting` 只依賴 `core`。
 - `reporting` 沒有其他子套件 import，圖中以獨立節點表示。
 - `reporting` 的輸入 artifact 由 CLI 以檔案傳入。
+- `dashboard.app` 以函式內延遲 import 使用 `benchmark`，`benchmark.service` 則 import `dashboard.performance` 取帳戶 NAV 序列；`dashboard/__init__.py` 不 import `app`，因此沒有循環。
 
 ## 各套件 README
 
@@ -65,7 +72,9 @@ flowchart TD
 | `competition` | D-Plan v4.3 context 整理、候選匯出與本地驗證 | [competition/README.md](../src/etf_agent/competition/README.md) | `cli/dplan.py` |
 | `ledger` | 整張成交模擬與交易日現金帳務 | [ledger/README.md](../src/etf_agent/ledger/README.md) | 由 `virtual_account` 使用 |
 | `virtual_account` | 虛擬帳戶初始化、每日快照、結算與決策套用 | [virtual_account/README.md](../src/etf_agent/virtual_account/README.md) | `cli/virtual_account.py` |
-| `dashboard` | 唯讀績效儀表板（FastAPI） | [dashboard/README.md](../src/etf_agent/dashboard/README.md) | `cli/dashboard.py`（`./start.sh`） |
+| `evaluation` | Agent 評測（資料抓齊率、評測集重跑、一致度／穩定度）與零 token 的多日 Policy 回放；不入決策鏈 | [evaluation/README.md](../src/etf_agent/evaluation/README.md) | `cli/agent_eval.py`、`cli/policy_replay.py` |
+| `dashboard` | 唯讀績效儀表板（FastAPI），含 `/api/benchmarks` | [dashboard/README.md](../src/etf_agent/dashboard/README.md) | `cli/dashboard.py`（`./start.sh`） |
+| `benchmark` | 帳戶對 0050／交易池等權買入持有的基準比較：同本金、同費稅、官方成交均價買進、官方收盤價估值、as-of 版本 | [benchmark/README.md](../src/etf_agent/benchmark/README.md) | `cli/benchmark.py`、`cli/dashboard.py` |
 
 ## 每日資料與決策流向
 
@@ -93,6 +102,6 @@ flowchart LR
 - `core`：與市場無關的基礎。
 - `data`、`fundamentals`、`perception`、`research`、`reporting`：資料與研究輸入，只提供事實、來源證據與驗證，不產生權重或訂單。
 - `decision`、`automation`：決策與編排；確定性程式負責數字，子 Agent 只輸出解讀、論點、意圖與信心等級。
-- `decision_delivery`、`competition`、`virtual_account`、`ledger`、`dashboard`：決策之後的交付、模擬帳務與呈現；不自動下單或送件。
+- `decision_delivery`、`competition`、`virtual_account`、`ledger`、`dashboard`、`benchmark`：決策之後的交付、模擬帳務、呈現與基準比較；不自動下單或送件，基準比較也不回饋到決策。
 
 新增或調整套件邊界、契約或開發順序時，同步更新本文件、[README.md](../README.md) 與相關 `docs/`。
