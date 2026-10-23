@@ -52,6 +52,7 @@ from etf_agent.data import (  # noqa: E402
     load_not_applicable,
 )
 from etf_agent.data.inferred_closures import update_inferred_closed_days  # noqa: E402
+from etf_agent.data.trading_calendar import DECISION_DEADLINE  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
@@ -340,6 +341,18 @@ def completed_run_for_session(runs_root: Path, run_id: str, session_start, now: 
 
 
 ROLLBACK_SNAPSHOT = "rollback_research_snapshot.json"  # 重跑前的 Snapshot 副本，還原時放回 latest
+
+
+def session_deadline_passed(session, now: datetime) -> bool:
+    """目標時段當天的交件期限（08:55）是否已過；缺少或無法解析開盤時間時視為已過（fail-closed）。"""
+    try:
+        start = datetime.fromisoformat(str((session or {}).get("start")))
+    except ValueError:
+        return True
+    if start.tzinfo is None:
+        return True
+    deadline = datetime.combine(start.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
+    return now >= deadline
 
 
 def superseded_pending(account_id: str, pending) -> bool:
@@ -650,6 +663,10 @@ def main() -> int:
         approvals = load_approvals(approvals_path)
         not_applicable = load_not_applicable(approvals_path)
         status_bundle, assessment, session = build_trading_status_from_capture(snapshot, capture_dir, approvals, not_applicable)
+        if session_deadline_passed(session, now):
+            # 沿用的舊 Snapshot 仍排到已過交件期限的時段；再做決策會取代已上傳那份，帳本與實際交件對不上。
+            raise RuntimeError("目標時段 %s 已過交件期限 %s，不再為它產生決策；收盤資料到齊後再跑會排到下一時段" % (
+                session.get("start"), DECISION_DEADLINE.strftime("%H:%M")))
         summary["trading_status"] = {
             "capture_dir": str(capture_dir) if capture_dir else None,
             "approved_sources": sorted(approvals),

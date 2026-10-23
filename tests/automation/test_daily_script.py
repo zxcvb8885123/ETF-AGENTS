@@ -408,6 +408,17 @@ class DataReuseTests(unittest.TestCase):
             with patch.object(self.module, "refresh_before_deadline", lambda *_a: False):
                 self.assertEqual(self.run_main(root, "--force"), [True])
 
+    def test_session_past_submission_deadline_is_refused(self):
+        # 10/23 13:59 沿用凌晨的 Snapshot，目標仍是 10/23 時段：不得再產生決策取代已上傳那份。
+        passed = self.module.session_deadline_passed
+        session = {"start": "2026-10-23T09:00:00+08:00", "end": "2026-10-23T13:30:00+08:00"}
+        self.assertTrue(passed(session, datetime(2026, 10, 23, 13, 59, tzinfo=self.TZ)))
+        self.assertTrue(passed(session, datetime(2026, 10, 23, 8, 55, tzinfo=self.TZ)))
+        self.assertFalse(passed(session, datetime(2026, 10, 23, 8, 54, 59, tzinfo=self.TZ)))
+        self.assertFalse(passed(session, datetime(2026, 10, 22, 18, 0, tzinfo=self.TZ)))
+        for broken in (None, {}, {"start": "明天"}, {"start": "2026-10-23T09:00:00"}):
+            self.assertTrue(passed(broken, datetime(2026, 10, 22, 18, 0, tzinfo=self.TZ)), broken)
+
     def scheduled_main(self, root, at):
         """不帶 --force 在指定台北時間觸發 main，回傳 (exit code, 是否走到預檢)。"""
         fixed = datetime.fromisoformat(at)
