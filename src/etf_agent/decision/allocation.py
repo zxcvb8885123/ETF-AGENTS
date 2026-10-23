@@ -18,6 +18,7 @@ from .contracts import (
     reject_unknown_fields,
     required_string,
 )
+from .drawdown import validate_drawdown_control
 from .momentum import MomentumEngine
 from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, conviction_weights, validate_position_sizing
 
@@ -78,6 +79,7 @@ class DecisionPolicyValidator:
         "reuse_sell_proceeds",
         "max_revisions",
         "position_sizing",
+        "drawdown_control",
         "content_sha256",
     }
 
@@ -182,6 +184,8 @@ class DecisionPolicyValidator:
                     errors.append("sector_by_symbol.%s 必須是非空字串" % symbol)
         if "position_sizing" in policy:
             validate_position_sizing(policy, self.context.universe, errors)
+        if "drawdown_control" in policy:
+            validate_drawdown_control(policy, self.context.bundle, errors)
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):
             errors.append("DecisionPolicy.cash_buffer_rate 必須小於 1")
         rules = self.context.bundle.get("rules", {})

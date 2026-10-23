@@ -211,6 +211,23 @@ class CashStanceAgentTests(unittest.TestCase):
         self.assertEqual(len(runner.prompts), 2)
         self.assertEqual(brief["trade_intents"], {"buy": 1, "hold": 1})
         self.assertNotIn("%", json.dumps(brief["trade_intents"]))
+        # 策略文件：風險 Agent 讀整體市場情緒；沒有核准來源時明確 unavailable，不拿個股新聞代替。
+        self.assertEqual(brief["market_sentiment"]["scope"], "TW_STOCK_MARKET")
+        self.assertEqual(brief["market_sentiment"]["status"], "unavailable")
+        self.assertIsNone(brief["drawdown_control"])
+
+    def test_cash_stance_below_drawdown_floor_is_retried(self):
+        bundle, momentum, _, trade, _, _, reports, _ = team_world()
+        control = {"neutral_at": "0.05", "defensive_at": "0.10", "status": "available", "drawdown": "0.120000",
+                   "stance_floor": "defensive"}
+        runner = FakeRunner({"cash_stance": [STANCE, dict(STANCE, level="defensive")]})
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline = DailyDecisionPipeline(ROOT, Path(directory), runner, Path(directory) / "repo", log=lambda _: None)
+            stance = pipeline.run_cash_stance(bundle, momentum, reports, trade, control)
+            brief = json.loads((Path(directory) / "brief_cash_stance.json").read_text(encoding="utf-8"))
+        self.assertEqual(stance["level"], "defensive")
+        self.assertEqual(len(runner.prompts), 2)
+        self.assertEqual(brief["drawdown_control"]["stance_floor"], "defensive")
 
 
 if __name__ == "__main__":

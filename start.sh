@@ -280,6 +280,17 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     echo "未設定 FINMIND_TOKEN；略過 FinMind 候選擷取。" >&2
     DATA_STATUS=2
   fi
+  # 已擷取的 FinMind 現金流量表以官方累計稅前淨利核對後轉成 Snapshot 文件；不連網，失敗只讓現金流降級。
+  echo "[3b+/4] 核對 FinMind 現金流量表並轉成快照文件"
+  set +e
+  docker compose run --rm agent python3 scripts/collect_cash_flow.py >/dev/null
+  CASH_FLOW_EXIT=$?
+  set -e
+  if [ "$CASH_FLOW_EXIT" -eq 1 ]; then
+    echo "現金流核對失敗；本次基本面分析的現金流標為資料缺口。" >&2
+    DATA_STATUS=2
+  fi
+  stage_time "現金流核對"
   # 必須在 cutoff 之前抓，決策才看得到；失敗只讓市場情緒降級，不中止每日流程。
   echo "[3b+/4] 抓取台股恐懼貪婪指標來源（VIX、Put/Call 比、融資）"
   set +e

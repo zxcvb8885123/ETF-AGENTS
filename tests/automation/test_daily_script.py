@@ -419,6 +419,32 @@ class DataReuseTests(unittest.TestCase):
         for broken in (None, {}, {"start": "明天"}, {"start": "2026-10-23T09:00:00"}):
             self.assertTrue(passed(broken, datetime(2026, 10, 22, 18, 0, tzinfo=self.TZ)), broken)
 
+    def test_decision_finished_after_deadline_is_not_exported(self):
+        # 早上重做拖過 08:55 才跑完：不換 D-Plan 主檔；沒有備案時把新決策移到封存區，帳本視為沒交件。
+        session = {"start": "2026-10-23T09:00:00+08:00", "end": "2026-10-23T13:30:00+08:00"}
+        refuse = self.module.refuse_late_decision
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fresh = root / "artifacts" / "decisions" / "2026-10-23" / "decision-20261023T000000Z"
+            fresh.mkdir(parents=True)
+            with patch.object(self.module, "ROOT", root):
+                summary = {}
+                refuse(summary, session, fresh.name, datetime(2026, 10, 23, 8, 54, tzinfo=self.TZ))
+                self.assertEqual(summary, {})
+                self.assertTrue(fresh.exists())
+                # 有被取代的備案：交給結束時的還原處理，這裡不搬新決策。
+                summary = {"superseded_pending": {"decision_run_id": "decision-old"}}
+                with self.assertRaisesRegex(RuntimeError, "交件期限"):
+                    refuse(summary, session, fresh.name, datetime(2026, 10, 23, 9, 5, tzinfo=self.TZ))
+                self.assertTrue(fresh.exists())
+                summary = {}
+                with self.assertRaisesRegex(RuntimeError, "交件期限"):
+                    refuse(summary, session, fresh.name, datetime(2026, 10, 23, 9, 5, tzinfo=self.TZ))
+            self.assertFalse(fresh.exists())
+            archived = root / "artifacts" / "archive" / "superseded_decisions" / "2026-10-23" / fresh.name
+            self.assertEqual(summary["late_decision_archived_to"], str(archived))
+            self.assertTrue(archived.is_dir())
+
     def scheduled_main(self, root, at):
         """不帶 --force 在指定台北時間觸發 main，回傳 (exit code, 是否走到預檢)。"""
         fixed = datetime.fromisoformat(at)

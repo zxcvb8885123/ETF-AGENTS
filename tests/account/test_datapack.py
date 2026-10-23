@@ -130,6 +130,10 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(result["status"], "matched")
         self.assertEqual(result["sellable_shares"], {"2330": 73000, "3293": 43000})
         self.assertEqual(Decimal(result["cash"]["difference"]), 0)
+        # D-Plan 換算股數沿用主辦方的分母與前日收盤價。
+        self.assertEqual(Decimal(result["nav_tradable"]), Decimal("1000000000"))
+        self.assertEqual({k: Decimal(v) for k, v in result["close_prices"].items()},
+                         {"2330.TW": Decimal("2585"), "3293.TWO": Decimal("787")})
 
     def test_share_and_cash_differences_stop(self):
         result = self.run_reconcile(ledger(**{"2330.TW": 74000, "3293.TWO": 43000, "2317.TW": 1000}))

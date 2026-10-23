@@ -39,6 +39,8 @@ flowchart TD
 | `trend_history.py` | 技術分析用整段歷史價格與逐日均線；不產生趨勢標籤 | `TechnicalTrendHistoryTools`、`TechnicalTrendHistoryValidator` |
 | `analysts.py` | 分析團隊：確定性輸入摘要、`AnalystReport` 契約與 Validator、技術 gate、基本面指標、事件 high 重大性挑出 | `build_analyst_brief`、`seal_report`、`AnalystReportValidator`、`technical_trend_gate`、`compute_fundamental_metrics`、`high_materiality_events`、`sentiment_unavailable_report`、`sentiment_report`、`seal_event_sentiment_report`、`seal_event_market_report`、`compact_event_batch`、`analyst_report_names`、`report_envelope` |
 | `event_financial_context.py` | 將同一快照財報接到事件解讀，保留原值、單位、期間與引用 | `event_financial_context` |
+| `cash_flow_context.py` | 從已核對的現金流文件計算營業現金流、自由現金流與對稅前淨利比率，給基本面分析師 | `cash_flow_context` |
+| `drawdown.py` | 從帳本 NAV 歷史計算峰值回撤，綁進 Policy 的 `drawdown_control`，強制現金姿態下限 | `bind_drawdown`、`measure_drawdown`、`stance_floor`、`stance_meets_floor`、`validate_drawdown_control` |
 | `market_scope.py` | 全市場情緒通道狀態：新聞優先，否則用恐懼貪婪指標；個股情緒與交易行情不能代替 | `market_sentiment_channel` |
 | `fundamental_language.py` | 把指標缺口轉為有期間、報表與欄位的中文說明；不改寫數值或分類 | `explain_metric_gap`、`chinese_gap_explanations`、`period_label`、`render_fundamental_report` |
 | `event_sentiment_report.py` | 將已驗證的合併分析報告呈現為繁體中文，不新增結論 | `render_event_sentiment_report` |
@@ -48,7 +50,7 @@ flowchart TD
 | `sizing.py` | conviction 等級、現金姿態，及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`conviction_weights` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
 | `allocation.py` | 確定性配置、下單、費稅與現金；Policy 與 Proposal 驗證 | `AllocationOrderEngine`、`DecisionPolicyValidator`、`ProposalValidator`、`decision_policy_sha256` |
-| `risk.py` | 確定性情境、競賽檢查（Guard）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`revision_effects` |
+| `risk.py` | 確定性情境、競賽檢查（Guard）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`liquidity_exposure`、`revision_effects` |
 | `revision.py` | 提案／審查修正鏈的確定性建立與重播 | `RevisionHistoryBuilder`、`RevisionHistoryValidator` |
 | `finalization.py` | 最終決策重建與不可變封存（`DecisionRepository` 繼承 `ImmutableRunStore`） | `DecisionFinalizer`、`DecisionResultValidator`、`DecisionRepository`、`build_team_inputs` |
 | `service.py` | 對外應用服務，供 `portfolio_decision` CLI 使用：建立輸入、動能、配置、風控、封存 | `PortfolioDecisionApplicationService` |
@@ -67,7 +69,7 @@ flowchart TD
 ## 對應的 CLI／scripts／測試
 
 - CLI：`cli/portfolio_decision.py`；scripts：`scripts/evaluate_event_brief.py`、`scripts/evaluate_technical_brief.py`。
-- 測試：`tests/decision/`（`test_portfolio_decision_agent.py`、`test_portfolio_risk_decision.py`、`test_decision_input_builder.py`、`test_stance.py`、`test_trader.py`、`test_team_chain.py`、`test_position_sizing.py`、`test_trader_report.py`、`test_batching.py`、`test_decision_delivery.py`）；`tests/research/test_analysts.py`、`test_fundamental_language.py`、`test_technical_trend_history.py`。
+- 測試：`tests/decision/`（`test_portfolio_decision_agent.py`、`test_portfolio_risk_decision.py`、`test_decision_input_builder.py`、`test_stance.py`、`test_trader.py`、`test_team_chain.py`、`test_position_sizing.py`、`test_trader_report.py`、`test_batching.py`、`test_decision_delivery.py`、`test_drawdown.py`）；`tests/research/test_analysts.py`、`test_fundamental_language.py`、`test_technical_trend_history.py`。
 - 架構文件：[docs/architecture.md](../../../docs/architecture.md)、[docs/technical_trend_history.md](../../../docs/technical_trend_history.md)。
 
 ## 規則與邊界

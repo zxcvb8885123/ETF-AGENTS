@@ -20,6 +20,7 @@
 | `collect_financial_statements.py` | 收集官方財報彙總並輸出固定分母覆蓋報告 | `start.sh`（`auto`／`daily`） | 補特定季度時用 `--fiscal-year`／`--fiscal-quarter` |
 | `collect_sector_classification.py` | 抓 TWSE／TPEx 官方公司基本資料並建立 150 檔產業代碼分類 | `start.sh`（輸出到 `artifacts/data/`，不覆蓋 `data/sector_classification.json`） | 要更新正式分類檔時，省略 `--output` 會寫入 `data/` |
 | `collect_supplemental_sources.py` | 擷取 FinMind 財報或個股新聞候選資料（需 `FINMIND_TOKEN`） | `start.sh`（財報）、`run_finmind_news.sh`（新聞） | 一般不用 |
+| `collect_cash_flow.py` | 把已擷取的 FinMind 現金流量表以官方累計稅前淨利核對後轉成快照文件；不連網，部分股票核對不過回傳 2 | `start.sh`（FinMind 之後） | 一般不用 |
 | `finmind_schedule.py` | 決定 FinMind 財報資料集今天要不要抓（`plan`），並記錄完成狀態（`done`） | `start.sh` | 不需要；`FORCE_FETCH=1` 可強制 |
 | `run_finmind_news.sh` | 讀取 `FINMIND_TOKEN`（環境變數或 `.env`）後擷取當日個股新聞候選 | `launchd/com.etf-agents.finmind-news.plist.template` | 補抓某日新聞：`scripts/run_finmind_news.sh YYYY-MM-DD` |
 | `probe_data_sources.py` | 探測白名單官方來源並驗證 150 檔交易池 | `start.sh`（`daily` 流程） | 懷疑來源改版時 |
@@ -44,6 +45,7 @@ flowchart TD
     CORP --> FS[collect_financial_statements.py]
     FS --> SEC[collect_sector_classification.py]
     SEC --> FM[finmind_schedule.py + collect_supplemental_sources.py]
+    FM --> CF[collect_cash_flow.py]
     FM --> CAL[capture_trading_status_candidates.py]
     CAL --> SNAP[cli/data_agent.py snapshot]
     SNAP --> LED[cli/virtual_account.py daily]
@@ -67,11 +69,11 @@ macOS `launchd` 排程樣板（`.plist.template`）。
 | --- | --- | --- | --- | --- |
 | `com.etf-agents.data.plist.template` | `com.etf-agents.data` | 平日 20:00 | `start.sh data`（即 `auto`，只更新資料） | 不呼叫決策 Agent |
 | `com.etf-agents.finmind-news.plist.template` | `com.etf-agents.finmind-news` | 平日 22:00 | `scripts/run_finmind_news.sh` | 避開 20:00 財報請求額度；需 `FINMIND_TOKEN` |
-| `com.etf-agents.daily.plist.template` | `com.etf-agents.daily` | 平日 07:00、18:00 | `.venv/bin/python scripts/run_daily_pipeline.py` | 18:00 做隔天時段的備案決策；07:00 在 08:55 交件期限前用新的事件、新聞與情緒資料重做（日線不重抓），帳本把同時段未執行的舊決策移到封存區；重做沒產生新 D-Plan（失敗或被擋）時自動還原帳本、舊決策與 Snapshot，晚上的備案 D-Plan 仍可上傳，該 run 不能 `--resume`，要重做改用 `--force`。需 Docker Desktop 已啟動、Claude CLI 已登入、Mac 未休眠；週末、休市日或同一時段 1 小時內已完成由腳本略過（例如 06:30 手動跑完，07:00 不再跑；半夜手動跑的不算，07:00 照常重做） |
+| `com.etf-agents.daily.plist.template` | `com.etf-agents.daily` | 平日 07:00、21:00 | `.venv/bin/python scripts/run_daily_pipeline.py` | 21:00 做隔天時段的備案決策（須先下載主辦方約 19:00 產生的 DataPack 到 `var/datapack/`）；07:00 在 08:55 交件期限前用新的事件、新聞與情緒資料重做（日線不重抓），帳本把同時段未執行的舊決策移到封存區；重做沒產生新 D-Plan（失敗或被擋）時自動還原帳本、舊決策與 Snapshot，晚上的備案 D-Plan 仍可上傳；決策跑完已過 08:55 時不產生 D-Plan，該 run 不能 `--resume`，要重做改用 `--force`。需 Docker Desktop 已啟動、Claude CLI 已登入、Mac 未休眠；週末、休市日或同一時段 1 小時內已完成由腳本略過（例如 06:30 手動跑完，07:00 不再跑；半夜手動跑的不算，07:00 照常重做） |
 
 ```mermaid
 flowchart LR
-    L1[launchd 07:00／18:00 daily] --> RDP[run_daily_pipeline.py]
+    L1[launchd 07:00／21:00 daily] --> RDP[run_daily_pipeline.py]
     L2[launchd 20:00 data] --> SA[start.sh data]
     L3[launchd 22:00 finmind-news] --> RFN[run_finmind_news.sh]
     RDP --> SD[start.sh daily]

@@ -213,6 +213,22 @@ class VirtualAccountRepository:
         return {"run_id": run_id, "state": state, "run_dir": run_dir}
 
 
+    def nav_history(self) -> List[Dict[str, str]]:
+        """沿 latest 的 parent_run_id 往回走到開帳，回傳每個狀態的 NAV（舊到新）；退回的 prepare 不在鏈上。"""
+        current = self.latest()
+        history: List[Dict[str, str]] = []
+        seen = set()
+        run_id: Optional[str] = current["run_id"]
+        while run_id:
+            if run_id in seen:
+                raise VirtualAccountError("帳本 parent_run_id 形成循環：%s" % run_id)
+            seen.add(run_id)
+            state = _read(self.verify(run_id) / "state.json", "state")
+            history.append({"run_id": run_id, "as_of": str(state["as_of"]), "nav": str(state["nav"])})
+            run_id = state.get("provenance", {}).get("parent_run_id")
+        return list(reversed(history))
+
+
 class VirtualAccountService:
     def __init__(self, repository: VirtualAccountRepository):
         self.repository = repository

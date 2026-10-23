@@ -30,8 +30,9 @@ _EVENT_ITEM = {
     "events": {
         "type": "array",
         "items": _object(
-            {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT},
-            ("evidence_id", "materiality", "summary"),
+            {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT,
+             "counter_evidence": _strings(), "pending_confirmations": _strings()},
+            ("evidence_id", "materiality", "summary", "counter_evidence", "pending_confirmations"),
         ),
     },
 }
@@ -109,4 +110,7 @@ EVENT_BATCH_SIZE = 15
 _EVENT_RULES = (
     "finding_id 在整份報告（含所有股票）中必須唯一，請用「股票代號:f序號」，例如 2330.TW:f1，不可每檔都從 f1 起算；"
     "輸入列出的每一則重大訊息都必須在該股票的 events 逐一分級一次，不可漏掉或重複。"
+    "每則事件的 summary 寫事件影響；counter_evidence 列出輸入中削弱或反駁這個影響的事實（例如同快照財報或其他公告），"
+    "pending_confirmations 列出輸入中還查不到、尚待確認的事項（例如金額未公布、尚待股東會或主管機關核准）；"
+    "兩者都只能依輸入內容，沒有就給空陣列，不得推測補充。"
 )

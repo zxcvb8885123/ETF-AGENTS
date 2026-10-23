@@ -17,6 +17,7 @@ from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIR
 from .trend_history import TechnicalTrendHistoryTools
 from .fundamental_language import chinese_gap_explanations
 from .event_financial_context import event_financial_context
+from .cash_flow_context import cash_flow_context
 
 from .contracts import (
     validate_forbidden_keys,
@@ -42,7 +43,7 @@ _EVENT_BODY_LIMIT = 1500
 _EVENT_EXCERPT_HEAD = 500
 _EVENT_EXCERPT_TAIL = 160
 _MOMENTUM_FIELDS = (
-    "close", "return_5d", "return_20d", "return_60d", "above_ma20", "above_ma60",
+    "close", "return_5d", "return_20d", "return_60d", "ma20", "ma60", "above_ma20", "above_ma60",
     "atr_14_pct", "downside_volatility_20d", "average_traded_value_20d",
 )
 TECHNICAL_GATE_VERSION = "1.0"
@@ -153,6 +154,7 @@ def build_analyst_brief(
     events = _documents(bundle, "material_event")
     sentiment_by_symbol = {item["symbol"]: item for item in sentiment_report(bundle)["items"]} if analyst == "event" else {}
     financial_by_symbol = event_financial_context(bundle) if analyst == "event" else {}
+    cash_flow_by_symbol = cash_flow_context(bundle) if analyst == "fundamental" else {}
     trend_tools = TechnicalTrendHistoryTools(bundle) if analyst == "technical" else None
     symbols: List[Dict[str, object]] = []
     for symbol in _symbols(bundle):
@@ -201,6 +203,11 @@ def build_analyst_brief(
                 metrics.get("metrics", []), bundle["snapshot"].get("documents", []), symbol
             )
             entry["financial_status"] = metrics.get("status", "unavailable")
+            # 策略文件：基本面看現金流。數值由程式從已核對的現金流文件計算，缺少時明確說明。
+            entry["cash_flow"] = cash_flow_by_symbol.get(symbol) or {
+                "status": "unavailable",
+                "reason": "快照沒有本股票已核對的現金流量表（金融保險業或資料商尚未提供）",
+            }
             entry["financial_facts"] = []
             for document in _documents(bundle, "financial_statement").get(symbol, []):
                 statement = document.get("financial_statement", {})
@@ -422,6 +429,8 @@ class AnalystReportValidator:
     ITEM = {"symbol", "outlook", "findings", "data_gaps"}
     FINDING = {"finding_id", "text", "evidence_ids"}
     EVENT = {"evidence_id", "materiality", "summary"}
+    # 策略文件：公司事件要看「反證與尚待確認事項」。舊封存沒有這兩欄，照原樣驗證；有就必須是字串陣列。
+    EVENT_REVIEW = ("counter_evidence", "pending_confirmations")
 
     def __init__(
         self, bundle: Mapping[str, object], analyst: str, symbols: Optional[Sequence[str]] = None
@@ -606,7 +615,13 @@ class AnalystReportValidator:
             if not isinstance(event, Mapping):
                 errors.append("%s 必須是物件" % event_prefix)
                 continue
-            reject_unknown_fields(event, self.EVENT, event_prefix, errors)
+            reject_unknown_fields(event, self.EVENT | set(self.EVENT_REVIEW), event_prefix, errors)
+            for field in self.EVENT_REVIEW:
+                if field in event:
+                    try:
+                        string_list(event, field)
+                    except DecisionToolError as error:
+                        errors.append("%s.%s" % (event_prefix, error))
             evidence_id = str(event.get("evidence_id", ""))
             if evidence_id not in expected:
                 errors.append("%s 不是 %s 的重大訊息：%s" % (event_prefix, symbol, evidence_id))
