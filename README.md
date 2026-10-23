@@ -4,10 +4,11 @@
 
 ## 快速啟動
 
-在專案根目錄操作，需有可執行 `start.sh` 的 shell。首次安裝先建立本機環境：
+在專案根目錄操作，需有可執行 `start.sh` 的 shell。本機環境使用 Python 3.12（與 Docker 映像相同；系統內建的 3.9 已停止維護，且裝不了 pip 26.2.2 以上的安全版本）。首次安裝先用 [uv](https://docs.astral.sh/uv/) 取得 Python 3.12 並建立本機環境：
 
 ```bash
-python3 -m venv .venv
+uv python install 3.12
+"$(uv python find 3.12)" -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 

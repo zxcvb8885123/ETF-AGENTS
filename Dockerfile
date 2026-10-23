@@ -7,9 +7,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt /app/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r /app/requirements.txt
+    pip install --upgrade "pip>=26.2.2" \
+    && pip install -r /app/requirements.txt
 
 ARG BUILD_INPUT_SHA=unknown
 LABEL org.etf-agent.build-input-sha="${BUILD_INPUT_SHA}"

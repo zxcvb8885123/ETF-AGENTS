@@ -4,3 +4,4 @@ fastapi>=0.110,<1
 uvicorn>=0.29,<1
 httpx>=0.27,<1
 pytest>=8,<9
+certifi>=2026.10.19

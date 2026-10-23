@@ -57,7 +57,7 @@ case "$MODE" in
     ;;
   run|status)
     if [ ! -x "$PROJECT_DIR/.venv/bin/python" ]; then
-      echo "找不到專案 Python 環境，請先執行 python3 -m venv .venv，再執行 .venv/bin/python -m pip install -r requirements.txt。" >&2
+      echo "找不到專案 Python 環境，請先以 Python 3.12 建立：uv python install 3.12，再執行 \"\$(uv python find 3.12)\" -m venv .venv，然後執行 .venv/bin/python -m pip install -r requirements.txt。" >&2
       exit 1
     fi
     if [ "$MODE" = "run" ]; then
