@@ -4,7 +4,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from unittest import mock
@@ -51,10 +51,37 @@ class SupersedeDecisionRunsTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def make_run(self, name, snapshot):
+    def make_run(self, name, snapshot, session_start=None):
         run = self.decisions / "2026-10-21" / name
         run.mkdir(parents=True)
-        (run / "decision_input.json").write_text(json.dumps({"account_snapshot": snapshot}), encoding="utf-8")
+        bundle = {"account_snapshot": snapshot}
+        if session_start:
+            bundle["trading_status_bundle"] = {"target_session": {"start": session_start}}
+        (run / "decision_input.json").write_text(json.dumps(bundle), encoding="utf-8")
+
+    def test_submitted_decision_after_deadline_is_kept(self):
+        # 10/23 13:59 重跑同一帳戶快照：04:15 那份已過 08:55 交件期限，保留它，新決策移到封存區。
+        session = "2026-10-23T09:00:00+08:00"
+        self.make_run("decision-old", {"id": 1}, session)
+        self.make_run("decision-new", {"id": 1}, session)
+        archive = self.root / "archive"
+        afternoon = datetime.fromisoformat("2026-10-23T14:14:00+08:00")
+        with self.assertRaisesRegex(VirtualAccountError, "已過交件期限"):
+            supersede_decision_runs(self.decisions, "decision-new", archive, now=afternoon)
+        self.assertEqual([path.name for path in self.decisions.glob("*/*")], ["decision-old"])
+        self.assertTrue((archive / "2026-10-21" / "decision-new" / "decision_input.json").exists())
+
+    def test_backup_before_deadline_is_replaced(self):
+        session = "2026-10-23T09:00:00+08:00"
+        self.make_run("decision-old", {"id": 1}, session)
+        self.make_run("decision-new", {"id": 1}, session)
+        morning = datetime.fromisoformat("2026-10-23T07:25:00+08:00")
+        self.assertEqual(supersede_decision_runs(self.decisions, "decision-new", self.root / "archive", now=morning),
+                         ["decision-old"])
+        # 缺少目標時段的舊決策視為可能已上傳，不取代。
+        self.make_run("decision-legacy", {"id": 1})
+        with self.assertRaisesRegex(VirtualAccountError, "已過交件期限"):
+            supersede_decision_runs(self.decisions, "decision-new", self.root / "archive", now=morning)
 
     def test_older_run_with_same_account_snapshot_is_archived(self):
         self.make_run("decision-old", {"id": 1})

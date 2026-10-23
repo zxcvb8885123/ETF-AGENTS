@@ -41,7 +41,7 @@ flowchart LR
 
 - 帳本是雜湊鏈，不分日期資料夾；已有帳戶不會重新注資，只驗證並沿用。
 - 結算用官方 TWSE／TPEx 價量；缺官方價時 `run` 停止並顯示缺口，不改用 Yahoo 價格（見根 README「常見問題」）。
-- 新決策取代同一份帳戶快照的舊決策時，舊 run 會被移到 `artifacts/archive/superseded_decisions`（`supersede_decision_runs`）。
+- 新決策取代同一份帳戶快照的舊決策時，舊 run 會被移到 `artifacts/archive/superseded_decisions`（`supersede_decision_runs`）；舊決策的目標時段已過交件期限（08:55，可能已上傳）或沒有目標時段時不取代，改把新決策移到封存區並讓該次流程失敗。
 - 有待成交決策時預設不建立新的 prepare；只有新 Snapshot 的 cutoff 早於該決策目標時段當天的交件期限（08:55）時，`DailyAccountRunner.run` 才把該決策移到同一封存區並建立新 prepare（`supersede_unstarted_decision`）。缺少目標時段、已過期限或收盤價晚到時維持 `blocked_by_pending_decision`。
 - 取代後該次每日流程沒產生新 D-Plan 時，`restore_superseded_decision` 把被取代的決策搬回決策庫、帳本 latest 指回原 prepare（`VirtualAccountRepository.rollback_latest`），重跑建立的 prepare 移到 `ledger/<account_id>/rolled_back/`，全部只搬移不刪除；帳本已被其他執行推進或原決策不在封存區時拒絕。
 - 只模擬成交，不自動下單。

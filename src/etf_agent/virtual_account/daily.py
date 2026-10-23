@@ -81,15 +81,29 @@ def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, 
     return matches[0] if matches else None
 
 
-def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive_root: Path) -> List[str]:
-    """同一份 AccountSnapshot 重跑後，把較舊的 Decision run 整個搬到封存區，只留 keep_run_id；回傳被取代的 run。"""
+def submission_deadline_passed(bundle: Mapping[str, object], now: datetime) -> bool:
+    """決策目標時段當天的交件期限（08:55）是否已過；缺少目標時段時視為已過（可能已上傳，不得取代）。"""
+    start = ((bundle.get("trading_status_bundle") or {}).get("target_session") or {}).get("start")
+    if not start:
+        return True
+    session_day = parse_time(start, "target_session_start").astimezone(TAIPEI).date()
+    return now >= datetime.combine(session_day, DECISION_DEADLINE, TAIPEI)
+
+
+def supersede_decision_runs(
+    decision_repository: Path, keep_run_id: str, archive_root: Path, now: Optional[datetime] = None,
+) -> List[str]:
+    """同一份 AccountSnapshot 重跑後，把較舊的 Decision run 整個搬到封存區，只留 keep_run_id；回傳被取代的 run。
+
+    給 ``now`` 時，舊決策的目標時段已過交件期限（可能已上傳）就不得取代：改把 keep_run_id 移到封存區並拒絕。
+    """
     root = Path(decision_repository)
     kept_dir = DecisionRepository(root).run_dir(keep_run_id)
     if kept_dir is None:
         raise VirtualAccountError("找不到要保留的 Decision run：%s" % keep_run_id)
     kept = kept_dir / "decision_input.json"
     account_snapshot = json.loads(kept.read_text(encoding="utf-8")).get("account_snapshot")
-    superseded: List[str] = []
+    matches: List[Path] = []
     for run_dir in list_run_dirs(root):
         if run_dir.name == keep_run_id or not (run_dir / "decision_input.json").exists():
             continue
@@ -98,10 +112,20 @@ def supersede_decision_runs(decision_repository: Path, keep_run_id: str, archive
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(bundle, Mapping) and bundle.get("account_snapshot") == account_snapshot:
-            target = Path(archive_root) / run_dir.parent.name
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(run_dir), str(target / run_dir.name))
-            superseded.append(run_dir.name)
+            if now is not None and submission_deadline_passed(bundle, now):
+                target = Path(archive_root) / kept_dir.parent.name
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(kept_dir), str(target / kept_dir.name))
+                raise VirtualAccountError(
+                    "舊決策 %s 的時段已過交件期限，可能已上傳，保留舊決策；新決策 %s 已移到封存區"
+                    % (run_dir.name, keep_run_id))
+            matches.append(run_dir)
+    superseded: List[str] = []
+    for run_dir in matches:
+        target = Path(archive_root) / run_dir.parent.name
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(run_dir), str(target / run_dir.name))
+        superseded.append(run_dir.name)
     return superseded
 
 

@@ -729,6 +729,8 @@ def main() -> int:
         superseded = supersede_decision_runs(
             ROOT / "artifacts" / "decisions", result.decision_run_id,
             ROOT / "artifacts" / "archive" / "superseded_decisions",
+            # 以完成當下判斷：跑到超過 08:55 才完成時，舊決策可能已上傳，改保留舊的。
+            now=datetime.now(TAIPEI_TIMEZONE),
         )
         if superseded:
             summary["superseded_decision_runs"] = superseded
