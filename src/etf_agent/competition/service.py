@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,9 @@ from .dplan import DPlanError, DPlanExporter, load_decision_run, verify_account_
 
 TAIPEI = timezone(timedelta(hours=8))
 DEFAULT_OUTPUT_DIRECTORY = Path("artifacts") / "competition_d_plan"
+CODE_SNAPSHOT_DIRECTORY = Path("artifacts") / "code_versions"
+# 會影響決策行為的路徑；參數與提示詞模板也算程式碼。
+CODE_VERSION_PATHS = ("src", "cli", "tradeagent", "config", "scripts", "data", "start.sh", "requirements.txt")
 
 
 def read_object(path: Path, label: str) -> Dict[str, object]:
@@ -90,17 +94,20 @@ class DPlanExportService:
     def __init__(self, root: Path):
         self.root = Path(root)
 
+    def _git(self, *args: str) -> bytes:
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True).stdout
+
     def code_version(self) -> str:
-        """Return a reproducible local code identifier without trusting caller input."""
+        """Return a reproducible local code identifier without trusting caller input.
+
+        只有影響決策的路徑（CODE_VERSION_PATHS）算進版本；有未提交修改時，識別碼附上修改內容雜湊，
+        並把 patch 與未追蹤檔另存到 artifacts/code_versions/，讓這個識別碼能還原出當天實際執行的程式。
+        """
         try:
-            revision = subprocess.run(
-                ["git", "rev-parse", "--short=12", "HEAD"], cwd=self.root, check=True,
-                capture_output=True, text=True,
-            ).stdout.strip()
-            dirty = bool(subprocess.run(
-                ["git", "status", "--porcelain"], cwd=self.root, check=True,
-                capture_output=True, text=True,
-            ).stdout.strip())
+            revision = self._git("rev-parse", "--short=12", "HEAD").decode("utf-8").strip()
+            dirty = bool(self._git("status", "--porcelain", "--", *CODE_VERSION_PATHS).strip())
+            if dirty:
+                return self._dirty_code_version(revision)
         except (OSError, subprocess.CalledProcessError):
             digest = hashlib.sha256()
             included = 0
@@ -119,7 +126,43 @@ class DPlanExportService:
             if not included:
                 raise DPlanError("無法建立程式版本內容雜湊")
             return "sha256:%s" % digest.hexdigest()[:12]
-        return "git:%s%s" % (revision, "-dirty" if dirty else "")
+        return "git:%s" % revision
+
+    def _dirty_code_version(self, revision: str) -> str:
+        patch = self._git("diff", "--binary", "HEAD", "--", *CODE_VERSION_PATHS)
+        untracked = sorted(
+            item for item in self._git("ls-files", "--others", "--exclude-standard", "-z", "--", *CODE_VERSION_PATHS)
+            .decode("utf-8").split("\0") if item
+        )
+        digest = hashlib.sha256()
+        digest.update(patch)
+        for relative in untracked:
+            digest.update(b"\0" + relative.encode("utf-8") + b"\0")
+            digest.update((self.root / relative).read_bytes())
+        version = "git:%s-dirty-%s" % (revision, digest.hexdigest()[:12])
+        snapshot = self.root / CODE_SNAPSHOT_DIRECTORY / version.replace(":", "_")
+        if not snapshot.exists():
+            staging = Path(tempfile.mkdtemp(prefix=".tmp-", dir=self._snapshot_parent()))
+            (staging / "changes.patch").write_bytes(patch)
+            for relative in untracked:
+                target = staging / "untracked" / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((self.root / relative).read_bytes())
+            (staging / "manifest.json").write_text(json.dumps(
+                {"code_version": version, "base_revision": revision, "paths": list(CODE_VERSION_PATHS),
+                 "untracked": untracked}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            try:
+                os.rename(staging, snapshot)
+            except OSError:
+                shutil.rmtree(staging, ignore_errors=True)
+                if not snapshot.exists():
+                    raise
+        return version
+
+    def _snapshot_parent(self) -> Path:
+        parent = self.root / CODE_SNAPSHOT_DIRECTORY
+        parent.mkdir(parents=True, exist_ok=True)
+        return parent
 
     @staticmethod
     def trade_date(daily_run: Mapping[str, object]) -> str:

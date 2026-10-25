@@ -33,7 +33,8 @@ flowchart LR
 
 - 上游（依 import）：`core`、`decision`、`virtual_account`。
 - 下游：`decision_delivery.provider`（呼叫 `load_decision_run`）、`cli/dplan.py`、`scripts/run_daily_pipeline.py`。
-- 讀：決策封存、每日 `pipeline.json`、帳本、`config/competition_profile.json`。寫：`artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` 與 `contexts/`。
+- 讀：決策封存、每日 `pipeline.json`、帳本、`config/competition_profile.json`。寫：`artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` 、`contexts/` 與 `artifacts/code_versions/`。
+- `agent_metadata.code_version`（D-Plan 指南要求能對應當天實際執行的程式）：只看 `CODE_VERSION_PATHS`（`src`、`cli`、`tradeagent`、`config`、`scripts`、`data`、`start.sh`、`requirements.txt`），其他未追蹤檔（如 `game_docs/`）不影響。乾淨時為 `git:<12 碼 commit>`；有未提交修改時為 `git:<commit>-dirty-<修改內容 sha256 前 12 碼>`，並把 `changes.patch`、未追蹤檔與 `manifest.json` 存到 `artifacts/code_versions/<識別碼>/`，以 base commit 套回即可還原。
 
 ## 對應的 CLI／scripts／測試
 
