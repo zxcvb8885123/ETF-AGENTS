@@ -14,6 +14,10 @@
 | `玉山挑戰賽_投資組合及交易標的_150檔清單_v1.pdf` | 名單 | 官方 150 檔交易池 | `data/official_universe.csv`；`config/competition_rules.json` 的 `universe_source` 記錄其檔名與 sha256 |
 | `玉山挑戰賽_主動型ETF列表_v1.pdf` | 名單 | 主動型 ETF 清單 | `data/active_etf_list.csv` |
 | `玉山挑戰賽_ETF投資策略說明文件_參賽隊伍繳交格式_v1 .docx` | 格式文件 | 隊伍 ETF 投資策略說明的繳交格式（檔名在 `_v1` 後有一個空格） | 人工填寫策略說明時對照（尚未由程式讀取） |
+| `AI CUP 2026玉山人工智慧公開挑戰賽_比賽辦法_1005更新.pdf` | 競賽辦法 | 正式規則（2026-10-05 版）：持股檔數、權重、現金、Active Share（前 15 大比前 15 大、低於 15% 連續 2 個交易日可取消資格）、警告與罰則 | `config/competition_rules.json`；Active Share 由 `config/decision_rules.json` 與 `data/active_etf_holdings.csv` 接入 Guard |
+| `2026 Agent 基金經理人競賽後台操作說明.pdf` | 操作說明 | 競賽後台的繳交、DataPack 下載與合規狀態頁 | 人工操作參考 |
+| `玉山挑戰賽_ETF投資策略說明文件_範例文件_v1.pdf` | 範例 | ETF 投資策略說明文件的主辦方範例 | 人工撰寫策略說明時對照 |
+| `玉山挑戰賽_Google Token Credit領取方式_v1.pdf` | 說明 | Google Cloud Token Credit 領取流程 | 與程式無關 |
 
 ## 規則
 
