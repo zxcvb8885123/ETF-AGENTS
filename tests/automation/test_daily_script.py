@@ -445,6 +445,92 @@ class DataReuseTests(unittest.TestCase):
             self.assertEqual(summary["late_decision_archived_to"], str(archived))
             self.assertTrue(archived.is_dir())
 
+    def test_voided_closed_session_decision_is_not_treated_as_superseded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pending = {"decision_run_id": "decision-typhoon", "account_run_id": "prepare-old"}
+            (root / "artifacts" / "decisions").mkdir(parents=True)
+            with patch.object(self.module, "ROOT", root):
+                self.assertIsNone(self.module.voided_pending(pending))
+                superseded = root / "artifacts" / "archive" / "superseded_decisions" / "2026-10-23" / "decision-typhoon"
+                superseded.mkdir(parents=True)
+                self.assertTrue(self.module.superseded_pending("acct", pending))
+                superseded.rmdir()
+                voided = root / "artifacts" / "archive" / "voided_closed_sessions" / "2026-10-23" / "decision-typhoon"
+                voided.mkdir(parents=True)
+                self.assertFalse(self.module.superseded_pending("acct", pending))
+                self.assertEqual(self.module.voided_pending(pending), voided)
+                self.assertFalse(self.module.superseded_pending("acct", None))
+                self.assertIsNone(self.module.voided_pending(None))
+
+    def test_trading_day_check_runs_holiday_evening_before_trading_day(self):
+        class FakeCalendar:
+            closed = {date(2026, 10, 24), date(2026, 10, 25), date(2026, 10, 26)}
+
+            def is_trading_day(self, day):
+                return day not in self.closed
+
+        def check(at):
+            with patch.object(self.module, "latest_calendar_capture_before", lambda *_a: Path("capture")), \
+                    patch.object(self.module, "calendar_from_capture", lambda *_a: FakeCalendar()):
+                return self.module.trading_day_check(Path("captures"), datetime.fromisoformat(at))
+
+        self.assertTrue(check("2026-10-23T07:00:00+08:00"))
+        self.assertFalse(check("2026-10-26T07:00:00+08:00"))
+        self.assertTrue(check("2026-10-26T21:00:00+08:00"))
+        self.assertFalse(check("2026-10-26T14:59:00+08:00"))
+        self.assertFalse(check("2026-10-25T21:00:00+08:00"))
+        self.assertTrue(check("2026-10-27T21:00:00+08:00"))
+
+    def test_auto_resume_blocker_skips_quota_security_and_late_runs(self):
+        deadline = datetime.fromisoformat("2026-10-27T08:55:00+08:00")
+        early = datetime.fromisoformat("2026-10-27T07:20:00+08:00")
+        blocker = self.module.auto_resume_blocker
+        self.assertIsNone(blocker(["event_b3 Agent 輸出驗證失敗：items[14] 未分級"], deadline, early))
+        self.assertIn("額度", blocker(["event_b3 Agent 未產生結構化輸出：You've hit your session limit"], deadline, early))
+        self.assertIn("安全", blocker(["bull_b0 Agent 輸出包含本機秘密設定的值，已拒絕"], deadline, early))
+        self.assertIn("不足", blocker(["timeout"], deadline, datetime.fromisoformat("2026-10-27T08:31:00+08:00")))
+        self.assertIsNotNone(blocker(["timeout"], None, early))
+
+    def test_run_decision_chain_resumes_once_with_validated_outputs(self):
+        from types import SimpleNamespace
+
+        def outcome(status, calls, errors=()):
+            return SimpleNamespace(status=status, agent_calls=calls, errors=list(errors))
+
+        deadline = datetime.fromisoformat("2026-10-27T08:55:00+08:00")
+        now = lambda: datetime.fromisoformat("2026-10-27T07:20:00+08:00")
+        built, logs = [], []
+        results = iter([outcome("failed", [{"name": "event_b3"}], ["event_b3 Agent 輸出驗證失敗"]),
+                        outcome("completed", [{"name": "trader_b0"}])])
+        result, calls, record = self.module.run_decision_chain(
+            lambda resume: built.append(resume) or resume, lambda _: next(results), deadline, now, logs.append)
+        self.assertEqual(built, [False, True])
+        self.assertEqual(result.status, "completed")
+        self.assertEqual([call["name"] for call in calls], ["event_b3", "trader_b0"])
+        self.assertEqual((record["attempted"], record["status"]), (True, "completed"))
+        # 額度用完時不續跑，只呼叫一次並記下原因。
+        built.clear()
+        result, calls, record = self.module.run_decision_chain(
+            lambda resume: built.append(resume), lambda _: outcome("failed", [], ["hit your session limit"]), deadline, now, logs.append)
+        self.assertEqual(built, [False])
+        self.assertFalse(record["attempted"])
+        # 關閉自動續跑或第一次就成功時不記錄。
+        built.clear()
+        _, _, record = self.module.run_decision_chain(
+            lambda resume: built.append(resume), lambda _: outcome("failed", [], ["timeout"]), deadline, now, logs.append, auto_resume=False)
+        self.assertEqual((built, record), ([False], None))
+
+    def test_trading_day_check_runs_sunday_evening_before_monday(self):
+        def check(at):
+            with patch.object(self.module, "latest_calendar_capture_before", lambda *_a: Path("capture")), \
+                    patch.object(self.module, "calendar_from_capture", lambda *_a: FakeCalendar()):
+                return self.module.trading_day_check(Path("captures"), datetime.fromisoformat(at))
+
+        self.assertTrue(check("2026-11-01T21:00:00+08:00"))
+        self.assertFalse(check("2026-10-31T21:00:00+08:00"))
+        self.assertFalse(check("2026-11-01T07:00:00+08:00"))
+
     def scheduled_main(self, root, at):
         """不帶 --force 在指定台北時間觸發 main，回傳 (exit code, 是否走到預檢)。"""
         fixed = datetime.fromisoformat(at)

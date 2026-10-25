@@ -129,6 +129,66 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
         guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
         self.assertTrue(guard["passed"], [(item["rule_id"], item["details"]) for item in guard["checks"] if not item["passed"]])
 
+    def test_exit_kept_by_program_when_positions_would_fall_below_minimum(self):
+        bundle, _, _, intent = valid_inputs()
+        intent = copy.deepcopy(intent)
+        next(item for item in intent["items"] if item["symbol"] == "2330.TW")["intent"] = "exit"
+        bundle["rules"]["min_positions"] = 2
+        bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        settings = policy()
+        settings["min_positions"] = 2
+        settings["content_sha256"] = decision_policy_sha256(settings)
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        held = {item["symbol"] for item in proposal["allocation_proposal"]["positions"]}
+        self.assertIn("2330.TW", held)
+        self.assertFalse(any(item["symbol"] == "2330.TW" and item["side"] == "sell" for item in proposal["order_proposal"]["orders"]))
+        flags = [item for item in proposal["constraint_flags"] if item["code"] == "RISK_MIN_POSITIONS"]
+        self.assertEqual([item["symbol"] for item in flags], ["2330.TW"])
+        self.assertEqual(ProposalValidator(bundle, settings, intent).validate(proposal), [])
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        position_count = next(item for item in guard["checks"] if item["rule_id"] == "POSITION_COUNT")
+        self.assertTrue(position_count["passed"], position_count["details"])
+        # forced_exit 是規則要求出場，不由程式留住；未達下限時照舊交給 Guard 否決。
+        next(item for item in intent["items"] if item["symbol"] == "2330.TW")["intent"] = "forced_exit"
+        forced = AllocationOrderEngine(bundle, settings).run(intent)
+        self.assertNotIn("2330.TW", {item["symbol"] for item in forced["allocation_proposal"]["positions"]})
+        self.assertFalse(any(item["code"] == "RISK_MIN_POSITIONS" for item in forced["constraint_flags"]))
+
+    def test_exit_not_kept_when_positions_already_meet_minimum(self):
+        bundle, _, _, intent = valid_inputs()
+        intent = copy.deepcopy(intent)
+        next(item for item in intent["items"] if item["symbol"] == "2330.TW")["intent"] = "exit"
+        proposal = AllocationOrderEngine(bundle, policy()).run(intent)
+        self.assertNotIn("2330.TW", {item["symbol"] for item in proposal["allocation_proposal"]["positions"]})
+        self.assertFalse(any(item["code"] == "RISK_MIN_POSITIONS" for item in proposal["constraint_flags"]))
+
+    def test_untradable_symbols_get_no_orders_before_guard(self):
+        bundle, _, _, intent = valid_inputs()
+        intent = copy.deepcopy(intent)
+        next(item for item in intent["items"] if item["symbol"] == "2330.TW")["intent"] = "exit"
+        settings = policy()
+        with patch.object(AllocationOrderEngine, "_untradable", return_value={"2317.TW", "2330.TW"}):
+            proposal = AllocationOrderEngine(bundle, settings).run(intent)
+            self.assertEqual(ProposalValidator(bundle, settings, intent).validate(proposal), [])
+        self.assertEqual(proposal["order_proposal"]["orders"], [])
+        self.assertIn("2330.TW", {item["symbol"] for item in proposal["allocation_proposal"]["positions"]})
+        flagged = sorted(item["symbol"] for item in proposal["constraint_flags"] if item["code"] == "RISK_NOT_TRADABLE")
+        self.assertEqual(flagged, ["2317.TW", "2330.TW"])
+
+    def test_untradable_set_follows_guard_trading_status_source(self):
+        from types import SimpleNamespace
+
+        def untradable(bundle):
+            return AllocationOrderEngine._untradable(SimpleNamespace(context=SimpleNamespace(bundle=bundle)))
+
+        assessment = {"symbols": [{"symbol": "2317.tw", "state": "blocked"}, {"symbol": "2330.TW", "state": "allowed"},
+                                  {"symbol": "1101.TW", "state": "unknown"}]}
+        self.assertEqual(untradable({"trading_status_bundle": {}, "tradability_assessment": assessment}), {"2317.TW", "1101.TW"})
+        # 沒有成對的交易狀態包（舊 fixture）時不由程式判斷，維持交給 Guard。
+        self.assertEqual(untradable({"tradability_assessment": assessment}), set())
+
     def test_sector_over_limit_is_trimmed_before_guard(self):
         bundle, _, _, _ = valid_inputs()
         account = bundle["account_snapshot"]

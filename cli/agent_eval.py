@@ -29,8 +29,9 @@ def main() -> int:
     run.add_argument("--repeats", type=int, default=2, help="每份考卷重跑次數（1～5，預設 2，用來量穩定度）")
     run.add_argument("--stop-after", choices=("analysts", "full"), default="full",
                      help="analysts 只跑分析師（較省）；full 跑完整決策鏈")
-    run.add_argument("--model", help="多空、交易與風險使用的模型；預設沿用 Claude CLI 設定")
+    run.add_argument("--model", help="交易與風險使用的模型；預設沿用 Claude CLI 設定")
     run.add_argument("--analyst-model", default="sonnet", help="分析師批次模型，與每日排程相同預設 sonnet")
+    run.add_argument("--research-model", default="sonnet", help="多頭／空頭研究員模型，與每日排程相同預設 sonnet")
     run.add_argument("--max-workers", type=int, default=6, choices=range(1, 9), metavar="N")
     run.add_argument("--yes", action="store_true", help="確認會產生 Agent 用量")
     report = commands.add_parser("report", help="比較重跑結果，寫出 report.json 與 report.md")
@@ -65,6 +66,7 @@ def main() -> int:
                 return DailyDecisionPipeline(
                     ROOT, run_dir, ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=3.0), decision_repository,
                     analyst_runner=ClaudeAgentRunner(ROOT, model=args.analyst_model, max_budget_usd=3.0),
+                    research_runner=ClaudeAgentRunner(ROOT, model=args.research_model, max_budget_usd=3.0),
                     technical_gate=True, max_workers=args.max_workers,
                 )
 

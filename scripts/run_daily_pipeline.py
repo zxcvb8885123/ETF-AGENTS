@@ -64,7 +64,15 @@ from etf_agent.virtual_account.daily import (  # noqa: E402
     supersede_decision_runs,
 )
 
+DEFAULT_CLAUDE_MODEL = "opus"
+# 分析師批次逐則分級大量重大訊息，opus 實測漏分級且單批用量約 sonnet 兩倍，維持 sonnet。
 DEFAULT_CLAUDE_ANALYST_MODEL = "sonnet"
+# 多頭／空頭逐檔寫論點、讀得多，opus 用量約 sonnet 2.5 倍；opus 只留給最後拍板的交易與風險。
+DEFAULT_CLAUDE_RESEARCH_MODEL = "sonnet"
+# 決策鏈失敗後自動續跑一次的最短剩餘時間：完整鏈約 22 分鐘，續跑沿用已驗證輸出，通常更短。
+AUTO_RESUME_MIN_REMAINING = timedelta(minutes=25)
+# 額度用完要等重置、安全拒絕不該重試：這些錯誤續跑無效。
+NON_RESUMABLE_MARKERS = ("session limit", "usage limit", "hit your", "rate limit", "秘密", "未核准工具")
 RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
 DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
 TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
@@ -357,11 +365,18 @@ def refresh_inferred_closures(captures_root: Path, now: datetime) -> None:
 
 
 def trading_day_check(captures_root: Path, now: datetime) -> bool:
-    """依 now 前最近封存的官方開休市日曆判斷今天是否為交易日；日曆缺漏或未涵蓋今年即拋錯。"""
+    """依 now 前最近封存的官方開休市日曆判斷此刻是否該跑；日曆缺漏或未涵蓋今年即拋錯。
+
+    今天是交易日就跑。今天休市時，DATA_READY_TIME 後的晚間場是替隔天做備案，隔天是交易日也要跑
+    （例如補假那晚先做好隔天的備案，早上還能再重做一次）。
+    """
     capture = latest_calendar_capture_before(captures_root, now.isoformat())
     if capture is None:
         raise TradingCalendarError("找不到封存的官方開休市日期表（%s）" % captures_root)
-    return calendar_from_capture(capture).is_trading_day(now.date())
+    calendar = calendar_from_capture(capture)
+    if calendar.is_trading_day(now.date()):
+        return True
+    return now.time() >= DATA_READY_TIME and calendar.is_trading_day(now.date() + timedelta(days=1))
 
 
 def upcoming_session_start(captures_root: Path, now: datetime):
@@ -413,6 +428,38 @@ def completed_run_for_session(runs_root: Path, run_id: str, session_start, now: 
 ROLLBACK_SNAPSHOT = "rollback_research_snapshot.json"  # 重跑前的 Snapshot 副本，還原時放回 latest
 
 
+def auto_resume_blocker(errors, deadline, now: datetime) -> "str | None":
+    """決策鏈失敗後不該自動續跑的原因；可以續跑時回 None。"""
+    text = "；".join(str(error) for error in errors)
+    lowered = text.lower()
+    for marker in NON_RESUMABLE_MARKERS:
+        if marker.lower() in lowered:
+            return "錯誤屬額度用完或安全拒絕（%s），續跑無效" % marker
+    if deadline is None:
+        return "無法判斷交件期限"
+    if now + AUTO_RESUME_MIN_REMAINING > deadline:
+        return "距交件期限不足 %d 分鐘" % (AUTO_RESUME_MIN_REMAINING.total_seconds() // 60)
+    return None
+
+
+def run_decision_chain(build, run, deadline, now, log, auto_resume=True):
+    """跑決策鏈；失敗且 ``auto_resume_blocker`` 允許時，以 resume 沿用已驗證輸出自動續跑一次。
+
+    ``build(resume)`` 回傳 pipeline，``run(pipeline)`` 回傳 PipelineResult，``now()`` 回傳含時區現在時間。
+    回傳 (result, agent_calls, auto_resume)：agent_calls 合併兩次呼叫紀錄；auto_resume 為 None（未失敗或關閉）或紀錄。"""
+    first = run(build(False))
+    if first.status == "completed" or not auto_resume:
+        return first, list(first.agent_calls), None
+    blocker = auto_resume_blocker(first.errors, deadline, now())
+    if blocker is not None:
+        log("[續跑] 不自動續跑：%s" % blocker)
+        return first, list(first.agent_calls), {"attempted": False, "reason": blocker}
+    log("[續跑] 決策鏈失敗，沿用已驗證輸出自動續跑一次：%s" % "；".join(first.errors)[:300])
+    second = run(build(True))
+    record = {"attempted": True, "first_errors": [str(error)[:300] for error in first.errors[:5]], "status": second.status}
+    return second, list(first.agent_calls) + list(second.agent_calls), record
+
+
 def session_deadline(session):
     """目標時段當天的交件期限（08:55，含時區）；缺少或無法解析開盤時間時回 None。"""
     try:
@@ -448,7 +495,17 @@ def superseded_pending(account_id: str, pending) -> bool:
     """資料階段是否把重跑前的待成交決策移到封存區；帳本可能已前進，也可能在建立新 prepare 前就失敗。"""
     if pending is None:
         return False
-    return find_run_dir(ROOT / "artifacts" / "decisions", pending["decision_run_id"], RuntimeError) is None
+    if find_run_dir(ROOT / "artifacts" / "decisions", pending["decision_run_id"], RuntimeError) is not None:
+        return False
+    # 目標時段休市而作廢的決策不是被取代的備案，沒產生新 D-Plan 時也不能還原。
+    return voided_pending(pending) is None
+
+
+def voided_pending(pending) -> "Path | None":
+    """待成交決策因目標時段休市被帳本作廢時，回傳它在作廢區的位置。"""
+    if pending is None:
+        return None
+    return find_run_dir(ROOT / "artifacts" / "archive" / "voided_closed_sessions", pending["decision_run_id"], RuntimeError)
 
 
 def roll_back_superseded(summary: dict, run_dir: Path, account_id: str, decision_run_id: str) -> None:
@@ -555,21 +612,29 @@ def main() -> int:
              "不帶值時續跑今天最近一個未完成的 run；帶 RUN_ID（如 daily-20260929）則續跑指定 run，用量上限重置或跨午夜後使用",
     )
     parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
-    parser.add_argument("--model", help="子 Agent 模型；預設沿用所選 CLI 設定")
+    parser.add_argument("--model", help="交易、現金姿態與風險審查的模型；使用 Claude CLI 時預設 %s，其他 CLI 預設沿用該 CLI 設定" % DEFAULT_CLAUDE_MODEL)
     parser.add_argument(
         "--analyst-model",
         help="技術／基本面／事件分析師批次使用的模型；使用 Claude CLI 時預設 %s，傳 inherit 則沿用 --model；其他 CLI 未指定時沿用 --model。多空、交易與現金姿態不受影響" % DEFAULT_CLAUDE_ANALYST_MODEL,
+    )
+    parser.add_argument(
+        "--research-model",
+        help="多頭／空頭研究員批次使用的模型；使用 Claude CLI 時預設 %s，傳 inherit 則沿用 --model；其他 CLI 未指定時沿用 --model" % DEFAULT_CLAUDE_RESEARCH_MODEL,
     )
     parser.add_argument(
         "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
         help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
     )
     parser.add_argument(
-        "--max-workers", type=int, default=6, choices=range(1, 9), metavar="N",
-        help="分析師、多空研究與交易階段同時執行的子 Agent 數（1～8，預設 6；1 為串行）。同時呼叫越多越容易撞到用量上限",
+        "--max-workers", type=int, default=8, choices=range(1, 9), metavar="N",
+        help="分析師、多空研究與交易階段同時執行的子 Agent 數（1～8，預設 8；1 為串行）。同時呼叫越多越容易撞到用量上限",
     )
     parser.add_argument("--preflight-only", action="store_true", help="只檢查 Docker、所選 Agent CLI 登入、帳戶、必要檔案與磁碟")
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_BYTES / 1024 ** 3, help="執行前檢查要求的最低可用磁碟空間（GiB）")
+    parser.add_argument(
+        "--no-auto-resume", action="store_true",
+        help="決策鏈失敗時不自動續跑（預設：離交件期限 25 分鐘以上、且不是額度用完或安全拒絕時，沿用已驗證輸出續跑一次）",
+    )
     parser.add_argument("--max-budget-usd", type=float, help="Claude CLI 單次子 Agent 的估算用量上限；預設 3 美元")
     args = parser.parse_args()
     args.account_id = args.account_id or active_account_id(ROOT)
@@ -583,10 +648,16 @@ def main() -> int:
         parser.error("--skip-datapack 不能和 --datapack 同時使用")
     if args.rebase_to_datapack and (args.skip_datapack or args.resume is not None):
         parser.error("--rebase-to-datapack 不能和 --skip-datapack 或 --resume 同時使用")
+    if args.model is None and args.agent_cli == "claude":
+        args.model = DEFAULT_CLAUDE_MODEL
     if args.analyst_model == "inherit":
         args.analyst_model = None
     elif args.analyst_model is None and args.agent_cli == "claude":
         args.analyst_model = DEFAULT_CLAUDE_ANALYST_MODEL
+    if args.research_model == "inherit":
+        args.research_model = None
+    elif args.research_model is None and args.agent_cli == "claude":
+        args.research_model = DEFAULT_CLAUDE_RESEARCH_MODEL
     if args.agent_cli != "claude" and args.max_budget_usd is not None:
         parser.error("--max-budget-usd 只適用 Claude CLI")
     if args.max_budget_usd is not None and (not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0):
@@ -643,7 +714,7 @@ def _main(args) -> int:
         refresh_inferred_closures(captures_root, now)
         try:
             if not trading_day_check(captures_root, now):
-                log("%s 依官方開休市日曆休市，不執行（--force 可強制）。" % now.date().isoformat())
+                log("%s 依官方開休市日曆休市、隔天也不是交易時段的晚間備案，不執行（--force 可強制）。" % now.date().isoformat())
                 return 0
         except (TradingCalendarError, OSError, ValueError) as error:
             log("無法判定今天是否為交易日，停止：%s" % error)
@@ -751,6 +822,9 @@ def _main(args) -> int:
                 refresh_inferred_closures(captures_root, datetime.now(TAIPEI_TIMEZONE))
                 if superseded_pending(args.account_id, pending):
                     summary["superseded_pending"] = pending
+                elif voided_pending(pending) is not None:
+                    summary["voided_pending"] = dict(pending, archived_to=str(voided_pending(pending)))
+                    log("前一份決策的目標時段休市，已作廢（不成交）：%s" % pending["decision_run_id"])
             if prepared_account_run(args.account_id) != "prepare-%s" % stamp:
                 raise RuntimeError("虛擬帳本未建立本次 prepare 狀態（可能在等待前次決策的收盤價），不能產生新決策")
         account_run_id = prepared_account_run(args.account_id)
@@ -791,40 +865,52 @@ def _main(args) -> int:
 
         agent_runner = make_runner(args.model)
         analyst_runner = make_runner(args.analyst_model) if args.analyst_model else None
-        pipeline = DailyDecisionPipeline(
-            ROOT, run_dir,
-            agent_runner,
-            ROOT / "artifacts" / "decisions",
-            log=log,
-            resume=args.resume is not None,
-            analyst_runner=analyst_runner,
-            technical_gate=args.technical_gate,
-            max_workers=args.max_workers,
-            # 子 Agent 暫時性失敗（逾時、非零結束、輸出不是 JSON）再試一次，但不拖過目標時段的交件期限。
-            retry_deadline=session_deadline(session),
+        research_runner = make_runner(args.research_model) if args.research_model else None
+        def build_pipeline(resume):
+            return DailyDecisionPipeline(
+                ROOT, run_dir,
+                agent_runner,
+                ROOT / "artifacts" / "decisions",
+                log=log,
+                resume=resume or args.resume is not None,
+                analyst_runner=analyst_runner,
+                research_runner=research_runner,
+                technical_gate=args.technical_gate,
+                max_workers=args.max_workers,
+                # 子 Agent 暫時性失敗（逾時、非零結束、輸出不是 JSON）再試一次，但不拖過目標時段的交件期限。
+                retry_deadline=session_deadline(session),
+            )
+
+        def run_pipeline(pipeline):
+            return pipeline.run(
+                snapshot_path, account_path, trading_status_path,
+                ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
+                ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
+                decision_run_id,
+                perception_bundle_path=perception_bundle, perception_result_path=perception_result,
+                fear_greed_root=ROOT / "artifacts" / "data" / "market_fear_greed",
+                fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
+                market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
+                nav_history=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).nav_history(),
+                applied_decision_run_ids=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).applied_decision_run_ids(),
+            )
+
+        result, agent_calls, auto_resume = run_decision_chain(
+            build_pipeline, run_pipeline, session_deadline(session), lambda: datetime.now(TAIPEI_TIMEZONE), log,
+            auto_resume=not args.no_auto_resume,
         )
-        result = pipeline.run(
-            snapshot_path, account_path, trading_status_path,
-            ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
-            ROOT / "config" / "decision_policy.json", ROOT / "data" / "sector_classification.json",
-            decision_run_id,
-            perception_bundle_path=perception_bundle, perception_result_path=perception_result,
-            fear_greed_root=ROOT / "artifacts" / "data" / "market_fear_greed",
-            fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
-            market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
-            nav_history=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).nav_history(),
-            applied_decision_run_ids=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).applied_decision_run_ids(),
-        )
+        if auto_resume is not None:
+            summary["auto_resume"] = auto_resume
         summary.update(
             {
                 "decision_status": result.decision_status,
                 "decision_run_id": result.decision_run_id,
                 "cash_stance": result.cash_stance,
                 "order_count": len(result.orders),
-                "agent_calls": result.agent_calls,
+                "agent_calls": agent_calls,
                 "max_workers": args.max_workers,
                 "stage_durations": result.stage_durations,
-                "agent_estimated_usage_usd": round(sum(call["estimated_usage_usd"] for call in result.agent_calls), 4),
+                "agent_estimated_usage_usd": round(sum(call["estimated_usage_usd"] for call in agent_calls), 4),
                 "target_session": session,
             }
         )

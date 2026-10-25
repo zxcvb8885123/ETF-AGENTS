@@ -26,7 +26,7 @@ flowchart LR
 | 措施 | 狀態 | 說明 |
 | --- | --- | --- |
 | 技術面閘門 | 已實作，預設開啟 | 見下節 |
-| 分級模型 | 已實作 | Claude CLI 預設 `sonnet`，品質無實跑對照 |
+| 分級模型 | 已實作 | Claude CLI 分析師與多頭／空頭預設 `sonnet`，交易、現金姿態與風險審查自 2026-10-24 起預設 `opus`（多空用 opus 實跑約 7.3 美元、sonnet 約 2.9）。2026-10-24 分析師改用 `opus` 實跑一次：事件批次 event_b3 兩次都漏分級重大訊息而失敗，單批用量約 2.1 美元（sonnet 約 1.1），因此維持 `sonnet` |
 | 交易 brief 去重 | 已接入 | 完整帳戶持倉改為持股代號與檔數，各批少 3,176 bytes；逐股 `held_shares`、雙方 claims 與引用完整保留 |
 | 減少無效重試 | 部分 | 單股硬上限減碼改由程式處理；`liquidity_fill_rate` 為 1 |
 | 關閉 MCP 外掛 | 已實作 | Claude CLI 加 `--strict-mcp-config`，不載入使用者的 MCP 工具；實測一句 `ok` 的固定開銷由約 50,000 降到約 9,700 cache 建立 token |

@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -202,7 +203,7 @@ class DPlanExportServiceTests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"fixture": "new"})
             self.assertEqual(sorted(path.name for path in output.parent.glob("*.json")), [output.name])
             # 每版另存帶台北時間的檔案，舊版不會被取代。
-            versions = output.parent / "versions"
+            versions = output.parent / "versions" / "2026-10-20"
             old_version = versions / ("%s_20261019-180000.json" % output.stem)
             self.assertEqual(Path(results[0]["version_output"]), old_version)
             self.assertEqual(json.loads(old_version.read_text(encoding="utf-8")), {"fixture": "old"})
@@ -213,11 +214,12 @@ class DPlanExportServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "artifacts" / "competition_d_plan" / "D-Plan_TEAM_2026-10-20.json"
-            version = DPlanExportService.version_path(output, "decision-20261019T100000Z")
+            version = DPlanExportService.version_path(output, "decision-20261019T100000Z", "2026-10-20")
             version.parent.mkdir(parents=True)
             version.write_text("{}", encoding="utf-8")
             self.assertEqual(version.name, "D-Plan_TEAM_2026-10-20_20261019-180000.json")
-            self.assertEqual(DPlanExportService.version_path(output, "decision-x").name, "D-Plan_TEAM_2026-10-20_decision-x.json")
+            self.assertEqual(version.parent.name, "2026-10-20")
+            self.assertEqual(DPlanExportService.version_path(output, "decision-x", "2026-10-20").name, "D-Plan_TEAM_2026-10-20_decision-x.json")
             profile = root / "profile.json"
             profile.write_text(json.dumps(approved_profile()), encoding="utf-8")
             daily = {"target_session": {"start": "2026-10-20T09:00:00+08:00"}, "datapack": {"status": "skipped"}}
@@ -355,6 +357,16 @@ class DPlanAdditionalContractTests(unittest.TestCase):
             check_cutoff_before_deadline("2026-10-23T00:30:00", "2026-10-23")
         with self.assertRaisesRegex(DPlanError, "無法解析"):
             check_cutoff_before_deadline("not-a-time", "2026-10-23")
+
+    def test_target_weight_survives_organizer_float_rounding(self):
+        # 2026-10-27 主辦方上傳檢查：0.0331592 × 1e9 ÷ 72.4 以浮點數算是 457999.99999999994，推導少一張。
+        nav = Decimal("1000000000")
+        for price, shares in ((Decimal("72.4"), 458_000), (Decimal("66.4"), 250_000), (Decimal("27.95"), 1_104_000)):
+            weight = official_target_weight(shares, price, nav)
+            self.assertEqual(math.floor(weight * float(nav) / float(price) / 1000) * 1000, shares)
+            self.assertEqual(official_target_shares(weight, price, nav), shares)
+            self.assertLess(weight - float(Decimal(shares) * price / nav), 1e-12)
+        self.assertEqual(official_target_shares(0.0331592, Decimal("72.4"), nav), 457_000)
 
     def test_target_weight_uses_datapack_nav_so_organizer_derives_same_lots(self):
         # 帳本 NAV 比主辦方 nav_tradable 低 0.04%：用帳本反推的權重，在主辦方公式下會少一張。

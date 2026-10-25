@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository
 
@@ -139,7 +141,26 @@ def _pending_orders(decision_repository: Optional[Path], latest: Mapping[str, ob
     } for order in decision.get("orders", [])]
     # 占資金由高到低；沒有比重（已出清）的排最後，同比重維持決策原順序。
     orders.sort(key=lambda item: -float(item["weight"]) if item["weight"] is not None else float("inf"))
-    return {"decision_run_id": run_id, "status": decision.get("status"), "execution_date": execution_date, "orders": orders}
+    return {"decision_run_id": run_id, "status": decision.get("status"), "execution_date": execution_date,
+            "decided_at": _decided_at(run_id), "version_count": _version_count(Path(decision_repository), execution_date),
+            "orders": orders}
+
+
+def _decided_at(run_id: str) -> Optional[str]:
+    """由決策 ID（UTC）換成台北時間；格式不符回 None。"""
+    try:
+        stamp = datetime.strptime(run_id, "decision-%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return stamp.astimezone(ZoneInfo("Asia/Taipei")).isoformat()
+
+
+def _version_count(decision_repository: Path, execution_date: Optional[str]) -> Optional[int]:
+    """同交易日已產生幾份 D-Plan（決策庫旁的 competition_d_plan/versions/<交易日>/）；資料夾不存在回 None。"""
+    if not execution_date:
+        return None
+    folder = decision_repository.parent / "competition_d_plan" / "versions" / execution_date
+    return len(list(folder.glob("*.json"))) if folder.is_dir() else None
 
 
 def build_performance_summary(repository: VirtualAccountRepository, decision_repository: Optional[Path] = None) -> Dict[str, object]:

@@ -34,13 +34,14 @@ from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import (
     ANALYST_SCHEMA,
     EVENT_ANALYST_SCHEMA,
+    EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
     STANCE_SCHEMA,
     TRADE_SCHEMA,
     _EVENT_RULES,
     _SHARED_RULES,
 )
-from .batching import merge_batch_items, universe_batches
+from .batching import merge_batch_items, universe_batches, weighted_batches
 
 
 # 前次決策背景只給交易 Agent 核對一致性；它不是本次證據，Validator 會拒絕文字欄位出現其識別碼。
@@ -94,8 +95,10 @@ class TeamStagesMixin:
                 skipped = {item["symbol"] for item in program_items}
                 self.log("  [事件] %d 檔無重大訊息，由程式輸出 unknown，其餘 %d 檔交給 Agent" % (
                     len(skipped), len(brief["symbols"]) - len(skipped)))
-                analyst_batches = universe_batches(
-                    [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped], EVENT_BATCH_SIZE)
+                analyst_batches = weighted_batches(
+                    [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped],
+                    {row["symbol"]: len(row["events"]) for row in brief["symbols"]},
+                    EVENT_BATCH_SIZE, EVENT_BATCH_MAX_EVENTS)
             plans[analyst] = (brief, analyst_batches, program_items)
             jobs.extend(self._analyst_batch_jobs(bundle, analyst, brief, analyst_batches))
         partials = self._run_jobs(jobs)

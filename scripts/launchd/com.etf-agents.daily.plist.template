@@ -3,10 +3,11 @@
 <!-- 安裝：將 __PROJECT_ROOT__ 與 __HOME__ 換成實際路徑後複製到 ~/Library/LaunchAgents/，
      先 mkdir -p __PROJECT_ROOT__/var/logs（launchd 不會自動建立資料夾），
      再執行 launchctl load ~/Library/LaunchAgents/com.etf-agents.daily.plist。
-     平日 21:00 先做隔天時段的決策當備案（主辦方約 19:00 才產生隔天的 DataPack，須先下載到 var/datapack），隔天 07:00 在交件期限（08:55）前用新資料重做
+     平日與週日 21:00 先做隔天時段的決策當備案（週日那次看得到週末新聞，替週一再做一份）（主辦方約 19:00 才產生隔天的 DataPack，須先下載到 var/datapack），隔天 07:00 在交件期限（08:55）前用新資料重做
      （日線不重抓，事件、新聞與情緒重抓；沒產生新 D-Plan 時自動還原晚上的備案；本機時區須為 Asia/Taipei）。
-     週末、休市日與同一時段 1 小時內已完成由腳本自行略過。
-     需要 Docker Desktop 已啟動、claude CLI 已登入，且 Mac 在該時間未休眠。
+     週末、休市日與同一時段 1 小時內已完成由腳本自行略過；休市日 15:00 後若隔天是交易日，晚上仍照常做隔天的備案。
+     需要 Docker Desktop 已啟動、claude CLI 已登入，且 Mac 在該時間未休眠；以 caffeinate -i 執行，跑的途中不會因閒置而睡著，
+     但無法把已睡著的 Mac 叫醒（筆電闔上螢幕仍會睡），21:00 前須保持喚醒或在電池設定關閉接電源時自動睡眠。
      日誌：腳本自己的訊息一天一檔寫在 var/logs/daily-YYYY-MM-DD.log（台北日期，超過 30 天自動刪除，只刪此命名格式的檔）；
      下方 StandardOutPath／StandardErrorPath 的 var/logs/launchd.log 收的是整個行程的 stdout／stderr
      （含 ./start.sh daily、Docker 子程序輸出與未捕捉的 Python 例外），launchd 只會追加、不輪替，變大時可自行清空。 -->
@@ -16,6 +17,8 @@
   <string>com.etf-agents.daily</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
     <string>__PROJECT_ROOT__/.venv/bin/python</string>
     <string>__PROJECT_ROOT__/scripts/run_daily_pipeline.py</string>
   </array>
@@ -38,6 +41,7 @@
     <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>StandardOutPath</key>
   <string>__PROJECT_ROOT__/var/logs/launchd.log</string>

@@ -100,7 +100,7 @@ flowchart LR
 | `artifacts/daily/` | 每日流程狀態與 Agent 中間產物 | `scripts/run_daily_pipeline.py`、`src/etf_agent/automation/daily_pipeline.py` | 否 | 可刪舊日期；刪了無法續跑（`--resume`）與審計當日 Agent 原始輸出；最終決策仍在 `decisions/` |
 | `artifacts/decisions/` | 不可變決策封存（含 `decision_input`） | `DailyDecisionPipeline` 透過 `DecisionRepository.save`（`src/etf_agent/decision/service.py`、`finalization.py`） | 否 | 不建議刪。這是 Finalizer、Validator、交付報告、D-Plan 與帳本綁定的重建依據；刪了則該日報告與 D-Plan 無法重建，帳本要結算該決策時也會失敗 |
 | `artifacts/reports/` | 決策報告的封存、閱讀副本與日期副本 | `DeliveryRepository`（`src/etf_agent/decision_delivery/repository.py`） | 否 | 不建議刪。`artifacts/latest/` 指向這裡的閱讀副本；刪了需用 `cli/decision_delivery.py build` 從 `decisions/` 重建 |
-| `artifacts/competition_d_plan/` | D-Plan v4.3 候選與內部 context | `DPlanExportService.export`（`src/etf_agent/competition/service.py`），入口為 `run_daily_pipeline.py` 或 `cli/dplan.py` | 否 | 若已人工上傳就可刪；同一交易日重跑時，新決策的 D-Plan 直接取代同名主檔（已上傳的檔案不會跟著更新），每版另存於 `versions/`；`contexts/` 以決策 ID 命名，已存在則拒絕覆寫。由 `decisions/` 與 `ledger/` 可重建 |
+| `artifacts/competition_d_plan/` | D-Plan v4.3 候選與內部 context | `DPlanExportService.export`（`src/etf_agent/competition/service.py`），入口為 `run_daily_pipeline.py` 或 `cli/dplan.py` | 否 | 若已人工上傳就可刪；同一交易日重跑時，新決策的 D-Plan 直接取代同名主檔（已上傳的檔案不會跟著更新），每版另存於 `versions/<交易日>/`；`contexts/` 以決策 ID 命名，已存在則拒絕覆寫。由 `decisions/` 與 `ledger/` 可重建 |
 | `artifacts/ledger/` | 虛擬帳本（雜湊鏈）與帳戶快照 | `src/etf_agent/virtual_account/service.py` 的 `VirtualAccountRepository`，入口 `cli/virtual_account.py`（`start.sh` 呼叫） | 否 | 不要刪。這是帳戶唯一狀態來源，刪了帳戶歷史與績效消失，只能重建新帳戶 |
 | `artifacts/data/` | 最新資料快照與資料收集狀態 | `start.sh` 各階段與 `scripts/`（見 2.5） | 否 | 多數可刪，下次收集重建；`trading_status/` 刪了需重新抓才能判定交易日 |
 | `artifacts/debug/` | 來源原始抓取與探測報告 | `scripts/probe_data_sources.py`、`scripts/collect_sector_classification.py` | 否 | 可刪。平常不用看，只在稽核來源時用 |
@@ -146,7 +146,7 @@ flowchart LR
 | `ledger/<account_id>/runs/prepare-<UTC時間>Z/` | 每日推進後的帳本：`state.json`、`account_snapshot.json`、`snapshot.json`、`corporate_actions.json`、`manifest.json` | `cli/virtual_account.py daily`（run ID 來自 `start.sh` 的 `ACCOUNT_RUN_ID`） | 狀態 `sequence` 必須連續，`parent_state_id` 必須接最新父狀態 |
 | `ledger/<account_id>/.write.lock` | 寫入時暫時建立、結束即刪除的鎖 | `VirtualAccountRepository.save` | 若殘留代表上次寫入中斷，確認沒有程式在跑才可刪 |
 | `competition_d_plan/D-Plan_<team_id>_<交易日>.json` | D-Plan v4.3 候選，待人工驗證與上傳 | `DPlanExportService.export`；也可由 `cli/dplan.py build` 指定 `--output` | 不自動送件；同交易日重跑直接取代主檔，結果帶 `replaced_existing_output` |
-| `competition_d_plan/versions/D-Plan_<team_id>_<交易日>_<台北時間>.json` | 每個決策各一份 D-Plan，時間取自決策 ID（換成台北時間），可對回已上傳的是哪一版 | `DPlanExportService.export`，結果帶 `version_output` | 已存在則拒絕覆寫，不刪舊版 |
+| `competition_d_plan/versions/<交易日>/D-Plan_<team_id>_<交易日>_<台北時間>.json` | 每個決策各一份 D-Plan，時間取自決策 ID（換成台北時間），可對回已上傳的是哪一版 | `DPlanExportService.export`，結果帶 `version_output` | 已存在則拒絕覆寫，不刪舊版 |
 | `competition_d_plan/contexts/context_<decision_run_id>.json` | 內部 context（綁定決策與帳本） | 同上 | |
 | `archive/superseded_decisions/<日期>/<decision-run-id>/` | 同一份帳戶快照重跑、或交件期限前用新 Snapshot 重跑後被取代的舊決策整個搬到這裡 | `supersede_decision_runs`、`supersede_unstarted_decision`（`shutil.move`） | 只保留不再使用的 run；早上重跑沒產生新 D-Plan 時，被取代的決策會搬回 `decisions/` |
 
