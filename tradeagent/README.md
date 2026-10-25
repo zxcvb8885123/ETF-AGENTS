@@ -54,7 +54,7 @@ flowchart LR
 | `fundamental-analyst` | `analysis/fundamental/fundamental-analyst` | 整合財報、財務指標與月營收，逐檔判斷基本面正面／中性／負面 | 是 |
 | `fundamental-research` | `analysis/fundamental/fundamental-research` | 以同一 Snapshot 的已驗證財報建立／驗證／封存 `FundamentalResearchResult`；不得產生候選、權重或訂單 | 否（對應 `cli/fundamental_research.py`） |
 | `event-analyst` | `analysis/event/event-analyst` | 分開分析公司事件與整體台股情緒：市場給一個結果、公司逐檔給事件結果 | 是 |
-| `sentiment-analyst` | `analysis/event/sentiment-analyst` | 市場情緒逐筆標註、去重聚合與分析師共識驗證，產生 `MarketPerceptionResult`；是事件與市場情緒分析師的資料流程，不獨立交付報告 | 是（`perception_stage.py`） |
+| `sentiment-analyst` | `analysis/event/sentiment-analyst` | 市場情緒逐筆標註、去重聚合與重算驗證，產生 `MarketPerceptionResult`；是事件與市場情緒分析師的資料流程，不獨立交付報告 | 是（`perception_stage.py`） |
 
 ### research/（多空研究與事件研究）
 
@@ -84,7 +84,7 @@ flowchart LR
 
 | Skill | 路徑 | 職責 | 每日鏈 |
 | --- | --- | --- | --- |
-| `research-report` | `reporting/research-report` | 把已驗證的 Snapshot、事件研究與選配的情緒／共識結果整合成 ResearchReport JSON／Markdown；不含權重、訂單，也不取代 D-Plan | 否（對應 `cli/research_report.py`） |
+| `research-report` | `reporting/research-report` | 把已驗證的 Snapshot、事件研究與選配的市場情緒結果整合成 ResearchReport JSON／Markdown；不含權重、訂單，也不取代 D-Plan | 否（對應 `cli/research_report.py`） |
 
 ### data/
 

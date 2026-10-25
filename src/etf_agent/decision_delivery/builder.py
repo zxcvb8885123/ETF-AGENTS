@@ -44,7 +44,13 @@ def build_report(artifacts, run_id):
             "revision_count": decision["revision_count"]},
         "analyst_reports": a["team_inputs"]["analyst_reports"],
         "research_claims": a["debate"],
-        "evidence_index": b["snapshot"]["source_evidence"],
+        # 已核准的個股新聞不在 Snapshot 內，另附在引用清單後；舊輸入沒有這個鍵，清單不變。
+        "evidence_index": [*b["snapshot"]["source_evidence"], *(
+            {"evidence_id": item["evidence_id"], "source": item["candidate"]["source"], "symbol": item["symbol"],
+             "publisher": item["candidate"]["publisher"], "title": item["candidate"]["title"],
+             "link": item["candidate"]["link"], "available_at": item["available_at"],
+             "content_sha256": item["content_sha256"]}
+            for item in b.get("company_news_input", {}).get("items", []))],
         "reference_prices": b["snapshot"]["latest_prices"],
         "errors": decision["errors"],
     }

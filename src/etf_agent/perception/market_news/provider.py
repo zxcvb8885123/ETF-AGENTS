@@ -28,9 +28,9 @@ class MarketNewsRSSProvider:
         return {'source':source,'url':url,'raw_text':raw,'raw_sha256':canonical_sha256(raw),
                 'available_at':datetime.now(timezone.utc).isoformat(),'status':status,'error':error}
 
-    def capture_terms(self, terms_url):
+    def capture_terms(self, terms_url, registry=None):
         """保存來源使用規範原文作為核對依據；只接受已登錄來源的規範網址。"""
-        if terms_url not in {item['terms_url'] for item in NEWS_SOURCES.values()}:
+        if terms_url not in {item['terms_url'] for item in (NEWS_SOURCES if registry is None else registry).values()}:
             raise MarketNewsError('不支援的來源規範網址')
         request = urllib.request.Request(terms_url, headers={'User-Agent': 'ETF-Agent/0.1'})
         with self.opener(request, timeout=20) as response:

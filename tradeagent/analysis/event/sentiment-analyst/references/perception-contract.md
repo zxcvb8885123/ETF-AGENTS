@@ -7,10 +7,9 @@
 必要欄位：
 
 - `schema_version="1.0"`、`bundle_id`、`snapshot_id`、`decision_cutoff`、`generated_at`。
-- `source_coverage`：每個 provider 的 `channel`、`status` 與 `license_status`。
+- `source_coverage`：每個 provider 的 `channel`（目前只有 `sentiment`）、`status` 與 `license_status`。
 - `source_evidence`：穩定 `evidence_id`、股票、來源、URL、發布／可得時間及內容雜湊。
 - `sentiment_items`：原始項目、公司映射、canonical content ID 與證據引用。
-- `analyst_estimates`：逐位貢獻者、指標、預估期間、數值、單位、幣別及證據引用。
 
 Bundle 不得包含 cutoff 後才可得的資料。`generated_at` 可以晚於 cutoff，表示在何時封裝這份歷史資料；內容本身仍以 `available_at` 受限。
 
@@ -46,8 +45,6 @@ Bundle 不得包含 cutoff 後才可得的資料。`generated_at` 可以晚於 c
       "event_result_ids": ["research-run-1"],
       "sentiment_labels": [],
       "sentiment": {},
-      "consensus_metrics": [],
-      "expectation_gaps": [],
       "priced_in_assessment": "unknown",
       "rationale": "可核對的簡短判讀。",
       "evidence_ids": [],
@@ -66,14 +63,11 @@ Bundle 不得包含 cutoff 後才可得的資料。`generated_at` 可以晚於 c
 - `research_status`：`usable_secondary`、`pending`、`unavailable`、`excluded`。
 - `priced_in_assessment`：`underappreciated`、`aligned`、`crowded`、`contradicted`、`unknown`。
 - 情緒通道狀態：`available`、`insufficient`、`unavailable`。
-- 預期差：`above`、`below`、`in_line`、`unavailable`。
 
 ## 數值不變量
 
 - `sentiment` 必須逐欄等於 `aggregate-sentiment` 的輸出。
-- 每個 `consensus_metrics` 項目必須逐欄等於 `compute-consensus-revision` 的輸出。
-- 每個 `expectation_gaps` 項目必須逐欄等於 `compare-event-expectations` 的輸出，而且驗證時要提供原始、已驗證的 `ResearchResult`。
-- `evidence_ids` 必須包含所有被情緒與共識工具採用的來源。
-- `usable_secondary` 至少需要一個 `available` 的情緒或共識通道。
+- `evidence_ids` 必須包含所有被情緒工具採用的來源。
+- `usable_secondary` 需要 `available` 的情緒通道；有可用情緒通道時不得標記 `unavailable`。
 
 這個結果只代表市場認知層的次級輸入。下游必須同時保留事件研究、資料品質及風控結果，不得由本結果直接產生交易。

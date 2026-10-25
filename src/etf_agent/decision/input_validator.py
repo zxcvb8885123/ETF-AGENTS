@@ -62,6 +62,7 @@ class DecisionInputValidator:
                 "perception_inputs",
                 "market_news_input",
                 "market_fear_greed_input",
+                "company_news_input",
                 "trading_status_bundle",
                 "tradability_assessment",
             },
@@ -109,6 +110,13 @@ class DecisionInputValidator:
                 validate_fear_greed(self.bundle["market_fear_greed_input"], self.bundle.get("snapshot_id"), self.bundle.get("decision_cutoff"))
             except (FearGreedError, TypeError, KeyError) as error:
                 errors.append("恐懼貪婪指標輸入：%s" % error)
+        if "company_news_input" in self.bundle:
+            from etf_agent.perception.company_news import validate_pack, CompanyNewsError
+            try:
+                validate_pack(self.bundle["company_news_input"], self.bundle.get("snapshot_id"),
+                              self.bundle.get("decision_cutoff"), universe)
+            except (CompanyNewsError, TypeError, KeyError, AttributeError) as error:
+                errors.append("個股新聞輸入：%s" % error)
         self._validate_global_evidence_ids(errors)
         return errors
 
@@ -758,6 +766,11 @@ class DecisionInputValidator:
                         "perception_inputs[%d].bundle.source_evidence[%d]"
                         % (input_index, evidence_index),
                     )
+        news = self.bundle.get("company_news_input")
+        if isinstance(news, Mapping) and isinstance(news.get("items"), list):
+            for item_index, item in enumerate(news["items"]):
+                if isinstance(item, Mapping):
+                    register(item.get("evidence_id"), "company_news_input.items[%d]" % item_index)
         status_bundle = self.bundle.get("trading_status_bundle")
         if isinstance(status_bundle, Mapping):
             for evidence_index, evidence in enumerate(status_bundle.get("source_evidence", [])):

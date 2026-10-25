@@ -90,14 +90,17 @@ class TeamStagesMixin:
             program_items: List[Dict[str, object]] = []
             if analyst == "event":
                 # 查詢視窗內沒有重大訊息的股票，結果只可能是 unknown（Validator 強制），由程式直接產出，不送 Agent。
-                program_items = [no_event_item(row["symbol"], row["data_availability"])
-                                 for row in brief["symbols"] if not row["events"]]
+                # 有核准個股新聞時，只有新聞的股票也交給 Agent；新聞與重大訊息一起計入批次則數。
+                news_checked = "company_news_input" in bundle
+                program_items = [no_event_item(row["symbol"], row["data_availability"], news_checked)
+                                 for row in brief["symbols"] if not row["events"] and not row.get("news")]
                 skipped = {item["symbol"] for item in program_items}
-                self.log("  [事件] %d 檔無重大訊息，由程式輸出 unknown，其餘 %d 檔交給 Agent" % (
-                    len(skipped), len(brief["symbols"]) - len(skipped)))
+                self.log("  [事件] %d 檔無重大訊息%s，由程式輸出 unknown，其餘 %d 檔交給 Agent（個股新聞 %d 則）" % (
+                    len(skipped), "或新聞" if news_checked else "", len(brief["symbols"]) - len(skipped),
+                    sum(len(row.get("news", [])) for row in brief["symbols"])))
                 analyst_batches = weighted_batches(
                     [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped],
-                    {row["symbol"]: len(row["events"]) for row in brief["symbols"]},
+                    {row["symbol"]: len(row["events"]) + len(row.get("news", [])) for row in brief["symbols"]},
                     EVENT_BATCH_SIZE, EVENT_BATCH_MAX_EVENTS)
             plans[analyst] = (brief, analyst_batches, program_items)
             jobs.extend(self._analyst_batch_jobs(bundle, analyst, brief, analyst_batches))

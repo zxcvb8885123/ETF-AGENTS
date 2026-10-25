@@ -1,4 +1,4 @@
-"""Market sentiment and analyst-consensus research tools."""
+"""Market sentiment research tools."""
 
 from .contracts import PerceptionToolError
 from .provider import JsonPerceptionDataProvider

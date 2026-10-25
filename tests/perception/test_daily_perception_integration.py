@@ -19,15 +19,14 @@ class DailyPerceptionIntegrationTests(unittest.TestCase):
     def service(self):
         return MarketPerceptionApplicationService(PerceptionDataTools(perception_bundle()))
 
-    def test_build_covers_unavailable_symbols_and_both_consensus_versions(self):
+    def test_build_covers_unavailable_symbols_with_sentiment_only(self):
         result = self.service().build_result(["2330.TW", "2317.TW"], sentiment_labels(), "daily")
         self.assertEqual(result["status"], "degraded")
         by_symbol = {row["symbol"]: row for row in result["items"]}
         self.assertEqual(by_symbol["2317.TW"]["research_status"], "unavailable")
-        metric = by_symbol["2330.TW"]["consensus_metrics"][0]
-        self.assertEqual(metric["contributor_count"], 3)
-        self.assertIn("e1-evidence", metric["evidence_ids"])
-        self.assertIn("e5-evidence", metric["evidence_ids"])
+        self.assertEqual(by_symbol["2330.TW"]["research_status"], "usable_secondary")
+        self.assertNotIn("consensus_metrics", by_symbol["2330.TW"])
+        self.assertEqual(by_symbol["2330.TW"]["evidence_ids"], by_symbol["2330.TW"]["sentiment"]["evidence_ids"])
 
     def test_missing_label_rejected(self):
         with self.assertRaises(PerceptionToolError):
@@ -45,7 +44,7 @@ class DailyPerceptionIntegrationTests(unittest.TestCase):
         report = sentiment_report(bundle)
         self.assertEqual(AnalystReportValidator(bundle, "sentiment").validate(report), [])
         row = next(row for row in report["items"] if row["symbol"] == "2330.TW")
-        self.assertEqual(len(row["findings"]), 2)
+        self.assertEqual(len(row["findings"]), 1)
         row["findings"][0]["text"] = "遭改寫的方向"
         report["content_sha256"] = artifact_content_sha256(report)
         self.assertTrue(AnalystReportValidator(bundle, "sentiment").validate(report))

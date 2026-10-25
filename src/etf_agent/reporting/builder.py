@@ -211,8 +211,6 @@ class ResearchReportBuilder:
                 )
             if not isinstance(item.get("sentiment"), Mapping):
                 raise ResearchReportError("%s.sentiment 必須是物件" % prefix)
-            _mapping_list(item, "consensus_metrics")
-            _mapping_list(item, "expectation_gaps")
             _string_list(item, "risk_flags")
 
     def build(
@@ -308,7 +306,7 @@ class ResearchReportBuilder:
             "sources": [selected_sources[key] for key in sorted(selected_sources)],
             "missing_data": missing_data,
             "limitations": [
-                "市場情緒與分析師共識只作次級研究訊號。",
+                "市場情緒只作次級研究訊號。",
                 "本報告沒有配置、風控、回測或成交資訊。",
                 DISCLAIMER,
             ],
@@ -403,8 +401,6 @@ class ResearchReportBuilder:
                 "status": "unavailable",
                 "research_status": "unavailable",
                 "sentiment": None,
-                "consensus_metrics": [],
-                "expectation_gaps": [],
                 "priced_in_assessment": "unknown",
                 "rationale": "未提供 MarketPerceptionResult。",
                 "risk_flags": ["MARKET_PERCEPTION_UNAVAILABLE"],
@@ -425,12 +421,6 @@ class ResearchReportBuilder:
                 "status": "available",
                 "research_status": perception.get("research_status"),
                 "sentiment": dict(sentiment),
-                "consensus_metrics": _mapping_list(
-                    perception, "consensus_metrics"
-                ),
-                "expectation_gaps": _mapping_list(
-                    perception, "expectation_gaps"
-                ),
                 "priced_in_assessment": perception.get(
                     "priced_in_assessment"
                 ),
@@ -450,12 +440,6 @@ class ResearchReportBuilder:
             sentiment = perception_report.get("sentiment")
             if not isinstance(sentiment, Mapping) or sentiment.get("status") != "available":
                 missing_data.append("SENTIMENT_INSUFFICIENT_OR_UNAVAILABLE")
-            consensus = perception_report.get("consensus_metrics", [])
-            if not any(
-                isinstance(metric, Mapping) and metric.get("status") == "available"
-                for metric in consensus
-            ):
-                missing_data.append("ANALYST_CONSENSUS_INSUFFICIENT_OR_UNAVAILABLE")
         return {
             "symbol": symbol,
             "latest_price": latest_price,

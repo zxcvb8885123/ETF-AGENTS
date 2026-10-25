@@ -42,15 +42,10 @@ class MarketPerceptionApplicationService:
         for symbol in universe:
             selected = [row for row in labels if str(row.get("symbol", "")).upper() == symbol]
             sentiment = self.tools.aggregate_sentiment(symbol, selected)
-            keys = sorted({(row["metric"], row["forecast_period"])
-                           for row in self.tools.analyst_estimates if row["symbol"].upper() == symbol})
-            metrics = [self.tools.compute_consensus_revision(symbol, metric, period) for metric, period in keys]
-            available = sentiment["status"] == "available" or any(row["status"] == "available" for row in metrics)
+            available = sentiment["status"] == "available"
             evidence = set(sentiment["evidence_ids"])
-            for metric in metrics:
-                evidence.update(metric["evidence_ids"])
             items.append({"symbol": symbol, "event_result_ids": [], "sentiment_labels": selected,
-                          "sentiment": sentiment, "consensus_metrics": metrics, "expectation_gaps": [],
+                          "sentiment": sentiment,
                           "priced_in_assessment": "unknown", "rationale": "由已授權資料確定性聚合；未判斷市場定價。",
                           "evidence_ids": sorted(evidence), "risk_flags": sentiment["manipulation_flags"],
                           "research_status": "usable_secondary" if available else "unavailable",
@@ -68,15 +63,9 @@ class MarketPerceptionApplicationService:
         self,
         input_path: Path,
         output_path: Optional[Path] = None,
-        event_result_path: Optional[Path] = None,
     ) -> Dict[str, object]:
         payload = self.read_json(input_path, " MarketPerceptionResult")
-        event_result = (
-            self.read_json(event_result_path, " ResearchResult")
-            if event_result_path is not None
-            else None
-        )
-        errors = MarketPerceptionResultValidator(self.tools, event_result).validate(payload)
+        errors = MarketPerceptionResultValidator(self.tools).validate(payload)
         response: Dict[str, object] = {"valid": not errors, "errors": errors}
         if not errors and output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,22 +75,3 @@ class MarketPerceptionApplicationService:
             )
             response["output"] = str(output_path)
         return response
-
-    def compare_event_file(
-        self,
-        event_result_path: Path,
-        event_id: str,
-        fact_name: str,
-        metric: str,
-        forecast_period: str,
-        threshold_pct: float = 2.0,
-    ) -> Dict[str, object]:
-        event_result = self.read_json(event_result_path, " ResearchResult")
-        return self.tools.compare_event_expectations(
-            event_result,
-            event_id,
-            fact_name,
-            metric,
-            forecast_period,
-            threshold_pct,
-        )

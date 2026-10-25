@@ -30,7 +30,7 @@ flowchart TD
     DB --> ST[status.py<br/>DataAgentStatusRepository]
 ```
 
-FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對前不進正式 Snapshot（見根 README）。
+FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對前不進正式 Snapshot（見根 README）。個股新聞候選不進 Snapshot；核准後由 `perception/company_news` 直接從資料庫建立決策輸入的 `company_news_input`，只進事件分析師（核對指令尚未執行）。
 
 ## 檔案清單
 
@@ -55,7 +55,7 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `financial.py` | 官方財報彙總資料的請求、覆蓋驗收與來源可行性結果 | `FinancialStatementRequest`、`FinancialCoverageGap`、`FinancialCollectionResult`、`FinancialStatementCollector`、`latest_due_quarter` |
 | `cash_flow.py` | 以官方累計稅前淨利核對 FinMind 現金流量表，轉成 `cash_flow_statement` 快照文件（不連網） | `VerifiedCashFlowProvider`、`verified_cash_flow_record` |
 | `fundamental_repair.py` | 以官方當期金額核對 FinMind 單季口徑，補足去年同期累計財報 | `OfficialCompanyProfileProvider`、`FundamentalRepairProvider`、`verified_prior_record` |
-| `supplemental_sources.py` | 版本化擷取 FinMind 財報與個股新聞線索（候選） | `FinMindApiProvider`、`FinMindFundamentalProvider`、`FinMindNewsProvider`、`FinMindFundamentalCollector`、`FinMindNewsCollector`、`SupplementalRepository`、`SupplementalResult` |
+| `supplemental_sources.py` | 版本化擷取 FinMind 財報與個股新聞線索（候選；新聞核准與決策輸入見 `perception/company_news`） | `FinMindApiProvider`、`FinMindFundamentalProvider`、`FinMindNewsProvider`、`FinMindFundamentalCollector`、`FinMindNewsCollector`、`SupplementalRepository`、`SupplementalResult` |
 | `finmind_schedule.py` | FinMind 財報抓取排程：首次補歷史，之後只在財報公布區間內每天更新 | `FinMindScheduleError`、`in_filing_window`、`history_start`、`load_state`、`plan`、`record_done` |
 | `news_content.py` | 新聞原頁核對版本保存；候選不直接升級為正式情緒證據 | `save_news_captures` |
 | `sector_classification.py` | 官方公司基本資料的產業代碼分類，供產業曝險檢查使用 | `SectorSource`、`SectorClassificationBuilder`、`SectorClassificationError`、`capture_sector_sources` |

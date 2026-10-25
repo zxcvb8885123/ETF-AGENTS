@@ -17,7 +17,7 @@ flowchart LR
   K[config/market_fear_greed_sources.json<br/>來源核准] --> C
   C --> D[market_fear_greed_input<br/>bundle + result]
   D --> E[market_sentiment_channel]
-  E --> F[事件分析師報告 2.2<br/>多空研究員]
+  E --> F[事件分析師報告 2.2／2.3<br/>多空研究員]
 ```
 
 1. `./start.sh daily` 在固定 cutoff 之前執行 `cli/market_fear_greed.py capture`。失敗只會讓市場情緒降級，不會中止每日流程。

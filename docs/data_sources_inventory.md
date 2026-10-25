@@ -16,7 +16,7 @@
 | [官方財報](#官方財報) | MOPS 損益表、資產負債表 | `scripts/collect_financial_statements.py` | 可 |
 | [公司基本資料](#公司基本資料) | TWSE／TPEx `t187ap03` | `scripts/collect_sector_classification.py` | 候選；正式讀已驗證的檔案 |
 | [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 否，尚未接 Snapshot |
-| [個股新聞線索](#個股新聞線索) | FinMind `TaiwanStockNews` | `scripts/collect_supplemental_sources.py finmind-news` | **否**，授權未驗證 |
+| [個股新聞線索](#個股新聞線索) | FinMind `TaiwanStockNews` | `scripts/collect_supplemental_sources.py finmind-news` | 核准後可，只作公司事件（白名單媒體標題、截止前最後一批）；核對指令尚未執行 |
 | [正式帳本價量](#正式帳本價量) | TWSE／TPEx 官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
 | [基準標的](#基準標的) | TWSE 官方個股日成交資訊（0050） | `cli/benchmark.py collect` | 只供績效比較，不進交易池、不進決策 |
 | [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV × 7、TWSE 開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
@@ -105,18 +105,22 @@
 
 - **來源**：FinMind `TaiwanStockNews`，含股票代號、標題、原媒體、連結、來源時間字串。
 - **入口**：`scripts/collect_supplemental_sources.py finmind-news`。平日 22:00 執行，與財報排程錯開。
-- **保存方式**：只存 `license_status=unverified` 的候選。
+- **保存方式**：收集時存 `license_status=unverified` 的候選，核准狀態另存於 `company_news_source_reviews`。
   - 來源時間沒有時區，所以 `published_at` 留空。
-  - `available_at` 為抓取時間。
-- **使用界線**：不得進入正式情緒、事件判斷或回測。
+  - `available_at` 為第一次抓到的時間。
+- **核准**：`cli/company_news.py review --database var/etf_agent.db --status approved|unverified|restricted --evidence "..."` 抓取 FinMind 規範頁原文與 SHA-256 後保存；只對保存之後的決策截止時間生效，之後的 `restricted` 會取代。使用者已於 2026-10-25 自行判斷核准（僅標題、內部研究、不轉載，不是媒體書面同意），但**指令尚未執行**。見[來源核對](source_audit/2026-10-25_finmind_stock_news.md)。
+- **使用界線**：只進每日決策的事件分析師（`company_news_input`，事件報告 2.3），不進全市場情緒與回測。
+  - 媒體白名單 `company_news_publishers_v1` 依連結網域判斷，只收正規新聞媒體；CMoney 貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收。
+  - 視窗只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；排程中斷時輸出空清單，不拿舊聞補。
+  - 規則細節見[事件研究整合](integrated_event_analysis.md#事件報告-23已核准個股新聞)。
 
-**為什麼不能用**
+**仍有的限制**
 
-| 原因 | 說明 |
+| 項目 | 說明 |
 | --- | --- |
-| 授權 | 新聞含多家媒體；FinMind 服務使用權不等於原媒體再利用授權 |
-| 時間 | 新聞 `date` 沒有時區 |
-| 狀態 | 逐篇授權與發布時間證據核准前，正式研究維持 `unavailable` |
+| 授權 | 新聞含多家媒體；FinMind 服務使用權不等於原媒體再利用授權，核准是使用者自行承擔的判斷 |
+| 時間 | 新聞 `date` 沒有時區，只以第一次抓到的時間判斷可得性 |
+| 完整性 | 以假設已核准試算 10-20～10-23，每日約 80～100 則、約 40 檔；10-23 那批資料庫只有 82 筆、39 檔（白名單內 17 筆），看起來不完整 |
 
 **實測覆蓋**：
 
@@ -126,7 +130,7 @@
 | 有線索 / 空結果 | 116 / 34 檔 |
 | 保存筆數 | 1,004 |
 
-僅為候選覆蓋，不代表新聞完整，也不能用於正式研究。
+僅為候選覆蓋，不代表新聞完整。
 
 ## 正式帳本價量
 
@@ -204,7 +208,7 @@
 ## 尚未實作
 
 - 多季基本面候選（FinMind 三張財報）尚未接入 Snapshot 或歷史回測。
-- 個股新聞線索缺逐篇授權與發布時間證據，不進入正式研究。
+- 個股新聞的核對指令尚未執行；執行前每日決策不讀個股新聞。個股新聞仍缺發布時間時區，也沒有接入回測。
 
 ## 來源依據
 

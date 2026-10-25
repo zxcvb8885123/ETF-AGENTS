@@ -26,19 +26,18 @@
 
 ### Market Sentiment and Analyst Agent
 
-- 第三位分析師的當前對外報告（2.2）為「一次整體台股情緒＋逐家公司事件」，不是逐股情緒與事件的混合分數。公司維度 Provider、公司新聞或交易池行情不可冒充全市場情緒。市場通道以全市場新聞優先，新聞不可用時改用程式計算的台股恐懼貪婪指標（`perception/market_fear_greed`，只計入已核准來源），兩者都不可用時維持 unavailable；大盤成交、指數與法人買賣補抓只作交易背景。舊 2.1 及四份 2.0 封存沿用原輸入驗證。
+- 第三位分析師的當前對外報告（2.2；資料包含已核准個股新聞時為 2.3）為「一次整體台股情緒＋逐家公司事件」，不是逐股情緒與事件的混合分數。公司維度 Provider、公司新聞或交易池行情不可冒充全市場情緒；FinMind 個股新聞（`company_news_input`）只進公司事件通道，絕不進市場情緒。市場通道以全市場新聞優先，新聞不可用時改用程式計算的台股恐懼貪婪指標（`perception/market_fear_greed`，只計入已核准來源），兩者都不可用時維持 unavailable；大盤成交、指數與法人買賣補抓只作交易背景。舊 2.1 及四份 2.0 封存沿用原輸入驗證。
 
 - 只讀版本化 `PerceptionDataBundle` 與選配的已驗證 `ResearchResult`；第三位分析師的全市場新聞另讀同 Snapshot／cutoff 的 `market_news_input` 成對資料包，1.1 可包含核對過的歷史原頁。今日補抓的可得時間不得回填到過去。
 - 情緒標籤必須覆蓋查詢視窗內全部項目，不能選擇性取樣；聚合前依 canonical content ID 去重。
 - 只有 `license_status=approved` 的來源可以進入正式計算。
-- 分析師共識必須保留期間、單位、幣別、貢獻者數、分散度及發布／可得時間。
 - `MarketPerceptionResult` 只作次級研究輸入，不得直接產生候選、權重或訂單。
 - 沒有合法、歷史化的真實 Provider 時輸出 `unavailable`，不得以搜尋摘要、模型記憶或公司財測冒充分析師共識。
 
 ### 後續 Agent
 
 - 每日決策鏈依[目前每日決策架構](docs/architecture.md)採分析團隊 → 多空研究 → 交易 → 風險，原則是「確定性歸程式，不確定性歸 LLM」。舊版 Portfolio Decision 主控加 Momentum、Buy、Sell、Trade Adjudicator 與 Portfolio Risk 的 1.0 鏈已於 2026-09-30 移除，Finalizer 與 Validator 遇到 1.0 debate 一律拒絕。
-- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師只處理查詢視窗內有重大訊息的股票，沒有重大訊息者由程式直接輸出 `unknown`（最終報告仍覆蓋全部交易池）；標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
+- 分析團隊（technical／fundamental／event（事件與市場情緒）分析師）逐批覆蓋全部交易池，只輸出 `outlook`、事件 `materiality` 與引用證據的文字發現；指標與財務比率由程式計算，情緒無核准來源時確定性 unavailable。事件分析師只處理查詢視窗內有重大訊息或已核准個股新聞（FinMind，截止時已核准且通過媒體白名單與視窗檢查）的股票，兩者都沒有者由程式直接輸出 `unknown`（最終報告仍覆蓋全部交易池）；標為 high 的事件由程式提供同 Snapshot 的事實與脈絡，保留重大性、發現與證據，直接交給股票層級多空研究員；每日鏈不再另跑 Fact／Bull／Bear／Adjudicator。
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`）、互相隔離，都必須對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。比賽只能做多，空頭論點代表不宜買進或應減碼／出場。
 - 交易 Agent 作為多頭／空頭研究的整合者，先說明兩方論點的取捨，再逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
 - Decision run 必須另存 `team_inputs`（2.2 為三份分析報告、現金姿態與前次決策背景 `prior_decision_context`；舊 2.1 無前次決策背景，舊 2.0 的三／四份分析報告及事件研究保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。

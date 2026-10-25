@@ -36,7 +36,7 @@ def analyst_availability(database_path: Path, symbols, decision_cutoff: str) -> 
                     "name": label, "stored_rows": len(rows), "available_by_cutoff_rows": len(eligible),
                     "after_cutoff_rows": len(rows) - len(eligible),
                     "status": "已取得；稅前淨利與官方累計損益表相符者轉入快照（FINMIND_VERIFIED_CASH_FLOW），其餘為資料缺口" if table == "supplemental_facts" and rows else
-                              "已取得；新聞來源使用權及發布時間待確認，尚未進入情緒計算" if rows else "尚未取得本股票候選資料",
+                              "已取得；截止時間前已核准且屬白名單媒體者進事件分析（見決策輸入 company_news_input），其餘只作候選" if rows else "尚未取得本股票候選資料",
                     "earliest_available_at": min((r["available_at"] for r in rows), default=None),
                     "latest_available_at": max((r["available_at"] for r in rows), default=None),
                     "candidate_references": [{"row_id": r["id"], "content_sha256": r["content_sha256"], "raw_payload_id": r["raw_payload_id"]} for r in rows],

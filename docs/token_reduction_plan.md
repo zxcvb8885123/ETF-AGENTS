@@ -31,7 +31,7 @@ flowchart LR
 | 減少無效重試 | 部分 | 單股硬上限減碼改由程式處理；`liquidity_fill_rate` 為 1 |
 | 關閉 MCP 外掛 | 已實作 | Claude CLI 加 `--strict-mcp-config`，不載入使用者的 MCP 工具；實測一句 `ok` 的固定開銷由約 50,000 降到約 9,700 cache 建立 token |
 | brief 精簡格式 | 已實作 | `save_brief` 不縮排、`symbols` 每檔一行，仍是合法 JSON；多頭第一批由 138,854 降到 79,040 字元 |
-| 事件分析師略過無事件股票 | 已實作 | 查詢視窗內無重大訊息者，Validator 本就強制 `unknown`，改由程式輸出（`no_event_item`），不送 Agent；以 10/22 資料算 35／150 檔 |
+| 事件分析師略過無事件股票 | 已實作 | 查詢視窗內無重大訊息（且無已核准個股新聞）者，Validator 本就強制 `unknown`，改由程式輸出（`no_event_item`），不送 Agent；以 10/22 資料算 35／150 檔 |
 | 用量量測 | 部分 | bytes 可量；OpenCode 已記 token；Codex／Claude 未量得 |
 
 ## 旗標與參數

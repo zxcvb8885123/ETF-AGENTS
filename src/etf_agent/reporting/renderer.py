@@ -159,9 +159,9 @@ class ResearchReportMarkdownRenderer:
             )
             lines.append("")
         perception = company.get("perception")
-        lines.extend(["### 市場情緒與分析師共識", ""])
+        lines.extend(["### 市場情緒", ""])
         if not isinstance(perception, Mapping) or perception.get("status") == "unavailable":
-            lines.append("- unavailable：未提供可用的市場情緒或分析師研究結果。")
+            lines.append("- unavailable：未提供可用的市場情緒研究結果。")
         else:
             sentiment = perception.get("sentiment", {})
             if isinstance(sentiment, Mapping):
@@ -179,25 +179,6 @@ class ResearchReportMarkdownRenderer:
                 % _md_code(perception.get("priced_in_assessment"))
             )
             lines.append("- 說明：%s" % _md_text(perception.get("rationale")))
-            metrics = perception.get("consensus_metrics", [])
-            if isinstance(metrics, list):
-                for metric in metrics:
-                    if isinstance(metric, Mapping):
-                        revision = metric.get("revision_pct")
-                        revision_text = (
-                            "unavailable" if revision is None else "%s%%" % _md_text(revision)
-                        )
-                        lines.append(
-                            "- 共識 %s %s：中位數 %s %s，貢獻者 %s，修正 %s"
-                            % (
-                                _md_text(metric.get("metric")),
-                                _md_text(metric.get("forecast_period")),
-                                _md_text(metric.get("median")),
-                                _md_text(metric.get("unit")),
-                                _md_text(metric.get("contributor_count")),
-                                revision_text,
-                            )
-                        )
         lines.extend(
             [
                 "",

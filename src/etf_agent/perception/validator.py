@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict, List, Mapping, Optional
 
 from .contracts import (
-    EXPECTATION_CLASSES,
     PRICED_IN_STATES,
     RESEARCH_STATUSES,
     RESULT_STATUSES,
@@ -20,13 +19,8 @@ from .tools import PerceptionDataTools
 class MarketPerceptionResultValidator:
     """Validate agent output and recompute all aggregate values."""
 
-    def __init__(
-        self,
-        tools: PerceptionDataTools,
-        event_result: Optional[Mapping[str, object]] = None,
-    ):
+    def __init__(self, tools: PerceptionDataTools):
         self.tools = tools
-        self.event_result = dict(event_result) if event_result is not None else None
 
     def validate(self, result: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
@@ -90,12 +84,11 @@ class MarketPerceptionResultValidator:
             except PerceptionToolError as error:
                 errors.append("%s.%s" % (prefix, error))
         try:
-            event_result_ids = _string_list(item, "event_result_ids")
+            _string_list(item, "event_result_ids")
             evidence_ids = _string_list(item, "evidence_ids")
             _string_list(item, "risk_flags")
         except PerceptionToolError as error:
             errors.append("%s.%s" % (prefix, error))
-            event_result_ids = []
             evidence_ids = []
         for evidence_id in evidence_ids:
             linked = self.tools.by_evidence.get(evidence_id)
@@ -123,80 +116,16 @@ class MarketPerceptionResultValidator:
         except (PerceptionToolError, TypeError, ValueError) as error:
             errors.append("%s.sentiment：%s" % (prefix, error))
 
-        metrics = item.get("consensus_metrics")
-        has_available_consensus = False
         used_evidence = set(
             expected_sentiment.get("evidence_ids", []) if expected_sentiment else []
         )
-        if not isinstance(metrics, list):
-            errors.append("%s.consensus_metrics 必須是陣列" % prefix)
-            metrics = []
-        metric_keys = set()
-        for metric_index, metric in enumerate(metrics):
-            metric_prefix = "%s.consensus_metrics[%d]" % (prefix, metric_index)
-            if not isinstance(metric, Mapping):
-                errors.append("%s 必須是物件" % metric_prefix)
-                continue
-            key = (metric.get("metric"), metric.get("forecast_period"))
-            if key in metric_keys:
-                errors.append("%s metric/forecast_period 不得重複" % metric_prefix)
-            metric_keys.add(key)
-            try:
-                expected = self.tools.compute_consensus_revision(
-                    symbol,
-                    _required_string(metric, "metric"),
-                    _required_string(metric, "forecast_period"),
-                    int(metric.get("revision_window_days", 30)),
-                )
-                if dict(metric) != expected:
-                    errors.append("%s 與確定性重算結果不一致" % metric_prefix)
-                has_available_consensus = has_available_consensus or expected["status"] == "available"
-                used_evidence.update(expected["evidence_ids"])
-            except (PerceptionToolError, TypeError, ValueError) as error:
-                errors.append("%s：%s" % (metric_prefix, error))
-
-        gaps = item.get("expectation_gaps")
-        if not isinstance(gaps, list):
-            errors.append("%s.expectation_gaps 必須是陣列" % prefix)
-            gaps = []
-        if gaps and self.event_result is None:
-            errors.append("%s 驗證 expectation_gaps 時必須提供已驗證 ResearchResult" % prefix)
-        for gap_index, gap in enumerate(gaps):
-            gap_prefix = "%s.expectation_gaps[%d]" % (prefix, gap_index)
-            if not isinstance(gap, Mapping):
-                errors.append("%s 必須是物件" % gap_prefix)
-                continue
-            if gap.get("classification") not in EXPECTATION_CLASSES:
-                errors.append("%s.classification 無效" % gap_prefix)
-            if self.event_result is not None:
-                try:
-                    expected_gap = self.tools.compare_event_expectations(
-                        self.event_result,
-                        _required_string(gap, "event_id"),
-                        _required_string(gap, "fact_name"),
-                        _required_string(gap, "metric"),
-                        _required_string(gap, "forecast_period"),
-                        float(gap.get("threshold_pct", 2.0)),
-                    )
-                    if dict(gap) != expected_gap:
-                        errors.append("%s 與確定性重算結果不一致" % gap_prefix)
-                    used_evidence.update(expected_gap["consensus_evidence_ids"])
-                    if expected_gap.get("event_result_id") not in event_result_ids:
-                        errors.append("%s 未列入 event_result_ids" % gap_prefix)
-                except (PerceptionToolError, TypeError, ValueError) as error:
-                    errors.append("%s：%s" % (gap_prefix, error))
-
         if not used_evidence.issubset(set(evidence_ids)):
-            errors.append("%s.evidence_ids 未包含所有情緒／共識來源" % prefix)
+            errors.append("%s.evidence_ids 未包含所有情緒來源" % prefix)
         sentiment_available = bool(
             expected_sentiment and expected_sentiment.get("status") == "available"
         )
         research_status = item.get("research_status")
-        if research_status == "usable_secondary" and not (
-            sentiment_available or has_available_consensus
-        ):
-            errors.append("%s usable_secondary 至少需要一個可用的情緒或共識通道" % prefix)
-        if research_status == "unavailable" and (
-            sentiment_available or has_available_consensus
-        ):
+        if research_status == "usable_secondary" and not sentiment_available:
+            errors.append("%s usable_secondary 需要可用的情緒通道" % prefix)
+        if research_status == "unavailable" and sentiment_available:
             errors.append("%s 有可用通道時不得標記 unavailable" % prefix)

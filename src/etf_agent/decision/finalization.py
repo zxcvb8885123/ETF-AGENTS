@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
-from .analysts import analyst_report_names, EVENT_MARKET_VERSION
+from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS
 from .prior_decision import PriorDecisionContextValidator
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
@@ -206,8 +206,8 @@ class DecisionFinalizer:
         except DecisionToolError as error:
             return errors + [str(error)]
         if integrated:
-            if set(reports) != {"technical", "fundamental", "event"} or reports["event"].get("schema_version") != EVENT_MARKET_VERSION:
-                errors.append("team_inputs 2.1 必須使用三份分析報告及 event 2.2")
+            if set(reports) != {"technical", "fundamental", "event"} or reports["event"].get("schema_version") not in MARKET_SCOPED_VERSIONS:
+                errors.append("team_inputs 2.1／2.2 必須使用三份分析報告及 event 2.2 或 2.3（含個股新聞）")
         else:
             errors.extend(
                 "ResearchResult：%s" % error
