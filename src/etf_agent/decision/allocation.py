@@ -243,6 +243,53 @@ class AllocationOrderEngine:
         revision_count: int = 0,
         parent_proposal_id: Optional[str] = None,
     ) -> Dict[str, object]:
+        """配置後持股低於 min_positions 時，由程式依 ATR14 由低到高（同值依代號）留住交易 Agent 標為
+        exit 的持股續抱，直到達標或沒有可留的 exit；forced_exit 不留。每留一檔記 RISK_MIN_POSITIONS 旗標，
+        不改寫交易 Agent 的意圖。Validator 以同一方法重算，結果確定。"""
+        kept: Set[str] = set()
+        minimum = int(self.policy["min_positions"])
+        while True:
+            body = self._run(intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept)
+            need = minimum - len(body["allocation_proposal"]["positions"])
+            if need <= 0:
+                return body
+            held = {str(item["symbol"]).upper() for item in self.context.bundle["account_snapshot"]["positions"]}
+            untradable = self._untradable()
+            atr = self._atr_pct()
+            remaining = sorted(
+                (
+                    str(item.get("symbol", "")).upper()
+                    for item in intent_result.get("items", [])
+                    if isinstance(item, Mapping) and item.get("intent") == "exit"
+                ),
+                key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol),
+            )
+            remaining = [symbol for symbol in remaining if symbol in held and symbol not in kept and symbol not in untradable]
+            if not remaining:
+                return body
+            kept.update(remaining[:need])
+
+    def _untradable(self) -> Set[str]:
+        """明確交易狀態包中非 allowed 的標的（與 CompetitionGuard 的 TRADABLE 規則同源）；沒有狀態包時回空集合。"""
+        status_bundle = self.context.bundle.get("trading_status_bundle")
+        assessment = self.context.bundle.get("tradability_assessment")
+        if not isinstance(status_bundle, Mapping) or not isinstance(assessment, Mapping):
+            return set()
+        return {
+            str(item.get("symbol", "")).upper()
+            for item in assessment.get("symbols", [])
+            if isinstance(item, Mapping) and item.get("symbol") and str(item.get("state", "unknown")) != "allowed"
+        }
+
+    def _run(
+        self,
+        intent_result: Mapping[str, object],
+        excluded_symbols: Optional[Set[str]],
+        overrides: Optional[Mapping[str, object]],
+        revision_count: int,
+        parent_proposal_id: Optional[str],
+        kept_exits: Set[str],
+    ) -> Dict[str, object]:
         excluded = {value.upper() for value in (excluded_symbols or set())}
         effective = self._effective_policy(overrides or {})
         intents = {
@@ -276,10 +323,24 @@ class AllocationOrderEngine:
         default_weight = effective["default_target_weight"]
         max_positions = int(effective["max_positions"])
         constraint_flags: List[Dict[str, object]] = []
+        untradable = self._untradable()
 
         # Exits and trims run before capital is assigned to buys.
         for symbol in sorted(current):
             intent = intents.get(symbol, "hold")
+            if intent in {"exit", "forced_exit", "trim"} and symbol in untradable:
+                # 受限持股無法賣出，否則 Guard 的 TRADABLE 會否決整份決策；由程式改為續抱。
+                constraint_flags.append({
+                    "symbol": symbol, "code": "RISK_NOT_TRADABLE",
+                    "detail": "非可交易狀態，%s 無法執行，由程式續抱（交易 Agent 的意圖未被改寫）" % intent,
+                })
+                continue
+            if intent == "exit" and symbol in kept_exits:
+                constraint_flags.append({
+                    "symbol": symbol, "code": "RISK_MIN_POSITIONS",
+                    "detail": "出場後持股將低於 %d 檔，由程式依 ATR14 由低到高留住續抱（交易 Agent 的意圖未被改寫）" % int(self.policy["min_positions"]),
+                })
+                continue
             if intent in {"exit", "forced_exit"}:
                 target_shares[symbol] = 0
             elif intent == "trim":
@@ -306,6 +367,13 @@ class AllocationOrderEngine:
             for symbol in sorted(intents)
             if intents[symbol] in {"buy", "add"} and symbol not in excluded
         ]
+        # 受限標的在分配資金前就排除，避免占用預算；否則 Guard 的 TRADABLE 會否決整份決策。
+        for symbol in candidates:
+            if symbol in untradable:
+                constraint_flags.append(
+                    {"symbol": symbol, "code": "RISK_NOT_TRADABLE", "detail": "非可交易狀態，由程式不建立買單（交易 Agent 的意圖未被改寫）"}
+                )
+        candidates = [symbol for symbol in candidates if symbol not in untradable]
         sized_weights: Optional[Dict[str, Decimal]] = None
         if "position_sizing" in self.policy:
             candidates, sized_weights = self._conviction_targets(

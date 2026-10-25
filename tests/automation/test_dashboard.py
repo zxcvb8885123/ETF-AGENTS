@@ -86,6 +86,26 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(summary["realized_pnl"], "93707.00")
         self.assertIsNone(summary["pending_orders"])
 
+    def test_pending_orders_mark_final_version_time_and_count(self):
+        from etf_agent.dashboard.performance import _pending_orders
+
+        decisions = self.root / "decisions"
+        run = decisions / "2026-10-26" / "decision-20261026T230000Z"
+        run.mkdir(parents=True)
+        (run / "decision_input.json").write_text(json.dumps({"account_snapshot": {"id": 2}, "trading_status_bundle": {
+            "target_session": {"end": "2026-10-27T13:30:00+08:00"}}}), encoding="utf-8")
+        (run / "decision.json").write_text(json.dumps({"status": "approved", "orders": []}), encoding="utf-8")
+        versions = self.root / "competition_d_plan" / "versions" / "2026-10-27"
+        versions.mkdir(parents=True)
+        for stamp in ("20261026-210000", "20261027-070000"):
+            (versions / ("D-Plan_TEAM_2026-10-27_%s.json" % stamp)).write_text("{}", encoding="utf-8")
+        from unittest import mock
+        with mock.patch("etf_agent.virtual_account.daily.DecisionRepository"):
+            pending = _pending_orders(decisions, {"provenance": {"type": "prepared", "account_snapshot": {"id": 2}}})
+        self.assertEqual(pending["decided_at"], "2026-10-27T07:00:00+08:00")
+        self.assertEqual(pending["version_count"], 2)
+        self.assertEqual(pending["execution_date"], "2026-10-27")
+
     def test_pending_orders_come_from_the_decision_of_the_prepared_snapshot(self):
         from etf_agent.dashboard.performance import _pending_orders
 
@@ -106,6 +126,8 @@ class DashboardTests(unittest.TestCase):
         weights = [item["weight"] for item in pending["orders"]]
         self.assertEqual(weights, ["0.0798", None])
         self.assertEqual(pending["decision_run_id"], "decision-1")
+        self.assertIsNone(pending["decided_at"])
+        self.assertIsNone(pending["version_count"])
         self.assertIsNone(_pending_orders(decisions, {"provenance": {"type": "close"}}))
         self.assertIsNone(_pending_orders(None, latest))
 

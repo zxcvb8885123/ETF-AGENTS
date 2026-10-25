@@ -1,6 +1,6 @@
 import unittest
 
-from etf_agent.automation.batching import BatchMergeError, merge_batch_items, universe_batches
+from etf_agent.automation.batching import BatchMergeError, merge_batch_items, universe_batches, weighted_batches
 
 
 SYMBOLS = ["%04d.TW" % code for code in range(1101, 1101 + 120)]
@@ -13,6 +13,23 @@ class UniverseBatchTests(unittest.TestCase):
         self.assertEqual(sum((batch["symbols"] for batch in batches), []), sorted(SYMBOLS))
         self.assertEqual(batches, universe_batches(SYMBOLS, batch_size=50))
         self.assertEqual({batch["batch_count"] for batch in batches}, {3})
+
+    def test_weighted_batches_cap_symbols_and_event_count(self):
+        symbols = SYMBOLS[:20]
+        weights = {symbol: 5 for symbol in symbols}
+        weights[symbols[3]] = 90  # 單檔超過上限自成一批
+        batches = weighted_batches(list(reversed(symbols)), weights, max_size=6, max_weight=20)
+        self.assertEqual([batch["symbols"] for batch in batches][:3], [symbols[:3], [symbols[3]], symbols[4:8]])
+        self.assertTrue(all(len(batch["symbols"]) <= 6 for batch in batches))
+        self.assertTrue(all(sum(weights[s] for s in batch["symbols"]) <= 20 for batch in batches if len(batch["symbols"]) > 1))
+        self.assertEqual(sum((batch["symbols"] for batch in batches), []), symbols)
+        self.assertEqual({batch["batch_count"] for batch in batches}, {len(batches)})
+        self.assertEqual(batches, weighted_batches(symbols, weights, max_size=6, max_weight=20))
+        # 權重都很小時退回只依檔數切。
+        light = weighted_batches(symbols, {}, max_size=6, max_weight=20)
+        self.assertEqual([len(batch["symbols"]) for batch in light], [6, 6, 6, 2])
+        with self.assertRaises(ValueError):
+            weighted_batches(symbols + [symbols[0]], weights, max_size=6, max_weight=20)
 
     def test_duplicate_universe_symbols_are_rejected(self):
         with self.assertRaises(ValueError):

@@ -87,10 +87,47 @@ class TyphoonLedgerTests(unittest.TestCase):
         self.assertEqual(result["prepare"]["status"], "blocked_by_pending_decision")
         self.assertEqual(self.repository.latest()["run_id"], self.before)
 
-    def test_closure_added_to_calendar_later_rejects_settlement_and_keeps_ledger(self):
-        with self.assertRaisesRegex(VirtualAccountError, "不是交易日"):
-            self.settle(self.runner(calendar(TYPHOON_DAY)))
+    def test_closure_added_to_calendar_later_reports_closed_session_and_keeps_ledger(self):
+        result = self.settle(self.runner(calendar(TYPHOON_DAY)))
+        self.assertEqual(result["status"], "session_closed")
+        self.assertEqual(result["trade_date"], TYPHOON_DAY)
         self.assertEqual(self.repository.latest()["run_id"], self.before)
+
+    def test_settlement_date_still_rejects_closed_day(self):
+        with self.assertRaisesRegex(VirtualAccountError, "不是交易日"):
+            self.runner(calendar(TYPHOON_DAY)).settlement_date(TYPHOON_DAY)
+
+    def test_closed_session_decision_is_voided_and_next_prepare_proceeds(self):
+        later = dict(self.snapshot, decision_cutoff="2026-09-22T12:00:00+00:00")
+        later_path = self.root / "later.json"
+        later_path.write_text(json.dumps(later), encoding="utf-8")
+        before_state = self.repository.latest()["state"]
+        runner = self.runner(calendar(TYPHOON_DAY))
+        decision_run = next(self.decisions.glob("*/decision-1"))
+        with mock.patch("etf_agent.virtual_account.daily.DecisionRepository.verify", return_value=self.patched):
+            result = runner.run(later_path, "prepare-next", self.root / "account.json")
+        self.assertEqual(result["settle"]["status"], "voided_session_closed")
+        self.assertEqual(result["prepare"]["status"], "prepared")
+        self.assertFalse(decision_run.exists())
+        archived = Path(result["settle"]["archived_to"])
+        self.assertTrue(archived.is_dir())
+        self.assertIn("voided_closed_sessions", archived.parts)
+        record = json.loads((archived.parent / (archived.name + ".void.json")).read_text(encoding="utf-8"))
+        self.assertEqual(record["reason"], "target_session_closed")
+        self.assertEqual(record["trade_date"], TYPHOON_DAY)
+        after_state = self.repository.latest()["state"]
+        self.assertEqual(after_state["settled_cash"], before_state["settled_cash"])
+        self.assertEqual(after_state["unsettled_cash"], before_state["unsettled_cash"])
+        self.assertEqual(after_state["positions"], before_state["positions"])
+
+    def test_without_calendar_closed_session_still_waits(self):
+        later = dict(self.snapshot, decision_cutoff="2026-09-22T12:00:00+00:00")
+        later_path = self.root / "later.json"
+        later_path.write_text(json.dumps(later), encoding="utf-8")
+        with mock.patch("etf_agent.virtual_account.daily.DecisionRepository.verify", return_value=self.patched):
+            result = self.runner().run(later_path, "prepare-next", self.root / "account.json")
+        self.assertEqual(result["prepare"]["status"], "blocked_by_pending_decision")
+        self.assertTrue(next(self.decisions.glob("*/decision-1")).exists())
 
 
 if __name__ == "__main__":

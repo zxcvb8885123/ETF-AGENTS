@@ -11,7 +11,7 @@
 | `pipeline_base.py` | 執行基礎：`PipelineResult`、輸入摘要序列化、`PipelineBase`（Agent 步驟的驗證重試與續跑、平行任務、artifact 保存、階段計時） | `PipelineBase`（`agent_step`、`save_artifact`、`save_brief`）、`PipelineResult`、`degraded_research_result`、`compact_brief_json` |
 | `team_stages.py` | 團隊階段 mixin：分析師、多頭／空頭研究員、交易 Agent（逐批、可平行） | `TeamStagesMixin`（`run_analyst_team`、`run_research_team`、`run_trader`） |
 | `risk_stages.py` | 風險階段 mixin：配置前現金姿態、每次修正的風險審查 | `RiskStagesMixin`（`run_cash_stance`、`_review`） |
-| `agent_schemas.py` | 各子 Agent 的輸出 JSON Schema 與共用提示規則 | `ANALYST_SCHEMA`、`EVENT_ANALYST_SCHEMA`、`STANCE_SCHEMA`、`TRADE_SCHEMA`、`CASH_STANCE_SCHEMA`、`REVIEW_SCHEMA`、`EVENT_BATCH_SIZE` |
+| `agent_schemas.py` | 各子 Agent 的輸出 JSON Schema 與共用提示規則 | `ANALYST_SCHEMA`、`EVENT_ANALYST_SCHEMA`、`STANCE_SCHEMA`、`TRADE_SCHEMA`、`CASH_STANCE_SCHEMA`、`REVIEW_SCHEMA`、`EVENT_BATCH_SIZE`、`EVENT_BATCH_MAX_EVENTS` |
 | `agent_runner.py` | 子 Agent 的共用型別與三種 CLI runner | `DailyPipelineError`、`AgentTask`、`AgentCall`、`AgentRunner`、`ClaudeAgentRunner`、`CodexAgentRunner`、`OpenCodeAgentRunner` |
 | `batching.py` | 逐檔輸出的子 Agent 分批與確定性合併 | `BatchMergeError`、`universe_batches`、`merge_batch_items` |
 | `perception_stage.py` | 每日情緒標註階段：授權與時間先驗證、全量標註、程式聚合 | `build_daily_perception` |

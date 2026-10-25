@@ -10,7 +10,7 @@
   },
   "agent": {
     "model_provider": "anthropic",
-    "model_version": "claude-sonnet"
+    "model_version": "claude-opus, claude-sonnet"
   },
   "notes": {
     "etf_name": "待使用者確認；正式 ETF 公開說明書要求 20 字內的中文或英文名稱。",
@@ -18,7 +18,7 @@
     "investment_philosophy": "待使用者確認；正式 ETF 公開說明書要求 100–300 字的投資理念。",
     "approved_at": "待使用者確認策略後填入確認時間，格式為 YYYY-MM-DDTHH:MM:SS+08:00。",
     "model_provider": "歷史 pipeline 記錄 agent_cli=claude，因此填 anthropic。",
-    "model_version": "歷史 pipeline 僅記錄 model=sonnet，未保存更細的 Claude Sonnet 版本，因此填 claude-sonnet，不推測 4／4.5 等子版本。",
+    "model_version": "自 2026-10-24 起每日排程的交易、現金姿態與風險審查用 Claude CLI 別名 opus，分析師與多頭／空頭研究員用 sonnet；CLI 只記錄別名、未保存更細的子版本。此前的 run 全為 sonnet。",
     "submission_guard": "strategy_status 不是 approved，或任一 strategy 欄位為空時，不得產生正式 D-Plan。"
   }
 }

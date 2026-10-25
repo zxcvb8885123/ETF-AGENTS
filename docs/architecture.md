@@ -94,7 +94,7 @@
 
 ## 平行執行與耗時
 
-`--max-workers N`（1～8，CLI 預設 6；程式內 `DailyDecisionPipeline` 預設 1 即串行）讓下列階段同時執行子 Agent：
+`--max-workers N`（1～8，CLI 預設 8；程式內 `DailyDecisionPipeline` 預設 1 即串行）讓下列階段同時執行子 Agent：
 
 - 技術／基本面／事件三位分析師的所有批次。
 - 多頭與空頭研究員的所有批次。兩方仍只讀同一份共同輸入，任務之間不共享輸出。
@@ -140,7 +140,7 @@
 
 ### 分析師模型
 
-`--analyst-model` 在 Claude CLI 預設為 `sonnet`（`inherit` 沿用 `--model`）。
+`--model`（交易、現金姿態與風險審查）在 Claude CLI 預設為 `opus`，`--analyst-model`（分析師與全市場新聞標註）與 `--research-model`（多頭／空頭）預設為 `sonnet`（`inherit` 沿用 `--model`）。
 
 - 技術／基本面／事件批次使用它。
 - 多空、交易與現金姿態維持 `--model`。
@@ -160,6 +160,8 @@
 - 依整張數降低預計超重的部位。
 - 用同一個情境引擎，檢查部分成交後的曝險。
 - `constraint_flags.RISK_STOCK_WEIGHT` 記錄程式必要的硬規則減碼。交易 Agent 原本的 `hold` 等意圖不會被改寫。
+- `RISK_NOT_TRADABLE`：交易狀態包中非 `allowed` 的標的，程式不建立買單、續抱不賣，避免 Guard 的 `TRADABLE` 否決整份決策。
+- `RISK_MIN_POSITIONS`：配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高留住標為 `exit` 的持股（`forced_exit` 不留），避免 `POSITION_COUNT` 否決整份決策而當日無單可交。
 - 風險 Agent 不手寫股數或權重。
 - 交易受限、整張／現金／換手等限制無法同時滿足時，CompetitionGuard 仍然拒絕。
 

@@ -39,6 +39,32 @@ def universe_batches(symbols: Sequence[str], batch_size: int = DEFAULT_BATCH_SIZ
     return batches
 
 
+def weighted_batches(
+    symbols: Sequence[str], weights: Mapping[str, int], max_size: int, max_weight: int,
+) -> List[Dict[str, object]]:
+    """依代號排序後連續切批，每批最多 ``max_size`` 檔、權重合計最多 ``max_weight``。
+
+    單檔權重已超過上限時自成一批；格式與 ``universe_batches`` 相同，可由同一輸入重算。"""
+    if max_size < 1 or max_weight < 1:
+        raise ValueError("max_size 與 max_weight 必須至少為 1")
+    ordered = sorted({str(symbol).upper() for symbol in symbols})
+    if len(ordered) != len(symbols):
+        raise ValueError("交易池股票不得重複")
+    groups: List[List[str]] = []
+    total = 0
+    for symbol in ordered:
+        weight = int(weights.get(symbol, 0))
+        if not groups or len(groups[-1]) >= max_size or (groups[-1] and total + weight > max_weight):
+            groups.append([])
+            total = 0
+        groups[-1].append(symbol)
+        total += weight
+    return [
+        {"batch_index": index, "batch_count": len(groups), "symbols": members, "batch_sha256": canonical_sha256(members)}
+        for index, members in enumerate(groups)
+    ]
+
+
 def merge_batch_items(
     batches: Sequence[Mapping[str, object]],
     outputs: Sequence[Sequence[Mapping[str, object]]],

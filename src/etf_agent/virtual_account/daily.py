@@ -357,11 +357,17 @@ class DailyAccountRunner:
                       if target else self.market.execution_date(state["as_of"]))
         if trade_date is None:
             return {"status": "waiting_for_close_data", "run_id": current["run_id"], "decision_run_id": decision_run_id}
-        # 先確認成交日與交割日，日曆不足時在寫入任何輸入檔前停止。
-        settlement, calendar_basis = self.settlement_date(trade_date)
         decision = json.loads((decision_path / "decision.json").read_text(encoding="utf-8"))
         symbols = sorted({str(row["symbol"]).upper() for row in state.get("positions", [])}
                          | {str(row.get("symbol", "")).upper() for row in decision.get("orders", [])})
+        if self.calendar is not None and not self.calendar.is_trading_day(date.fromisoformat(trade_date)):
+            # 目標時段事後才確認臨時休市（例如颱風假）：委託不會成交，由 run 作廢該決策，帳本不變。
+            # 該日只要有任何行情就代表資料矛盾，交由 settlement_date 拒絕，不作廢。
+            if not self.market.quotes(trade_date, observed_at):
+                return {"status": "session_closed", "run_id": current["run_id"], "decision_run_id": decision_run_id,
+                        "trade_date": trade_date}
+        # 先確認成交日與交割日，日曆不足時在寫入任何輸入檔前停止。
+        settlement, calendar_basis = self.settlement_date(trade_date)
         markets = self.market.build(trade_date, symbols, observed_at)
         if markets is None:
             return {"status": "waiting_for_close_data", "run_id": current["run_id"], "decision_run_id": decision_run_id, "trade_date": trade_date}
@@ -410,6 +416,26 @@ class DailyAccountRunner:
         shutil.move(str(run_dir), str(target))
         return target
 
+    def void_closed_session_decision(self, decision_run_id: str, trade_date: str) -> Path:
+        """目標時段臨時休市時，把未成交的決策移到作廢區並留下作廢紀錄；帳本狀態、現金與持股都不動。
+
+        只在日曆確認 ``trade_date`` 不是交易日時呼叫；與主辦方作廢前一日委託一致，不順延到下一個交易日成交。
+        """
+        run_dir = DecisionRepository(self.decision_repository).run_dir(decision_run_id)
+        if run_dir is None:
+            raise VirtualAccountError("找不到要作廢的 Decision run：%s" % decision_run_id)
+        target = self.decision_repository.parent / "archive" / "voided_closed_sessions" / run_dir.parent.name / run_dir.name
+        if target.exists():
+            raise VirtualAccountError("作廢區已有同名 Decision run：%s" % target)
+        record = {"decision_run_id": decision_run_id, "trade_date": trade_date, "reason": "target_session_closed",
+                  "calendar": self.calendar.provenance() if self.calendar is not None else None}
+        record["record_sha256"] = canonical_sha256(record)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(run_dir), str(target))
+        (target.parent / (run_dir.name + ".void.json")).write_text(
+            json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return target
+
     def run(self, snapshot_path: Path, prepare_run_id: str, account_output: Path) -> Dict[str, object]:
         snapshot = self.service.read_snapshot(snapshot_path)
         current = self.repository.latest()
@@ -421,6 +447,9 @@ class DailyAccountRunner:
         if parse_time(snapshot.get("decision_cutoff"), "decision_cutoff") <= parse_time(current["state"]["as_of"], "state.as_of"):
             raise VirtualAccountError("新 Snapshot cutoff 必須晚於目前帳戶狀態；同一快照請直接重用")
         settled = self.settle(snapshot["decision_cutoff"])
+        if settled["status"] == "session_closed":
+            archived = self.void_closed_session_decision(settled["decision_run_id"], settled["trade_date"])
+            settled = dict(settled, status="voided_session_closed", archived_to=str(archived))
         if settled["status"] == "waiting_for_close_data":
             # 已有待成交決策時不得建立新的 prepare，否則會覆蓋尚未結算的決策；
             # 唯一例外是新 cutoff 早於該決策目標時段的交件期限，決策尚未執行，可由新資料重做。

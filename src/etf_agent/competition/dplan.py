@@ -299,8 +299,15 @@ class DPlanValidator:
 
 
 def official_target_shares(weight: float, price: Decimal, nav: Decimal) -> int:
-    """主辦方公式：floor(target_weight × 前日淨值 ÷ 前日收盤價 ÷ 1000) × 1000。"""
-    return int((Decimal(str(weight)) * nav / price / Decimal(1000)).to_integral_value(rounding=ROUND_FLOOR)) * 1000
+    """主辦方公式：floor(target_weight × 前日淨值 ÷ 前日收盤價 ÷ 1000) × 1000。
+
+    主辦方以二進位浮點數計算：剛好落在整張邊界時（如 0.0331592 × 1e9 ÷ 72.4 = 457999.99999999994）
+    會少一張。因此同時算精確 Decimal 與常見的浮點運算順序，取最少的張數，讓反推權重對每種算法都成立。
+    """
+    exact = int((Decimal(str(weight)) * nav / price / Decimal(1000)).to_integral_value(rounding=ROUND_FLOOR)) * 1000
+    w, n, p = float(weight), float(nav), float(price)
+    floats = (w * n / p / 1000, (w * n) / (p * 1000), w * (n / p) / 1000)
+    return min([exact] + [math.floor(value) * 1000 for value in floats])
 
 
 def official_target_weight(shares: int, price: Decimal, nav: Decimal) -> float:

@@ -49,9 +49,10 @@ uv python install 3.12
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
 | `--agent-cli claude\|codex\|opencode` | `claude` | 子 Agent 使用的 CLI。換執行器時不可續用其他執行器的 run。 |
-| `--model 模型` | 所選 CLI 的設定 | 多空研究、交易與現金姿態使用的模型。 |
+| `--model 模型` | Claude CLI 為 `opus`；其他 CLI 沿用該 CLI 設定 | 交易、現金姿態與風險審查使用的模型（最後拍板的階段）。 |
+| `--research-model 模型` | Claude CLI 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於多頭／空頭研究員批次。傳 `inherit` 則沿用 `--model`。 |
 | `--analyst-model 模型` | Claude CLI 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於技術／基本面／事件三位分析師的批次，量最大。傳 `inherit` 則沿用 `--model`。 |
-| `--max-workers N` | 6 | 分析師、多空研究與交易階段同時執行的子 Agent 數（1～8）；1 為串行。只縮短時間，不改決策內容；同時呼叫越多越容易撞到用量上限。現金姿態與風險審查仍串行。同一 Snapshot 實跑對照：3 時 Agent 階段合計 928.7 秒，6 時 601.0 秒（約少 35%），皆未撞用量上限；6 的那次有 1 次事件批次驗證重試。8 尚未實測。`pipeline.json` 的 `stage_durations` 記錄各階段秒數。 |
+| `--max-workers N` | 8 | 分析師、多空研究與交易階段同時執行的子 Agent 數（1～8）；1 為串行。只縮短時間，不改決策內容；同時呼叫越多越容易撞到用量上限。現金姿態與風險審查仍串行。同一 Snapshot 實跑對照：3 時 Agent 階段合計 928.7 秒，6 時 601.0 秒（約少 35%），皆未撞用量上限；6 的那次有 1 次事件批次驗證重試。2026-10-25 起預設改為 8（分析師 15 批由 3 輪變 2 輪，估計省 2～3 分鐘；用量不變），尚未有實跑紀錄。`pipeline.json` 的 `stage_durations` 記錄各階段秒數。 |
 | `--technical-gate` ／ `--no-technical-gate` | 開啟 | 趨勢一致的股票技術 brief 只附 `momentum`、不附逐日歷史，約少一半輸入；資料不足或訊號衝突者仍附完整歷史。同 Snapshot 對照結果見[降 token 計劃](docs/token_reduction_plan.md)，樣本只有一天。 |
 | `--max-budget-usd 金額` | 3 | 單次子 Agent 呼叫的估算用量上限，只適用 Claude CLI。 |
 
@@ -61,7 +62,7 @@ uv python install 3.12
 | --- | --- | --- |
 | `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，例如撞到用量上限。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`（如 `daily-20261020-180000`）：續跑指定 run，跨午夜或額度重置後使用。找到可續跑的 run 時自動沿用既有 Snapshot，不重新更新資料。已還原成重跑前狀態的 run（`pipeline.json` 有 `rolled_back`）不能續跑，改用 `--force`。Snapshot 截止時間早於 `config/decision_policy.json` 的 `available_at`（目前 2026-10-23 00:00 台北）的舊 run 也不能續跑，建立 Policy 時會被擋下（策略設定晚於資料截止）；改用 `--force` 重抓資料重跑。 |
 | `--skip-data` | 關 | 一律沿用既有 Snapshot 與帳戶快照，不重新執行資料更新，不看更新時間。續跑、或 Snapshot 已含應有的最新交易日資料（150 檔齊全，且是該日 15:00 後建立）時會自動套用，通常不用手動加。 |
-| `--force` | 關 | 休市日或當日已完成時仍執行；預設同一台北日期、同一目標時段在 1 小時內已完成就不重跑（早上為當天時段、晚上為隔天時段，兩者不算重複）；更早完成的（例如半夜手動跑）照常重跑，舊 run 目錄與 D-Plan 版本都保留。 |
+| `--force` | 關 | 休市日或當日已完成時仍執行（休市日 15:00 後若隔天是交易日，不加也會做隔天的備案）；預設同一台北日期、同一目標時段在 1 小時內已完成就不重跑（早上為當天時段、晚上為隔天時段，兩者不算重複）；更早完成的（例如半夜手動跑）照常重跑，舊 run 目錄與 D-Plan 版本都保留。 |
 | `--delivery-only RUN_ID` | 無 | 只重建既有 run 的最終交付，不執行資料準備或 Agent，不耗用量。 |
 
 ### 檢查與輸入
@@ -73,6 +74,7 @@ uv python install 3.12
 | `--account-id ID` | `config/active_account.json` 的帳戶 | 指定帳戶。所有入口預設讀同一個設定檔，比賽第一天開新帳戶時會自動切換。 |
 | `--datapack PATH` | 自動尋找 | 指定要對帳的主辦方資料包。省略時在 `var/datapack/` 找本隊、本交易日 `generated_at` 最新的一份。 |
 | `--no-market-news` | 關 | 不接入全市場新聞，市場情緒改用恐懼貪婪指標。新聞或事件分析步驟出問題時的緊急開關，`pipeline.json` 記為 `market_news: disabled`。 |
+| `--no-auto-resume` | 關（預設會自動續跑） | 決策鏈失敗時，若離 08:55 還有 25 分鐘以上、且錯誤不是額度用完或安全拒絕，程式沿用已驗證輸出自動續跑一次（`pipeline.json` 的 `auto_resume` 記錄）；加此參數則不續跑。 |
 | `--rebase-to-datapack` | 關 | 帳本與資料包不一致時（例如前日整批作廢、被剔除），以資料包重建帳本，再重抓資料建立新 Snapshot 與決策前快照，對帳一致才跑 Agent。舊帳本狀態保留在雜湊鏈。不能和 `--skip-datapack`、`--resume` 同用。 |
 | `--skip-datapack` | 關 | 明確略過資料包對帳，`pipeline.json` 會記為 `skipped`。比賽期間不要用。 |
 | `--datapack-cash-tolerance 比率` | 0.0005 | 帳本與資料包現金差的容忍比率（分母 `nav_tradable`）。實際差額寫在 `pipeline.json` 的 `datapack.cash`，可依真實資料包校準。 |
@@ -281,12 +283,12 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 ### 每日排程：晚上備案、早上重做
 
-排程（`scripts/launchd/`）平日 21:00、07:00 各跑一次 `run`：
+排程（`scripts/launchd/`）平日 21:00、07:00 各跑一次 `run`；週日 21:00 也跑一次，替週一再做一份看得到週末新聞的備案（週一就有週五晚上、週日晚上、週一早上三份，後做的取代先做的）：
 
 - **21:00 備案**：用當天收盤資料做下一個交易日的決策與 D-Plan。早上出事時，手上仍有一份能交。主辦方約 19:00 才產生隔天的 DataPack，**21:00 前要先下載到 `var/datapack/`**，否則對帳不過、不會有備案。
 - **07:00 重做**：在 08:55 交件期限前，用晚上到早上的新事件、新聞與情緒重做，取代晚上那份。
 - **何時略過**：同一目標時段在 1 小時內已有完成的 run 才略過（例如 06:30 手動跑完，07:00 不跑）。半夜手動跑的不算，07:00 照常重做。
-- **每次都保留**：run 目錄一律帶台北時間（`daily-<YYYYMMDD>-<HHMMSS>`）。每份 D-Plan 另存在 `artifacts/competition_d_plan/versions/`，檔名結尾是決策時間（台北）；主檔 `D-Plan_<team_id>_<交易日>.json` 永遠是最新一份。
+- **每次都保留**：run 目錄一律帶台北時間（`daily-<YYYYMMDD>-<HHMMSS>`）。每份 D-Plan 另存在 `artifacts/competition_d_plan/versions/<交易日>/`，檔名結尾是決策時間（台北）；主檔 `D-Plan_<team_id>_<交易日>.json` 永遠是最新一份。
 - **跑完已過 08:55 不換主檔**：決策跑完時若已過目標時段的交件期限，不產生 D-Plan、不取代已上傳的決策；沒有備案時新決策移到封存區，帳本視為該時段沒交件。
 - **重做失敗時自動還原**：早上重做沒產生新 D-Plan（失敗、被擋、決策被拒或跑完已過 08:55），程式把帳本、晚上的決策與 Snapshot 還原成重做前，重做建立的帳本狀態移到 `artifacts/ledger/<account_id>/rolled_back/`（不刪除）。通知會寫「已還原重跑前的備案決策」。
 
@@ -338,7 +340,7 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 | `var/datapack/` | 人工下載的主辦方資料包（不進 git）；每次 run 的對帳副本在 `artifacts/daily/<日期>/<run_id>/datapack.json` |
 | `config/active_account.json` | 使用中的帳戶 ID |
 | `artifacts/competition_d_plan/D-Plan_<team_id>_<日期>.json` | 可人工上傳的 D-Plan v4.3 候選（同交易日永遠是最新一份） |
-| `artifacts/competition_d_plan/versions/` | 每份 D-Plan 的帶時間副本，查得到交過哪一版；不刪不覆蓋 |
+| `artifacts/competition_d_plan/versions/<交易日>/` | 每份 D-Plan 的帶時間副本，依交易日分資料夾，查得到交過哪一版；不刪不覆蓋 |
 | `artifacts/competition_d_plan/contexts/` | D-Plan 內部 context 稽核檔；不是主辦方繳交檔 |
 
 ## 常見問題

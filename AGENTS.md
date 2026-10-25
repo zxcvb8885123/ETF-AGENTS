@@ -48,6 +48,7 @@
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
 - 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
 - 單股硬性權重上限的減碼一律由程式執行（不依 Policy 的 `stock_weight_fit` 版本欄位開關）；因風控減碼產生的賣單，意圖由程式標為 `trim`（仍有持股）或 `exit`（減至零），不改寫交易 Agent 的原意圖，並留下 `RISK_STOCK_WEIGHT` 旗標。
+- 交易狀態包標為非 `allowed` 的標的由程式不建立買單、續抱不賣（`RISK_NOT_TRADABLE`）；配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高（同值依代號）留住交易 Agent 標為 `exit` 的持股續抱直到達標（`RISK_MIN_POSITIONS`，`forced_exit` 不留）。兩者都不改寫交易 Agent 的意圖，仍無法滿足硬規則時照舊由 Guard 拒絕。
 - 技術分析師啟用 `technical_gate` 時，分批 brief 只記錄該批股票的 `momentum_only_symbols` 與 `full_history_symbols`；每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。Claude 與 OpenCode 的 read 權限須拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案（兩者共用 `agent_runner.SENSITIVE_READ_GLOBS`）；Codex 唯讀沙箱無法限制讀檔，因此所有 runner 的輸出含專案 `.env`／`.envrc` 的值時一律拒絕。子 Agent CLI 的逾時、非零結束、輸出不是 JSON 或沒有結構化輸出屬 `TransientAgentError`，`agent_step` 只對它在交件期限內再試一次並把失敗嘗試記入 `agent_calls`；秘密外洩、未核准工具等安全拒絕與驗證失敗不得重試。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
 

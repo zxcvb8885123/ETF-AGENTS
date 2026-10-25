@@ -57,7 +57,9 @@ class PipelineResult:
     stage_durations: Dict[str, float] = field(default_factory=dict)
 
 
-ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event"})
+# market 為事件分析師的全市場新聞標註（market_news_labels_*）。
+ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event", "market"})
+RESEARCH_TASK_PREFIXES = frozenset({"bull", "bear"})
 MAX_PARALLEL_WORKERS = 8
 DEFAULT_TRANSIENT_RETRIES = 1  # 暫時性失敗（逾時、非零結束、輸出不是 JSON）最多再試的次數
 DEFAULT_RETRY_DELAY_SECONDS = 30.0
@@ -77,6 +79,7 @@ class PipelineBase:
         log: Callable[[str], None] = print,
         resume: bool = False,
         analyst_runner: Optional[AgentRunner] = None,
+        research_runner: Optional[AgentRunner] = None,
         technical_gate: bool = False,
         max_workers: int = 1,
         transient_retries: int = DEFAULT_TRANSIENT_RETRIES,
@@ -84,7 +87,8 @@ class PipelineBase:
         retry_deadline: Optional[datetime] = None,
         sleep: Optional[Callable[[float], None]] = None,
     ):
-        """``analyst_runner`` 只負責技術／基本面／事件分析師批次，未提供時全部沿用 ``runner``。
+        """``analyst_runner`` 只負責技術／基本面／事件分析師批次（含全市場新聞標註），``research_runner`` 只負責
+        多頭／空頭研究員批次；未提供時沿用 ``runner``（交易、現金姿態與風險審查一律用 ``runner``）。
         ``resume=True`` 時，同一 run 目錄中先前已通過驗證的 Agent 輸出會以目前的
         Validator 重驗後沿用，不再呼叫 Agent；輸入改變時 envelope 對不上，自然重跑。
         ``max_workers`` 是分析師與多空研究階段同時執行的 Agent 呼叫數上限；預設 1 為串行。
@@ -103,6 +107,7 @@ class PipelineBase:
         self.run_dir = run_dir
         self.runner = runner
         self.analyst_runner = analyst_runner or runner
+        self.research_runner = research_runner or runner
         self.technical_gate = technical_gate
         self.decision_repository = decision_repository
         self.max_attempts = max_attempts
@@ -185,7 +190,9 @@ class PipelineBase:
         offset = len(previous)
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
-            runner = self.analyst_runner if task.name.split("_", 1)[0] in ANALYST_TASK_PREFIXES else self.runner
+            prefix = task.name.split("_", 1)[0]
+            runner = (self.analyst_runner if prefix in ANALYST_TASK_PREFIXES
+                      else self.research_runner if prefix in RESEARCH_TASK_PREFIXES else self.runner)
             call, item = self._call_agent(runner, task, prompt, attempt)
             if call.usage_tokens is not None:
                 item["usage_tokens"] = call.usage_tokens
