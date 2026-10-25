@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
+from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
 from .contracts import (
     DECISION_SCHEMA_VERSION,
@@ -422,11 +423,7 @@ class CompetitionGuardV2:
                     str(symbol).upper(): decimal_value(value, "benchmark weight")
                     for symbol, value in benchmark["weights"].items()
                 }
-                symbols = set(scenario_weights) | set(benchmark_weights)
-                active = Decimal("0.5") * sum(
-                    abs(scenario_weights.get(symbol, Decimal("0")) - benchmark_weights.get(symbol, Decimal("0")))
-                    for symbol in symbols
-                )
+                active = active_share(top_weights(scenario_weights), top_weights(benchmark_weights))
                 active_results.append({
                     "benchmark_id": benchmark_id,
                     "version": benchmark["version"],
@@ -495,11 +492,7 @@ class CompetitionGuardV2:
                 str(symbol).upper(): decimal_value(value, "benchmark weight")
                 for symbol, value in benchmark["weights"].items()
             }
-            symbols = set(weights) | set(benchmark_weights)
-            active = Decimal("0.5") * sum(
-                abs(weights.get(symbol, Decimal("0")) - benchmark_weights.get(symbol, Decimal("0")))
-                for symbol in symbols
-            )
+            active = active_share(top_weights(weights), top_weights(benchmark_weights))
             benchmark_results.append(
                 {
                     "benchmark_id": benchmark["benchmark_id"],

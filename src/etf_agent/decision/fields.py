@@ -26,6 +26,10 @@ class DecisionToolError(ValueError):
     """Raised when a decision artifact cannot be used safely."""
 
 
+# Active Share 基準中交易池外的持股沒有代號，以此前綴加名稱為鍵；它們必然不與投資組合重疊。
+UNLISTED_BENCHMARK_PREFIX = "OTHER:"
+
+
 def parse_time(value: object, field: str) -> datetime:
     return parse_aware_time(value, field, error=DecisionToolError)
 

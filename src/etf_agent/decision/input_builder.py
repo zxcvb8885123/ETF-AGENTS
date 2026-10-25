@@ -39,6 +39,7 @@ class DecisionInputBuilder:
         perception_inputs: Sequence[Mapping[str, object]] = (),
         market_news_input: Optional[Mapping[str, object]] = None,
         market_fear_greed_input: Optional[Mapping[str, object]] = None,
+        benchmarks: Sequence[Mapping[str, object]] = (),
     ):
         self.perception_inputs = [dict(item) for item in perception_inputs]
         self.market_news_input = dict(market_news_input) if market_news_input is not None else None
@@ -49,6 +50,7 @@ class DecisionInputBuilder:
         self.research_results = [dict(item) for item in research_results]
         self.trading_status = dict(trading_status) if trading_status is not None else None
         self.account_snapshot = dict(account_snapshot) if account_snapshot is not None else None
+        self.benchmarks = [dict(item) for item in benchmarks]
 
     def build(self) -> Dict[str, object]:
         snapshot_id = self.snapshot.get("snapshot_id")
@@ -66,7 +68,7 @@ class DecisionInputBuilder:
             "snapshot_sha256": canonical_sha256(self.snapshot),
             "snapshot": self.snapshot,
             "rules": rules,
-            "benchmarks": [],
+            "benchmarks": self.benchmarks,
             "price_series": self._price_series(),
             "research_results": self.research_results,
             "perception_inputs": self.perception_inputs,

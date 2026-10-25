@@ -194,7 +194,7 @@ ETF_AGENTS/
 │   ├── official_universe.csv     # 150 檔交易池
 │   ├── sector_classification.json # 產業分類
 │   ├── active_etf_list.csv       # 官方 30 檔主動型 ETF 名單
-│   └── active_etf_holdings.csv   # Active Share 用前 15 大持股（尚未填入）
+│   └── active_etf_holdings.csv   # Active Share 用 30 檔主動型 ETF 前 15 大持股（MoneyDJ 2026-09-30，一次性）
 ├── game_docs/               # 主辦方原始文件：標的清單、D-Plan 指南與 schema、DataPack 規格
 ├── docs/                    # 設計與操作文件
 │   └── source_audit/        #   來源核對與核准證據，程式與核准設定會引用，不可刪
