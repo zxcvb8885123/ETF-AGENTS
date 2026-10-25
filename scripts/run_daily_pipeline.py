@@ -893,6 +893,8 @@ def _main(args) -> int:
                 market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
                 nav_history=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).nav_history(),
                 applied_decision_run_ids=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).applied_decision_run_ids(),
+                active_share_holdings_path=ROOT / "data" / "active_etf_holdings.csv",
+                active_share_approvals_path=ROOT / "config" / "active_share_sources.json",
             )
 
         result, agent_calls, auto_resume = run_decision_chain(

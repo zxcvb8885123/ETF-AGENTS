@@ -18,12 +18,15 @@ from .contracts import (
     reject_unknown_fields,
     required_string,
 )
+from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
 from .momentum import MomentumEngine
 from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, conviction_weights, validate_position_sizing
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
+# Active Share 低於門檻時，程式最多取消幾檔重疊的買進候選後重新配置。
+ACTIVE_SHARE_MAX_DROPS = 3
 MONEY = Decimal("1")
 PRICE = Decimal("0.01")
 RATE = Decimal("0.00000001")
@@ -243,13 +246,79 @@ class AllocationOrderEngine:
         revision_count: int = 0,
         parent_proposal_id: Optional[str] = None,
     ) -> Dict[str, object]:
+        """配置後任一必備主動型 ETF 的 Active Share 低於門檻時，由程式取消與最低那檔 ETF 重疊最多的
+        buy／add 候選（重疊量 min(組合權重, ETF 權重) 由大到小、同值依代號），重新配置，最多 ACTIVE_SHARE_MAX_DROPS 次；
+        每取消一檔記 RISK_ACTIVE_SHARE 旗標，不改寫交易 Agent 的意圖，仍不通過時由 Guard 拒絕。Validator 以同一方法重算。"""
+        dropped: Dict[str, str] = {}
+        while True:
+            body = self._run_min_positions(
+                intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, dropped
+            )
+            if len(dropped) >= ACTIVE_SHARE_MAX_DROPS:
+                return body
+            pick = self._active_share_drop(body, intent_result, dropped)
+            if pick is None:
+                return body
+            dropped[pick[0]] = pick[1]
+
+    def _active_share_drop(
+        self, body: Mapping[str, object], intent_result: Mapping[str, object], dropped: Mapping[str, str]
+    ) -> Optional[Tuple[str, str]]:
+        required = set(self.context.bundle["rules"].get("required_benchmark_ids", []))
+        minimum = decimal_value(self.policy["minimum_active_share"], "minimum_active_share")
+        if not required or minimum <= 0:
+            return None
+        weights = top_weights({
+            str(item["symbol"]).upper(): decimal_value(item["weight"], "weight")
+            for item in body["allocation_proposal"]["positions"]
+        })
+        droppable = {
+            str(item.get("symbol", "")).upper()
+            for item in intent_result.get("items", [])
+            if isinstance(item, Mapping) and item.get("intent") in {"buy", "add"}
+        } - set(dropped)
+        failing = []
+        for benchmark in self.context.bundle.get("benchmarks", []):
+            if benchmark["benchmark_id"] not in required:
+                continue
+            reference = top_weights({
+                str(symbol).upper(): decimal_value(value, "benchmark weight")
+                for symbol, value in benchmark["weights"].items()
+            })
+            share = active_share(weights, reference)
+            if share < minimum:
+                failing.append((share, str(benchmark["benchmark_id"]), reference))
+        for share, benchmark_id, reference in sorted(failing, key=lambda item: (item[0], item[1])):
+            overlaps = sorted(
+                (
+                    (min(weights[symbol], reference[symbol]), symbol)
+                    for symbol in set(weights) & set(reference)
+                    if symbol in droppable
+                ),
+                key=lambda item: (-item[0], item[1]),
+            )
+            if overlaps:
+                symbol = overlaps[0][1]
+                return symbol, "與 %s 的 Active Share %s 低於 %s，由程式取消重疊最多的買進候選（交易 Agent 的意圖未被改寫）" % (
+                    benchmark_id, format(share, ".2%"), format(minimum, ".2%"))
+        return None
+
+    def _run_min_positions(
+        self,
+        intent_result: Mapping[str, object],
+        excluded_symbols: Optional[Set[str]],
+        overrides: Optional[Mapping[str, object]],
+        revision_count: int,
+        parent_proposal_id: Optional[str],
+        dropped: Mapping[str, str],
+    ) -> Dict[str, object]:
         """配置後持股低於 min_positions 時，由程式依 ATR14 由低到高（同值依代號）留住交易 Agent 標為
         exit 的持股續抱，直到達標或沒有可留的 exit；forced_exit 不留。每留一檔記 RISK_MIN_POSITIONS 旗標，
         不改寫交易 Agent 的意圖。Validator 以同一方法重算，結果確定。"""
         kept: Set[str] = set()
         minimum = int(self.policy["min_positions"])
         while True:
-            body = self._run(intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept)
+            body = self._run(intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept, dropped)
             need = minimum - len(body["allocation_proposal"]["positions"])
             if need <= 0:
                 return body
@@ -289,6 +358,7 @@ class AllocationOrderEngine:
         revision_count: int,
         parent_proposal_id: Optional[str],
         kept_exits: Set[str],
+        active_share_dropped: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, object]:
         excluded = {value.upper() for value in (excluded_symbols or set())}
         effective = self._effective_policy(overrides or {})
@@ -374,6 +444,10 @@ class AllocationOrderEngine:
                     {"symbol": symbol, "code": "RISK_NOT_TRADABLE", "detail": "非可交易狀態，由程式不建立買單（交易 Agent 的意圖未被改寫）"}
                 )
         candidates = [symbol for symbol in candidates if symbol not in untradable]
+        for symbol, detail in sorted((active_share_dropped or {}).items()):
+            if symbol in candidates:
+                constraint_flags.append({"symbol": symbol, "code": "RISK_ACTIVE_SHARE", "detail": detail})
+        candidates = [symbol for symbol in candidates if symbol not in (active_share_dropped or {})]
         sized_weights: Optional[Dict[str, Decimal]] = None
         if "position_sizing" in self.policy:
             candidates, sized_weights = self._conviction_targets(

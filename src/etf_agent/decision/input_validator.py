@@ -16,6 +16,7 @@ from etf_agent.perception import (
 from etf_agent.research import ResearchResultValidator, ResearchToolError
 
 from .fields import (
+    UNLISTED_BENCHMARK_PREFIX,
     DECISION_SCHEMA_VERSION,
     DecisionToolError,
     decimal_value,
@@ -92,7 +93,7 @@ class DecisionInputValidator:
         self._validate_rules(errors)
         universe, price_evidence = self._universe_and_price_evidence(errors)
         self._validate_account(universe, errors)
-        self._validate_benchmarks(errors)
+        self._validate_benchmarks(universe, errors)
         self._validate_price_series(universe, price_evidence, errors)
         self._validate_research_results(errors)
         self._validate_perception_inputs(errors)
@@ -492,7 +493,7 @@ class DecisionInputValidator:
                 except DecisionToolError as error:
                     errors.append(str(error))
 
-    def _validate_benchmarks(self, errors: List[str]) -> None:
+    def _validate_benchmarks(self, universe: Set[str], errors: List[str]) -> None:
         benchmarks = self.bundle.get("benchmarks")
         if not isinstance(benchmarks, list):
             errors.append("benchmarks 必須是陣列")
@@ -533,6 +534,9 @@ class DecisionInputValidator:
                 if not isinstance(symbol, str) or not symbol.strip():
                     errors.append("%s.weights 股票代碼無效" % prefix)
                     continue
+                # 代號格式與交易池不一致時拒絕，避免比對不到而默默高估 Active Share。
+                if universe and not symbol.startswith(UNLISTED_BENCHMARK_PREFIX) and symbol.upper() not in universe:
+                    errors.append("%s.weights.%s 不在交易池；交易池外持股須以 %s 加名稱為鍵" % (prefix, symbol, UNLISTED_BENCHMARK_PREFIX))
                 try:
                     weight = decimal_value(value, "%s.weights.%s" % (prefix, symbol))
                     if weight < 0 or weight > 1:

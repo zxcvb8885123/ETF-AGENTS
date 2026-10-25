@@ -89,7 +89,7 @@ Decision run 的 artifact 為 `momentum`、`debate`（`ResearchDebateBundle` 2.0
 }
 ```
 
-`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。若既有 `hold` 持股或候選在配置及壓力情境（含部分成交）下超過單股硬上限，程式會先按整張減少買單或產生必要賣單，`RISK_STOCK_WEIGHT` 保留原始意圖與減碼後股數；產業權重超過 `max_sector_weight` 時同樣由程式按整張減碼並留下 `RISK_SECTOR_WEIGHT`。交易狀態包標為非 `allowed` 的標的不建立買賣單（`RISK_NOT_TRADABLE`）；配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高留住標為 `exit` 的持股續抱（`RISK_MIN_POSITIONS`，`forced_exit` 不留）。這些是確定性風控，不宣稱交易 Agent 主動提出賣出。無法同時滿足其他硬規則時仍由 Guard 拒絕。內容必須可由原始帳戶、cutoff 行情、TradeDecision 與 DecisionPolicy 完整重算。
+`ProposalBundle` 同時保存 `allocation_proposal` 與 `order_proposal`。配置工具先執行退出／減碼，再依股票代號排序處理買進／加碼；以 Decimal 計算價格、費稅與現金，依一張 1,000 股向下取整。現金不足、未滿一張或持股檔數已滿時保存 `constraint_flags`，不能填補股數。若既有 `hold` 持股或候選在配置及壓力情境（含部分成交）下超過單股硬上限，程式會先按整張減少買單或產生必要賣單，`RISK_STOCK_WEIGHT` 保留原始意圖與減碼後股數；產業權重超過 `max_sector_weight` 時同樣由程式按整張減碼並留下 `RISK_SECTOR_WEIGHT`。交易狀態包標為非 `allowed` 的標的不建立買賣單（`RISK_NOT_TRADABLE`）；配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高留住標為 `exit` 的持股續抱（`RISK_MIN_POSITIONS`，`forced_exit` 不留）；配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 `minimum_active_share`（15%）時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次（`RISK_ACTIVE_SHARE`，不賣既有持股）。這些是確定性風控，不宣稱交易 Agent 主動提出賣出。無法同時滿足其他硬規則時仍由 Guard 拒絕。內容必須可由原始帳戶、cutoff 行情、TradeDecision 與 DecisionPolicy 完整重算。
 
 ## ScenarioResult、GuardResult 與 RiskReview
 

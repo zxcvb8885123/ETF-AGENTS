@@ -1,0 +1,7 @@
+{
+  "version": "active-share-sources-2026-10-25",
+  "note": "競賽 Active Share 基準（主動型 ETF 前 15 大持股）的來源使用核准。只有 license_status=approved 且 reviewed_at 不晚於決策截止時間的來源可進入 Guard 計算；未列入或非 approved 者拒絕。依據見 evidence 指向的稽核紀錄。",
+  "sources": [
+    {"source": "MONEYDJ_ETF_HOLDINGS", "license_status": "approved", "terms_url": "https://www.moneydj.com/", "usage_scope": "competition_research", "reviewed_at": "2026-10-25T20:45:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-10-25_active_etf_holdings.md：MoneyDJ 頁面聲明未經合法授權請勿翻載；使用者決定以比賽內部風控用途一次性使用 2026-09-30 持股，屬使用者自行承擔的判斷。"}
+  ]
+}

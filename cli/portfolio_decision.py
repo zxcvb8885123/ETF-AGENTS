@@ -48,6 +48,8 @@ class PortfolioDecisionApplication:
                     lookback_bars=args.lookback_bars,
                     perception_bundle_path=args.perception_bundle,
                     perception_result_path=args.perception,
+                    active_share_holdings_path=args.active_share_holdings,
+                    active_share_approvals_path=args.active_share_approvals,
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
@@ -199,6 +201,8 @@ class PortfolioDecisionApplication:
         build_input.add_argument("--perception-bundle", type=Path)
         build_input.add_argument("--perception", type=Path)
         build_input.add_argument("--lookback-bars", type=int, default=DEFAULT_LOOKBACK_BARS)
+        build_input.add_argument("--active-share-holdings", type=Path, default=self.root / "data" / "active_etf_holdings.csv")
+        build_input.add_argument("--active-share-approvals", type=Path, default=self.root / "config" / "active_share_sources.json")
 
         commands.add_parser("validate-input", help="驗證共用 DecisionInputBundle")
 
