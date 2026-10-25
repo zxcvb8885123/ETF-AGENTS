@@ -26,7 +26,7 @@
 | `decision_rules.json` | 張數 `lot_size`、費率、最低手續費、單股／特定股權重上限、持股數、現金上限 |
 | `decision_rules.json` | 內容算 `config_sha256` 寫入決策輸入包，Validator 以此重算 |
 | `decision_rules.json` | `source_url` 指向 `config/competition_rules.json`，兩份數值需一致 |
-| `decision_rules.json` | `max_sector_weight` 為 `"0.35"`（2026-10-23 起；超過時由配置程式在 Guard 前按整張減碼，見根 README）；`minimum_active_share` 為 `"0"`，即不設實際限制（比賽只比總報酬，與主動型 ETF 的差異不加分） |
+| `decision_rules.json` | `max_sector_weight` 為 `"0.35"`（2026-10-23 起；超過時由配置程式在 Guard 前按整張減碼，見根 README）；`required_benchmark_ids` 為 30 檔主動型 ETF、`minimum_active_share` 為 `"0.15"`（2026-10-25 起，依比賽辦法（十三）；Guard 以投資組合前 15 大對各 ETF 前 15 大、占淨值權重計算，基準取自 `data/active_etf_holdings.csv`） |
 | `decision_policy.json` | 現金緩衝、預設權重、減碼比例、滑價、換手、壓力情境、修正次數與 `position_sizing` |
 | `decision_policy.json` | 可調：`drawdown_control`（`neutral_at`／`defensive_at` 峰值回撤門檻，達到時現金姿態至少 neutral／defensive）、`cash_buffer_by_stance`（aggressive／neutral／defensive 現金比例）、`conviction_multipliers`（high／medium／low 乘數）、`volatility_floor`、`slippage_bps`、`trim_fraction` |
 | `decision_policy.json` | 樣板不得含硬性規則或產業分類欄位，否則 `build_decision_policy` 拒絕 |

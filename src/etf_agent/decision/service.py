@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
 from etf_agent.data import MarketDataDatabase, SnapshotRepository
 
@@ -13,6 +13,7 @@ from .contracts import (
     DecisionToolError,
     artifact_content_sha256,
 )
+from .active_share import load_active_etf_benchmarks
 from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .policy_builder import build_decision_policy
 from .momentum import MomentumEngine, MomentumResultValidator
@@ -76,10 +77,13 @@ class PortfolioDecisionApplicationService:
         fear_greed_root: Optional[Path] = None,
         fear_greed_approvals_path: Optional[Path] = None,
         market_news_input: Optional[Mapping[str, object]] = None,
+        active_share_holdings_path: Optional[Path] = None,
+        active_share_approvals_path: Optional[Path] = None,
     ) -> Dict[str, object]:
         """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。
 
         指定 ``fear_greed_root`` 時，附上截止前最後一次保存的恐懼貪婪抓取；沒有任何抓取則不附。
+        規則有 ``required_benchmark_ids`` 時，必須提供主動型 ETF 持股檔與來源核准檔，缺少即拒絕。
         """
         if lookback_bars < 1:
             raise DecisionToolError("lookback_bars 必須至少為 1")
@@ -107,9 +111,18 @@ class PortfolioDecisionApplicationService:
         if fear_greed_root is not None:
             from etf_agent.perception.market_fear_greed import build_fear_greed_input
             fear_greed = build_fear_greed_input(fear_greed_root, fear_greed_approvals_path, snapshot.get("snapshot_id"), cutoff)
+        rules = cls.read_json(rules_path, " DecisionRules")
+        required_benchmarks = rules.get("required_benchmark_ids") or []
+        benchmarks: List[Dict[str, object]] = []
+        if required_benchmarks:
+            if active_share_holdings_path is None or active_share_approvals_path is None:
+                raise DecisionToolError("規則要求 Active Share 基準，必須提供主動型 ETF 持股檔與來源核准檔")
+            benchmarks = load_active_etf_benchmarks(
+                active_share_holdings_path, active_share_approvals_path, required_benchmarks, cutoff
+            )
         builder = DecisionInputBuilder(
             snapshot,
-            cls.read_json(rules_path, " DecisionRules"),
+            rules,
             history,
             research_results=[cls.read_json(path, " ResearchResult") for path in research_paths],
             perception_inputs=([{"bundle": cls.read_json(perception_bundle_path, " PerceptionDataBundle"),
@@ -127,6 +140,7 @@ class PortfolioDecisionApplicationService:
             ),
             market_fear_greed_input=fear_greed,
             market_news_input=market_news_input,
+            benchmarks=benchmarks,
         )
         bundle = builder.build()
         errors = builder.validate(bundle)

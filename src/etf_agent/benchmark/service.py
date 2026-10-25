@@ -61,6 +61,13 @@ def _first_execution_date(started_at: datetime, trading_dates: Sequence[str]) ->
     return None
 
 
+def _no_start_reason(started_at: datetime, as_of: datetime) -> str:
+    opened = started_at.astimezone(TAIPEI)
+    deadline = "在當日 08:55 交件期限前" if opened.time() < DECISION_DEADLINE else "已過當日 08:55 交件期限"
+    return "開帳於 %s（台北，%s），基準從之後第一個可下單的交易日起算；截至 %s（台北）這一天還沒收盤或行情還沒抓到，暫時沒有可比較的資料" % (
+        opened.strftime("%Y-%m-%d %H:%M"), deadline, as_of.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M"))
+
+
 def _series_with_metrics(
     genesis_point: Mapping[str, object],
     capital: Decimal,
@@ -232,7 +239,7 @@ def build_benchmark_comparison(
             benchmarks.append(_unavailable(definition, "license_status=%s，未核准的來源不進正式計算" % definition.license_status))
             continue
         if start_date is None:
-            benchmarks.append(_unavailable(definition, "開帳後交易池尚無 as-of %s 時已可得的官方交易日行情" % as_of_time.isoformat()))
+            benchmarks.append(_unavailable(definition, _no_start_reason(started_at, as_of_time)))
             continue
         if definition.kind == BENCHMARK_KIND_SINGLE:
             result = _build_single(definition, price_repository, capital, fees, start_date, trading_dates, as_of_time, genesis_point, end_date)

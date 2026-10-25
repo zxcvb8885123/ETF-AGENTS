@@ -162,6 +162,7 @@
 - `constraint_flags.RISK_STOCK_WEIGHT` 記錄程式必要的硬規則減碼。交易 Agent 原本的 `hold` 等意圖不會被改寫。
 - `RISK_NOT_TRADABLE`：交易狀態包中非 `allowed` 的標的，程式不建立買單、續抱不賣，避免 Guard 的 `TRADABLE` 否決整份決策。
 - `RISK_MIN_POSITIONS`：配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高留住標為 `exit` 的持股（`forced_exit` 不留），避免 `POSITION_COUNT` 否決整份決策而當日無單可交。
+- `RISK_ACTIVE_SHARE`：配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 15% 時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次，不賣既有持股，避免 `ACTIVE_SHARE_ALL` 否決整份決策。
 - 風險 Agent 不手寫股數或權重。
 - 交易受限、整張／現金／換手等限制無法同時滿足時，CompetitionGuard 仍然拒絕。
 

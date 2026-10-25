@@ -35,6 +35,7 @@ flowchart TD
 | `input_validator.py` | DecisionInputBundle 重建驗證 | `DecisionInputValidator` |
 | `input_context.py` | 已驗證的 bundle 查詢視圖與證據對應 | `DecisionContext` |
 | `input_builder.py` | 由 `ResearchSnapshot` 組裝時間點一致的 `DecisionInputBundle` | `DecisionInputBuilder` |
+| `active_share.py` | 競賽 Active Share：讀取並驗證主動型 ETF 前 15 大持股（來源核准、可得時間、排名、權重），選取前 15 大並以占淨值權重計算 | `load_active_etf_benchmarks`、`top_weights`、`active_share`、`ACTIVE_SHARE_TOP_N` |
 | `momentum.py` | 確定性動能與市場狀態計算與驗證 | `MomentumEngine`、`MomentumResultValidator` |
 | `trend_history.py` | 技術分析用整段歷史價格與逐日均線；不產生趨勢標籤 | `TechnicalTrendHistoryTools`、`TechnicalTrendHistoryValidator` |
 | `analysts.py` | 分析團隊：確定性輸入摘要、`AnalystReport` 契約與 Validator、技術 gate、基本面指標、事件 high 重大性挑出 | `build_analyst_brief`、`seal_report`、`AnalystReportValidator`、`technical_trend_gate`、`compute_fundamental_metrics`、`high_materiality_events`、`sentiment_unavailable_report`、`sentiment_report`、`seal_event_sentiment_report`、`seal_event_market_report`、`compact_event_batch`、`analyst_report_names`、`report_envelope` |
@@ -51,7 +52,7 @@ flowchart TD
 | `sizing.py` | conviction 等級、現金姿態，及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`conviction_weights` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
 | `allocation.py` | 確定性配置、下單、費稅與現金；Policy 與 Proposal 驗證 | `AllocationOrderEngine`、`DecisionPolicyValidator`、`ProposalValidator`、`decision_policy_sha256` |
-| `risk.py` | 確定性情境、競賽檢查（Guard）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`liquidity_exposure`、`revision_effects` |
+| `risk.py` | 確定性情境、競賽檢查（Guard，Active Share 以前 15 大比前 15 大）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`liquidity_exposure`、`revision_effects` |
 | `revision.py` | 提案／審查修正鏈的確定性建立與重播 | `RevisionHistoryBuilder`、`RevisionHistoryValidator` |
 | `finalization.py` | 最終決策重建與不可變封存（`DecisionRepository` 繼承 `ImmutableRunStore`） | `DecisionFinalizer`、`DecisionResultValidator`、`DecisionRepository`、`build_team_inputs` |
 | `service.py` | 對外應用服務，供 `portfolio_decision` CLI 使用：建立輸入、動能、配置、風控、封存 | `PortfolioDecisionApplicationService` |
@@ -70,7 +71,7 @@ flowchart TD
 ## 對應的 CLI／scripts／測試
 
 - CLI：`cli/portfolio_decision.py`；scripts：`scripts/evaluate_event_brief.py`、`scripts/evaluate_technical_brief.py`。
-- 測試：`tests/decision/`（`test_portfolio_decision_agent.py`、`test_portfolio_risk_decision.py`、`test_decision_input_builder.py`、`test_stance.py`、`test_trader.py`、`test_team_chain.py`、`test_position_sizing.py`、`test_trader_report.py`、`test_batching.py`、`test_decision_delivery.py`、`test_drawdown.py`）；`tests/research/test_analysts.py`、`test_fundamental_language.py`、`test_technical_trend_history.py`。
+- 測試：`tests/decision/`（`test_portfolio_decision_agent.py`、`test_portfolio_risk_decision.py`、`test_decision_input_builder.py`、`test_active_share.py`、`test_stance.py`、`test_trader.py`、`test_team_chain.py`、`test_position_sizing.py`、`test_trader_report.py`、`test_batching.py`、`test_decision_delivery.py`、`test_drawdown.py`）；`tests/research/test_analysts.py`、`test_fundamental_language.py`、`test_technical_trend_history.py`。
 - 架構文件：[docs/architecture.md](../../../docs/architecture.md)、[docs/technical_trend_history.md](../../../docs/technical_trend_history.md)。
 
 ## 規則與邊界
@@ -85,6 +86,7 @@ flowchart TD
 - 單股硬性權重上限的減碼一律由程式執行。
 - 減碼賣單意圖由程式標為 `trim` 或 `exit`，並留下 `RISK_STOCK_WEIGHT` 旗標。
 - 非可交易標的不建立買賣單（`RISK_NOT_TRADABLE`）；持股將低於 `min_positions` 時依 ATR14 由低到高留住 `exit` 持股（`RISK_MIN_POSITIONS`，`forced_exit` 不留）。
+- 配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 `minimum_active_share`（15%）時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次（`RISK_ACTIVE_SHARE`，不賣既有持股）；仍不通過由 Guard 拒絕。
 - 產業權重在任一情境超過 `max_sector_weight` 時，`_fit_sector_weights` 同樣在 Guard 前按整張減碼（先減買單、再賣持股；同產業先減低信心、大市值），留下 `RISK_SECTOR_WEIGHT` 旗標；上限為 1 時不動作。
 - Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。2.2 另含 `prior_decision_context`，交易 Agent 的文字欄位引用它即拒絕。
 - 舊版 1.0 debate 已移除，Finalizer 與 Validator 遇到一律拒絕。
