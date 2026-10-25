@@ -192,6 +192,9 @@ class ComparisonTests(_Fixture):
         earlier = self.build("2026-10-02T16:00:00+08:00")
         self.assertIsNone(earlier["start_date"])
         self.assertTrue(all(item["status"] == "unavailable" for item in earlier["benchmarks"]))
+        for item in (item for item in earlier["benchmarks"] if item["license_status"] == "approved"):
+            self.assertIn("基準從之後第一個可下單的交易日起算", item["reason"])
+            self.assertIn("截至 2026-10-02 16:00（台北）", item["reason"])
 
     def test_later_version_is_not_used_before_it_was_fetched(self):
         # 10-02 的 0050 收盤價在 10-04 被來源更正為 101；as-of 10-03 仍用當時的 100。
@@ -276,7 +279,7 @@ class MissingDataTests(_Fixture):
         result = self.build()
         self.assertIsNone(result["start_date"])
         self.assertTrue(all(item["status"] == "unavailable" for item in result["benchmarks"]))
-        self.assertIn("官方交易日", result["benchmarks"][0]["reason"])
+        self.assertIn("開帳於 2026-10-01 17:00（台北，已過當日 08:55 交件期限）", result["benchmarks"][0]["reason"])
 
     def test_uninitialized_account(self):
         empty = VirtualAccountRepository(self.root / "ledger", "nobody")
