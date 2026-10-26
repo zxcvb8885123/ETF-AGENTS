@@ -52,11 +52,21 @@ class NewsDatabaseCase(unittest.TestCase):
                 title TEXT, link TEXT, publisher TEXT, source_time_raw TEXT, published_at TEXT, available_at TEXT,
                 fetched_at TEXT, license_status TEXT, license_url TEXT, canonical_content_id TEXT,
                 content_sha256 TEXT UNIQUE, raw_payload_id INTEGER)""")
+            db.execute("""CREATE TABLE raw_payloads (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, source TEXT,
+                endpoint TEXT, fetched_at TEXT, sha256 TEXT, payload_json TEXT)""")
             for row in ROWS:
                 db.execute("INSERT INTO finmind_news_candidates (%s) VALUES (%s)" % (
                     ",".join(row), ",".join("?" * len(row))), list(row.values()))
+                self.fetch(db, row["stock_id"], row["fetched_at"])
         self.bundle = decision_bundle()
         self.snapshot = self.bundle["snapshot"]
+
+    @staticmethod
+    def fetch(db, stock_id, fetched_at, source="FINMIND_NEWS"):
+        """一次實際抓取的紀錄（含空回應）；端點格式與 FinMindNewsCollector 相同。"""
+        endpoint = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockNews&data_id=%s" % stock_id
+        db.execute("INSERT INTO raw_payloads (run_id, source, endpoint, fetched_at, sha256, payload_json) "
+                   "VALUES ('run', ?, ?, ?, 'x', '{}')", (source, endpoint, fetched_at))
 
     def review(self, status, at="2026-09-19T12:00:00+00:00"):
         review = {"source": "FINMIND_NEWS", "license_status": status, "terms_url": TERMS_URL,
@@ -91,6 +101,47 @@ class CompanyNewsInputTests(NewsDatabaseCase):
                          [("2317.TW", "鴻海接單"), ("2330.TW", "台積電擴產")])
         self.assertEqual(validate_pack(pack, self.bundle["snapshot_id"], CUTOFF, ["2317.TW", "2330.TW"]), pack)
         self.assertEqual(DecisionInputValidator(self.attach(pack)).validate(), [])
+
+    def test_refetch_without_new_content_drops_previous_batch(self):
+        """隔天再抓只拿到重複內容（候選去重不新增）時，最新批次是那次抓取，前一批舊聞不得再進資料包。"""
+        self.review("approved")
+        cutoff = "2026-09-21T13:00:00+00:00"
+        snapshot = dict(self.snapshot, decision_cutoff=cutoff)
+        before = build_company_news_input(self.path, snapshot)
+        # 沒有新抓取時，最後一批停在 09-20 01:00，前兩晚的新聞都還在視窗內。
+        self.assertEqual(before["latest_fetch_at"], "2026-09-20T01:00:00+00:00")
+        self.assertEqual(len(before["items"]), 3)
+        with sqlite3.connect(self.path) as db:
+            # 09-21 晚間重抓：回應全是已存在的內容，候選表不新增；交易池外與截止後的抓取不算。
+            self.fetch(db, "2317", "2026-09-21T12:00:00+00:00")
+            self.fetch(db, "9999", "2026-09-21T12:30:00+00:00")
+            self.fetch(db, "2330", "2026-09-21T14:00:00+00:00")
+        pack = build_company_news_input(self.path, snapshot)
+        self.assertEqual(pack["latest_fetch_at"], "2026-09-21T12:00:00+00:00")
+        self.assertEqual(pack["window_start"], "2026-09-21T00:00:00+00:00")
+        self.assertEqual(pack["items"], [])
+        self.assertEqual(validate_pack(pack, self.bundle["snapshot_id"], cutoff, ["2317.TW", "2330.TW"]), pack)
+
+    def test_empty_latest_batch_gives_no_items(self):
+        """最後一批兩檔都是空回應時，資料包沒有新聞，不拿前一晚的舊聞補。"""
+        self.review("approved")
+        cutoff = "2026-09-21T13:00:00+00:00"
+        with sqlite3.connect(self.path) as db:
+            for stock_id in ("2317", "2330"):
+                self.fetch(db, stock_id, "2026-09-21T12:00:00+00:00")
+        pack = build_company_news_input(self.path, dict(self.snapshot, decision_cutoff=cutoff))
+        self.assertEqual(pack["latest_fetch_at"], "2026-09-21T12:00:00+00:00")
+        self.assertEqual(pack["items"], [])
+        self.assertEqual(validate_pack(pack, self.bundle["snapshot_id"], cutoff, ["2317.TW", "2330.TW"]), pack)
+
+    def test_no_fetch_record_gives_empty_window(self):
+        """有候選但查不到任何抓取紀錄時視窗為空（fail-closed），不改用候選時間推算。"""
+        self.review("approved")
+        with sqlite3.connect(self.path) as db:
+            db.execute("DELETE FROM raw_payloads")
+        pack = build_company_news_input(self.path, self.snapshot)
+        self.assertIsNone(pack["latest_fetch_at"])
+        self.assertEqual(pack["items"], [])
 
     def test_tampered_pack_rejected(self):
         self.review("approved")

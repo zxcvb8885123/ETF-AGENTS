@@ -56,13 +56,13 @@ flowchart LR
 | 項目 | 規則 |
 | --- | --- |
 | 來源核准 | `company_news_source_reviews` 中截止前已保存的 `approved` 紀錄；之後的 `restricted` 會取代 |
-| 視窗 | 只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；最後一批早於 3 天時視為排程中斷，輸出空清單 |
+| 視窗 | 只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；最後一批早於 3 天時視為排程中斷，輸出空清單。`latest_fetch_at` 取交易池內 `raw_payloads` 的實際抓取時間（含空回應與全部重複的回應），不由候選時間推算；重抓到的舊聞保留第一次的 `available_at`，因此不會再進新一批 |
 | 媒體白名單 | `company_news_publishers_v1`，依連結網域判斷（聯合、自由、工商、中時、鉅亨、MoneyDJ、今周刊、ETtoday、TVBS、三立、台視、科技新報、Yahoo 新聞、中央社、鏡週刊）；CMoney 貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收 |
 | 去重 | 依 (symbol, canonical content ID)，保留最早 `available_at` |
 | 時間 | `available_at` 為第一次抓到的時間；FinMind 來源時間沒有時區，`published_at` 維持 null |
 | 證據 ID | `news:finmind:<content_sha256 前 16 碼>` |
 | Brief | 每檔 `news` 只給 evidence_id、標題、媒體與 `available_at`（只有標題） |
-| 分類 | 每則新聞須在 `events` 剛好分類一次（與重大訊息相同）；方向性 `outlook` 可引用新聞；findings 可引用自己的事件、新聞與同快照財報 |
+| 分類 | 每則新聞須在 `events` 剛好分類一次（與重大訊息相同）；重大性由 Agent 判斷，但新聞標 `high` 時須在 `corroborated_by` 指出講同一件事的同股重大訊息或另一家媒體（不同網域，子網域視為同一家）的新聞；沒有、引用自己或別檔訊息時由 Validator 確定性拒絕（Agent 依錯誤重試）。是否同一件事由 Agent 在 summary 說明；舊封存沒有此欄時照原樣驗證；方向性 `outlook` 可引用新聞；findings 可引用自己的事件、新聞與同快照財報 |
 | 略過 | 沒有重大訊息也沒有核准新聞的股票由程式輸出 `unknown`，不送 Agent；只有新聞的股票會送 Agent |
 | 批次 | 批次權重 = 事件數 + 新聞數，每批上限 80 |
 

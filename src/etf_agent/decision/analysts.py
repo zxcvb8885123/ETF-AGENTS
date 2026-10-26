@@ -443,6 +443,8 @@ class AnalystReportValidator:
     EVENT = {"evidence_id", "materiality", "summary"}
     # 策略文件：公司事件要看「反證與尚待確認事項」。舊封存沒有這兩欄，照原樣驗證；有就必須是字串陣列。
     EVENT_REVIEW = ("counter_evidence", "pending_confirmations")
+    # 新聞標 high 時，Agent 指出佐證同一件事的訊息（同股的重大訊息，或另一家媒體的新聞）；舊封存沒有這欄。
+    CORROBORATION = "corroborated_by"
 
     def __init__(
         self, bundle: Mapping[str, object], analyst: str, symbols: Optional[Sequence[str]] = None
@@ -459,6 +461,12 @@ class AnalystReportValidator:
             for symbol, documents in _documents(bundle, "material_event").items()
         }
         # 有核准個股新聞時，新聞與重大訊息一樣要逐則分級，也可作為公司事件方向的引用。
+        # 重大性由 Agent 判斷；新聞要標 high 時，Agent 須在 corroborated_by 指出佐證，不得只憑單一標題。
+        self.material_by_symbol = {symbol: set(ids) for symbol, ids in self.events_by_symbol.items()}
+        self.news_outlets: Dict[str, Dict[str, str]] = {}
+        if analyst == "event" and "company_news_input" in bundle:
+            from etf_agent.perception.company_news import news_outlets
+            self.news_outlets = news_outlets(bundle["company_news_input"])
         for symbol, rows in (company_news(bundle) or {}).items() if analyst == "event" else ():
             self.events_by_symbol.setdefault(symbol, set()).update(row["evidence_id"] for row in rows)
         self.sentiment_by_symbol = {
@@ -630,8 +638,8 @@ class AnalystReportValidator:
             if not isinstance(event, Mapping):
                 errors.append("%s 必須是物件" % event_prefix)
                 continue
-            reject_unknown_fields(event, self.EVENT | set(self.EVENT_REVIEW), event_prefix, errors)
-            for field in self.EVENT_REVIEW:
+            reject_unknown_fields(event, self.EVENT | set(self.EVENT_REVIEW) | {self.CORROBORATION}, event_prefix, errors)
+            for field in (*self.EVENT_REVIEW, self.CORROBORATION):
                 if field in event:
                     try:
                         string_list(event, field)
@@ -643,6 +651,7 @@ class AnalystReportValidator:
             classified.append(evidence_id)
             if event.get("materiality") not in MATERIALITY:
                 errors.append("%s.materiality 必須是 %s" % (event_prefix, "／".join(MATERIALITY)))
+            self._validate_corroboration(event, evidence_id, symbol, event_prefix, errors)
             try:
                 required_string(event, "summary")
             except DecisionToolError as error:
@@ -652,6 +661,36 @@ class AnalystReportValidator:
         missing = sorted(expected - set(classified))
         if missing:
             errors.append("%s 未分級全部重大訊息與新聞：%s" % (prefix, ", ".join(missing)))
+
+    def _validate_corroboration(
+        self, event: Mapping[str, object], evidence_id: str, symbol: str, prefix: str, errors: List[str]
+    ) -> None:
+        """佐證必須是同股、輸入中存在的其他訊息；新聞標 high 至少要一則重大訊息或另一家媒體的新聞。
+
+        是否講同一件事由 Agent 判斷並寫進 summary；程式只確認佐證存在且來源不同。
+        """
+        cited = event.get(self.CORROBORATION, [])
+        if not isinstance(cited, list) or not all(isinstance(value, str) for value in cited):
+            return
+        outlets = self.news_outlets.get(symbol, {})
+        own = self.events_by_symbol.get(symbol, set())
+        for value in cited:
+            if value == evidence_id or value not in own:
+                errors.append("%s.%s 必須是 %s 的其他重大訊息或新聞：%s" % (prefix, self.CORROBORATION, symbol, value))
+        if len(cited) != len(set(cited)):
+            errors.append("%s.%s 不得重複" % (prefix, self.CORROBORATION))
+        if event.get("materiality") != "high" or evidence_id not in outlets:
+            return
+        independent = [
+            value for value in cited
+            if value in self.material_by_symbol.get(symbol, set())
+            or (value in outlets and outlets[value] != outlets[evidence_id])
+        ]
+        if not independent:
+            errors.append(
+                "%s 新聞標 high 時，%s 至少要列出一則同股重大訊息或另一家媒體（不同網域）的新聞，不得只憑單一標題：%s"
+                % (prefix, self.CORROBORATION, evidence_id)
+            )
 
 
 def compute_fundamental_metrics(bundle: Mapping[str, object]) -> Optional[Dict[str, object]]:

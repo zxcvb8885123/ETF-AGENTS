@@ -61,6 +61,12 @@ def link_host(link):
     return urllib.parse.urlparse(str(link)).hostname
 
 
+def outlet(link):
+    """媒體品牌：去掉子網域（money.udn.com 與 udn.com 同一家；.com.tw 保留三段）。"""
+    labels = str(link_host(link) or "").split(".")
+    return ".".join(labels[-3:] if labels[-2:] == ["com", "tw"] else labels[-2:])
+
+
 def canonical_content_id(link):
     """與收集端相同：去掉 fragment 後的連結雜湊。"""
     parsed = urllib.parse.urlparse(str(link))

@@ -7,7 +7,7 @@
 | 檔案 | 職責 | 主要公開項目 |
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | 見下方 |
-| `contracts.py` | 列舉、錯誤型別與欄位解析 helper | `PerceptionToolError` |
+| `contracts.py` | 列舉、錯誤型別與欄位解析 helper；`LEGACY_EMPTY_CHANNELS` 讓舊封存列出的 `analyst_consensus` 在沒有資料（非 available、無預估與證據、結果共識欄位為空陣列）時照舊通過，有資料一律拒絕 | `PerceptionToolError` |
 | `provider.py` | `PerceptionDataBundle` 的 Provider 邊界；目前只有本機 JSON 實作 | `PerceptionDataProvider`、`JsonPerceptionDataProvider` |
 | `tools.py` | 情緒的確定性工具（去重、覆蓋、聚合） | `PerceptionDataTools` |
 | `validator.py` | `MarketPerceptionResult` 的覆蓋、授權、引用與聚合重算驗證 | `MarketPerceptionResultValidator` |
@@ -35,9 +35,9 @@ FinMind 個股新聞只進事件分析師的公司事件通道，不得代表全
 
 | 檔案 | 職責 | 主要公開項目 |
 | --- | --- | --- |
-| `__init__.py` | 匯出公開介面 | `CompanyNewsError`、`EVIDENCE_PREFIX`、`PUBLISHER_HOSTS`、`PUBLISHER_POLICY_VERSION`、`SOURCE`、`build_pack`、`news_by_symbol`、`validate_pack`、`approved_review`、`build_company_news_input`、`record_source_review` |
+| `__init__.py` | 匯出公開介面 | `CompanyNewsError`、`EVIDENCE_PREFIX`、`PUBLISHER_HOSTS`、`PUBLISHER_POLICY_VERSION`、`SOURCE`、`build_pack`、`news_by_symbol`、`news_outlets`、`validate_pack`、`approved_review`、`build_company_news_input`、`record_source_review` |
 | `contracts.py` | 來源（`FINMIND_NEWS`）、核對表 `company_news_source_reviews`、媒體白名單 `company_news_publishers_v1`、視窗常數、evidence ID 與欄位白名單 | `CompanyNewsError`、`publisher_policy`、`evidence_id` |
-| `tools.py` | 取截止前最後一批抓取、計算視窗（`latest_fetch_at` − 12 小時，不早於 cutoff − 3 天）、白名單過濾、依 (symbol, canonical content ID) 去重並封裝 `company-news-1.0` | `build_pack`、`news_by_symbol`、`window_start` |
+| `tools.py` | 取截止前最後一批抓取（`service.py` 由 `raw_payloads` 讀實際抓取時間）、計算視窗（`latest_fetch_at` − 12 小時，不早於 cutoff − 3 天）、白名單過濾、依 (symbol, canonical content ID) 去重並封裝 `company-news-1.0` | `build_pack`、`news_by_symbol`、`news_outlets`、`window_start` |
 | `validator.py` | 重算內容雜湊並重驗白名單、視窗、核准早於 cutoff、代號在交易池內與不重複 | `validate_pack` |
 | `service.py` | 抓 FinMind 規範頁原文保存核對（與全市場新聞分表）、查截止時的核准、由資料庫建立決策輸入 | `record_source_review`、`approved_review`、`build_company_news_input` |
 

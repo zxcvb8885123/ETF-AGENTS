@@ -9,6 +9,7 @@ from typing import Dict, List, Mapping, Optional
 
 from .contracts import (
     CHANNEL_STATES,
+    LEGACY_EMPTY_CHANNELS,
     LICENSE_STATES,
     RELEVANCE_STATES,
     SENTIMENT_STANCES,
@@ -76,7 +77,12 @@ class PerceptionDataTools:
                 raise PerceptionToolError("source_coverage[%d] 必須是物件" % index)
             channel = _required_string(coverage, "channel")
             provider = _required_string(coverage, "provider")
-            if channel not in SOURCE_CHANNELS:
+            if channel in LEGACY_EMPTY_CHANNELS:
+                if coverage.get("status") == "available" or self.bundle.get("analyst_estimates", []) != []:
+                    raise PerceptionToolError(
+                        "source_coverage[%d] 舊版 %s 通道已停用，只接受沒有資料的封存" % (index, channel)
+                    )
+            elif channel not in SOURCE_CHANNELS:
                 raise PerceptionToolError("source_coverage[%d].channel 無效" % index)
             if coverage.get("status") not in CHANNEL_STATES:
                 raise PerceptionToolError("source_coverage[%d].status 無效" % index)

@@ -1,5 +1,6 @@
 """個股新聞的來源核對與決策輸入建立；不呼叫模型、不建立交易決策。"""
 import sqlite3
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,4 +56,20 @@ def build_company_news_input(database_path, snapshot):
         rows = [] if not exists or not codes else [dict(row) for row in connection.execute(
             "SELECT %s, available_at, content_sha256 FROM finmind_news_candidates WHERE stock_id IN (%s)"
             % (", ".join(CANDIDATE_FIELDS), ",".join("?" * len(codes))), codes)]
-    return build_pack(rows, review, symbols, snapshot["snapshot_id"], cutoff)
+        fetch_times = fetches(connection, set(codes))
+    return build_pack(rows, review, symbols, snapshot["snapshot_id"], cutoff, fetch_times)
+
+
+def fetches(connection, codes):
+    """交易池內每次成功保存的 FinMind 新聞抓取時間；空回應與全部重複的回應也算一批。"""
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='raw_payloads'").fetchone()
+    if not exists or not codes:
+        return []
+    times = []
+    for endpoint, fetched_at in connection.execute(
+            "SELECT endpoint, fetched_at FROM raw_payloads WHERE source = ?", (SOURCE,)):
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(endpoint).query)
+        if set(query.get("data_id", [])) & codes:
+            times.append(fetched_at)
+    return times

@@ -207,6 +207,43 @@ class SentimentAnalystAgentTests(unittest.TestCase):
         with self.assertRaises(PerceptionToolError):
             PerceptionDataTools(bundle)
 
+    def test_legacy_empty_consensus_channel_still_validates(self):
+        """舊封存列出沒有資料的共識通道與空的共識欄位時照舊通過；帶預估、證據或共識數字一律拒絕。"""
+        bundle = perception_bundle()
+        bundle["source_coverage"].append(
+            {
+                "channel": "analyst_consensus",
+                "provider": "UNAVAILABLE",
+                "status": "unavailable",
+                "license_status": "unknown",
+            }
+        )
+        bundle["analyst_estimates"] = []
+        tools = PerceptionDataTools(bundle)
+        payload = valid_result(tools)
+        payload["items"][0]["consensus_metrics"] = []
+        payload["items"][0]["expectation_gaps"] = []
+        validator = MarketPerceptionResultValidator(tools)
+        self.assertEqual(validator.validate(payload), [])
+
+        for field in ("consensus_metrics", "expectation_gaps"):
+            stale = copy.deepcopy(payload)
+            stale["items"][0][field] = [{"metric": "eps", "status": "available"}]
+            errors = validator.validate(stale)
+            self.assertTrue(any("%s 已停用" % field in error for error in errors), errors)
+
+        with_estimates = copy.deepcopy(bundle)
+        with_estimates["analyst_estimates"] = [{"estimate_id": "e1"}]
+        with self.assertRaises(PerceptionToolError):
+            PerceptionDataTools(with_estimates)
+
+        with_evidence = copy.deepcopy(bundle)
+        with_evidence["source_evidence"].append(
+            dict(bundle["source_evidence"][0], evidence_id="e1-evidence", channel="analyst_consensus")
+        )
+        with self.assertRaises(PerceptionToolError):
+            PerceptionDataTools(with_evidence)
+
     def test_bundle_rejects_unapproved_source_usage(self):
         bundle = perception_bundle()
         bundle["source_evidence"][0]["license_status"] = "unknown"
