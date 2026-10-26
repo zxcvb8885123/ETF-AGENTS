@@ -61,7 +61,7 @@ def render_event_sentiment_report(
             doc = documents[event["evidence_id"]]
             lines.append("- **重要程度：%s。** %s" % (IMPORTANCE[event["materiality"]], event["summary"]))
             # 策略文件：事件要看反證與尚待確認事項；舊封存沒有這兩欄時不顯示。
-            for key, label in (("counter_evidence", "反證"), ("pending_confirmations", "尚待確認")):
+            for key, label in (("counter_evidence", "反證"), ("pending_confirmations", "尚待確認"), ("corroborated_by", "佐證")):
                 if event.get(key):
                     lines.append("  %s：%s" % (label, "；".join(event[key])))
             title = " ".join(str(doc["title"]).replace("\\r\\n", " ").replace("\\r", " ").split())

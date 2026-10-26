@@ -46,7 +46,7 @@
 | --- | --- | --- |
 | 基本面：營收、獲利、負債、現金流與期間比較 | 財務比率、月營收、`cash_flow`（營業現金流、資本支出、自由現金流、營業現金流對稅前淨利比率） | 基本面分析師 |
 | 技術：5／20／60 日變化、均線、ATR 與下行波動 | `return_5d／20d／60d`、`ma20`、`ma60`、是否站上均線、`atr_14_pct`、`downside_volatility_20d` | 技術分析師 |
-| 公司事件：事件影響、反證與尚待確認事項 | 重大訊息原文、同快照財報，以及截止時已核准的 FinMind 個股新聞標題（白名單媒體、截止前最後一批）；Agent 逐則輸出 `summary`、`counter_evidence`、`pending_confirmations` | 事件分析師 → 多空研究員 |
+| 公司事件：事件影響、反證與尚待確認事項 | 重大訊息原文、同快照財報，以及截止時已核准的 FinMind 個股新聞標題（白名單媒體、截止前最後一批；新聞標 `high` 須在 `corroborated_by` 指出重大訊息或另一家媒體的佐證）；Agent 逐則輸出 `summary`、`counter_evidence`、`pending_confirmations` | 事件分析師 → 多空研究員 |
 | 市場背景與風險：整體市場情緒、集中度、流動性與壓力情境 | `market_sentiment`、產業曝險、`liquidity_exposure`、壓力情境、峰值回撤 | 風險 Agent |
 
 ### 回撤控制

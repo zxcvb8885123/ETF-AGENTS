@@ -111,7 +111,7 @@
 - **核准**：`cli/company_news.py review --database var/etf_agent.db --status approved|unverified|restricted --evidence "..."` 抓取 FinMind 規範頁原文與 SHA-256 後保存；只對保存之後的決策截止時間生效，之後的 `restricted` 會取代。使用者已於 2026-10-25 自行判斷核准（僅標題、內部研究、不轉載，不是媒體書面同意），但**指令尚未執行**。見[來源核對](source_audit/2026-10-25_finmind_stock_news.md)。
 - **使用界線**：只進每日決策的事件分析師（`company_news_input`，事件報告 2.3），不進全市場情緒與回測。
   - 媒體白名單 `company_news_publishers_v1` 依連結網域判斷，只收正規新聞媒體；CMoney 貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收。
-  - 視窗只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；排程中斷時輸出空清單，不拿舊聞補。
+  - 視窗只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；排程中斷時輸出空清單，不拿舊聞補。`latest_fetch_at` 取 `raw_payloads` 的實際抓取時間，空回應與全部重複的回應也算一批。
   - 規則細節見[事件研究整合](integrated_event_analysis.md#事件報告-23已核准個股新聞)。
 
 **仍有的限制**

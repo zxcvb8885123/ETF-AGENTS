@@ -32,6 +32,11 @@ LICENSE_STATES = {"approved", "restricted", "unknown"}
 SOURCE_CHANNELS = {"sentiment"}
 
 
+# 已移除的分析師共識通道。舊封存的資料包仍可能列出它；只接受沒有資料的狀態，
+# 有預估、證據或共識數字時已無法重算，一律拒絕。
+LEGACY_EMPTY_CHANNELS = {"analyst_consensus"}
+
+
 PRICED_IN_STATES = {
     "underappreciated",
     "aligned",

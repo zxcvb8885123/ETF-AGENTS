@@ -116,6 +116,10 @@ class MarketPerceptionResultValidator:
         except (PerceptionToolError, TypeError, ValueError) as error:
             errors.append("%s.sentiment：%s" % (prefix, error))
 
+        # 舊版結果帶的共識欄位：空陣列照舊接受；有內容時已無工具可重算，拒絕。
+        for field in ("consensus_metrics", "expectation_gaps"):
+            if field in item and item[field] != []:
+                errors.append("%s.%s 已停用，舊封存只接受空陣列" % (prefix, field))
         used_evidence = set(
             expected_sentiment.get("evidence_ids", []) if expected_sentiment else []
         )
