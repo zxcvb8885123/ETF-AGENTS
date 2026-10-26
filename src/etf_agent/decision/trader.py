@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .drawdown import stance_meets_floor
 from .prior_decision import prior_reference_tokens
-from .sizing import CASH_STANCES, CONVICTION_LEVELS, validate_cash_stance
+from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
 
@@ -205,7 +205,7 @@ def apply_trade_decision(
     bundle: Mapping[str, object],
     debate: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
-    """把交易 Agent 的信心等級與風險 Agent 的現金姿態綁進新版 policy；呼叫端重新封存驗證。"""
+    """把交易 Agent 的信心等級與風險 Agent 的現金姿態（與持股廣度）綁進新版 policy；呼叫端重新封存驗證。"""
     stance_errors: List[str] = []
     validate_cash_stance(DecisionContext(bundle), cash_stance, "cash_stance", stance_errors)
     if stance_errors:
@@ -234,6 +234,11 @@ def apply_trade_decision(
             if item.get("intent") in SIZED
         },
     }
+    if "positions_by_breadth" in sizing:
+        breadth = cash_stance.get("breadth")
+        if breadth not in POSITION_BREADTHS:
+            raise DecisionToolError("Policy 已啟用 positions_by_breadth，現金姿態必須給 breadth（%s）" % "／".join(POSITION_BREADTHS))
+        result["position_sizing"]["position_breadth"] = breadth
     if debate is not None:
         result["position_sizing"]["support_by_symbol"] = support_by_symbol(decision, debate)
     result["policy_id"] = "%s+%s" % (policy.get("policy_id"), decision["decision_id"])

@@ -115,6 +115,7 @@ uv python install 3.12
 - **技術**：5／20／60 日變化、MA20／MA60 數值、ATR 與下行波動。
 - **公司事件**：每則事件寫影響、反證（`counter_evidence`）與尚待確認事項（`pending_confirmations`）。
 - **市場與風險**：風險 Agent 讀整體市場情緒、產業集中、每筆委託佔 20 日均量比例與壓力情境（比賽以成交均價結算，成交量只作提醒，不限制成交）。
+- **持股檔數**：風險 Agent 和現金姿態一起選持股廣度：集中、平衡或分散，分別對應 22、26、30 檔（`config/decision_policy.json` 的 `positions_by_breadth`）。程式照交易 Agent 的信心高 → 中 → 低挑到該檔數；信心和支持數都一樣時，波動（ATR14）低的優先。Agent 不輸出檔數。
 - **控制回撤**：程式算帳戶峰值回撤，達 5% 時現金姿態至少 neutral、達 10% 時至少 defensive（`config/decision_policy.json` 的 `drawdown_control`）。
 
 ### 單股超出權重上限時

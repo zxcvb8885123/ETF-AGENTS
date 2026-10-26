@@ -70,7 +70,7 @@ TRADE = {"items": [
     {"symbol": "2330.TW", "intent": "hold", "conviction": None, "rationale": "多空相當，續抱。",
      "adopted_claim_ids": ["bull-2330-1"], "rejected_claim_ids": ["bear-2330-1"], "unresolved_questions": [], "invalidation_conditions": []},
 ]}
-STANCE = {"level": "neutral", "rationale": "市場中性。", "evidence_ids": ["price-2330"]}
+STANCE = {"level": "neutral", "breadth": "balanced", "rationale": "市場中性。", "evidence_ids": ["price-2330"]}
 APPROVE = {
     "decision": "approve", "rationale": "現金、集中與情境均可接受。", "evidence_ids": ["price-2317"],
     "risk_flags": [], "unresolved_questions": [], "revision_actions": [],
@@ -171,6 +171,10 @@ class DailyPipelineTests(unittest.TestCase):
             run_dir = DecisionRepository(world.repository).verify("decision-fixture")
             team = json.loads((run_dir / "team_inputs.json").read_text(encoding="utf-8"))
             self.assertEqual(team["cash_stance"]["level"], "neutral")
+            # 風險 Agent 的持股廣度由程式綁進 policy，Finalizer 依 team_inputs 重建核對。
+            self.assertEqual(result.position_breadth, "balanced")
+            policy = json.loads((run_dir / "policy.json").read_text(encoding="utf-8"))
+            self.assertEqual(policy["position_sizing"]["position_breadth"], "balanced")
             self.assertEqual(team["schema_version"], "2.2")
             self.assertNotIn("research_result", team)
             # 決策庫沒有更早的 run：前次決策背景為 unavailable，仍存進 team_inputs 供重建。

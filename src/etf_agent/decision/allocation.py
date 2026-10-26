@@ -21,7 +21,9 @@ from .contracts import (
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
 from .momentum import MomentumEngine
-from .sizing import CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, conviction_weights, validate_position_sizing
+from .sizing import (
+    CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, breadth_target, conviction_weights, validate_position_sizing,
+)
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -462,8 +464,10 @@ class AllocationOrderEngine:
             if (symbol not in active_symbols and len(active_symbols) >= max_positions) or (
                 sized_weights is not None and symbol not in sized_weights
             ):
+                breadth = breadth_target(self.policy.get("position_sizing") or {})
                 constraint_flags.append(
-                    {"symbol": symbol, "code": "MAX_POSITIONS", "detail": "持股檔數已達上限"}
+                    {"symbol": symbol, "code": "MAX_POSITIONS",
+                     "detail": "持股檔數已達上限" if breadth is None else "持股檔數已達風險 Agent 持股廣度對應的 %d 檔" % breadth}
                 )
                 continue
             limit = self._weight_limit(symbol, effective)
@@ -634,7 +638,7 @@ class AllocationOrderEngine:
         max_positions: int,
         effective: Mapping[str, object],
     ) -> Tuple[List[str], Dict[str, Decimal]]:
-        """依風控等級排序候選，並以等級乘數／ATR 分配扣除現金緩衝後的資金。"""
+        """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。"""
         sizing = self.policy["position_sizing"]
         tiers = sizing.get("conviction_by_symbol")
         if tiers is None:
@@ -643,11 +647,23 @@ class AllocationOrderEngine:
         if missing:
             raise DecisionToolError("交易決策缺少候選等級：" + ", ".join(missing))
         support = sizing.get("support_by_symbol", {})
-        ordered = sorted(
-            candidates,
-            key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),
-        )
         volatility = self._atr_pct()
+        target = breadth_target(sizing)
+        if target is None:
+            ordered = sorted(
+                candidates,
+                key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),
+            )
+        else:
+            # 持股廣度啟用後，同等級同支持數改由 ATR 低者優先，不再只靠股票代號決定誰入選。
+            ordered = sorted(
+                candidates,
+                key=lambda symbol: (
+                    CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0),
+                    volatility.get(symbol, Decimal("Infinity")), symbol,
+                ),
+            )
+            max_positions = min(max_positions, max(target, int(self.policy["min_positions"])))
         slots = max_positions - len(active_symbols - set(ordered))
         eligible: List[str] = []
         for symbol in ordered:

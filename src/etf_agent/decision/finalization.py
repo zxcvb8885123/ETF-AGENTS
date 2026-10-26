@@ -239,6 +239,8 @@ class DecisionFinalizer:
         }
         if "support_by_symbol" in sizing:
             expected["support_by_symbol"] = support_by_symbol(self.intent, self.debate)
+        if "positions_by_breadth" in sizing:
+            expected["position_breadth"] = stance.get("breadth") if isinstance(stance, Mapping) else None
         for field, value in expected.items():
             if sizing.get(field) != value:
                 errors.append("DecisionPolicy.position_sizing.%s 與交易決策或現金姿態不一致" % field)

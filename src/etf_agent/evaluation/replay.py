@@ -212,6 +212,12 @@ def bind_replay_policy(
         level = str(stance.get("level"))
         raised = not stance_meets_floor(level, floor)
         bound_stance = dict(stance, level=str(floor)) if raised else dict(stance)
+        sizing = base.get("position_sizing")
+        breadth_dropped = isinstance(sizing, Mapping) and "positions_by_breadth" in sizing and "breadth" not in stance
+        if breadth_dropped:
+            # 舊封存的現金姿態沒有持股廣度：回放時拿掉樣板的 positions_by_breadth，沿用填滿 max_positions 的舊行為。
+            base["position_sizing"] = {key: value for key, value in sizing.items() if key != "positions_by_breadth"}
+            base["content_sha256"] = decision_policy_sha256(base)
         policy = apply_trade_decision(base, intent, bound_stance, bundle, debate)
         policy["content_sha256"] = decision_policy_sha256(policy)
     except DecisionToolError as error:
@@ -222,7 +228,7 @@ def bind_replay_policy(
     notes = {
         "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"],
         "available_at_overridden": overridden, "archived_cash_stance": level, "cash_stance": bound_stance["level"],
-        "stance_floor": floor, "stance_raised_to_floor": raised, "cash_buffer_rate": policy["cash_buffer_rate"],
+        "stance_floor": floor, "stance_raised_to_floor": raised, "breadth_unavailable": breadth_dropped, "cash_buffer_rate": policy["cash_buffer_rate"],
         "drawdown": (base.get("drawdown_control") or {}).get("drawdown"),
     }
     return policy, notes

@@ -49,7 +49,7 @@ flowchart TD
 | `trader.py` | 交易 Agent：權衡多空論點的 `TradeDecision` 與確定性配置轉接 | `TradeDecisionValidator`、`seal_trade_decision`、`trade_decision_envelope`、`apply_trade_decision`、`claims_by_symbol`、`support_by_symbol` |
 | `prior_decision.py` | 前次決策背景：從決策庫找同帳戶、目標交易時段更早、approved／no_trade 的封存 run（同時段多個時優先帳本結算記錄），整理持股的前次意圖與重估條件為不可引用的 `PriorDecisionContext`，並重建驗證 | `find_prior_decision_run`、`read_decision_run`、`build_prior_decision_context`、`prior_decision_brief`、`prior_reference_tokens`、`PriorDecisionContextValidator` |
 | `trader_report.py` | 以已驗證 `TradeDecision` 呈現交易整合結果，不重貼多空全文 | `render_trader_report` |
-| `sizing.py` | conviction 等級、現金姿態，及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`conviction_weights` |
+| `sizing.py` | conviction 等級、現金姿態、持股廣度（`positions_by_breadth` 對應檔數），及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`breadth_target`、`conviction_weights` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
 | `allocation.py` | 確定性配置、下單、費稅與現金；Policy 與 Proposal 驗證 | `AllocationOrderEngine`、`DecisionPolicyValidator`、`ProposalValidator`、`decision_policy_sha256` |
 | `risk.py` | 確定性情境、競賽檢查（Guard，Active Share 以前 15 大比前 15 大）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`liquidity_exposure`、`revision_effects` |
@@ -80,7 +80,7 @@ flowchart TD
 - 兩方都對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。
 - 交易 Agent 把多空每個 claim 剛好採納或否決一次，不新增事實或 claim。
 - buy／add 給 `high`／`medium`／`low`；權重由 `conviction_volatility_v1` 依 Policy 乘數與 ATR14 計算，Agent 不輸出數字。
-- 風險 Agent 給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；不手寫權重、不覆寫 CompetitionGuard。
+- 風險 Agent 給 `aggressive`／`neutral`／`defensive` 現金姿態與 `concentrated`／`balanced`／`diversified` 持股廣度並附證據（檔數由 Policy 對應，Agent 不輸出數字）；不手寫權重、不覆寫 CompetitionGuard。
 - 現金比例由 Policy 依姿態對應，競賽現金上限由 Guard 強制。
 - 修正循環最多三次；硬性規則失敗一律拒絕。
 - 單股硬性權重上限的減碼一律由程式執行。

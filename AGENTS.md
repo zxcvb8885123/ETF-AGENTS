@@ -42,10 +42,10 @@
 - 交易 Agent 作為多頭／空頭研究的整合者，先說明兩方論點的取捨，再逐檔給 `intent` 與 buy／add 的 `conviction`，必須把多空每個 claim 剛好採納或否決一次，不得新增事實或 claim；權重、張數與現金由程式依等級與風險 Agent 的現金姿態計算。
 - Decision run 必須另存 `team_inputs`（2.2 為三份分析報告、現金姿態與前次決策背景 `prior_decision_context`；舊 2.1 無前次決策背景，舊 2.0 的三／四份分析報告及事件研究保留原始重建）；Finalizer 與所有下游重建驗證時都要傳入，缺少即拒絕。
 - 前次決策背景只給交易 Agent、只當背景：來源必須是決策庫中同帳戶、`approved`／`no_trade`、通過 manifest 驗證、**目標交易時段嚴格早於本次**的 run（同一時段的 21:00 備案不算前次；同一前次時段多個 run 時優先帳本結算記錄的，否則取 cutoff 最新者），記錄 run_id、時段、挑法與內容雜湊，snapshot 不同時標 `cross_snapshot_exception`；`citable=false`、沒有 evidence_id，交易 Agent 文字欄位出現其識別碼即拒絕，行動仍須由本次 claim 支持；沒有前次 run 時輸出 `unavailable`，不是錯誤。多頭／空頭研究員不讀它。
-- 子 Agent 只輸出市場狀態解讀、多空論點、買賣意圖與信心分級、現金姿態或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
+- 子 Agent 只輸出市場狀態解讀、多空論點、買賣意圖與信心分級、現金姿態與持股廣度或結構化風險修正；技術指標、權重、股數、費稅、現金、情境與競賽限制由確定性 Python 程式計算。
 - 多頭／空頭必須使用相同的共同輸入且 `peer_packet_ids` 為空；決策 artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - 交易 Agent 不得新增事實或 claim，風險 Agent 不得手寫權重或覆寫 CompetitionGuard；修正循環最多三次，硬性規則失敗必須拒絕。
-- 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
+- 交易 Agent 對全部 buy／add 候選給 `high`／`medium`／`low` 等級，風險 Agent 在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據；現金比例由 Policy 依姿態對應，競賽現金上限仍由 Guard 強制；同一次輸出另給 `concentrated`／`balanced`／`diversified` 持股廣度，檔數由 Policy 的 `positions_by_breadth` 對應（夾在 `min_positions`～`max_positions`），程式依信心 high→medium→low、支持數、ATR14 低者優先挑到該檔數（沒有 `positions_by_breadth` 的舊 policy 照舊填滿 `max_positions`）；權重由 `conviction_volatility_v1` 依 Policy 的等級乘數與 ATR14 確定性計算，Agent 不輸出任何數字。
 - 單股硬性權重上限的減碼一律由程式執行（不依 Policy 的 `stock_weight_fit` 版本欄位開關）；因風控減碼產生的賣單，意圖由程式標為 `trim`（仍有持股）或 `exit`（減至零），不改寫交易 Agent 的原意圖，並留下 `RISK_STOCK_WEIGHT` 旗標。
 - 交易狀態包標為非 `allowed` 的標的由程式不建立買單、續抱不賣（`RISK_NOT_TRADABLE`）；配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高（同值依代號）留住交易 Agent 標為 `exit` 的持股續抱直到達標（`RISK_MIN_POSITIONS`，`forced_exit` 不留）。兩者都不改寫交易 Agent 的意圖，仍無法滿足硬規則時照舊由 Guard 拒絕。
 - 配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 `minimum_active_share`（15%）時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次（`RISK_ACTIVE_SHARE`，不賣既有持股）；同樣不改寫交易 Agent 的意圖，仍不通過時由 Guard 拒絕。

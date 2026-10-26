@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from etf_agent.decision.analysts import MATERIALITY, OUTLOOKS
-from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS
+from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS
 from etf_agent.decision.stance import STRENGTHS
 from etf_agent.decision.trader import TRADE_INTENTS
 
@@ -69,8 +69,9 @@ TRADE_SCHEMA = _object(
     ("items",),
 )
 CASH_STANCE_SCHEMA = _object(
-    {"level": {"enum": list(CASH_STANCES)}, "rationale": _TEXT, "evidence_ids": _strings(1)},
-    ("level", "rationale", "evidence_ids"),
+    {"level": {"enum": list(CASH_STANCES)}, "breadth": {"enum": list(POSITION_BREADTHS)},
+     "rationale": _TEXT, "evidence_ids": _strings(1)},
+    ("level", "breadth", "rationale", "evidence_ids"),
 )
 REVIEW_SCHEMA = _object(
     {

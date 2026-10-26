@@ -23,17 +23,20 @@
 | 三位分析師 | 全池逐檔輸出 outlook、事件重大性與有證據的發現；全市場情緒只輸出一次 | 計算指標與財務比率、分批與覆蓋驗證；市場情緒由程式依全市場新聞或恐懼貪婪指標重建，兩者都不可用時輸出 `unavailable` |
 | 多頭／空頭 | 同一共同輸入、互相隔離，逐檔提出有證據的 claims 與強度 | 核對 `shared_input_sha256`、引用歸屬、全池覆蓋、`peer_packet_ids` 為空 |
 | 交易 | 逐檔取捨每個多空 claim，給買賣意圖與 buy／add 信心等級；可看前次決策對持股的意圖與重估條件，但只當背景 | 驗證每個 claim 剛好被採納或否決一次、文字欄位沒有引用前次決策；依 Policy、ATR 與風險現金姿態計算權重與張數 |
-| 風險 | 配置前給現金姿態；配置後審查並提出受限修正 | 從帳本 NAV 歷史算峰值回撤並強制姿態下限；提供整體市場情緒與每筆委託佔 20 日均量比例；重算費稅、現金、情境與競賽限制；硬性規則失敗即拒絕，修正循環最多 3 次 |
+| 風險 | 配置前給現金姿態與持股廣度（集中／平衡／分散）；配置後審查並提出受限修正 | 從帳本 NAV 歷史算峰值回撤並強制姿態下限；持股廣度依 Policy 換算成 22／26／30 檔，照信心、支持數、ATR14 挑股；提供整體市場情緒與每筆委託佔 20 日均量比例；重算費稅、現金、情境與競賽限制；硬性規則失敗即拒絕，修正循環最多 3 次 |
 
-## 持股檔數上限的取捨順序
+## 持股檔數與取捨順序
 
-買進候選超過 `max_positions` 時，程式依下列順序決定誰先入選，其餘標為 `MAX_POSITIONS`：
+持股檔數由風險 Agent 的持股廣度決定：`concentrated`（集中）、`balanced`（平衡）、`diversified`（分散），對應 `config/decision_policy.json` 的 `positions_by_breadth`（目前 22／26／30 檔，配置時夾在 `min_positions`～`max_positions`）。集中設 22 而非 20，是留兩檔緩衝給 Active Share 或不可交易剔除。Agent 只選等級，不輸出檔數；程式把廣度綁成 Policy 的 `position_breadth`，Finalizer 依 `team_inputs.cash_stance.breadth` 重建核對。
+
+買進候選超過該檔數時，程式依下列順序決定誰先入選，其餘標為 `MAX_POSITIONS`：
 
 1. 信心等級：`high`、`medium`、`low`。
 2. 同等級時，交易決策採納的多頭 claim 數減空頭 claim 數，越大越先（`support_by_symbol`，綁在 Policy 並由 Validator 重算）。
-3. 仍相同時，依股票代號。
+3. 仍相同時，ATR14 占價格比例低者先（波動小的先入選）。
+4. 再相同時，依股票代號。
 
-舊 Decision run 沒有 `support_by_symbol`，仍只依等級與代號。
+舊 Decision run 沒有 `positions_by_breadth`，仍填滿 `max_positions` 且不看 ATR；更舊的沒有 `support_by_symbol`，只依等級與代號。策略回放遇到沒有持股廣度的舊封存時，拿掉樣板的 `positions_by_breadth` 沿用舊行為並在報告註明。
 
 ## 對應參賽策略文件的四類因子
 

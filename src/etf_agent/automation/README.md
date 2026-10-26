@@ -10,7 +10,7 @@
 | `daily_pipeline.py` | 每日決策鏈主流程 `run`（評測用 `run_from_bundle` 從已封存的 DecisionInputBundle 重跑，可只跑到分析師）：DecisionInputBundle、動能、串接各階段、policy、配置／情境／Guard／風險審查迴圈（最多 `max_revisions` 次修正）、finalize 與封存；同時為既有 import 路徑再匯出下列拆出的項目 | `DailyDecisionPipeline`、`validate_research_result`（並再匯出 `PipelineResult`、`degraded_research_result`、`compact_brief_json`、各 Schema 與 runner 型別） |
 | `pipeline_base.py` | 執行基礎：`PipelineResult`、輸入摘要序列化、`PipelineBase`（Agent 步驟的驗證重試與續跑、平行任務、artifact 保存、階段計時） | `PipelineBase`（`agent_step`、`save_artifact`、`save_brief`）、`PipelineResult`、`degraded_research_result`、`compact_brief_json` |
 | `team_stages.py` | 團隊階段 mixin：分析師、多頭／空頭研究員、交易 Agent（逐批、可平行）；事件分析師只送有重大訊息或已核准個股新聞的股票，批次權重為兩者則數合計 | `TeamStagesMixin`（`run_analyst_team`、`run_research_team`、`run_trader`） |
-| `risk_stages.py` | 風險階段 mixin：配置前現金姿態、每次修正的風險審查 | `RiskStagesMixin`（`run_cash_stance`、`_review`） |
+| `risk_stages.py` | 風險階段 mixin：配置前現金姿態與持股廣度、每次修正的風險審查 | `RiskStagesMixin`（`run_cash_stance`、`_review`） |
 | `agent_schemas.py` | 各子 Agent 的輸出 JSON Schema 與共用提示規則 | `ANALYST_SCHEMA`、`EVENT_ANALYST_SCHEMA`、`STANCE_SCHEMA`、`TRADE_SCHEMA`、`CASH_STANCE_SCHEMA`、`REVIEW_SCHEMA`、`EVENT_BATCH_SIZE`、`EVENT_BATCH_MAX_EVENTS` |
 | `agent_runner.py` | 子 Agent 的共用型別與三種 CLI runner | `DailyPipelineError`、`AgentTask`、`AgentCall`、`AgentRunner`、`ClaudeAgentRunner`、`CodexAgentRunner`、`OpenCodeAgentRunner` |
 | `batching.py` | 逐檔輸出的子 Agent 分批與確定性合併 | `BatchMergeError`、`universe_batches`、`merge_batch_items` |
@@ -32,7 +32,7 @@ flowchart TD
     AN --> RS[多頭 / 空頭研究員<br/>共同輸入 互相隔離]
     RS --> TR[交易 Agent 整合多空]
     TR --> CS[風險 Agent 現金姿態]
-    CS --> POL[apply_trade_decision<br/>conviction 與現金姿態 到 policy]
+    CS --> POL[apply_trade_decision<br/>conviction、現金姿態與持股廣度 到 policy]
     POL --> ALLOC[AllocationOrderEngine 配置]
     ALLOC --> SG[ScenarioEngine + CompetitionGuardV2]
     SG --> RV[風險審查]
