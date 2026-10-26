@@ -4,13 +4,14 @@
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
 from etf_agent.data import TradingCalendar, calendar_from_capture, latest_calendar_capture_before  # noqa: E402
 from etf_agent.decision.contracts import DecisionInputValidator, canonical_sha256, decision_bundle_sha256  # noqa: E402
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, VirtualAccountService, active_account_id  # noqa: E402
@@ -34,7 +35,19 @@ def write_json(path: Path, value: object) -> None:
 
 def load_calendar(captures_root: Path, limit_time: str) -> TradingCalendar:
     """limit_time 前最近一次封存的官方開休市日曆；找不到時停止，不退回週一至週五近似。"""
+    started = datetime.now(timezone.utc) - timedelta(seconds=60)
     capture = latest_calendar_capture_before(captures_root, limit_time)
+    if capture is None:
+        # 新帳戶或 artifacts 被清空後沒有日期表：先去抓政府開放 CSV 再找一次。
+        try:
+            report = json.loads((ROOT / "docs" / "source_audit" / "2026-09-25_ogd_crosscheck.json").read_text(encoding="utf-8"))
+            capture_ogd_candidates(report, captures_root, keep_latest_only=True)
+        except (OSError, ValueError) as error:
+            print("政府開放 CSV 抓取失敗：%s" % error, file=sys.stderr)
+        # 剛抓到的檔案完成時間晚於呼叫開始時間；limit_time 是「現在」時改用抓完後的時間。
+        if datetime.fromisoformat(limit_time) >= started:
+            limit_time = datetime.now(timezone.utc).isoformat()
+        capture = latest_calendar_capture_before(captures_root, limit_time)
     if capture is None:
         raise VirtualAccountError("%s 前沒有封存的官方開休市日期表，不能計算交割日：%s" % (limit_time, captures_root))
     return calendar_from_capture(capture)

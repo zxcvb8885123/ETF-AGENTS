@@ -338,15 +338,17 @@ def capture_trading_sources(captures_root: Path) -> dict:
     return capture_ogd_candidates(report, captures_root, keep_latest_only=True)
 
 
-def ensure_calendar_capture(captures_root: Path, now: datetime) -> None:
+def ensure_calendar_capture(captures_root: Path, now: datetime) -> bool:
     """還沒有開休市日期表（新環境或資料夾被清掉）就先去抓；抓不到則照原本流程報錯停止。"""
     try:
         if latest_calendar_capture_before(captures_root, now.isoformat()) is not None:
-            return
+            return False
         log("找不到封存的開休市日期表，先抓政府開放 CSV")
         capture_trading_sources(captures_root)
+        return True
     except (TradingCalendarError, OSError, ValueError) as error:
         log("政府開放 CSV 抓取失敗：%s" % error)
+        return False
 
 
 def refresh_inferred_closures(captures_root: Path, now: datetime) -> None:
@@ -356,9 +358,9 @@ def refresh_inferred_closures(captures_root: Path, now: datetime) -> None:
         database = ROOT / "var" / "etf_agent.db"
         if capture is None or not database.exists():
             return
-        added = update_inferred_closed_days(database, captures_root, calendar_from_capture(capture), now)
+        added = update_inferred_closed_days(database, ROOT / "var", calendar_from_capture(capture), now)
         if added:
-            log("依官方行情缺口，推斷臨時休市日：%s（證據：%s）" % ("、".join(added), captures_root / "inferred_closed_days.json"))
+            log("依官方行情缺口，推斷臨時休市日：%s（證據：%s）" % ("、".join(added), ROOT / "var" / "inferred_closed_days.json"))
             notify("ETF Agent 每日決策", "推斷臨時休市：%s" % "、".join(added))
     except (TradingCalendarError, OSError, ValueError) as error:
         log("臨時休市推斷未執行：%s" % error)
@@ -710,7 +712,9 @@ def _main(args) -> int:
         return 0 if all(check.ok for check in checks) else 1
     captures_root = ROOT / "artifacts" / "data" / "trading_status"
     if not args.force:
-        ensure_calendar_capture(captures_root, now)
+        if ensure_calendar_capture(captures_root, now):
+            # 剛抓到的日期表完成時間晚於 now，沿用舊 now 會被當成未來資料而找不到。
+            now = datetime.now(TAIPEI_TIMEZONE)
         refresh_inferred_closures(captures_root, now)
         try:
             if not trading_day_check(captures_root, now):
