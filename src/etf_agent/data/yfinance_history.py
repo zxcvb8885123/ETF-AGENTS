@@ -14,7 +14,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
 from .historical import HistoryRefreshBatch, plan_history_refresh, rolling_start
-from .price_finality import price_finalized_at
+from .price_finality import UNOFFICIAL_PRICE_SOURCES, price_finalized_at
 from .twse import DailyPrice
 from .universe import Instrument
 
@@ -131,6 +131,31 @@ def _decimal(value: object) -> Optional[Decimal]:
     # Yahoo commonly exposes float32 artifacts such as 64.5999984741211.
     # Four decimals preserve adjusted-price usefulness while removing noise.
     return Decimal("%.4f" % number)
+
+
+def no_trade_placeholder(price: DailyPrice) -> bool:
+    """Yahoo 在休市日（如颱風停市）也會補一根成交量 0、開高低收相同的日線，它不是真的成交。"""
+    return price.volume_shares == 0 and all(
+        value is None or value == price.close_price
+        for value in (price.open_price, price.high_price, price.low_price)
+    )
+
+
+def drop_closed_day_placeholders(
+    prices: Sequence[DailyPrice], official_dates: set
+) -> Tuple[List[DailyPrice], List[str]]:
+    """官方行情整天沒有任何一檔的日期視為休市，丟掉該日的 Yahoo 補位日線；回傳 (保留, 丟掉的日期)。
+
+    停牌個股在正常交易日仍有其他股票的官方行情，所以不受影響。
+    """
+    kept: List[DailyPrice] = []
+    dropped: List[str] = []
+    for price in prices:
+        if price.trade_date not in official_dates and no_trade_placeholder(price):
+            dropped.append(price.trade_date)
+        else:
+            kept.append(price)
+    return kept, dropped
 
 
 class YFinanceHistoryCollector:
@@ -347,7 +372,16 @@ class YFinanceHistoryCollector:
 
             stored_rows = 0
             unfinalized: Dict[str, List[str]] = {}
+            closed: Dict[str, List[str]] = {}
             with self.database.connect() as connection:
+                official_dates = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT DISTINCT trade_date FROM daily_prices WHERE trade_date BETWEEN ? AND ? AND source NOT IN (%s)"
+                        % ", ".join("?" for _ in UNOFFICIAL_PRICE_SOURCES),
+                        (start.isoformat(), end.isoformat(), *UNOFFICIAL_PRICE_SOURCES),
+                    )
+                }
                 for symbol, frame in frames.items():
                     # 同一檔的原始回應與日線版本共用同一抓取時間，供稽核與定案判斷。
                     fetched_at = datetime.now(timezone.utc)
@@ -357,6 +391,9 @@ class YFinanceHistoryCollector:
                     warnings.extend(row_warnings)
                     for trade_date in skipped:
                         unfinalized.setdefault(trade_date, []).append(symbol)
+                    prices, dropped = drop_closed_day_placeholders(prices, official_dates)
+                    for trade_date in dropped:
+                        closed.setdefault(trade_date, []).append(symbol)
                     payload_id = self.database.insert_raw_payload(
                         connection,
                         run_id,
@@ -378,6 +415,11 @@ class YFinanceHistoryCollector:
                     warnings.append(
                         "%s 的 Yahoo 日線在定案時間（台北 15:00）前抓取，尚未定案，略過 %d 檔不寫入"
                         % (trade_date, len(symbols_skipped))
+                    )
+                for trade_date, symbols_closed in sorted(closed.items()):
+                    warnings.append(
+                        "%s 官方行情整天沒有資料，視為休市；Yahoo 成交量 0 的補位日線略過 %d 檔不寫入"
+                        % (trade_date, len(symbols_closed))
                     )
                 connection.execute(
                     """

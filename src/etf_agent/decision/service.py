@@ -79,8 +79,11 @@ class PortfolioDecisionApplicationService:
         market_news_input: Optional[Mapping[str, object]] = None,
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
+        company_news: bool = True,
     ) -> Dict[str, object]:
         """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。
+
+        ``company_news`` 為真時，FinMind 個股新聞在截止時間前已核准才附上（白名單媒體、截止前 3 天）；未核准則不附。
 
         指定 ``fear_greed_root`` 時，附上截止前最後一次保存的恐懼貪婪抓取；沒有任何抓取則不附。
         規則有 ``required_benchmark_ids`` 時，必須提供主動型 ETF 持股檔與來源核准檔，缺少即拒絕。
@@ -111,6 +114,10 @@ class PortfolioDecisionApplicationService:
         if fear_greed_root is not None:
             from etf_agent.perception.market_fear_greed import build_fear_greed_input
             fear_greed = build_fear_greed_input(fear_greed_root, fear_greed_approvals_path, snapshot.get("snapshot_id"), cutoff)
+        company_news_input = None
+        if company_news:
+            from etf_agent.perception.company_news import build_company_news_input
+            company_news_input = build_company_news_input(database_path, snapshot)
         rules = cls.read_json(rules_path, " DecisionRules")
         required_benchmarks = rules.get("required_benchmark_ids") or []
         benchmarks: List[Dict[str, object]] = []
@@ -141,6 +148,7 @@ class PortfolioDecisionApplicationService:
             market_fear_greed_input=fear_greed,
             market_news_input=market_news_input,
             benchmarks=benchmarks,
+            company_news_input=company_news_input,
         )
         bundle = builder.build()
         errors = builder.validate(bundle)

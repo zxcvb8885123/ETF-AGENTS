@@ -40,10 +40,12 @@ class DecisionInputBuilder:
         market_news_input: Optional[Mapping[str, object]] = None,
         market_fear_greed_input: Optional[Mapping[str, object]] = None,
         benchmarks: Sequence[Mapping[str, object]] = (),
+        company_news_input: Optional[Mapping[str, object]] = None,
     ):
         self.perception_inputs = [dict(item) for item in perception_inputs]
         self.market_news_input = dict(market_news_input) if market_news_input is not None else None
         self.market_fear_greed_input = dict(market_fear_greed_input) if market_fear_greed_input is not None else None
+        self.company_news_input = dict(company_news_input) if company_news_input is not None else None
         self.snapshot = dict(snapshot)
         self.rules = dict(rules)
         self.history_rows = list(history_rows)
@@ -79,6 +81,8 @@ class DecisionInputBuilder:
             bundle["market_news_input"] = self.market_news_input
         if self.market_fear_greed_input is not None:
             bundle["market_fear_greed_input"] = self.market_fear_greed_input
+        if self.company_news_input is not None:
+            bundle["company_news_input"] = self.company_news_input
         if self.trading_status is not None:
             bundle["trading_status_bundle"] = self.trading_status.get("bundle")
             bundle["tradability_assessment"] = self.trading_status.get("assessment")

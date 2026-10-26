@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from etf_agent.core import parse_aware_time
 
-from .analysts import AnalystReportValidator, EVENT_SENTIMENT_VERSION, EVENT_MARKET_VERSION
+from .analysts import AnalystReportValidator, EVENT_SENTIMENT_VERSION, MARKET_SCOPED_VERSIONS
 from .contracts import DecisionToolError
 from .event_financial_context import event_financial_context
 
@@ -24,12 +24,12 @@ def render_event_sentiment_report(
     symbols: Optional[Sequence[str]] = None,
 ) -> str:
     """呈現前重驗同源、時間、覆蓋與情緒聚合；批次範圍需明確傳入。"""
-    if report.get("schema_version") not in {EVENT_SENTIMENT_VERSION, EVENT_MARKET_VERSION}:
-        raise DecisionToolError("中文事件與市場報告需要格式 2.1 或 2.2")
+    if report.get("schema_version") not in {EVENT_SENTIMENT_VERSION, *MARKET_SCOPED_VERSIONS}:
+        raise DecisionToolError("中文事件與市場報告需要格式 2.1、2.2 或 2.3")
     errors = AnalystReportValidator(bundle, "event", symbols).validate(report)
     if errors:
         raise DecisionToolError("合併報告驗證失敗：" + "；".join(errors))
-    if report.get("schema_version") == EVENT_MARKET_VERSION:
+    if report.get("schema_version") in MARKET_SCOPED_VERSIONS:
         return _render_market_scoped(report)
     documents = {doc["source_evidence_id"]: doc for doc in bundle["snapshot"]["documents"]}
     financial = event_financial_context(bundle)

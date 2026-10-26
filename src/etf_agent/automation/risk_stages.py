@@ -10,7 +10,7 @@ from etf_agent.decision import (
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
 from etf_agent.decision.market_scope import market_sentiment_channel
-from etf_agent.decision.sizing import validate_cash_stance
+from etf_agent.decision.sizing import POSITION_BREADTHS, validate_cash_stance
 
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
@@ -26,8 +26,9 @@ class RiskStagesMixin:
         analyst_reports: Mapping[str, Mapping[str, object]],
         trade_decision: Mapping[str, object],
         drawdown_control: Optional[Mapping[str, object]] = None,
+        breadth_targets: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
-        """風險 Agent 依市場層級摘要給現金姿態；分布與計數由程式統計，回撤下限由程式強制。"""
+        """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。"""
 
         def counts(values: Sequence[object]) -> Dict[str, int]:
             result: Dict[str, int] = {}
@@ -64,6 +65,8 @@ class RiskStagesMixin:
                 # 策略文件：風險 Agent 看整體市場情緒；與事件分析師讀同一份由程式重建的全市場通道。
                 "market_sentiment": market_sentiment_channel(bundle),
                 "drawdown_control": dict(drawdown_control) if drawdown_control else None,
+                # 持股廣度對應的目標檔數由 Policy 決定；風險 Agent 只選等級，程式依信心順序挑到該檔數。
+                "positions_by_breadth": dict(breadth_targets) if breadth_targets else None,
                 "citable_evidence_ids": price_evidence,
             },
         )
@@ -73,6 +76,8 @@ class RiskStagesMixin:
         def validate(stance: Mapping[str, object]) -> List[str]:
             errors: List[str] = []
             validate_cash_stance(context, stance, "cash_stance", errors)
+            if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
+                errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
             if isinstance(stance, Mapping) and not stance_meets_floor(stance.get("level"), floor):
                 errors.append("帳戶回撤 %s 已達門檻，現金姿態不得低於 %s" % (drawdown_control.get("drawdown"), floor))
             return errors
@@ -82,6 +87,9 @@ class RiskStagesMixin:
             "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節），再讀市場層級摘要 %s。"
             "依 regime、分析師看法分布、交易決策、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive。"
             "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
+            "另給持股廣度 breadth：concentrated（集中）／balanced（平衡）／diversified（分散），對應檔數見 positions_by_breadth，"
+            "程式依交易 Agent 的信心等級 high→medium→low 挑到該檔數；高信心少、候選看法分歧或事件風險高時偏分散，"
+            "高信心明確且集中時偏集中；你不得輸出檔數，rationale 要同時說明現金姿態與持股廣度的理由。"
             "market_sentiment 是整體台股情緒（全市場新聞，不可用時為恐懼貪婪指標），status 非 available 時不得當成情緒結論；"
             "drawdown_control 是程式從帳本計算的峰值回撤；stance_floor 不是 aggressive 時，姿態不得比它更積極。"
             "evidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"

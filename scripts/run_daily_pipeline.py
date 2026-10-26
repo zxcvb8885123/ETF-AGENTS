@@ -594,7 +594,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--perception", nargs=2, type=Path, metavar=("BUNDLE", "RESULT"),
-        help="已核准授權且同 cutoff 的情緒與共識資料包，以及與其成對的已驗證結果；兩個檔案須同時提供",
+        help="已核准授權且同 cutoff 的情緒資料包，以及與其成對的已驗證結果；兩個檔案須同時提供",
     )
     parser.add_argument("--account-id", help="預設讀取 config/active_account.json")
     parser.add_argument("--datapack", type=Path, help="指定本次要對帳的主辦方 DataPack；預設在 --datapack-dir 找本隊、本交易日最新的一份")
@@ -908,6 +908,7 @@ def _main(args) -> int:
                 "decision_status": result.decision_status,
                 "decision_run_id": result.decision_run_id,
                 "cash_stance": result.cash_stance,
+                "position_breadth": result.position_breadth,
                 "order_count": len(result.orders),
                 "agent_calls": agent_calls,
                 "max_workers": args.max_workers,
@@ -983,9 +984,9 @@ def _main(args) -> int:
 
     log("[4/4] 通知")
     if summary["status"] == "completed":
-        message = "決策 %s，%d 筆委託，現金姿態 %s，CLI %s" % (
+        message = "決策 %s，%d 筆委託，現金姿態 %s，持股廣度 %s，CLI %s" % (
             summary.get("decision_status"), summary.get("order_count", 0),
-            summary.get("cash_stance"), args.agent_cli,
+            summary.get("cash_stance"), summary.get("position_breadth") or "-", args.agent_cli,
         )
         if args.agent_cli == "claude":
             message += "，Agent 估算用量 $%s（訂閱不計費）" % summary.get("agent_estimated_usage_usd")

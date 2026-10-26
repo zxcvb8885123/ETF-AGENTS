@@ -63,7 +63,7 @@ flowchart TD
 | `core` | 雜湊、時間、Decimal、不可變 run 封存與 run 佈局等共用基礎 | [core/README.md](../src/etf_agent/core/README.md) | 被所有套件引用 |
 | `data` | 行情與公司資料收集、版本化、交易狀態與日曆、`ResearchSnapshot` | [data/README.md](../src/etf_agent/data/README.md) | `cli/data_agent.py`、`scripts/collect_*.py` |
 | `fundamentals` | 由 Snapshot 財報確定性計算基本面指標並驗證 | [fundamentals/README.md](../src/etf_agent/fundamentals/README.md) | `cli/fundamental_research.py` |
-| `perception` | 市場情緒、分析師共識、新聞候選核對、全市場新聞與恐懼貪婪指標 | [perception/README.md](../src/etf_agent/perception/README.md) | `cli/sentiment_research.py`、`cli/news_sentiment.py`、`cli/market_news.py`、`cli/market_fear_greed.py` |
+| `perception` | 市場情緒、新聞候選核對、全市場新聞、恐懼貪婪指標與個股新聞（`company_news/`，只進公司事件） | [perception/README.md](../src/etf_agent/perception/README.md) | `cli/sentiment_research.py`、`cli/news_sentiment.py`、`cli/market_news.py`、`cli/market_fear_greed.py`、`cli/company_news.py` |
 | `research` | Event Research Agent（獨立研究與舊封存），四子 Agent 辯論驗證 | [research/README.md](../src/etf_agent/research/README.md) | `cli/event_research.py` |
 | `reporting` | Research Report V0：同源 JSON／Markdown 與重建驗證 | [reporting/README.md](../src/etf_agent/reporting/README.md) | `cli/research_report.py` |
 | `decision` | 分析團隊、多空研究、交易、配置、風控與最終決策封存 | [decision/README.md](../src/etf_agent/decision/README.md) | `cli/portfolio_decision.py` |

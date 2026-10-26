@@ -58,6 +58,12 @@ class DecisionContext:
                     if evidence_id in result:
                         raise DecisionToolError("evidence_id 跨輸入來源重複：%s" % evidence_id)
                     result[evidence_id] = str(evidence.get("symbol", "")).upper() or None
+        news = self.bundle.get("company_news_input", {})
+        for item in news.get("items", []) if isinstance(news, Mapping) else []:
+            evidence_id = str(item["evidence_id"])
+            if evidence_id in result:
+                raise DecisionToolError("evidence_id 跨輸入來源重複：%s" % evidence_id)
+            result[evidence_id] = str(item["symbol"]).upper()
         status_bundle = self.bundle.get("trading_status_bundle", {})
         if isinstance(status_bundle, Mapping):
             for record in status_bundle.get("records", []):

@@ -5,6 +5,9 @@ from contextlib import closing, contextmanager
 from etf_agent.core import canonical_sha256, canonical_json, parse_aware_time
 from .contracts import NEWS_SOURCES, MarketNewsError, check_fields
 
+# 個股新聞（FinMind）沿用同一套核對規則，但另存一張表，避免被全市場情緒讀到。
+REVIEW_TABLES = {'market_news_source_reviews', 'company_news_source_reviews'}
+
 class MarketNewsRepository:
     def __init__(self, database_path):
         self.database_path = str(database_path)
@@ -26,14 +29,17 @@ class MarketNewsRepository:
                     (canonical_sha256(row),row['source'],'TW_STOCK_MARKET',row['available_at'],row['raw_sha256'],
                      canonical_json(row)))
 
-    def save_source_reviews(self, reviews, terms_captures, available_at):
+    def save_source_reviews(self, reviews, terms_captures, available_at, *, registry=None, table='market_news_source_reviews'):
         """追加真實核對紀錄與原始依據；不推定或提升使用狀態。"""
+        registry = NEWS_SOURCES if registry is None else registry
+        if table not in REVIEW_TABLES:
+            raise MarketNewsError('來源使用核對資料表無效')
         available = parse_aware_time(available_at, 'available_at', error=MarketNewsError)
         entries = []
         for review in reviews:
             check_fields(review, {'source','license_status','terms_url','usage_scope','reviewed_at','evidence'}, '來源使用核對')
             source = review['source']
-            if source not in NEWS_SOURCES or review['terms_url'] != NEWS_SOURCES[source]['terms_url']:
+            if source not in registry or review['terms_url'] != registry[source]['terms_url']:
                 raise MarketNewsError('來源使用核對身分無效')
             if review['license_status'] not in {'approved','unverified','restricted'}:
                 raise MarketNewsError('來源使用狀態無效')
@@ -53,18 +59,20 @@ class MarketNewsRepository:
             payload = {'review':dict(review),'terms_captures':captures,'available_at':available.isoformat()}
             entries.append((canonical_sha256(payload),source,available.isoformat(),canonical_json(payload)))
         with self._connect() as connection:
-            connection.execute('''CREATE TABLE IF NOT EXISTS market_news_source_reviews (
+            connection.execute('''CREATE TABLE IF NOT EXISTS %s (
                 review_id TEXT PRIMARY KEY, source TEXT NOT NULL,
-                available_at TEXT NOT NULL, payload_json TEXT NOT NULL)''')
-            connection.executemany('INSERT OR IGNORE INTO market_news_source_reviews VALUES (?,?,?,?)',entries)
+                available_at TEXT NOT NULL, payload_json TEXT NOT NULL)''' % table)
+            connection.executemany('INSERT OR IGNORE INTO %s VALUES (?,?,?,?)' % table,entries)
 
-    def load_source_reviews(self, decision_cutoff):
+    def load_source_reviews(self, decision_cutoff, *, table='market_news_source_reviews'):
         """只讀截止時間前已保存的版本，較晚的限制可取代較早核准。"""
         cutoff = parse_aware_time(decision_cutoff, 'decision_cutoff', error=MarketNewsError)
+        if table not in REVIEW_TABLES:
+            raise MarketNewsError('來源使用核對資料表無效')
         with self._connect() as connection:
-            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_news_source_reviews'").fetchone():
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                 return []
-            rows = connection.execute('SELECT review_id,source,available_at,payload_json FROM market_news_source_reviews').fetchall()
+            rows = connection.execute('SELECT review_id,source,available_at,payload_json FROM %s' % table).fetchall()
         selected = {}
         for identity, source, saved_at, raw in rows:
             saved = parse_aware_time(saved_at, '保存時間', error=MarketNewsError)

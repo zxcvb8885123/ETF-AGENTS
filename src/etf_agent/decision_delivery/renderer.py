@@ -66,7 +66,10 @@ def _render(report, template):
                 "不適用（決策拒絕）" if report["decision_status"] == "rejected" else cell((position or {}).get("shares", 0)), percent(position["weight"]) if position else "不適用"), ""]
         lines += _intent(item)
         lines += ["最終結果：%s。" % {"buy": "買進", "sell": "賣出", "no_order": "無委託（不等同原意圖為不交易，請對照風控修正及配置限制）", "rejected": "拒絕"}[row["final_action"]], ""]
-    lines += ["## 風控與修正", "", "現金姿態：%s；修正次數：%s。" % (cell({"aggressive": "積極", "neutral": "中性", "defensive": "防守"}.get(risk["cash_stance"]["level"])), risk["revision_count"]), ""]
+    stance = risk["cash_stance"]
+    # 持股廣度是 2026-10-26 後新增的欄位；舊封存沒有它，輸出維持原樣。
+    breadth = "；持股廣度：%s" % cell({"concentrated": "集中", "balanced": "平衡", "diversified": "分散"}.get(stance["breadth"])) if "breadth" in stance else ""
+    lines += ["## 風控與修正", "", "現金姿態：%s%s；修正次數：%s。" % (cell({"aggressive": "積極", "neutral": "中性", "defensive": "防守"}.get(stance["level"])), breadth, risk["revision_count"]), ""]
     for entry in risk["revisions"]:
         review = entry["review"]
         lines += ["- %s：%s" % (cell({"approve": "核准", "reject": "拒絕", "revise": "要求修正"}.get(review["decision"])), cell(review["rationale"]))]

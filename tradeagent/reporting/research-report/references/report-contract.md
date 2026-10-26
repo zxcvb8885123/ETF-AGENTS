@@ -38,7 +38,7 @@ ResearchReport V0 只整理研究層輸出，不包含配置、訂單或正式�
 - `symbol`
 - `latest_price`：日期、分析價格及行情 evidence ID；缺少時為 `null`。
 - `events`：直接整理 Event Research 的事實、多空 thesis、裁決、行情確認與失效條件。
-- `perception`：情緒、共識、預期差與已反映判讀；未提供時固定為 `unavailable`。
+- `perception`：情緒與已反映判讀；未提供時固定為 `unavailable`。
 - `risk_flags`、`missing_data`、`source_evidence_ids`
 
 ## Sources

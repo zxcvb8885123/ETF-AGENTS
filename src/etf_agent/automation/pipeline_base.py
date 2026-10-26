@@ -51,6 +51,7 @@ class PipelineResult:
     decision_run_id: Optional[str] = None
     orders: List[Dict[str, object]] = field(default_factory=list)
     cash_stance: Optional[str] = None
+    position_breadth: Optional[str] = None
     research_result_path: Optional[Path] = None
     agent_calls: List[Dict[str, object]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)

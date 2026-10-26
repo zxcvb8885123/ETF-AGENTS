@@ -35,6 +35,9 @@ ANALYSTS = ("technical", "fundamental", "event")
 LEGACY_ANALYSTS = (*ANALYSTS, "sentiment")
 EVENT_SENTIMENT_VERSION = "2.1"
 EVENT_MARKET_VERSION = "2.2"
+# 2.3：決策輸入含已核准的 FinMind 個股新聞時，新聞與重大訊息一起逐則分級；沒有新聞鍵的舊輸入仍為 2.2。
+EVENT_NEWS_VERSION = "2.3"
+MARKET_SCOPED_VERSIONS = (EVENT_MARKET_VERSION, EVENT_NEWS_VERSION)
 LLM_ANALYSTS = ("technical", "fundamental", "event")
 OUTLOOKS = ("positive", "negative", "neutral", "unknown")
 MATERIALITY = ("high", "medium", "low", "unknown")
@@ -102,6 +105,18 @@ def _documents(bundle: Mapping[str, object], document_type: str) -> Dict[str, Li
     return result
 
 
+def company_news(bundle: Mapping[str, object]) -> Optional[Dict[str, List[Dict[str, object]]]]:
+    """決策輸入沒有個股新聞鍵時回傳 None；有鍵但沒有新聞時回傳空 dict。"""
+    if "company_news_input" not in bundle:
+        return None
+    from etf_agent.perception.company_news import news_by_symbol
+    return news_by_symbol(bundle["company_news_input"])
+
+
+def event_market_version(bundle: Mapping[str, object]) -> str:
+    return EVENT_NEWS_VERSION if "company_news_input" in bundle else EVENT_MARKET_VERSION
+
+
 def report_envelope(bundle: Mapping[str, object], analyst: str, report_id: str) -> Dict[str, object]:
     return {
         "schema_version": ANALYST_SCHEMA_VERSION,
@@ -123,7 +138,7 @@ def analyst_report_names(reports: Mapping[str, object]) -> Sequence[str]:
             raise DecisionToolError("舊四份報告不能混用新版合併事件報告")
         return LEGACY_ANALYSTS
     if set(reports) == set(ANALYSTS):
-        if reports["event"].get("schema_version") not in {EVENT_SENTIMENT_VERSION, EVENT_MARKET_VERSION}:
+        if reports["event"].get("schema_version") not in {EVENT_SENTIMENT_VERSION, *MARKET_SCOPED_VERSIONS}:
             raise DecisionToolError("三份報告必須包含新版事件與市場情緒報告")
         return ANALYSTS
     raise DecisionToolError("分析團隊需要技術、基本面、事件與市場情緒三份報告")
@@ -152,6 +167,7 @@ def build_analyst_brief(
     }
     revenues = _documents(bundle, "monthly_revenue")
     events = _documents(bundle, "material_event")
+    news = company_news(bundle) if analyst == "event" and event_market_scope else None
     sentiment_by_symbol = {item["symbol"]: item for item in sentiment_report(bundle)["items"]} if analyst == "event" else {}
     financial_by_symbol = event_financial_context(bundle) if analyst == "event" else {}
     cash_flow_by_symbol = cash_flow_context(bundle) if analyst == "fundamental" else {}
@@ -274,11 +290,14 @@ def build_analyst_brief(
                 }
                 for document in sorted(events.get(symbol, []), key=lambda doc: str(doc.get("published_at")))
             ]
+            if news is not None:
+                # 只有標題與媒體；可得時間是第一次抓取時間，FinMind 來源時間沒有時區，不當發布時間。
+                entry["news"] = news.get(symbol, [])
         symbols.append(entry)
     brief = {
         "analyst": analyst,
         "report_envelope": {**report_envelope(bundle, analyst, "analyst-%s:%s" % (analyst, str(bundle["bundle_sha256"])[:16])),
-                            "schema_version": (EVENT_MARKET_VERSION if event_market_scope else EVENT_SENTIMENT_VERSION) if analyst == "event" else ANALYST_SCHEMA_VERSION},
+                            "schema_version": (event_market_version(bundle) if event_market_scope else EVENT_SENTIMENT_VERSION) if analyst == "event" else ANALYST_SCHEMA_VERSION},
         "regime_assessment": momentum.get("regime_assessment") if analyst == "technical" else None,
         "symbols": symbols,
     }
@@ -341,7 +360,7 @@ def sentiment_unavailable_report(bundle: Mapping[str, object]) -> Dict[str, obje
 
 
 def sentiment_report(bundle: Mapping[str, object]) -> Dict[str, object]:
-    """將已驗證情緒與共識轉成次級證據；共識水準本身不產生方向。"""
+    """將已驗證情緒轉成次級證據。"""
     from .contracts import DecisionInputValidator
 
     pairs = bundle.get("perception_inputs", [])
@@ -365,14 +384,6 @@ def sentiment_report(bundle: Mapping[str, object]) -> Dict[str, object]:
                                      "text": "情緒方向：%s；去重樣本 %s 筆、來源 %s 個；僅作次級研究輸入。" %
                                              (direction, sentiment["item_count"], sentiment["source_count"]),
                                      "evidence_ids": sentiment["evidence_ids"]})
-                for metric in row["consensus_metrics"]:
-                    if metric["status"] != "available":
-                        continue
-                    findings.append({"finding_id": "consensus:%s:%d" % (symbol, len(findings)),
-                                     "text": "分析師共識 %s／%s：中位數 %s %s（%s），貢獻者 %s，分散度 %s%%，修正 %s%%；非交易指令。" %
-                                             (metric["metric"], metric["forecast_period"], metric["median"], metric["unit"],
-                                              metric["currency"], metric["contributor_count"], metric["dispersion_pct"], metric["revision_pct"]),
-                                     "evidence_ids": metric["evidence_ids"]})
         outlook = next(iter(directions)) if len(directions) == 1 else "unknown"
         items.append({"symbol": symbol, "outlook": outlook, "findings": findings,
                       "data_gaps": [] if outlook != "unknown" else ["NO_UNAMBIGUOUS_SENTIMENT_DIRECTION"]})
@@ -394,9 +405,10 @@ def seal_event_sentiment_report(bundle: Mapping[str, object], envelope: Mapping[
     return seal_report({**envelope, "schema_version": EVENT_SENTIMENT_VERSION}, merged)
 
 
-def no_event_item(symbol: str, availability: Sequence[Mapping[str, object]]) -> Dict[str, object]:
-    """查詢視窗內沒有重大訊息的股票：事件看法必為 unknown、無發現，資料缺口由程式照資料庫狀態列出。"""
-    gaps = ["查詢視窗內沒有重大訊息事件，無法判斷公司事件方向。"]
+def no_event_item(symbol: str, availability: Sequence[Mapping[str, object]], news_checked: bool = False) -> Dict[str, object]:
+    """查詢視窗內沒有重大訊息（與核准新聞）的股票：事件看法必為 unknown、無發現，資料缺口由程式照資料庫狀態列出。"""
+    gaps = ["查詢視窗內沒有重大訊息事件或核准媒體的個股新聞，無法判斷公司事件方向。" if news_checked
+            else "查詢視窗內沒有重大訊息事件，無法判斷公司事件方向。"]
     for channel in availability:
         name, status = channel.get("name"), channel.get("status")
         if isinstance(name, str) and isinstance(status, str):
@@ -413,7 +425,7 @@ def seal_event_market_report(bundle, envelope, items):
     rows = [dict(item) for item in items]
     if any("sentiment" in row or "market_sentiment" in row for row in rows):
         raise DecisionToolError("公司項目不得輸出個股或全市場情緒通道")
-    output = seal_report({**envelope, "schema_version": EVENT_MARKET_VERSION}, rows)
+    output = seal_report({**envelope, "schema_version": event_market_version(bundle)}, rows)
     output["market_sentiment"] = market_sentiment_channel(bundle)
     output["content_sha256"] = artifact_content_sha256(output)
     return output
@@ -446,6 +458,9 @@ class AnalystReportValidator:
             symbol: {str(document.get("source_evidence_id")) for document in documents}
             for symbol, documents in _documents(bundle, "material_event").items()
         }
+        # 有核准個股新聞時，新聞與重大訊息一樣要逐則分級，也可作為公司事件方向的引用。
+        for symbol, rows in (company_news(bundle) or {}).items() if analyst == "event" else ():
+            self.events_by_symbol.setdefault(symbol, set()).update(row["evidence_id"] for row in rows)
         self.sentiment_by_symbol = {
             row["symbol"]: row for row in sentiment_report(bundle)["items"]
         } if analyst == "event" else {}
@@ -457,7 +472,7 @@ class AnalystReportValidator:
             if dict(report) != sentiment_report(self.bundle):
                 errors.append("情緒分析報告與已驗證來源重建結果不一致")
         validate_forbidden_keys(report, "AnalystReport", errors)
-        market_scoped = self.analyst == "event" and report.get("schema_version") == EVENT_MARKET_VERSION
+        market_scoped = self.analyst == "event" and report.get("schema_version") in MARKET_SCOPED_VERSIONS
         reject_unknown_fields(report, self.ENVELOPE | ({"market_sentiment"} if market_scoped else set()), "AnalystReport", errors)
         expected = report_envelope(self.bundle, self.analyst, str(report.get("report_id")))
         merged = self.analyst == "event" and report.get("schema_version") == EVENT_SENTIMENT_VERSION
@@ -465,7 +480,7 @@ class AnalystReportValidator:
             expected["schema_version"] = EVENT_SENTIMENT_VERSION
         if market_scoped:
             from .market_scope import market_sentiment_channel
-            expected["schema_version"] = EVENT_MARKET_VERSION
+            expected["schema_version"] = event_market_version(self.bundle)
             if report.get("market_sentiment") != market_sentiment_channel(self.bundle):
                 errors.append("全市場情緒與同截止時間的來源重建不一致")
         for field, value in expected.items():
@@ -528,7 +543,7 @@ class AnalystReportValidator:
                 ids = {eid for eid in finding["evidence_ids"] if isinstance(eid, str)}
                 cited |= ids
                 if ids - event_ids - financial_ids:
-                    errors.append("%s 公司事件只能引用本公司事件及同快照財報" % prefix)
+                    errors.append("%s 公司事件只能引用本公司事件、核准新聞及同快照財報" % prefix)
         if item.get("outlook") in {"positive", "negative", "neutral"} and not cited.intersection(event_ids):
             errors.append("%s 公司事件結果缺少事件引用" % prefix)
 
@@ -624,7 +639,7 @@ class AnalystReportValidator:
                         errors.append("%s.%s" % (event_prefix, error))
             evidence_id = str(event.get("evidence_id", ""))
             if evidence_id not in expected:
-                errors.append("%s 不是 %s 的重大訊息：%s" % (event_prefix, symbol, evidence_id))
+                errors.append("%s 不是 %s 的重大訊息或核准新聞：%s" % (event_prefix, symbol, evidence_id))
             classified.append(evidence_id)
             if event.get("materiality") not in MATERIALITY:
                 errors.append("%s.materiality 必須是 %s" % (event_prefix, "／".join(MATERIALITY)))
@@ -636,7 +651,7 @@ class AnalystReportValidator:
             errors.append("%s.events 不得重複分級同一則訊息" % prefix)
         missing = sorted(expected - set(classified))
         if missing:
-            errors.append("%s 未分級全部重大訊息：%s" % (prefix, ", ".join(missing)))
+            errors.append("%s 未分級全部重大訊息與新聞：%s" % (prefix, ", ".join(missing)))
 
 
 def compute_fundamental_metrics(bundle: Mapping[str, object]) -> Optional[Dict[str, object]]:

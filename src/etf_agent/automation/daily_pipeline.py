@@ -255,7 +255,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         base_policy["content_sha256"] = decision_policy_sha256(base_policy)
         self.save_artifact("policy_base", base_policy)
         with self._timed("cash_stance"):
-            stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"))
+            stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"),
+                                          (base_policy.get("position_sizing") or {}).get("positions_by_breadth"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy)
@@ -263,6 +264,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             raise DailyPipelineError("綁定交易決策與現金姿態後 policy 無效：" + "；".join(policy_errors))
         self.save_artifact("policy", policy)
         result.cash_stance = str(stance["level"])
+        result.position_breadth = stance.get("breadth")
 
         self.log("[decision 7] 配置、情境、Guard 與風險審查（最多 %d 次修正）" % int(policy["max_revisions"]))
         review_started = time.monotonic()

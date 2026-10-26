@@ -24,7 +24,7 @@
 | `data_agent.py` | 資料狀態、收集與 ResearchSnapshot |
 | `trading_status.py` | 交易狀態 Bundle／TradabilityAssessment 建立與驗證 |
 | `event_research.py` | 事件研究與 Debate／ResearchResult 驗證 |
-| `sentiment_research.py` | 市場情緒、分析師共識與驗證 |
+| `sentiment_research.py` | 市場情緒與驗證 |
 | `research_report.py` | Research Report V0 建立與重建驗證 |
 | `portfolio_decision.py` | 動能、配置、風控、最終決策與封存 |
 | `virtual_account.py` | `ensure-init` 首次開帳或驗證既有帳本；`open-competition` 比賽第一天開新帳戶並切換使用中帳戶；`reconcile` 不跑 Agent、直接用資料包檢查最新帳戶快照；其餘命令處理決策前快照與模擬成交。`--account-id` 預設讀 `config/active_account.json` |
@@ -35,6 +35,7 @@
 | `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）、已判讀輸入接入（`integrate`）與來源使用核對（`review`） |
 | `market_fear_greed.py` | 台股恐懼貪婪指標來源補抓（`capture`）與截止前分數檢視（`show`） |
 | `news_sentiment.py` | 核對資料庫新聞候選、保存原頁版本並驗證全量情緒標註 |
+| `company_news.py` | FinMind 個股新聞來源核對（`review --database --status approved\|unverified\|restricted --evidence`）：抓規範頁原文與 SHA-256，寫入 `company_news_source_reviews`；只對保存之後的決策截止時間生效 |
 | `market_context_probe.py` | 補抓公開大盤成交、指數與法人資料（交易背景），不產生情緒結論 |
 | `calibration.py` | 校準旁觀者：`snapshot` 記錄封存決策、`report` 以官方成交均價對答案（少於 20 個決策日不給結論）、`gap-audit` 審計決策價與成交均價的偏離；不影響決策 |
 | `policy_replay.py` | 便宜版回測：`run` 用封存 Decision run 的 Agent 輸出換策略樣板多日滾動回放（零 token，資料庫唯讀）、`verify` 整段重算驗證、`compare` 比較兩個回放 |

@@ -11,6 +11,8 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 交易 Agent 決定完每檔意圖與 buy／add 信心等級後，本 Skill 只對整體給市場層級的 `cash_stance`：`aggressive`、`neutral` 或 `defensive`，附 `rationale` 與共同輸入中存在的 `evidence_ids`（例如 regime、市場廣度、事件集中）。依 regime、分析師看法分布、交易決策、交易狀態、重大事件風險與整體市場情緒（`market_sentiment`，全市場新聞或恐懼貪婪指標，`status` 非 available 時不能當成情緒結論）判斷。程式另從帳本 NAV 歷史計算峰值回撤（`drawdown_control`），回撤達 Policy 門檻時給出姿態下限 `stance_floor`，姿態不得比下限更積極，否則由程式退回重答。它決定要保留多少現金；實際比例由 Policy 的 `cash_buffer_by_stance` 對應，競賽現金上限仍由 Guard 強制檢查，Agent 不得輸出百分比，也不對個股給等級或權重。權重由 Python 依交易 Agent 的等級乘數除以 ATR14% 分配。
 
+同一次輸出另給持股廣度 `breadth`：`concentrated`（集中）、`balanced`（平衡）或 `diversified`（分散）。對應檔數由 Policy 的 `positions_by_breadth` 決定（目前 22／26／30，夾在競賽 20～30 檔之間），程式依交易 Agent 的信心 high → medium → low 挑到該檔數，同等級同支持數時 ATR14 低者優先。高信心候選明確且集中時偏集中；高信心少、看法分歧或事件風險高時偏分散。Agent 不得輸出檔數，`rationale` 要同時說明現金姿態與持股廣度的理由。
+
 ## 審查方式
 
 1. 先確認三個輸入的 bundle、proposal、policy、版本與內容雜湊一致。不同版本停止，不拼接結論。

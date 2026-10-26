@@ -259,6 +259,46 @@ class HistoricalProviderTests(unittest.TestCase):
         for _symbols, kwargs in provider.calls:
             self.assertIs(kwargs["auto_adjust"], False)
 
+    def test_yfinance_skips_placeholder_bars_on_days_without_official_prices(self):
+        """颱風休市日 Yahoo 仍補一根成交量 0 的日線；官方整天沒資料就不寫入，停牌股在交易日的補位照存。"""
+        import pandas
+
+        class PlaceholderYFinance:
+            def download(self, symbols, **_kwargs):
+                index = pandas.to_datetime(["2026-10-21", "2026-10-22", "2026-10-23"])
+                return pandas.DataFrame(
+                    {"Open": [101.0, 100.0, 100.0], "High": [103.0, 100.0, 100.0], "Low": [99.0, 100.0, 100.0],
+                     "Close": [100.0, 100.0, 100.0], "Adj Close": [100.0, 100.0, 100.0], "Volume": [1000, 0, 0]},
+                    index=index,
+                )
+
+        instrument = Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14")
+        other = Instrument("2317.TW", "2317", "鴻海", "TWSE", "2026-09-14")
+        official = DailyPrice(symbol=other.symbol, code=other.code, name=other.name, trade_date="2026-10-22",
+                              open_price=Decimal("200"), high_price=Decimal("201"), low_price=Decimal("199"),
+                              close_price=Decimal("200"), change=None, volume_shares=5000, trade_value=1000000,
+                              transactions=10)
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            database.initialize()
+            with database.connect() as connection:
+                database.upsert_instruments(connection, [other], True)
+                connection.execute("INSERT INTO collection_runs(run_id, source, started_at, status) "
+                                   "VALUES ('official', 'TWSE_STOCK_DAY', '2026-10-22T08:00:00+00:00', 'success')")
+                payload_id = database.insert_raw_payload(connection, "official", "TWSE_STOCK_DAY", "fixture://twse",
+                                                         "2026-10-22T08:00:00+00:00", "{}")
+                database.store_prices(connection, [official], "TWSE_STOCK_DAY", "2026-10-22T08:00:00+00:00",
+                                      "official", payload_id)
+            collector = YFinanceHistoryCollector(database, retries=0)
+            with patch("etf_agent.data.yfinance_history.importlib.import_module", return_value=PlaceholderYFinance()):
+                result = collector.collect([instrument], date(2026, 10, 20), date(2026, 10, 23))
+            with database.connect() as connection:
+                dates = [str(row["trade_date"]) for row in connection.execute(
+                    "SELECT trade_date FROM daily_prices WHERE source = 'YAHOO_FINANCE' ORDER BY trade_date")]
+
+        self.assertEqual(dates, ["2026-10-21", "2026-10-22"])
+        self.assertTrue(any("2026-10-23" in warning and "休市" in warning for warning in result.warnings), result.warnings)
+
     def test_refresh_refetches_whole_series_when_yahoo_basis_changes(self):
         import pandas
 

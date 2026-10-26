@@ -160,7 +160,7 @@ flowchart LR
 - RSS 只保留最近項目，不能單靠 RSS 宣稱涵蓋整段歷史；歷史補抓見[缺日補抓](market_news_history.md)。
 - 中央社與自由時報的 RSS 條款同意個人、非商業用途並須標示出處；2026-10-23 起由使用者核准四個來源（歷史原頁屬使用者自行判斷），只對之後的 cutoff 生效，見[稽核紀錄](source_audit/2026-10-23_market_news_sources.md)。
 - 每日接入：`./start.sh daily` 在 cutoff 前抓 RSS 存到 `artifacts/data/market_news/`；`./start.sh run` 取截止前最後一份、查詢視窗為 cutoff 前 3 天，由子 Agent 逐則標註並給一個綜合看法，程式重建結果後接入事件分析師。新聞步驟失敗時記錄 `market_news_error` 並改用恐懼貪婪指標。
-- FinMind 個股新聞未核准，也不能代表整體台股。
+- FinMind 個股新聞另存核對於 `company_news_source_reviews`（與本頁 `market_news_source_reviews` 分表），核准後只進事件分析師的公司事件通道，不能代表整體台股，也不進本頁的市場情緒，見[事件研究整合](integrated_event_analysis.md#事件報告-23已核准個股新聞)。
 - 診斷看法是新聞材料的研究推論，不是投資人民調，也不驗證投資效果。
 - 原有個股 PerceptionDataBundle 路徑維持兼容。
 
@@ -168,5 +168,5 @@ flowchart LR
 
 ## 尚未實作
 
-- FinMind 個股新聞的使用核准與發布時間證據。
+- FinMind 個股新聞的核對指令（`cli/company_news.py review`）尚未執行，且來源時間仍沒有時區（`published_at` 為 null）。
 - 完整歷史新聞庫（含當時內容版本與可得時間證據）。

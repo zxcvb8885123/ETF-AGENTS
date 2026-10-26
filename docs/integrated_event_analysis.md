@@ -31,7 +31,7 @@ flowchart LR
 
 | 版本 | 規則 |
 | --- | --- |
-| 2.1 | 只接受 `schema_version`、`analyst_reports`、`cash_stance`。報告鍵必須是 technical／fundamental／event，event 使用 2.2。不得注入 `research_result` |
+| 2.1 | 只接受 `schema_version`、`analyst_reports`、`cash_stance`。報告鍵必須是 technical／fundamental／event，event 使用 2.2，或在資料包含 `company_news_input` 時必須使用 2.3（見下方）。不得注入 `research_result` |
 | 2.0（舊） | 沿用原白名單、三／四份分析報告與已驗證 ResearchResult。多空共同輸入雜湊、DecisionResult ID 與封存內容都不改寫 |
 
 ### 共同輸入雜湊
@@ -44,10 +44,31 @@ flowchart LR
 
 | Brief | 事件相關欄位 |
 | --- | --- |
-| 多空 | 不含 `event_research`、`research_status`；個股事件在 `symbols[].analysts.event`；頂層帶 event 2.2 已驗證的 `market_sentiment`，兩方相同、只出現一次 |
+| 多空 | 不含 `event_research`、`research_status`；個股事件在 `symbols[].analysts.event`；頂層帶 event 2.2／2.3 已驗證的 `market_sentiment`，兩方相同、只出現一次 |
 | 風險摘要 | 逐檔 `company_events`、`findings`、`data_gaps` |
 
 - 缺少市場資料時 `market_sentiment` 維持 `unavailable`，不推成中性；市場背景不能代替個股論點的證據。
+
+### 事件報告 2.3（已核准個股新聞）
+
+決策截止時 FinMind 個股新聞（`FINMIND_NEWS`）已核准，`build_input_file` 才在資料包加入 `company_news_input`（`company-news-1.0`）；有這個鍵時事件報告必須是 2.3，沒有時維持 2.2，舊封存不受影響。`team_inputs` 2.1／2.2 都接受 2.2 或 2.3，需要哪一版由資料包綁定，沒有新增 `team_inputs` 版本。
+
+| 項目 | 規則 |
+| --- | --- |
+| 來源核准 | `company_news_source_reviews` 中截止前已保存的 `approved` 紀錄；之後的 `restricted` 會取代 |
+| 視窗 | 只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；最後一批早於 3 天時視為排程中斷，輸出空清單 |
+| 媒體白名單 | `company_news_publishers_v1`，依連結網域判斷（聯合、自由、工商、中時、鉅亨、MoneyDJ、今周刊、ETtoday、TVBS、三立、台視、科技新報、Yahoo 新聞、中央社、鏡週刊）；CMoney 貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收 |
+| 去重 | 依 (symbol, canonical content ID)，保留最早 `available_at` |
+| 時間 | `available_at` 為第一次抓到的時間；FinMind 來源時間沒有時區，`published_at` 維持 null |
+| 證據 ID | `news:finmind:<content_sha256 前 16 碼>` |
+| Brief | 每檔 `news` 只給 evidence_id、標題、媒體與 `available_at`（只有標題） |
+| 分類 | 每則新聞須在 `events` 剛好分類一次（與重大訊息相同）；方向性 `outlook` 可引用新聞；findings 可引用自己的事件、新聞與同快照財報 |
+| 略過 | 沒有重大訊息也沒有核准新聞的股票由程式輸出 `unknown`，不送 Agent；只有新聞的股票會送 Agent |
+| 批次 | 批次權重 = 事件數 + 新聞數，每批上限 80 |
+
+`DecisionInputValidator` 重建驗證：重算內容雜湊、白名單、視窗、核准早於 cutoff、代號在交易池內、沒有重複，並登錄新聞 evidence ID，讓分析師 findings 與多空 claims 可以引用。個股新聞只進公司事件通道，不進市場情緒。
+
+時間對應：FinMind 排程平日 22:00 抓取。21:00 備案時當晚那批還沒抓，用的是前一天 22:00 那批；隔天早上重跑用前一晚 22:00 那批；週一早上用週五那批。
 
 ### 每日 run
 

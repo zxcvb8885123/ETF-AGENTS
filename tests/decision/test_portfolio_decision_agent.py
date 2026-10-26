@@ -181,7 +181,6 @@ def minimal_perception_input(snapshot_id, cutoff, evidence_id="perception-eviden
                 }
             ],
             "sentiment_items": [],
-            "analyst_estimates": [],
         },
         "result": {
             "schema_version": "1.0",

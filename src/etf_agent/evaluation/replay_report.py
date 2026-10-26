@@ -77,6 +77,8 @@ def render_replay_report(report: Mapping[str, object]) -> str:
             notes.append("Guard 未通過：%s（回放不重現風險 Agent 修正，當日不下單）" % "、".join(day["guard"]["failed_rules"]))
         if (day.get("policy") or {}).get("available_at_overridden"):
             notes.append("策略樣板版本晚於該日 cutoff，回放把 available_at 提前到 cutoff")
+        if (day.get("policy") or {}).get("breadth_unavailable"):
+            notes.append("封存的現金姿態沒有持股廣度，回放沿用填滿 max_positions 的舊行為")
         for note in notes:
             lines.append("- 第 %d 天（%s）：%s" % (day["index"], day.get("run_id") or "缺日", note))
     if report.get("not_replayed_run_ids"):

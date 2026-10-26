@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-10-23",
-  "available_at": "2026-10-23T00:00:00+08:00",
+  "policy_id": "strategy-2026-10-26",
+  "available_at": "2026-10-26T00:00:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -29,6 +29,11 @@
       "aggressive": "0.03",
       "neutral": "0.10",
       "defensive": "0.20"
+    },
+    "positions_by_breadth": {
+      "concentrated": 22,
+      "balanced": 26,
+      "diversified": 30
     }
   }
 }

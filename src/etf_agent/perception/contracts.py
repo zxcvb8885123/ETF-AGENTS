@@ -1,12 +1,11 @@
-"""市場情緒與分析師共識的列舉、錯誤型別與欄位解析 helper。"""
+"""市場情緒的列舉、錯誤型別與欄位解析 helper。"""
 
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from typing import List, Mapping
 
-from etf_agent.core import parse_aware_time, parse_decimal
+from etf_agent.core import parse_aware_time
 
 
 RESULT_STATUSES = {"completed", "degraded", "failed"}
@@ -27,13 +26,10 @@ SENTIMENT_DIRECTIONS = SENTIMENT_STANCES | {"insufficient", "unavailable"}
 CHANNEL_STATES = {"available", "insufficient", "unavailable"}
 
 
-CONSENSUS_STATES = {"available", "insufficient", "unavailable"}
-
-
 LICENSE_STATES = {"approved", "restricted", "unknown"}
 
 
-SOURCE_CHANNELS = {"sentiment", "analyst_consensus"}
+SOURCE_CHANNELS = {"sentiment"}
 
 
 PRICED_IN_STATES = {
@@ -43,12 +39,6 @@ PRICED_IN_STATES = {
     "contradicted",
     "unknown",
 }
-
-
-EXPECTATION_CLASSES = {"above", "below", "in_line", "unavailable"}
-
-
-NUMERIC_METRICS = {"revenue", "eps", "target_price", "rating_score", "other"}
 
 
 class PerceptionToolError(ValueError):
@@ -73,7 +63,3 @@ def _string_list(payload: Mapping[str, object], field: str) -> List[str]:
     ):
         raise PerceptionToolError("%s 必須是字串陣列" % field)
     return [item.strip() for item in value]
-
-
-def _decimal(value: object, field: str) -> Decimal:
-    return parse_decimal(value, field, error=PerceptionToolError)

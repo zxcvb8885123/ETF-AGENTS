@@ -1,6 +1,6 @@
 # 公司事件與整體市場情緒交付格式
 
-每日流程使用 AnalystReport(event) 2.2。模型只輸出 items，每檔包含 symbol、outlook、event_outlook、findings、data_gaps、events。
+每日流程使用 AnalystReport(event) 2.2；決策輸入含已核准的個股新聞（`company_news_input`）時改用 2.3，欄位相同，差別是每檔的 news 也要在 events 逐則分級一次，版本由程式依決策輸入決定。模型只輸出 items，每檔包含 symbol、outlook、event_outlook、findings、data_gaps、events。
 
 outlook 與 event_outlook 必須相同，僅表示該公司事件的結果，使用 positive／neutral／negative／unknown。市場氣氛不能替代事件引用。findings 包含 finding_id、text、evidence_ids。events 包含 evidence_id、materiality（high／medium／low／unknown）、summary（事件影響）、counter_evidence（輸入中削弱或反駁這個影響的事實）與 pending_confirmations（輸入中查不到、尚待確認的事項）；後兩者是字串陣列，沒有就給空陣列，只能依輸入，不得推測。舊版封存沒有這兩欄仍有效。每則輸入事件剛好分級一次，不得漏掉。
 

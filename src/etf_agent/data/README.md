@@ -30,7 +30,7 @@ flowchart TD
     DB --> ST[status.py<br/>DataAgentStatusRepository]
 ```
 
-FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對前不進正式 Snapshot（見根 README）。
+FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對前不進正式 Snapshot（見根 README）。個股新聞候選不進 Snapshot；核准後由 `perception/company_news` 直接從資料庫建立決策輸入的 `company_news_input`，只進事件分析師（核對指令尚未執行）。
 
 ## 檔案清單
 
@@ -48,14 +48,14 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `latest.py` | 官方 TWSE＋TPEx 最新價合併收集 | `LatestPriceCollectionResult`、`LatestPriceProviderFactory`、`LatestPriceCollector`、`latest_price_providers`、`collect_latest_prices` |
 | `historical.py` | TWSE 上市股票歷史月行情 Provider、節流與刷新規劃 | `HistoricalResponse`、`HistoryRefreshBatch`、`HistoricalPriceProvider`、`RequestGate`、`SourceThrottledError`、`SourceBlockedError`、`rolling_start`、`plan_history_refresh`、`month_starts` |
 | `historical_collector.py` | 有界並行的月歷史回應批次保存、官方歷史刷新；`HistoricalPriceCollector(in_competition_universe=False)` 只存行情、不把標的標成交易池成員 | `HistoricalPriceCollector`、`OfficialHistoricalRefreshService`、`HistoricalCollectionResult`、`HistoricalCollectionError`、`OfficialHistoryBatchResult`、`OfficialHistoryCoverage`、`OfficialHistoryRefreshResult` |
-| `yfinance_history.py` | 透過 yfinance 收集上市／上櫃兩年 OHLCV（研究用調整價）；同樣提供 `in_competition_universe` 開關 | `YFinanceHistoryCollector`、`YFinanceCollectionResult`、`YFinanceRefreshResult`、`stale_basis_symbols`、`stored_closes`、`close_rebased_symbols` |
+| `yfinance_history.py` | 透過 yfinance 收集上市／上櫃兩年 OHLCV（研究用調整價）；同樣提供 `in_competition_universe` 開關；官方行情整天沒有任何一檔的日期（如颱風休市）視為休市，Yahoo 成交量 0、開高低收相同的補位日線不寫入 | `YFinanceHistoryCollector`、`no_trade_placeholder`、`drop_closed_day_placeholders`、`YFinanceCollectionResult`、`YFinanceRefreshResult`、`stale_basis_symbols`、`stored_closes`、`close_rebased_symbols` |
 | `benchmarks.py` | 讀 `config/benchmarks.json`（基準清單與 `license_status`），以官方個股月行情收集已核准的基準標的（如 0050）；`in_competition_universe=False`，交易池、Snapshot 與 `analysis_daily_prices` 不受影響 | `BenchmarkDefinition`、`BenchmarkConfigError`、`load_benchmarks`、`parse_benchmarks`、`benchmark_instruments`、`collect_benchmark_history` |
 | `price_freshness.py` | 判斷資料庫是否已有某交易日收盤後定案行情，供 `start.sh` 略過重複抓取 | `prices_current` |
 | `corporate.py`（轉出層）、`corporate_contracts.py`、`corporate_parsing.py`、`corporate_provider.py`、`corporate_collector.py` | 官方公司資料（重大訊息、月營收、財報）：契約、解析、Provider、收集與保存分檔，`corporate.py` 維持舊 import 路徑 | `SourceDocument`、`MonthlyRevenue`、`FinancialStatementFact`、`FinancialStatement`、`CorporateRecord`、`CorporateResponse`、`OfficialCorporateProvider`、`OfficialCorporateProviderFactory`、`CorporateDataCollector`、`CorporateCollectionResult` |
 | `financial.py` | 官方財報彙總資料的請求、覆蓋驗收與來源可行性結果 | `FinancialStatementRequest`、`FinancialCoverageGap`、`FinancialCollectionResult`、`FinancialStatementCollector`、`latest_due_quarter` |
 | `cash_flow.py` | 以官方累計稅前淨利核對 FinMind 現金流量表，轉成 `cash_flow_statement` 快照文件（不連網） | `VerifiedCashFlowProvider`、`verified_cash_flow_record` |
 | `fundamental_repair.py` | 以官方當期金額核對 FinMind 單季口徑，補足去年同期累計財報 | `OfficialCompanyProfileProvider`、`FundamentalRepairProvider`、`verified_prior_record` |
-| `supplemental_sources.py` | 版本化擷取 FinMind 財報與個股新聞線索（候選） | `FinMindApiProvider`、`FinMindFundamentalProvider`、`FinMindNewsProvider`、`FinMindFundamentalCollector`、`FinMindNewsCollector`、`SupplementalRepository`、`SupplementalResult` |
+| `supplemental_sources.py` | 版本化擷取 FinMind 財報與個股新聞線索（候選；新聞核准與決策輸入見 `perception/company_news`） | `FinMindApiProvider`、`FinMindFundamentalProvider`、`FinMindNewsProvider`、`FinMindFundamentalCollector`、`FinMindNewsCollector`、`SupplementalRepository`、`SupplementalResult` |
 | `finmind_schedule.py` | FinMind 財報抓取排程：首次補歷史，之後只在財報公布區間內每天更新 | `FinMindScheduleError`、`in_filing_window`、`history_start`、`load_state`、`plan`、`record_done` |
 | `news_content.py` | 新聞原頁核對版本保存；候選不直接升級為正式情緒證據 | `save_news_captures` |
 | `sector_classification.py` | 官方公司基本資料的產業代碼分類，供產業曝險檢查使用 | `SectorSource`、`SectorClassificationBuilder`、`SectorClassificationError`、`capture_sector_sources` |

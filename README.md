@@ -78,7 +78,7 @@ uv python install 3.12
 | `--rebase-to-datapack` | 關 | 帳本與資料包不一致時（例如前日整批作廢、被剔除），以資料包重建帳本，再重抓資料建立新 Snapshot 與決策前快照，對帳一致才跑 Agent。舊帳本狀態保留在雜湊鏈。不能和 `--skip-datapack`、`--resume` 同用。 |
 | `--skip-datapack` | 關 | 明確略過資料包對帳，`pipeline.json` 會記為 `skipped`。比賽期間不要用。 |
 | `--datapack-cash-tolerance 比率` | 0.0005 | 帳本與資料包現金差的容忍比率（分母 `nav_tradable`）。實際差額寫在 `pipeline.json` 的 `datapack.cash`，可依真實資料包校準。 |
-| `--perception BUNDLE RESULT` | 無 | 提供市場情緒與分析師共識資料：資料包與其驗證結果，兩個檔案必須同時給。不給時這類資訊標為「無資料」。目前尚未接入合法來源，平常不需要使用。 |
+| `--perception BUNDLE RESULT` | 無 | 提供市場情緒資料：資料包與其驗證結果，兩個檔案必須同時給。不給時這類資訊標為「無資料」。目前尚未接入合法來源，平常不需要使用。 |
 
 ### 常見組合
 
@@ -115,6 +115,7 @@ uv python install 3.12
 - **技術**：5／20／60 日變化、MA20／MA60 數值、ATR 與下行波動。
 - **公司事件**：每則事件寫影響、反證（`counter_evidence`）與尚待確認事項（`pending_confirmations`）。
 - **市場與風險**：風險 Agent 讀整體市場情緒、產業集中、每筆委託佔 20 日均量比例與壓力情境（比賽以成交均價結算，成交量只作提醒，不限制成交）。
+- **持股檔數**：風險 Agent 和現金姿態一起選持股廣度：集中、平衡或分散，分別對應 22、26、30 檔（`config/decision_policy.json` 的 `positions_by_breadth`）。程式照交易 Agent 的信心高 → 中 → 低挑到該檔數；信心和支持數都一樣時，波動（ATR14）低的優先。Agent 不輸出檔數。
 - **控制回撤**：程式算帳戶峰值回撤，達 5% 時現金姿態至少 neutral、達 10% 時至少 defensive（`config/decision_policy.json` 的 `drawdown_control`）。
 
 ### 單股超出權重上限時
@@ -265,7 +266,8 @@ ETF_AGENTS/
 - **價格口徑**：Snapshot 的決策與帳本用價是同日官方原價（`execution_close_price`），研究指標用調整價；上市與上櫃官方歷史月行情皆可補抓。缺官方價時退回調整價，重放過去日期時含事後除權息調整，見[架構](docs/architecture.md)。
 - **已接入**：[台股恐懼貪婪指標](docs/market_fear_greed.md)（期交所 VIX、Put/Call 比、FinMind 融資），`./start.sh daily` 在 cutoff 前抓取，由程式算出整體台股情緒；VIX 依使用者決定以非商業比賽研究用途核准，見[來源核對](docs/source_audit/2026-10-23_market_fear_greed_sources.md)。
 - **已接入**：全市場新聞（中央社、自由時報 RSS，2026-10-23 核准）。`./start.sh daily` 在 cutoff 前抓取，每日決策由子 Agent 逐則標註後程式重建；至少 5 則獨立市場新聞、2 家媒體才算可用，否則改用恐懼貪婪指標。新聞步驟失敗不會讓整天失敗。
-- **尚未接入**：合法歷史分析師共識，維持 `unavailable`。FinMind 財報與新聞等候選資料，未通過授權、時間與覆蓋核對前不進正式決策。
+- **已接入**：FinMind 現金流量表（稅前淨利與官方損益表相符才用）進基本面分析；FinMind 單季財報經官方金額核對後，可補足去年同期累計財報（`cli/fundamental_repair.py`）。
+- **已接入（待執行核對）**：FinMind 個股新聞進事件分析師（只進公司事件通道，不代表全市場情緒）。只在決策截止時已核准時加入，且只用截止前最後一批抓取、連結網域在媒體白名單內的標題；事件報告升為 2.3。使用者已於 2026-10-25 自行判斷核准（僅標題、內部研究、不轉載，不是媒體書面同意），但**尚未執行**核對指令：`cli/company_news.py review --database var/etf_agent.db --status approved --evidence "..."`；執行前每日決策不會讀到個股新聞。見[來源核對](docs/source_audit/2026-10-25_finmind_stock_news.md)。
 - **已接入**：主辦方資料包（DataPack）對帳。每日 `run` 在呼叫任何 Agent 前，把帳本持股與現金和資料包比對，對不上就停止；D-Plan 只在對帳一致（或明確略過）時產生，賣出不得超過資料包持股。見下方「主辦方資料包」。
 - **已接入但仍需人工上傳**：每日流程在決策為 `approved`／`no_trade`、競賽設定已確認、帳本綁定與資料包對帳都通過時，自動建立 D-Plan v4.3 候選。主辦方伺服器驗證與上傳仍由人工執行；回測功能已移除。
 

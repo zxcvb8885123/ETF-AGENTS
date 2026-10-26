@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
-from .analysts import analyst_report_names, EVENT_MARKET_VERSION
+from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS
 from .prior_decision import PriorDecisionContextValidator
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
@@ -206,8 +206,8 @@ class DecisionFinalizer:
         except DecisionToolError as error:
             return errors + [str(error)]
         if integrated:
-            if set(reports) != {"technical", "fundamental", "event"} or reports["event"].get("schema_version") != EVENT_MARKET_VERSION:
-                errors.append("team_inputs 2.1 必須使用三份分析報告及 event 2.2")
+            if set(reports) != {"technical", "fundamental", "event"} or reports["event"].get("schema_version") not in MARKET_SCOPED_VERSIONS:
+                errors.append("team_inputs 2.1／2.2 必須使用三份分析報告及 event 2.2 或 2.3（含個股新聞）")
         else:
             errors.extend(
                 "ResearchResult：%s" % error
@@ -239,6 +239,8 @@ class DecisionFinalizer:
         }
         if "support_by_symbol" in sizing:
             expected["support_by_symbol"] = support_by_symbol(self.intent, self.debate)
+        if "positions_by_breadth" in sizing:
+            expected["position_breadth"] = stance.get("breadth") if isinstance(stance, Mapping) else None
         for field, value in expected.items():
             if sizing.get(field) != value:
                 errors.append("DecisionPolicy.position_sizing.%s 與交易決策或現金姿態不一致" % field)
