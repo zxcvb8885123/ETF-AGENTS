@@ -25,6 +25,8 @@ from .trading_calendar import TradingCalendar, TradingCalendarError
 
 
 INFERRED_CLOSED_FILE = "inferred_closed_days.json"
+# 與行情資料庫同放 var/：清空 artifacts/ 或開新帳戶都不會弄丟，之後也不必重新推斷。
+DEFAULT_STATE_DIR = Path(__file__).resolve().parents[3] / "var"
 INFERENCE_BASIS = "official_price_gap_confirmed_by_later_day"
 # 只看官方行情來源；Yahoo 等補充來源不作為「有沒有開市」的證據。
 OFFICIAL_PRICE_SOURCES: Mapping[str, tuple] = {
@@ -34,13 +36,13 @@ OFFICIAL_PRICE_SOURCES: Mapping[str, tuple] = {
 LOOKBACK_DAYS = 14
 
 
-def inferred_closed_path(captures_root: Path) -> Path:
-    return Path(captures_root) / INFERRED_CLOSED_FILE
+def inferred_closed_path(state_dir: Path = DEFAULT_STATE_DIR) -> Path:
+    return Path(state_dir) / INFERRED_CLOSED_FILE
 
 
-def load_inferred_closed_days(captures_root: Path) -> Dict[str, Mapping[str, object]]:
+def load_inferred_closed_days(state_dir: Path = DEFAULT_STATE_DIR) -> Dict[str, Mapping[str, object]]:
     """讀取已保存的臨時休市日；檔案不存在回空；格式錯誤即拒絕，不忽略。"""
-    path = inferred_closed_path(captures_root)
+    path = inferred_closed_path(state_dir)
     if not path.exists():
         return {}
     try:
@@ -96,10 +98,10 @@ def infer_closed_days(database: Path, calendar: TradingCalendar, today: date) ->
 
 
 def update_inferred_closed_days(
-    database: Path, captures_root: Path, calendar: TradingCalendar, now: datetime
+    database: Path, state_dir: Path, calendar: TradingCalendar, now: datetime
 ) -> List[str]:
     """推斷並保存新的臨時休市日；回傳這次新增的日期。已保存的紀錄不改寫、不刪除。"""
-    existing = dict(load_inferred_closed_days(captures_root))
+    existing = dict(load_inferred_closed_days(state_dir))
     found = infer_closed_days(database, calendar.with_inferred_closed(existing), now.astimezone(TAIPEI_TIMEZONE).date())
     added = sorted(day for day in found if day not in existing)
     if not added:
@@ -108,7 +110,7 @@ def update_inferred_closed_days(
         record = dict(found[day], inferred_at=now.isoformat())
         record["record_sha256"] = canonical_sha256(record)
         existing[day] = record
-    path = inferred_closed_path(captures_root)
+    path = inferred_closed_path(state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps({"version": 1, "closed_days": existing}, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")

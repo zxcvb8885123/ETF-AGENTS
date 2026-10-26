@@ -111,8 +111,8 @@ def calendar_from_capture(capture_dir: Path) -> TradingCalendar:
 
 
 def _with_inferred_closures(calendar: TradingCalendar, capture_dir: Path) -> TradingCalendar:
-    """加入行情缺口推斷的臨時休市日；紀錄放在封存根目錄（日期資料夾／run 資料夾的上兩層）。"""
-    return calendar.with_inferred_closed(load_inferred_closed_days(capture_dir.parent.parent))
+    """加入行情缺口推斷的臨時休市日；紀錄放在 var/（不受清空 artifacts 影響）。"""
+    return calendar.with_inferred_closed(load_inferred_closed_days())
 
 
 def latest_calendar_capture_before(captures_root: Path, limit_time: str) -> Optional[Path]:
