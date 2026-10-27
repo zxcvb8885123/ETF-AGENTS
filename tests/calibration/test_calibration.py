@@ -169,22 +169,22 @@ class EvaluateTests(DecisionRunFixture):
         return days
 
     def test_enough_days_report_means_and_rank_ic(self):
-        self.build_world(20)
+        self.build_world(10)
         report = evaluate(self.repository, self.db, "2026-12-31T00:00:00+00:00")
         for horizon in ("1", "5", "20"):
             self.assertEqual(report["horizons"][horizon]["status"], "ok")
-            self.assertEqual(report["horizons"][horizon]["complete_days"], 20)
+            self.assertEqual(report["horizons"][horizon]["complete_days"], 10)
         by = report["horizons"]["5"]["by_conviction"]
         self.assertGreater(Decimal(by["high"]["mean_excess_return"]), Decimal(by["low"]["mean_excess_return"]))
         # 兩檔 low 信心同分（名次取平均），所以略低於 1。
         self.assertGreater(Decimal(report["horizons"]["5"]["rank_ic"]["conviction"]["mean"]), Decimal("0.9"))
-        self.assertEqual(report["horizons"]["5"]["rank_ic"]["conviction"]["n_days"], 20)
+        self.assertEqual(report["horizons"]["5"]["rank_ic"]["conviction"]["n_days"], 10)
 
-    def test_fewer_than_twenty_days_gives_counts_but_no_conclusion(self):
-        self.build_world(19)
+    def test_fewer_than_ten_days_gives_counts_but_no_conclusion(self):
+        self.build_world(9)
         entry = evaluate(self.repository, self.db, "2026-12-31T00:00:00+00:00")["horizons"]["5"]
         self.assertEqual(entry["status"], "insufficient_sample")
-        self.assertEqual(entry["complete_days"], 19)
+        self.assertEqual(entry["complete_days"], 9)
         self.assertGreater(entry["n_obs"], 0)
         for key in ("by_conviction", "by_intent", "rank_ic"):
             self.assertNotIn(key, entry)
