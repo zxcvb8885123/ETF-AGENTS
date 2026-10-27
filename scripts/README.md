@@ -69,7 +69,7 @@ macOS `launchd` 排程樣板（`.plist.template`）。
 | 樣板 | Label | 時間（Asia/Taipei） | 執行內容 | 備註 |
 | --- | --- | --- | --- | --- |
 | `com.etf-agents.data.plist.template` | `com.etf-agents.data` | 平日 20:00 | `start.sh data`（即 `auto`，只更新資料） | 不呼叫決策 Agent |
-| `com.etf-agents.finmind-news.plist.template` | `com.etf-agents.finmind-news` | 平日 22:00 | `scripts/run_finmind_news.sh` | 避開 20:00 財報請求額度；需 `FINMIND_TOKEN` |
+| `com.etf-agents.finmind-news.plist.template` | `com.etf-agents.finmind-news` | 平日 20:40 | `scripts/run_finmind_news.sh` | 離 20:00 財報請求隔 40 分鐘避開額度，且在 21:00 決策前抓完；需 `FINMIND_TOKEN` |
 | `com.etf-agents.reflection.plist.template` | `com.etf-agents.reflection` | 平日 20:30 | `.venv/bin/python cli/strategy_reflection.py auto` | 20:00 資料更新後、21:00 決策前；決策日不足時不呼叫 Agent；通過驗證與影子回放才改寫 `config/decision_policy.json`；日誌在 `var/logs/strategy-reflection-launchd.log` |
 | `com.etf-agents.daily.plist.template` | `com.etf-agents.daily` | 平日 07:00、21:00；週日 21:00 | `.venv/bin/python scripts/run_daily_pipeline.py` | 21:00 做隔天時段的備案決策（須先下載主辦方約 19:00 產生的 DataPack 到 `var/datapack/`）；07:00 在 08:55 交件期限前用新的事件、新聞與情緒資料重做（日線不重抓），帳本把同時段未執行的舊決策移到封存區；重做沒產生新 D-Plan（失敗或被擋）時自動還原帳本、舊決策與 Snapshot，晚上的備案 D-Plan 仍可上傳；決策跑完已過 08:55 時不產生 D-Plan，該 run 不能 `--resume`，要重做改用 `--force`。需 Docker Desktop 已啟動、Claude CLI 已登入、Mac 未休眠；週末、休市日或同一時段 1 小時內已完成由腳本略過，但休市日 15:00 後若隔天是交易日，晚上仍做隔天的備案（例如 06:30 手動跑完，07:00 不再跑；半夜手動跑的不算，07:00 照常重做） |
 
@@ -77,7 +77,7 @@ macOS `launchd` 排程樣板（`.plist.template`）。
 flowchart LR
     L1[launchd 07:00／21:00 daily] --> RDP[run_daily_pipeline.py]
     L2[launchd 20:00 data] --> SA[start.sh data]
-    L3[launchd 22:00 finmind-news] --> RFN[run_finmind_news.sh]
+    L3[launchd 20:40 finmind-news] --> RFN[run_finmind_news.sh]
     RDP --> SD[start.sh daily]
     RFN --> CSS[collect_supplemental_sources.py finmind-news]
 ```
