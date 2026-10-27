@@ -25,7 +25,7 @@ uv python install 3.12
 | 用途 | 指令 | 執行內容 |
 | --- | --- | --- |
 | 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板（含帳戶對 0050 買入持有、150 檔等權買入持有的基準比較）；不更新資料 |
-| 補抓基準、比較績效 | `.venv/bin/python cli/benchmark.py collect`／`compare` | `collect` 以官方個股月行情補抓 `config/benchmarks.json` 內已核准的基準標的（如 0050），只存行情、不進交易池；`compare` 唯讀計算帳戶對基準的 NAV、累積報酬、超額報酬、最大回撤與相對回撤，資料不足顯示 unavailable（口徑見 [benchmark/README.md](src/etf_agent/benchmark/README.md)） |
+| 補抓基準、比較績效 | `.venv/bin/python cli/benchmark.py collect`／`compare` | `collect` 以官方個股月行情補抓 `config/benchmarks.json` 內已核准的基準標的（如 0050），只存行情、不進交易池，`./start.sh daily`／`run` 與排程會在帳本推進前自動執行（失敗只警告，該基準顯示 unavailable）；`compare` 唯讀計算帳戶對基準的 NAV、累積報酬、超額報酬、最大回撤與相對回撤，資料不足顯示 unavailable（口徑見 [benchmark/README.md](src/etf_agent/benchmark/README.md)） |
 | 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建研究快照、不推進帳本或執行決策（`data` 為相容別名） |
 | 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立 Snapshot、結算／準備虛擬帳本；不跑 Agent |
 | 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。若已抓到應有的最新交易日資料（交易日 15:00 後算當日）且已過下一時段的交件期限（08:55），會自動沿用 Snapshot、不重抓；沿用的 Snapshot 若仍排到已過交件期限的時段（例如當天 08:55 到 15:00 之間再跑），流程在呼叫 Agent 前停止，不會取代已上傳那份決策；仍在期限前（例如前一晚已跑、早上再跑）則重建 Snapshot，cutoff 改為此刻，帳本把同時段尚未執行的舊決策移到 `artifacts/archive/superseded_decisions/`；這次沒產生新 D-Plan 時自動還原舊決策（見[每日排程](#每日排程晚上備案早上重做)）。資料庫已有該日收盤後抓到的完整行情時，`start.sh` 也略過三個行情步驟（官方最新價、Yahoo 日線、官方個股價量），重大訊息、月營收、財報等發布時間不固定的資料照常收集，`FORCE_FETCH=1` 可強制重抓行情 |
