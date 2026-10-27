@@ -104,7 +104,7 @@
 ## 個股新聞線索
 
 - **來源**：FinMind `TaiwanStockNews`，含股票代號、標題、原媒體、連結、來源時間字串。
-- **入口**：`scripts/collect_supplemental_sources.py finmind-news`。平日 20:40 執行，與 20:00 財報排程錯開，且在 21:00 決策之前。
+- **入口**：`scripts/collect_supplemental_sources.py finmind-news`。平日 20:40 執行，與 20:00 財報排程錯開，且在 21:00 決策之前。每日決策在建 Snapshot 前會檢查當天（台北日期）逐股成功擷取是否少於交易池，不足就補抓一次（上限 15 分鐘）；補抓失敗只記入 `pipeline.json` 的 `company_news`，不中止決策，事件分析師照舊只看重大訊息。
 - **保存方式**：收集時存 `license_status=unverified` 的候選，核准狀態另存於 `company_news_source_reviews`。
   - 來源時間沒有時區，所以 `published_at` 留空。
   - `available_at` 為第一次抓到的時間。

@@ -64,7 +64,7 @@ docker compose version
 | 排程 | 時間（台北） | 作用 |
 | --- | --- | --- |
 | `com.etf-agents.data` | 平日 20:00 | 執行 `data` |
-| `com.etf-agents.finmind-news` | 20:40 | 擷取個股新聞候選 |
+| `com.etf-agents.finmind-news` | 20:40 | 擷取個股新聞候選（每日決策發現當天沒抓齊會自己補抓） |
 
 **FinMind Token** 依序讀取：執行環境 → 專案根目錄 `.env`（`FINMIND_TOKEN=...`，權限 600，Git 忽略）。財報流程還可回退到 macOS 鑰匙圈服務 `etf-agent-finmind`。
 

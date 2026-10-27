@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, tzinfo
 from typing import Callable
 
 from etf_agent.core import canonical_json, canonical_sha256, decimal_string, parse_aware_time, parse_decimal
@@ -137,6 +137,16 @@ class SupplementalRepository:
                 (stored, run_id),
             )
         return SupplementalResult(run_id, source, len(rows), stored)
+
+    def count_collected_days(self, source: str, day: date, tz: timezone | tzinfo) -> int:
+        """該來源在指定日（依 tz 換算）成功擷取的次數；個股新聞逐股一次，沒有新聞的股票也算一次。"""
+        self.database.initialize()
+        with self.database.connect() as connection:
+            connection.executescript(SUPPLEMENTAL_SCHEMA)
+            rows = connection.execute(
+                "SELECT started_at FROM collection_runs WHERE source = ? AND status = 'success'", (source,),
+            ).fetchall()
+        return sum(parse_aware_time(row["started_at"], "started_at").astimezone(tz).date() == day for row in rows)
 
 
 class FinMindApiProvider:
