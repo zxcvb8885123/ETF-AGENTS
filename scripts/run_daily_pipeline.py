@@ -7,6 +7,7 @@
 
 import argparse
 import shutil
+import sqlite3
 try:
     import fcntl
 except ImportError:  # Windows 以 msvcrt 鎖定同一執行鎖。
@@ -51,6 +52,8 @@ from etf_agent.data import (  # noqa: E402
     load_approvals,
     load_not_applicable,
 )
+from etf_agent.data.supplemental_sources import SupplementalRepository  # noqa: E402
+from etf_agent.data import MarketDataDatabase, UniverseLoader  # noqa: E402
 from etf_agent.data.inferred_closures import update_inferred_closed_days  # noqa: E402
 from etf_agent.data.trading_calendar import DECISION_DEADLINE  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
@@ -74,6 +77,7 @@ AUTO_RESUME_MIN_REMAINING = timedelta(minutes=25)
 # 額度用完要等重置、安全拒絕不該重試：這些錯誤續跑無效。
 NON_RESUMABLE_MARKERS = ("session limit", "usage limit", "hit your", "rate limit", "秘密", "未核准工具")
 RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
+NEWS_CATCHUP_TIMEOUT_SECONDS = 900  # 個股新聞補抓上限；逐股 150 檔約數分鐘，卡住不拖垮每日流程
 DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
 TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
 RECENT_RUN_WINDOW = timedelta(hours=1)  # 同時段的 run 在此時間內完成才略過；更早的（例如半夜手動跑）照常重做
@@ -192,6 +196,31 @@ def run_data_stage(account_id: str, account_run_id: str, history_end=None) -> No
     completed = subprocess.run([str(ROOT / "start.sh"), "daily"], cwd=ROOT, env=env, check=False)
     if completed.returncode != 0:
         raise RuntimeError("./start.sh daily 失敗（exit %d）" % completed.returncode)
+
+
+def ensure_company_news(now: datetime) -> dict:
+    """個股新聞只由 20:40 排程抓；當天沒抓齊（逐股成功次數少於交易池）就在建 Snapshot 前補抓一次。
+
+    新聞的 available_at 是抓取時間，必須早於 Snapshot cutoff 才進得了本次決策。補抓失敗只記錄、
+    不中止：事件分析師會照舊只看重大訊息，與沒有核准個股新聞時相同（不填補假值）。"""
+    day = now.astimezone(TAIPEI_TIMEZONE).date()
+    try:
+        universe = len(UniverseLoader().load(ROOT / "data" / "official_universe.csv"))
+        repository = SupplementalRepository(MarketDataDatabase(ROOT / "var" / "etf_agent.db"))
+        done = repository.count_collected_days("FINMIND_NEWS", day, TAIPEI_TIMEZONE)
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
+        return {"status": "check_failed", "error": str(error)}
+    if done >= universe:
+        return {"status": "already_collected", "collected": done}
+    log("個股新聞今天只抓到 %d／%d 檔，建 Snapshot 前補抓" % (done, universe))
+    try:
+        completed = subprocess.run([str(ROOT / "scripts" / "run_finmind_news.sh"), day.isoformat()],
+                                   cwd=ROOT, check=False, timeout=NEWS_CATCHUP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"status": "failed", "collected_before": done, "error": str(error)}
+    if completed.returncode != 0:
+        return {"status": "failed", "collected_before": done, "exit_code": completed.returncode}
+    return {"status": "caught_up", "collected_before": done}
 
 
 def expected_latest_trade_date(captures_root: Path, now: datetime):
@@ -819,6 +848,10 @@ def _main(args) -> int:
             )
             if pending is not None and snapshot_path.exists():
                 shutil.copy2(snapshot_path, run_dir / ROLLBACK_SNAPSHOT)
+            summary["company_news"] = ensure_company_news(now)
+            if summary["company_news"]["status"] in {"failed", "check_failed"}:
+                log("個股新聞補抓未成功（%s），本次事件分析不含個股新聞" % summary["company_news"].get("error", summary["company_news"].get("exit_code")))
+            write_json(summary_path, summary)
             log("[1/4] ./start.sh daily：資料、Snapshot、虛擬帳本")
             try:
                 run_data_stage(args.account_id, "prepare-%s" % stamp, trade_date)
