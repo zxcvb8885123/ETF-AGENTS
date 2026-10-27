@@ -1,7 +1,7 @@
 """考卷的答案：決策之後真正的官方成交均價。答案隨時間自己長出來，價格沒到齊前標 pending。
 
 沿用 ``calibration`` 的口徑：成交日 T 是 cutoff 後第一個有官方收盤的交易日，報酬是 T+h 日均價
-÷ T 日均價 − 1，超額報酬減去同日交易池平均；窗口內除權息的股票不計；完整日少於 20 天只給天數
+÷ T 日均價 − 1，超額報酬減去同日交易池平均；窗口內除權息的股票不計；完整日少於 10 天只給天數
 與筆數，不給命中率或平均。單日結果另列，標明不具統計意義。
 """
 
@@ -83,7 +83,7 @@ def score_day(outputs: Mapping[str, object], excess: Mapping[str, Decimal]) -> D
 
 
 def pool_scores(days: Sequence[tuple]) -> Dict[str, object]:
-    """把多個完整決策日合起來；``days`` 是 (考卷, 單日分數)。同一天重跑多次只算一天，完整日少於 20 天只回報天數與筆數。"""
+    """把多個完整決策日合起來；``days`` 是 (考卷, 單日分數)。同一天重跑多次只算一天，完整日少於 10 天只回報天數與筆數。"""
     result: Dict[str, object] = {}
     names = sorted({name for _, day in days for name in day})
     for name in names:

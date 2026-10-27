@@ -17,7 +17,7 @@ TERMS_URL = "https://finmind.github.io/en/Disclaimer/"
 REVIEW_TABLE = "company_news_source_reviews"
 # 與 market_news.repository 共用核對規則；registry 只登錄 FinMind，不混入全市場新聞來源。
 SOURCES = {SOURCE: {"terms_url": TERMS_URL, "publisher": "FinMind 個股新聞"}}
-# 只用截止前最後一次抓取的那批（FinMind 平日 22:00 抓一次，一批約一小時內完成）；
+# 只用截止前最後一次抓取的那批（FinMind 平日 20:40 抓一次，一批約幾分鐘完成）；
 # 最後一批早於截止前 3 天時視為排程中斷，不拿舊聞補。
 BATCH_HOURS = 12
 WINDOW_DAYS = 3

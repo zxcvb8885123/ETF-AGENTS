@@ -175,6 +175,7 @@ ETF_AGENTS/
 │   ├── dashboard/           #   績效儀表板
 │   ├── benchmark/           #   帳戶對 0050／交易池等權買入持有的基準比較（同本金、同費稅、官方價）
 │   ├── calibration/         #   校準旁觀者：信心等級事後對答案、決策價與成交均價偏離（不入決策鏈）
+│   ├── strategy_reflection/ #   策略反思旁觀者：讀校準報告提出旋鈕提案，驗證與影子回放後自動改寫 decision_policy.json（不入決策鏈）
 │   ├── evaluation/          #   Agent 評測：資料抓齊率、評測集重跑、一致度／穩定度，以及零 token 的多日 Policy 回放（不入決策鏈）
 │   └── core/                #   共用的雜湊、時間、數值工具
 │
@@ -257,7 +258,7 @@ ETF_AGENTS/
 - **一致度與穩定度**（會花用量）：`run --suite 名稱 --repeats 2 --yes` 重跑，比較和當時結論、以及兩次重跑之間有多少相同、有幾檔正負相反。`--stop-after analysts` 只跑分析師，較省。
 - **過程**：報告列出每次呼叫的重試、驗證失敗與用量。
 
-- **準不準**：考卷的答案是之後真正的官方成交均價。看好的有沒有贏交易池平均、看壞的有沒有輸；價格還沒出來標「待答案」，累積到 20 個決策日才給命中率。之後再跑 `report --eval-id 編號` 就會更新。
+- **準不準**：考卷的答案是之後真正的官方成交均價。看好的有沒有贏交易池平均、看壞的有沒有輸；價格還沒出來標「待答案」，累積到 10 個決策日才給命中率。之後再跑 `report --eval-id 編號` 就會更新。
 - **換 Policy 會怎樣（便宜版回測，不花用量）**：`cli/policy_replay.py run --policy config/decision_policy.json --start 起日 --end 迄日 [--compare-policy 另一份樣板]` 逐日讀封存 run 的 Agent 輸出，用指定樣板重算權重、張數與訂單，依帳本口徑以下一交易日官方均價成交並結轉到下一天（回放自己的模擬帳本）。報告在 `artifacts/evaluation/replays/`，記錄樣板雜湊、`tradeagent/` 雜湊、git commit 與使用的 run；`verify --replay-id 編號` 整段重算驗證。缺日、缺價、前視價格與封存驗證失敗一律停止或標示；成交日少於 20 天的結果沒有統計意義。
 
 ## 目前狀態與限制

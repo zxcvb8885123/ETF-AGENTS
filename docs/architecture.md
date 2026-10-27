@@ -203,6 +203,10 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 
 `src/etf_agent/calibration/` 只讀已封存的 Decision run 與官方價量，記錄各股的信心等級與多空強度，價格到齊後以官方成交均價算前瞻報酬，並審計決策用的前日收盤與當日成交均價的差距。**不在決策鏈內**：決策、自動化與風控程式都不匯入它，也不回寫任何決策 artifact。完整口徑與限制見[校準旁觀者](../src/etf_agent/calibration/README.md)。
 
+## 策略反思旁觀者
+
+`src/etf_agent/strategy_reflection/` 讀校準報告，讓 Agent 提出策略樣板旋鈕（信心乘數、現金姿態比例、持股廣度檔數、回撤門檻、波動下限、減碼比例）的調整提案，通過程式驗證與影子回放後自動改寫 `config/decision_policy.json`。**不在決策鏈內**：每日決策只讀樣板，不匯入它；Agent 不輸出數字以外的任何決定，也不碰硬性規則與模擬假設。完整流程、邊界與回滾見[策略反思旁觀者](../src/etf_agent/strategy_reflection/README.md)。
+
 ## 事件如何處理
 
 - 重大公司事件保留在事件分析師報告，直接交給股票層級的多頭／空頭研究。

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 平日 20:30（主機時區 Asia/Taipei）跑策略反思：在 20:00 資料更新之後、21:00 決策之前，
+     讓 21:00 與隔天 07:00 的決策讀到同一份策略樣板。累積決策日不足時不呼叫 Agent（零用量）。
+     通過驗證與影子回放的提案由程式原子改寫 config/decision_policy.json；改壞可用
+     .venv/bin/python cli/strategy_reflection.py rollback 還原。每日決策進行中時（鎖住 artifacts/daily/.lock）略過。
+     安裝：把 __PROJECT_ROOT__ 與 __HOME__ 換成實際路徑，mkdir -p __PROJECT_ROOT__/var/logs，複製到 ~/Library/LaunchAgents/ 後 launchctl load。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etf-agents.reflection</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/cli/strategy_reflection.py</string>
+    <string>auto</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TZ</key>
+    <string>Asia/Taipei</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/var/logs/strategy-reflection-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/var/logs/strategy-reflection-launchd.log</string>
+</dict>
+</plist>

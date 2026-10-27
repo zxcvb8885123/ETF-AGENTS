@@ -51,6 +51,7 @@
 - 配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 `minimum_active_share`（15%）時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次（`RISK_ACTIVE_SHARE`，不賣既有持股）；同樣不改寫交易 Agent 的意圖，仍不通過時由 Guard 拒絕。
 - 技術分析師啟用 `technical_gate` 時，分批 brief 只記錄該批股票的 `momentum_only_symbols` 與 `full_history_symbols`；每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。Claude 與 OpenCode 的 read 權限須拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案（兩者共用 `agent_runner.SENSITIVE_READ_GLOBS`）；Codex 唯讀沙箱無法限制讀檔，因此所有 runner 的輸出含專案 `.env`／`.envrc` 的值時一律拒絕。子 Agent CLI 的逾時、非零結束、輸出不是 JSON 或沒有結構化輸出屬 `TransientAgentError`，`agent_step` 只對它在交件期限內再試一次並把失敗嘗試記入 `agent_calls`；秘密外洩、未核准工具等安全拒絕與驗證失敗不得重試。
 - 自動化排程與報告 Agent 只串接已驗證輸出；不修改研究結論、不放寬風控、不自動下單或送件。
+- 策略反思旁觀者（`src/etf_agent/strategy_reflection/`，不在每日決策鏈）讀校準報告提出策略樣板旋鈕提案；Agent 只輸出提案 JSON，是否生效由確定性程式依白名單、變幅上限、樣本門檻、冷卻期與影子回放決定，通過才原子改寫 `config/decision_policy.json`（可 `rollback`）。硬性規則、競賽限制、費稅、滑價與壓力情境不在可調範圍；它也不得被 `decision/`、`automation/` 匯入。
 
 ### Research Report V0
 

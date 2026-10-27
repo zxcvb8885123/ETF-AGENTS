@@ -64,7 +64,7 @@ docker compose version
 | 排程 | 時間（台北） | 作用 |
 | --- | --- | --- |
 | `com.etf-agents.data` | 平日 20:00 | 執行 `data` |
-| `com.etf-agents.finmind-news` | 22:00 | 擷取個股新聞候選 |
+| `com.etf-agents.finmind-news` | 20:40 | 擷取個股新聞候選 |
 
 **FinMind Token** 依序讀取：執行環境 → 專案根目錄 `.env`（`FINMIND_TOKEN=...`，權限 600，Git 忽略）。財報流程還可回退到 macOS 鑰匙圈服務 `etf-agent-finmind`。
 
@@ -83,7 +83,7 @@ docker compose version
 - 官方個股月行情由 `scripts/collect_official_history.py` 補抓。上市用 TWSE `STOCK_DAY`（來源 `TWSE_STOCK_DAY`），上櫃用 TPEx `tradingStock`（來源 `TPEX_TRADING_STOCK`）。
 - 兩個市場共用同一個節流器。全新環境首次回看兩年，約需數十分鐘。
 - 資料專用排程（`data`）不補這部分。
-- 個股新聞由平日 22:00 的 FinMind 排程擷取。`cli/company_news.py review --status approved` 保存核准後，之後的 `run` 才把截止前最後一批、白名單媒體的標題交給事件分析師；21:00 備案用前一天 22:00 那批，隔天早上重跑用前一晚那批。核對指令尚未執行。
+- 個股新聞由平日 20:40 的 FinMind 排程擷取。`cli/company_news.py review --status approved` 保存核准後，之後的 `run` 才把截止前最後一批、白名單媒體的標題交給事件分析師；21:00 備案用當晚 20:40 那批，隔天早上重跑也用這批。核對指令尚未執行。
 
 #### `run`
 

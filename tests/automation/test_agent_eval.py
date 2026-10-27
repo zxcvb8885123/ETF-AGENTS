@@ -218,12 +218,12 @@ class AnswerKeyTests(unittest.TestCase):
         self.assertEqual((scores["intent"]["n"], scores["intent"]["hits"]), (2, 2))
         self.assertEqual((scores["orders"]["n"], scores["orders"]["hits"]), (1, 1))
 
-    def test_hit_rate_needs_twenty_distinct_days(self):
+    def test_hit_rate_needs_ten_distinct_days(self):
         day = {"technical": {"n": 2, "hits": 1, "up_excess": ["0.1"], "down_excess": ["-0.1"]}}
         # 同一天重跑 25 次仍只算一天。
         self.assertEqual(pool_scores([("daily-1", day)] * 25)["technical"]["status"], "insufficient_sample")
-        enough = pool_scores([("daily-%d" % index, day) for index in range(20)])["technical"]
-        self.assertEqual((enough["status"], enough["hit_rate"], enough["complete_days"]), ("ok", 0.5, 20))
+        enough = pool_scores([("daily-%d" % index, day) for index in range(10)])["technical"]
+        self.assertEqual((enough["status"], enough["hit_rate"], enough["complete_days"]), ("ok", 0.5, 10))
 
 
 if __name__ == "__main__":
