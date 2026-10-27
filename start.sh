@@ -314,6 +314,16 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     DATA_STATUS=2
   fi
   stage_time "全市場新聞"
+  # 基準（0050）行情必須在帳本 as-of 之前抓，儀表板的基準比較才讀得到；失敗只讓該基準顯示 unavailable，不中止每日流程。
+  echo "[3b+/4] 補抓基準標的官方行情（0050）"
+  set +e
+  docker compose run --rm agent python3 cli/benchmark.py --database var/etf_agent.db collect >/dev/null
+  BENCHMARK_EXIT=$?
+  set -e
+  if [ "$BENCHMARK_EXIT" -ne 0 ]; then
+    echo "基準行情抓取失敗（exit ${BENCHMARK_EXIT}）；儀表板的 0050 比較可能顯示 unavailable。" >&2
+  fi
+  stage_time "基準行情"
   if [ "$DATA_ONLY" -eq 1 ]; then
     echo "[4/4] 顯示資料狀態"
     docker compose run --rm agent python3 scripts/data_status.py

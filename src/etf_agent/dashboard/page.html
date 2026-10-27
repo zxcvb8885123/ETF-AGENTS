@@ -37,6 +37,8 @@
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--ink); }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
   button, select { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
@@ -54,6 +56,7 @@
   <header>
     <h1>虛擬帳戶績效</h1>
     <span class="meta" id="meta">載入中…</span>
+    <button id="unit-toggle" type="button"></button>
   </header>
   <div id="notice"></div>
   <div class="grid" id="kpis"></div>
@@ -101,6 +104,23 @@ function tile(label, value, sub, cls = "", subCls = "") {
 }
 
 let lastPerformance = null, lastBenchmarks = null;
+let showAmount = false;
+try { showAmount = localStorage.getItem("showAmount") === "1"; } catch (e) {}
+const amt = v => v == null || !lastPerformance || lastPerformance.initial_capital == null ? null : Number(v) * Number(lastPerformance.initial_capital);
+// 報酬率換成金額：同本金比較時，報酬率 × 起始本金＝損益；沒有金額可換就維持百分比
+const ret = (v, amount = amt(v)) => showAmount && amount != null ? signed(amount) + " 元" : pct(v);
+const UNIT = () => showAmount ? "元" : "%";
+function syncUnitButton() {
+  document.getElementById("unit-toggle").textContent = showAmount ? "顯示：金額（點擊改看 %）" : "顯示：%（點擊改看金額）";
+}
+document.getElementById("unit-toggle").addEventListener("click", () => {
+  showAmount = !showAmount;
+  try { localStorage.setItem("showAmount", showAmount ? "1" : "0"); } catch (e) {}
+  syncUnitButton();
+  if (lastPerformance) render(lastPerformance);
+  if (lastBenchmarks) renderBenchmarks(lastBenchmarks);
+});
+syncUnitButton();
 const BENCH_COLORS = ["var(--accent)", "var(--muted)"];
 
 function renderChart(history, benchmarks) {
@@ -149,7 +169,7 @@ function renderBenchmarks(b) {
   if (b.status !== "ok") { el.innerHTML = `<div class="empty">基準比較 unavailable：${esc(b.reason || "原因不明")}</div>`; return; }
   const a = b.account;
   const row = (label, start, latest, nav, cum, excess, mdd, rdd, note) => `<tr><td>${label}</td><td>${start}</td><td>${latest}</td><td>${nav}</td>
-    <td class="${tone(cum)}">${pct(cum)}</td><td class="${tone(excess)}">${pct(excess)}</td><td>${plain(mdd)}</td><td>${plain(rdd)}</td><td class="label">${note}</td></tr>`;
+    <td class="${tone(cum)}">${ret(cum)}</td><td class="${tone(excess)}">${ret(excess)}</td><td>${plain(mdd)}</td><td>${plain(rdd)}</td><td class="label">${note}</td></tr>`;
   const rows = [row("帳戶", esc(b.account.series[0].trade_date), esc(a.latest_trade_date), money(a.nav), a.cumulative_return, null, a.max_drawdown, null, "")];
   b.benchmarks.forEach(item => {
     if (item.status !== "ok") { rows.push(`<tr><td>${esc(item.label)}</td><td colspan="8" class="label">unavailable：${esc(item.reason)}</td></tr>`); return; }
@@ -158,7 +178,7 @@ function renderBenchmarks(b) {
     rows.push(row(esc(item.label), esc(item.start_date || "—"), esc(l.trade_date || "—"), money(l.nav), l.cumulative_return, c.excess_return, item.max_drawdown, c.relative_drawdown, note));
   });
   el.innerHTML = `<table>
-    <tr><th>項目</th><th>起始日</th><th>最新交易日</th><th>NAV</th><th>累積報酬</th><th>超額報酬（帳戶−基準）</th><th>最大回撤</th><th>相對回撤</th><th>說明</th></tr>
+    <tr><th>項目</th><th>起始日</th><th>最新交易日</th><th>NAV</th><th>累積報酬（${UNIT()}）</th><th>超額報酬（帳戶−基準，${UNIT()}）</th><th>最大回撤</th><th>相對回撤</th><th>說明</th></tr>
     ${rows.join("")}
   </table><div class="sub">as-of ${time(b.as_of)}；起始日 ${esc(b.start_date || "—")}；費稅 手續費率 ${esc(b.fees.commission_rate)}、最低 ${esc(b.fees.minimum_commission)} 元、賣出稅率 ${esc(b.fees.sell_tax_rate)}；${esc(b.method.valuation)}。</div>`;
 }
@@ -196,14 +216,60 @@ function renderTrades(d) {
     : '<div class="empty">最新決策沒有委託。</div>';
 }
 
+// 持倉表：點欄位標題排序（再點一次反向、第三次回原順序）；空值一律排最後
+const POSITION_COLUMNS = [
+  ["symbol", "代號", false], ["lots", "張數", true], ["average_cost", "均價", true], ["price", "現價", true],
+  ["cost_value", "成本", true], ["market_value", "市值", true], ["unrealized_pnl", "未實現損益", true],
+  ["unrealized_return", null, true],
+];
+let positionSort = { key: null, dir: -1 };
+function renderPositions(d) {
+  const el = document.getElementById("positions");
+  if (!d.positions.length) { el.innerHTML = '<div class="empty">目前空倉。</div>'; return; }
+  const key = positionSort.key, dir = positionSort.dir;
+  const rows = d.positions.slice();
+  if (key) {
+    const num = key !== "symbol";
+    rows.sort((a, b) => {
+      const x = a[key], y = b[key];
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return dir * (num ? Number(x) - Number(y) : String(x).localeCompare(String(y)));
+    });
+  }
+  const head = POSITION_COLUMNS.map(([k, label]) => {
+    const text = label || `報酬（${UNIT()}）`;
+    const mark = key === k ? (dir < 0 ? " ▼" : " ▲") : "";
+    return `<th class="sortable" data-sort="${k}">${text}${mark}</th>`;
+  }).join("");
+  el.innerHTML = `<table>
+    <tr>${head}</tr>
+    ${rows.map(p => `<tr><td>${esc(p.symbol)}</td><td>${nf.format(p.lots)}</td>
+      <td>${Number(p.average_cost).toFixed(2)}</td><td>${p.price == null ? "—" : Number(p.price).toFixed(2)}</td>
+      <td>${money(p.cost_value)}</td><td>${money(p.market_value)}</td>
+      <td class="${tone(p.unrealized_pnl)}">${signed(p.unrealized_pnl)}</td>
+      <td class="${tone(p.unrealized_return)}">${ret(p.unrealized_return, p.unrealized_pnl)}</td></tr>`).join("")}
+  </table>`;
+}
+document.getElementById("positions").addEventListener("click", ev => {
+  const th = ev.target.closest("th[data-sort]");
+  if (!th || !lastPerformance) return;
+  const k = th.dataset.sort;
+  if (positionSort.key !== k) positionSort = { key: k, dir: -1 };
+  else if (positionSort.dir < 0) positionSort.dir = 1;
+  else positionSort = { key: null, dir: -1 };
+  renderPositions(lastPerformance);
+});
+
 function render(d) {
   document.getElementById("meta").textContent =
     `帳戶 ${d.account_id}・資料時間 ${time(d.as_of)}・狀態 ${d.latest_state_type}・${new Date().toLocaleTimeString("zh-TW", { hour12: false })} 更新`;
   const t = d.today;
   document.getElementById("kpis").innerHTML = [
-    tile(t ? `今日報酬率・帳面（${t.trade_date}）` : "今日報酬率・帳面", t ? pct(t.return) : "—", t ? `帳面損益 ${signed(t.pnl)} 元（持股漲跌，尚未賣出）` : "開帳後尚無收盤估值", "hero", t ? tone(t.return) : ""),
+    tile(t ? `今日報酬率・帳面（${t.trade_date}）` : "今日報酬率・帳面", t ? ret(t.return, t.pnl) : "—", t ? `帳面損益 ${signed(t.pnl)} 元（持股漲跌，尚未賣出）` : "開帳後尚無收盤估值", "hero", t ? tone(t.return) : ""),
     tile("累積已實現損益（已賣出）", signed(d.realized_pnl), "只算已賣出的部分，已扣手續費與證交稅", "hero", tone(d.realized_pnl)),
-    tile("累積報酬率（含帳面）", pct(d.total_return), `累積損益 ${signed(d.total_pnl)} 元＝已實現＋持股未實現`, "", tone(d.total_return)),
+    tile("累積報酬（含帳面）", ret(d.total_return, d.total_pnl), `累積損益 ${signed(d.total_pnl)} 元＝已實現＋持股未實現`, "", tone(d.total_return)),
     tile("目前總資產（NAV）", money(d.nav), `起始本金 ${money(d.initial_capital)} 元`),
     tile("現金", money(d.cash), `現金比 ${plain(d.cash_weight)}・未交割 ${money(d.unsettled_cash)}`),
     tile("持股市值", money(d.market_value), `${d.positions.length} 檔持股`),
@@ -212,20 +278,13 @@ function render(d) {
   lastPerformance = d;
   renderChart(d.history, lastBenchmarks ? lastBenchmarks.benchmarks : null);
   renderTrades(d);
-  document.getElementById("positions").innerHTML = d.positions.length ? `<table>
-    <tr><th>代號</th><th>張數</th><th>均價</th><th>現價</th><th>成本</th><th>市值</th><th>未實現損益</th><th>報酬率</th></tr>
-    ${d.positions.map(p => `<tr><td>${esc(p.symbol)}</td><td>${nf.format(p.lots)}</td>
-      <td>${Number(p.average_cost).toFixed(2)}</td><td>${p.price == null ? "—" : Number(p.price).toFixed(2)}</td>
-      <td>${money(p.cost_value)}</td><td>${money(p.market_value)}</td>
-      <td class="${tone(p.unrealized_pnl)}">${signed(p.unrealized_pnl)}</td>
-      <td class="${tone(p.unrealized_return)}">${pct(p.unrealized_return)}</td></tr>`).join("")}
-  </table>` : '<div class="empty">目前空倉。</div>';
+  renderPositions(d);
   document.getElementById("history").innerHTML = `<table>
-    <tr><th>交易日</th><th>類型</th><th>NAV</th><th>當日帳面損益</th><th>當日報酬率（帳面）</th><th>累積報酬率</th></tr>
+    <tr><th>交易日</th><th>類型</th><th>NAV</th><th>當日帳面損益</th><th>當日報酬（帳面，${UNIT()}）</th><th>累積報酬（${UNIT()}）</th></tr>
     ${d.history.slice().reverse().map(h => `<tr><td>${esc(h.trade_date)}</td><td>${TYPE[h.type] || esc(h.type)}</td>
       <td>${money(h.nav)}</td><td class="${tone(h.daily_pnl)}">${signed(h.daily_pnl)}</td>
-      <td class="${tone(h.daily_return)}">${pct(h.daily_return)}</td>
-      <td class="${tone(h.cumulative_return)}">${pct(h.cumulative_return)}</td></tr>`).join("")}
+      <td class="${tone(h.daily_return)}">${ret(h.daily_return, h.daily_pnl)}</td>
+      <td class="${tone(h.cumulative_return)}">${ret(h.cumulative_return)}</td></tr>`).join("")}
   </table>`;
 }
 
