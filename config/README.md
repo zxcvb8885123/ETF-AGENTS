@@ -1,6 +1,6 @@
 # config/：規則與來源設定
 
-放影響資料來源、風控與送件資格的靜態設定；程式以唯讀掛載讀取（`compose.yaml` 的 `./config:/app/config:ro`），Agent 不改寫。
+放影響資料來源、風控與送件資格的靜態設定；程式以唯讀掛載讀取（`compose.yaml` 的 `./config:/app/config:ro`），Agent 不改寫。唯一例外是 `decision_policy.json`：策略反思旁觀者（`cli/strategy_reflection.py`，在主機執行）通過驗證與影子回放後由程式原子改寫，Agent 本身不寫檔，見 [strategy_reflection](../src/etf_agent/strategy_reflection/README.md)。
 
 ## 檔案清單
 

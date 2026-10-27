@@ -5,7 +5,7 @@ Codex／Claude／OpenCode 共用的 Skill 來源，只保存工作流程、輸�
 - 數值計算、時間檢查、引用驗證在 `src/etf_agent/`，Skill 不複製邏輯。
 - 人工與 Skill 共用 `cli/` 的同一組命令。
 
-- 共 17 個 Skill，依職責分六個群組（`analysis`、`research`、`trading`、`risk`、`reporting`、`data`）。
+- 共 18 個 Skill，依職責分六個群組（`analysis`、`research`、`trading`、`risk`、`reporting`、`data`）。
 - 每個 Skill 資料夾含 `SKILL.md`（必要）、`agents/openai.yaml`（UI 描述與 `default_prompt`，需提到 `$skill-name`）及選配的 `references/`（詳細 schema）。
 - 各 Skill 資料夾不放 README，本檔是唯一索引。
 - 命名用小寫連字號。
@@ -78,6 +78,7 @@ flowchart LR
 
 | Skill | 路徑 | 職責 | 每日鏈 |
 | --- | --- | --- | --- |
+| `strategy-reflection` | `risk/strategy-reflection` | 讀校準簡報，提出受限的策略旋鈕調整提案；不改權重、風控或模擬假設，由程式驗證與影子回放後才套用 | 否（鏈外旁觀者） |
 | `portfolio-risk-review` | `risk/portfolio-risk-review` | 配置前給整體現金姿態（aggressive／neutral／defensive）；配置後審查程式產生的方案，輸出 approve／revise／reject；不得改寫權重或硬性規則 | 是 |
 
 ### reporting/

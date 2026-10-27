@@ -175,6 +175,7 @@ ETF_AGENTS/
 │   ├── dashboard/           #   績效儀表板
 │   ├── benchmark/           #   帳戶對 0050／交易池等權買入持有的基準比較（同本金、同費稅、官方價）
 │   ├── calibration/         #   校準旁觀者：信心等級事後對答案、決策價與成交均價偏離（不入決策鏈）
+│   ├── strategy_reflection/ #   策略反思旁觀者：讀校準報告提出旋鈕提案，驗證與影子回放後自動改寫 decision_policy.json（不入決策鏈）
 │   ├── evaluation/          #   Agent 評測：資料抓齊率、評測集重跑、一致度／穩定度，以及零 token 的多日 Policy 回放（不入決策鏈）
 │   └── core/                #   共用的雜湊、時間、數值工具
 │
