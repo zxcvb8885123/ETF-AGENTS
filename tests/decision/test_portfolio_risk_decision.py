@@ -850,5 +850,75 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             self.assertEqual(len(list((root / "runs").glob("*/cli-run/manifest.json"))), 1)
 
 
+class RevisionActionFieldTests(unittest.TestCase):
+    """revise 動作的條件必填：schema 要求四欄位都出現，不適用者必須省略或為空字串。"""
+
+    def setUp(self):
+        self.bundle, self.momentum, self.debate, self.intent = valid_inputs()
+        self.settings = policy()
+        self.proposal = AllocationOrderEngine(self.bundle, self.settings).run(self.intent)
+        self.scenario = ScenarioEngine(self.bundle, self.settings).run(self.proposal)
+        self.guard = CompetitionGuardV2(self.bundle, self.settings).run(self.proposal, self.scenario)
+
+    def validate(self, actions):
+        review = risk_review(self.bundle, self.proposal, self.scenario, self.guard, "revise", 1, actions)
+        return RiskReviewValidator(self.bundle, self.settings).validate(
+            self.proposal, self.scenario, self.guard, review
+        )
+
+    def test_unused_field_may_be_omitted(self):
+        self.assertEqual(
+            self.validate([
+                {"type": "remove_candidate", "symbol": "2317.TW", "reason": "降低新增曝險。"},
+                {"type": "increase_cash_buffer", "value": "0.10", "reason": "提高緩衝。"},
+            ]),
+            [],
+        )
+
+    def test_unused_field_may_be_empty_string(self):
+        """子 Agent 依 Codex strict schema 實際送出的形狀：四欄位齊全、不適用者為空字串。"""
+        self.assertEqual(
+            self.validate([
+                {"type": "remove_candidate", "symbol": "2317.TW", "value": "", "reason": "降低新增曝險。"},
+                {"type": "increase_cash_buffer", "symbol": "", "value": "0.10", "reason": "提高緩衝。"},
+            ]),
+            [],
+        )
+
+    def test_remove_candidate_rejects_non_empty_value(self):
+        errors = self.validate(
+            [{"type": "remove_candidate", "symbol": "2317.TW", "value": "0.10", "reason": "夾帶數值。"}]
+        )
+        self.assertTrue(
+            any("value 對 remove_candidate 不適用" in error for error in errors), errors
+        )
+
+    def test_policy_action_rejects_non_empty_symbol(self):
+        errors = self.validate(
+            [{"type": "increase_cash_buffer", "symbol": "2317.TW", "value": "0.10", "reason": "夾帶股票。"}]
+        )
+        self.assertTrue(
+            any("symbol 對 increase_cash_buffer 不適用" in error for error in errors), errors
+        )
+
+    def test_remove_candidate_rejects_empty_symbol(self):
+        errors = self.validate([{"type": "remove_candidate", "symbol": "", "value": "", "reason": "缺股票。"}])
+        self.assertTrue(any("缺少必要字串欄位：symbol" in error for error in errors), errors)
+
+    def test_policy_action_rejects_empty_value(self):
+        errors = self.validate([{"type": "increase_cash_buffer", "symbol": "", "value": "", "reason": "缺數值。"}])
+        self.assertTrue(any("value" in error for error in errors), errors)
+
+    def test_schema_allows_empty_symbol_and_value(self):
+        """修正前 symbol／value 套用 minLength 1，與「不適用者填空字串」的指示互相矛盾。"""
+        from etf_agent.automation.agent_schemas import REVIEW_SCHEMA
+
+        action = REVIEW_SCHEMA["properties"]["revision_actions"]["items"]
+        self.assertEqual(set(action["properties"]), set(action["required"]))
+        for field in ("symbol", "value"):
+            self.assertNotIn("minLength", action["properties"][field], field)
+        self.assertEqual(action["properties"]["reason"].get("minLength"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ flowchart TD
     TR[trader.py<br/>TradeDecision<br/>每個 claim 採納或否決一次] --> SZ
     CASH[風險 Agent 現金姿態<br/>sizing.validate_cash_stance] --> SZ
     PB[policy_builder.py<br/>build_decision_policy] --> SZ
-    SZ[sizing.py + trader.apply_trade_decision<br/>conviction_volatility_v1] --> AL
+    SZ[sizing.py + trader.apply_trade_decision<br/>conviction_volatility_v1 / v2] --> AL
     AL[allocation.py<br/>AllocationOrderEngine] --> RK
     RK[risk.py<br/>ScenarioEngine / CompetitionGuardV2<br/>風險審查] -- revise 最多 3 次 --> AL
     RK --> RV[revision.py<br/>修正鏈]
@@ -38,7 +38,7 @@ flowchart TD
 | `active_share.py` | 競賽 Active Share：讀取並驗證主動型 ETF 前 15 大持股（來源核准、可得時間、排名、權重），選取前 15 大並以占淨值權重計算 | `load_active_etf_benchmarks`、`top_weights`、`active_share`、`ACTIVE_SHARE_TOP_N` |
 | `momentum.py` | 確定性動能與市場狀態計算與驗證 | `MomentumEngine`、`MomentumResultValidator` |
 | `trend_history.py` | 技術分析用整段歷史價格與逐日均線；不產生趨勢標籤 | `TechnicalTrendHistoryTools`、`TechnicalTrendHistoryValidator` |
-| `analysts.py` | 分析團隊：確定性輸入摘要、`AnalystReport` 契約與 Validator、技術 gate、基本面指標、事件 high 重大性挑出；資料包含 `company_news_input` 時事件 brief 逐檔帶 `news`（只有標題），事件報告為 `EVENT_NEWS_VERSION`（2.3），否則 2.2 | `company_news`、`event_market_version`、`build_analyst_brief`、`seal_report`、`AnalystReportValidator`、`technical_trend_gate`、`compute_fundamental_metrics`、`high_materiality_events`、`sentiment_unavailable_report`、`sentiment_report`、`seal_event_sentiment_report`、`seal_event_market_report`、`compact_event_batch`、`analyst_report_names`、`report_envelope` |
+| `analysts.py` | 分析團隊：確定性輸入摘要、`AnalystReport` 契約與 Validator、技術 gate、基本面指標、事件 high 重大性挑出；資料包含 `company_news_input` 時事件 brief 逐檔帶 `news`（只有標題），事件報告為 `EVENT_NEWS_VERSION`（2.3），否則 2.2 | `company_news`、`event_market_version`、`build_analyst_brief`、`seal_report`、`AnalystReportValidator`、`technical_trend_gate`、`compute_fundamental_metrics`、`growth_signal_quality`、`high_materiality_events`、`sentiment_unavailable_report`、`sentiment_report`、`seal_event_sentiment_report`、`seal_event_market_report`、`compact_event_batch`、`analyst_report_names`、`report_envelope` |
 | `event_financial_context.py` | 將同一快照財報接到事件解讀，保留原值、單位、期間與引用 | `event_financial_context` |
 | `cash_flow_context.py` | 從已核對的現金流文件計算營業現金流、自由現金流與對稅前淨利比率，給基本面分析師 | `cash_flow_context` |
 | `drawdown.py` | 從帳本 NAV 歷史計算峰值回撤，綁進 Policy 的 `drawdown_control`，強制現金姿態下限 | `bind_drawdown`、`measure_drawdown`、`stance_floor`、`stance_meets_floor`、`validate_drawdown_control` |
@@ -49,7 +49,8 @@ flowchart TD
 | `trader.py` | 交易 Agent：權衡多空論點的 `TradeDecision` 與確定性配置轉接 | `TradeDecisionValidator`、`seal_trade_decision`、`trade_decision_envelope`、`apply_trade_decision`、`claims_by_symbol`、`support_by_symbol` |
 | `prior_decision.py` | 前次決策背景：從決策庫找同帳戶、目標交易時段更早、approved／no_trade 的封存 run（同時段多個時優先帳本結算記錄），整理持股的前次意圖與重估條件為不可引用的 `PriorDecisionContext`，並重建驗證 | `find_prior_decision_run`、`read_decision_run`、`build_prior_decision_context`、`prior_decision_brief`、`prior_reference_tokens`、`PriorDecisionContextValidator` |
 | `trader_report.py` | 以已驗證 `TradeDecision` 呈現交易整合結果，不重貼多空全文 | `render_trader_report` |
-| `sizing.py` | conviction 等級、現金姿態、持股廣度（`positions_by_breadth` 對應檔數），及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`breadth_target`、`conviction_weights` |
+| `sizing.py` | conviction 等級、現金姿態、持股廣度（`positions_by_breadth` 對應檔數）、換股名額（`rotation`）、入選順序（`selection_tiebreak`）與低波動偏好強度（v2 的 `volatility_exponent`），及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`breadth_target`、`conviction_weights` |
+| `rotation.py` | 滿檔換股的名額脈絡：程式算好的持股檔數、硬上限、空名額與全池多空強度統計，交給交易 Agent 當背景並由 Finalizer 重算比對 | `build_portfolio_slots`、`validate_portfolio_slots`、`PORTFOLIO_SLOTS_VERSION` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
 | `allocation.py` | 確定性配置、下單、費稅與現金；Policy 與 Proposal 驗證 | `AllocationOrderEngine`、`DecisionPolicyValidator`、`ProposalValidator`、`decision_policy_sha256` |
 | `risk.py` | 確定性情境、競賽檢查（Guard，Active Share 以前 15 大比前 15 大）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`liquidity_exposure`、`revision_effects` |
@@ -79,7 +80,8 @@ flowchart TD
 - 多頭／空頭研究員讀同一份共同輸入（`shared_input_sha256`），互相隔離（`peer_packet_ids` 為空）。
 - 兩方都對全部交易池逐檔給 `strength` 與有證據的 claims；`none` 時不得有 claims。
 - 交易 Agent 把多空每個 claim 剛好採納或否決一次，不新增事實或 claim。
-- buy／add 給 `high`／`medium`／`low`；權重由 `conviction_volatility_v1` 依 Policy 乘數與 ATR14 計算，Agent 不輸出數字。
+- buy／add 給 `high`／`medium`／`low`；權重由 `conviction_volatility_v1`（固定 1／ATR14）或 `conviction_volatility_v2`（依 `volatility_exponent` 0～1 調整低波動偏好，0 為不看波動度）依 Policy 乘數計算，Agent 不輸出數字。
+- 滿檔時新股只能用出場釋出的名額（`rotation` 的 `max_swaps_per_run`、`min_new_conviction`；不足標 `MAX_POSITIONS`，信心不足標 `ROTATION_CONVICTION`）；交易 Agent 只收到 `portfolio_slots` 當背景，配對由程式決定。
 - 風險 Agent 給 `aggressive`／`neutral`／`defensive` 現金姿態與 `concentrated`／`balanced`／`diversified` 持股廣度並附證據（檔數由 Policy 對應，Agent 不輸出數字）；不手寫權重、不覆寫 CompetitionGuard。
 - 現金比例由 Policy 依姿態對應，競賽現金上限由 Guard 強制。
 - 修正循環最多三次；硬性規則失敗一律拒絕。

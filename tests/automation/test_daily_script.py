@@ -531,7 +531,7 @@ class DataReuseTests(unittest.TestCase):
         self.assertFalse(check("2026-10-31T21:00:00+08:00"))
         self.assertFalse(check("2026-11-01T07:00:00+08:00"))
 
-    def scheduled_main(self, root, at):
+    def scheduled_main(self, root, at, session_start="2026-10-23T09:00:00+08:00"):
         """不帶 --force 在指定台北時間觸發 main，回傳 (exit code, 是否走到預檢)。"""
         fixed = datetime.fromisoformat(at)
         real_datetime = datetime
@@ -553,7 +553,7 @@ class DataReuseTests(unittest.TestCase):
                 patch.object(self.module, "ensure_calendar_capture", lambda *_a: None), \
                 patch.object(self.module, "refresh_inferred_closures", lambda *_a: None), \
                 patch.object(self.module, "trading_day_check", lambda *_a: True), \
-                patch.object(self.module, "upcoming_session_start", lambda *_a: "2026-10-23T09:00:00+08:00"), \
+                patch.object(self.module, "upcoming_session_start", lambda *_a: session_start), \
                 patch.object(self.module, "expected_latest_trade_date", lambda *_a: date(2026, 10, 22)), \
                 patch.object(self.module, "refresh_before_deadline", lambda *_a: False), \
                 patch.object(self.module, "ROOT", root), \
@@ -576,6 +576,36 @@ class DataReuseTests(unittest.TestCase):
             self.write_run(runs, "daily-20261023-060000", "completed", session, "2026-10-23T06:30:00+08:00")
             self.assertEqual(self.scheduled_main(root, "2026-10-23T07:00:00+08:00"), (0, False))
             self.assertEqual(sorted(path.name for path in day.iterdir()), ["daily-20261023-070000"])
+
+    def test_evening_run_folder_uses_target_trading_day_not_execution_day(self):
+        # 10/23 晚上跑，算的是 10/24 的時段：資料夾要開在 10/24，不是跑的那天 10/23。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_data(root)
+            runs = root / "artifacts" / "daily"
+            self.assertEqual(
+                self.scheduled_main(root, "2026-10-23T21:00:00+08:00", session_start="2026-10-24T09:00:00+08:00"),
+                (1, True),
+            )
+            self.assertFalse((runs / "2026-10-23").exists())
+            self.assertEqual(
+                sorted(path.name for path in (runs / "2026-10-24").iterdir()), ["daily-20261023-210000"],
+            )
+
+    def test_daily_run_path_prefers_day_hint_for_new_run_but_not_resume(self):
+        find = self.module.daily_run_path
+        with tempfile.TemporaryDirectory() as directory:
+            runs = Path(directory)
+            # 新 run：day_hint 存在就優先用它，不管 run_id 本身的執行日期。
+            fresh = find(runs, "daily-20261023-210000", "2026-10-24")
+            self.assertEqual(fresh, runs / "2026-10-24" / "daily-20261023-210000")
+            # 沒給 day_hint 時照舊退回 run_id 內的執行日期。
+            self.assertEqual(find(runs, "daily-20261023-210000"), runs / "2026-10-23" / "daily-20261023-210000")
+            # 已存在的 run 一律用它原本的位置，day_hint 不會把它搬家。
+            (runs / "2026-10-22" / "daily-20261023-210000").mkdir(parents=True)
+            self.assertEqual(
+                find(runs, "daily-20261023-210000", "2026-10-24"), runs / "2026-10-22" / "daily-20261023-210000",
+            )
 
 
 if __name__ == "__main__":

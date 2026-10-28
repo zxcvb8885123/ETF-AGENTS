@@ -144,6 +144,48 @@ def analyst_report_names(reports: Mapping[str, object]) -> Sequence[str]:
     raise DecisionToolError("分析團隊需要技術、基本面、事件與市場情緒三份報告")
 
 
+def growth_signal_quality(metrics: Mapping[str, object]) -> Dict[str, object]:
+    """程式判定這檔的成長訊號可不可跨股比較；只標記，不改變分析師的 outlook 規則。
+
+    - ``comparable``：有同口徑財報算出的營收或淨利年增，可與其他股票並列比較。
+    - ``industry_formula_unsupported``：金融業等報表格式，程式連當期比率都算不出來。
+    - ``monthly_revenue_only``：缺去年同期損益表，只剩月營收年增；月營收在不同產業
+      的會計內容不同（金融業含保費與手續費收入），不可直接與一般業的營業收入比較。
+    """
+    available = {
+        str(metric.get("metric_key"))
+        for metric in metrics.get("metrics", [])
+        if isinstance(metric, Mapping) and metric.get("status") == "available"
+    }
+    reasons = sorted(
+        {
+            str(gap.get("reason_code"))
+            for gap in metrics.get("missing_data", [])
+            if isinstance(gap, Mapping) and gap.get("reason_code")
+        }
+    )
+    if available & {"revenue_yoy_pct", "net_income_yoy_pct"}:
+        level, note = "comparable", "有同口徑財報的年增率，可與其他股票比較成長幅度。"
+    elif any(reason.startswith("UNSUPPORTED_INDUSTRY") for reason in reasons):
+        level = "industry_formula_unsupported"
+        note = (
+            "本產業報表格式使程式無法計算任何比率；月營收年增的會計內容與一般業的營業收入"
+            "不同，不可用它與其他產業並列比較成長幅度。"
+        )
+    else:
+        level = "monthly_revenue_only"
+        note = (
+            "缺少可比的去年同期損益表，程式算不出獲利年增與營業利益率趨勢；"
+            "只有月營收年增時不足以判斷獲利是否改善。"
+        )
+    return {
+        "level": level,
+        "comparable_growth_metrics": sorted(available & {"revenue_yoy_pct", "net_income_yoy_pct"}),
+        "missing_reason_codes": reasons,
+        "note": note,
+    }
+
+
 def build_analyst_brief(
     bundle: Mapping[str, object],
     momentum: Mapping[str, object],
@@ -219,6 +261,7 @@ def build_analyst_brief(
                 metrics.get("metrics", []), bundle["snapshot"].get("documents", []), symbol
             )
             entry["financial_status"] = metrics.get("status", "unavailable")
+            entry["growth_signal_quality"] = growth_signal_quality(metrics)
             # 策略文件：基本面看現金流。數值由程式從已核對的現金流文件計算，缺少時明確說明。
             entry["cash_flow"] = cash_flow_by_symbol.get(symbol) or {
                 "status": "unavailable",

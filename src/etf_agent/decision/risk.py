@@ -670,8 +670,20 @@ class RiskReviewValidator:
             required_string(action, "reason")
         except DecisionToolError as error:
             errors.append("%s.%s" % (prefix, error))
+        # 輸出 schema 要求四個欄位都出現（Codex strict），不適用者以空字串表示；這裡依 type 條件
+        # 必填，並確認不適用的欄位確實是空的（省略或空字串），避免以該欄位夾帶未驗證的內容。
+        unused_field = "value" if action_type == "remove_candidate" else "symbol"
+        unused_value = action.get(unused_field)
+        if unused_value is not None and str(unused_value).strip():
+            errors.append(
+                "%s.%s 對 %s 不適用，必須省略或為空字串" % (prefix, unused_field, action_type)
+            )
         if action_type == "remove_candidate":
-            symbol = str(action.get("symbol", "")).upper()
+            try:
+                symbol = required_string(action, "symbol").upper()
+            except DecisionToolError as error:
+                errors.append("%s.%s" % (prefix, error))
+                return
             order_symbols = {
                 str(item["symbol"]).upper()
                 for item in proposal.get("order_proposal", {}).get("orders", [])

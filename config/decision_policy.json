@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-10-26",
-  "available_at": "2026-10-26T00:00:00+08:00",
+  "policy_id": "strategy-2026-10-28",
+  "available_at": "2026-10-28T00:00:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -17,14 +17,21 @@
     "defensive_at": "0.10"
   },
   "position_sizing": {
-    "method": "conviction_volatility_v1",
+    "method": "conviction_volatility_v2",
     "conviction_multipliers": {
       "high": "1.5",
       "medium": "1",
       "low": "0.5"
     },
     "volatility_floor": "0.01",
+    "volatility_exponent": "0",
     "stock_weight_fit": "v1",
+    "held_add_priority": "v1",
+    "rotation": {
+      "version": "v1",
+      "max_swaps_per_run": 10,
+      "min_new_conviction": "low"
+    },
     "cash_buffer_by_stance": {
       "aggressive": "0.03",
       "neutral": "0.10",

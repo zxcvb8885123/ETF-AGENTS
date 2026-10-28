@@ -17,6 +17,17 @@ from etf_agent.data.fundamental_repair import FundamentalRepairProvider, Officia
 from etf_agent.data.snapshot import DataAgentService
 from etf_agent.data.universe import UniverseLoader
 
+# 每日收集器已在用的官方損益表端點（來源代號、URL、業別）。補抓的核對基準必須涵蓋全部，
+# 否則該業別沒有基準可比，FinMind 去年同期一律被跳過。
+OFFICIAL_INCOME_SOURCES = (
+    ("TWSE_MOPS_INCOME_CI", "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci", "ci"),
+    ("TPEX_MOPS_INCOME_CI", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_ci", "ci"),
+    ("TWSE_MOPS_INCOME_MIM", "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_mim", "mim"),
+    ("TWSE_MOPS_INCOME_FH", "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_fh", "fh"),
+    ("TWSE_MOPS_INCOME_BASI", "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_basi", "basi"),
+    ("TPEX_MOPS_INCOME_BD", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_bd", "bd"),
+)
+
 
 def main():
     parser = argparse.ArgumentParser(description="補抓官方當期與 FinMind 去年同期累計財報")
@@ -33,24 +44,40 @@ def main():
     if args.symbols and not set(args.symbols) <= allowed:
         raise ValueError("指定股票不在交易池")
     database = MarketDataDatabase(args.database)
-    official = OfficialCorporateProvider("TWSE_MOPS_INCOME_CI", "https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci",
-                                         "TWSE", "financial_statement", "income_statement", "ci", retries=1)
-    current = CorporateDataCollector(database, [official]).collect(universe)
-    anchors = [item for item in current.records if item.document.symbol in allowed]
+    anchors = []
+    anchor_failures = []
+    stored_documents = 0
+    # 逐一收集每個官方損益表端點；只掛一般業（ci）時上櫃與金融業永遠沒有核對基準而被靜默跳過。
+    # 單一端點失敗只記警告並換下一個，不中止整輪，否則一個端點掛掉就什麼都補不到。
+    for source, url, industry in OFFICIAL_INCOME_SOURCES:
+        provider = OfficialCorporateProvider(source, url, source.split("_")[0], "financial_statement",
+                                             "income_statement", industry, retries=1)
+        try:
+            collected = CorporateDataCollector(database, [provider]).collect(universe)
+        except Exception as error:  # noqa: BLE001 - 端點層級降級，原因逐一回報
+            anchor_failures.append("%s：%s" % (source, error))
+            continue
+        stored_documents += collected.stored_documents
+        if collected.failures:
+            anchor_failures.extend("%s：%s" % (source, item) for item in collected.failures)
+            continue
+        anchors.extend(item for item in collected.records if item.document.symbol in allowed)
     if args.symbols:
         anchors = [item for item in anchors if item.document.symbol in set(args.symbols)]
-    if not anchors or current.failures:
-        raise ValueError("官方核對基準不可用；停止補抓")
+    if not anchors:
+        raise ValueError("官方核對基準不可用；停止補抓：" + "；".join(anchor_failures or ["沒有符合的股票"]))
     profiles = CorporateDataCollector(database, [OfficialCompanyProfileProvider()]).collect(universe)
     repair = CorporateDataCollector(database, [FundamentalRepairProvider(anchors, args.decision_cutoff)]).collect(universe)
     cutoff = args.decision_cutoff or datetime.now(timezone.utc).isoformat()
     snapshot = DataAgentService(database).build_snapshot(cutoff, require_prices=False,
                                                        require_universe_validation=False).as_dict()
     summary = {"run_id": repair.run_id, "decision_cutoff": cutoff,
-               "official_documents": current.stored_documents,
+               "official_documents": stored_documents,
+               "anchor_symbols": len(anchors), "anchor_failures": anchor_failures,
                "company_profile_documents": profiles.stored_documents,
                "prior_documents": repair.stored_documents, "warnings": repair.warnings,
-               "failures": list(repair.failures) + list(profiles.failures), "mode": "fundamental_research_only",
+               "failures": list(repair.failures) + list(profiles.failures) + anchor_failures,
+               "mode": "fundamental_research_only",
                "downstream_agents_run": False, "historical_backfill_permitted": False}
     output = ImmutableRunStore(args.output_root, schema_version="1.0").save(
         repair.run_id, {"snapshot": snapshot, "summary": summary})

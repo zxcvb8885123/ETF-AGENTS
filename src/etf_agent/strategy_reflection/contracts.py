@@ -52,18 +52,32 @@ def _knobs() -> Dict[str, Knob]:
             "drawdown_control.%s" % name, "decimal", Decimal("0.01"), Decimal("0.02"), None, tighten_only=True)
     knobs["volatility_floor"] = Knob("volatility_floor", "decimal", Decimal("0.005"), Decimal("0.005"), Decimal("0.05"))
     knobs["trim_fraction"] = Knob("trim_fraction", "decimal", Decimal("0.1"), Decimal("0.1"), Decimal("1"))
+    # 低波動偏好的強度（0 完全不看波動度、1 與 v1 相同）；反思員依校準報告調整，單次最多 0.25。
+    knobs["volatility_exponent"] = Knob(
+        "volatility_exponent", "decimal", Decimal("0.25"), Decimal("0"), Decimal("1"))
+    # 一天最多幾個出場名額可給未持有的新股；上限 10 與競賽換手成本相稱，單次最多改 2 檔。
+    knobs["rotation.max_swaps_per_run"] = Knob(
+        "rotation.max_swaps_per_run", "int", Decimal("2"), Decimal("0"), Decimal("10"))
     return knobs
 
 
 KNOBS: Dict[str, Knob] = _knobs()
 # 位於 position_sizing 之下的旋鈕群；其餘在樣板頂層。
-SIZING_GROUPS = ("conviction_multipliers", "cash_buffer_by_stance", "positions_by_breadth", "volatility_floor")
+SIZING_GROUPS = (
+    "conviction_multipliers", "cash_buffer_by_stance", "positions_by_breadth", "volatility_floor",
+    "volatility_exponent", "rotation",
+)
+# 以 min_positions／max_positions 夾範圍的整數旋鈕群（檔數類）；其他整數旋鈕用自己的 low／high。
+POSITION_COUNT_KNOBS = tuple("positions_by_breadth.%s" % level for level in ("concentrated", "balanced", "diversified"))
 # 絕不可由反思員提案的欄位（硬性規則、競賽限制、模擬假設、樣板識別）。
 FORBIDDEN_PREFIXES = (
     "lot_size", "commission_rate", "sell_tax_rate", "minimum_commission", "max_stock_weight", "special_weight_limits",
     "max_sector_weight", "min_positions", "max_positions", "cash_weight_ceiling", "minimum_active_share",
     "reuse_sell_proceeds", "slippage_bps", "stress_", "liquidity_fill_rate", "max_turnover_rate", "max_revisions",
     "cash_buffer_rate", "default_target_weight", "policy_id", "available_at", "content_sha256", "method", "stock_weight_fit",
+    # 版本閘門只由人設定：這些不是調整幅度，而是切換程式路徑（與 method、stock_weight_fit 同性質）。
+    # 低波動偏好強度 volatility_exponent 與換股上限 rotation.max_swaps_per_run 是正式旋鈕，見 KNOBS。
+    "held_add_priority", "rotation.version",
 )
 
 

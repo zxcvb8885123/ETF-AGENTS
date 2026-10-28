@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
 
+from etf_agent.core.run_layout import trade_date_from_session
 from etf_agent.data import MarketDataDatabase, SnapshotRepository
 
 from .contracts import (
@@ -29,6 +30,12 @@ from .risk import (
 )
 from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
 from .trader import TradeDecisionValidator
+
+
+def target_trade_date(bundle: Mapping[str, object]) -> Optional[str]:
+    """DecisionInputBundle 的目標交易日（跟 D-Plan 一致）；缺少 trading_status_bundle 時回傳 None。"""
+    trading_status_bundle = bundle.get("trading_status_bundle") or {}
+    return trade_date_from_session(trading_status_bundle.get("target_session"))
 
 
 class PortfolioDecisionApplicationService:
@@ -546,6 +553,8 @@ class PortfolioDecisionApplicationService:
         if errors:
             raise DecisionToolError("DecisionResult 保存前驗證失敗：" + "；".join(errors))
         artifacts = {"decision_input": self.bundle, **artifacts}
-        output = DecisionRepository(repository_root).save(run_id, artifacts)
+        # 資料夾日期用目標交易日（跟 D-Plan 一致），不是本次執行的日期；缺少 trading_status_bundle
+        # 時（例如評測重跑）退回執行日期，不影響 run_id、manifest 或雜湊封印。
+        output = DecisionRepository(repository_root).save(run_id, artifacts, day=target_trade_date(self.bundle))
         DecisionRepository(repository_root).verify(run_id)
         return {"ok": True, "output": str(output), "verified": True}

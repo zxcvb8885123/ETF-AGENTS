@@ -4,18 +4,80 @@ import calendar
 import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import NamedTuple
 
 from etf_agent.core import canonical_json, canonical_sha256, parse_aware_time, parse_decimal
 from .corporate import CorporateRecord, FinancialStatement, FinancialStatementFact, SourceDocument, OfficialCorporateProvider
 from .supplemental_sources import FinMindFundamentalProvider, FINMIND_ENDPOINT
 
 
-FIELDS = {
+# 一般業（ci）：FinMind 的 Revenue 就是營業收入。上市與上櫃欄位完全相同，三項全核對。
+GENERAL_FIELDS = {
     "revenue": ("Revenue", "營業收入"),
     "operating_profit": ("OperatingIncome", "營業利益（損失）"),
     "net_income": ("IncomeAfterTaxes", "本期淨利（淨損）"),
 }
+# 其他業（mim）：官方 t187ap06_*_mim 的損益表只有「收入」與「支出」，沒有營業收入與營業利益，
+# 所以收集器把 revenue 與 operating_profit 標為 not_reported；FinMind 這邊的 Revenue 也掛在
+# 「收入」這個 origin_name 下。沒有官方金額可核對的項目一律不接入，只核對稅後淨利。
+# 2026-10-28 以 2207.TW 2026Q2 實測：官方 net_income 為 13,759,770 千元，FinMind 兩個單季的
+# IncomeAfterTaxes 合計與它相符；revenue 與 operating_profit 兩邊都無從核對。
+MIM_FIELDS = {
+    "net_income": ("IncomeAfterTaxes", "本期淨利（淨損）"),
+}
+# 金控、銀行與保險（fh／basi／ins）：只核對稅後淨利，這是唯一經實測確認與官方累計金額完全
+# 相符的項目。官方欄位名是「本期稅後淨利（淨損）」，FinMind 對應的 type 是 IncomeAfterTax
+# （沒有 s），與一般業的 IncomeAfterTaxes 不同。
+#
+# 刻意不納入「淨收益」：FinMind 把金融業的淨收益也放在 Revenue 這個 type 下，但兩邊的口徑不同。
+# 2026-10-28 以 2886.TW 2026Q2 實測：FinMind 單季淨收益合計 46,292,555,000 元，官方
+# t187ap06_L_fh 的 net_revenue 為 1,477,626,000 元，相差約 31 倍；同期稅後淨利兩邊
+# 完全相符（21,307,220,000 元）。口徑未確認前不接入，以免產生假的成長率。
+FINANCIAL_FIELDS = {
+    "net_income": ("IncomeAfterTax", "本期稅後淨利（淨損）"),
+}
+# 證券期貨業（bd）：官方 t187ap06_*_bd 的稅後淨利欄位名是「本期淨利（淨損）」，與金控／銀行的
+# 「本期稅後淨利（淨損）」不同，FinMind 也跟著用一般業的 IncomeAfterTaxes。
+# 2026-10-28 以 6023.TWO 2026Q2 實測：官方 net_income 為 1,543,614 千元，FinMind 只提供
+# IncomeAfterTaxes／本期淨利（淨損），完全沒有 IncomeAfterTax。
+# 一樣不接入收益類欄位（Income／收益），因為官方 bd 表沒有可核對的營收金額。
+BD_FIELDS = {
+    "net_income": ("IncomeAfterTaxes", "本期淨利（淨損）"),
+}
+# 只核對官方基準有提供的項目時的必要項目；缺少即拒絕整筆，不以其他欄位替代。
+FINANCIAL_REQUIRED = ("net_income",)
+# 同時出現整體稅後淨利與一般業欄位名時語意不明，一律拒絕，不猜哪一個才對。
+AMBIGUOUS_NET_INCOME_TYPES = ("IncomeAfterTax", "IncomeAfterTaxes")
+# 一般業的對映未改變，沿用原版本字串，已封存的補抓文件不受影響。
 MAPPING_VERSION = "finmind-official-anchor-ytd-v1"
+FINANCIAL_MAPPING_VERSION = "finmind-official-anchor-ytd-financial-v1"
+MIM_MAPPING_VERSION = "finmind-official-anchor-ytd-mim-v1"
+BD_MAPPING_VERSION = "finmind-official-anchor-ytd-bd-v1"
+
+
+class RepairSpec(NamedTuple):
+    """每個業別一份規格；不以物件相等判斷業別，避免新增業別時靜默套到別人的規則。"""
+
+    fields: "dict[str, tuple[str, str]]"
+    required: "tuple[str, ...]"
+    # True：只核對官方基準標為 provided 的項目（官方表本身沒有該欄位的業別）。
+    # False：規格列出的項目全部都要有官方金額可核對，缺一即拒絕（一般業沿用此嚴格行為）。
+    anchor_provided_only: bool
+    mapping_version: str
+
+
+REPAIR_SPECS = {
+    "ci": RepairSpec(GENERAL_FIELDS, tuple(GENERAL_FIELDS), False, MAPPING_VERSION),
+    "mim": RepairSpec(MIM_FIELDS, FINANCIAL_REQUIRED, True, MIM_MAPPING_VERSION),
+    "fh": RepairSpec(FINANCIAL_FIELDS, FINANCIAL_REQUIRED, True, FINANCIAL_MAPPING_VERSION),
+    "basi": RepairSpec(FINANCIAL_FIELDS, FINANCIAL_REQUIRED, True, FINANCIAL_MAPPING_VERSION),
+    "ins": RepairSpec(FINANCIAL_FIELDS, FINANCIAL_REQUIRED, True, FINANCIAL_MAPPING_VERSION),
+    "bd": RepairSpec(BD_FIELDS, FINANCIAL_REQUIRED, True, BD_MAPPING_VERSION),
+}
+SUPPORTED_REPAIR_INDUSTRIES = frozenset(REPAIR_SPECS)
+# 既有匯入相容（測試與舊程式沿用一般業對映）。
+FIELDS_BY_INDUSTRY = {industry: spec.fields for industry, spec in REPAIR_SPECS.items()}
+FIELDS = GENERAL_FIELDS
 
 
 class OfficialCompanyProfileProvider:
@@ -59,7 +121,7 @@ def verified_prior_record(anchor, raw, fetched_at, decision_cutoff):
     if observed > parse_aware_time(decision_cutoff, "decision_cutoff"):
         raise ValueError("補抓資料晚於截止時間，不能回填歷史快照")
     statement = anchor.financial_statement
-    if (statement is None or statement.industry not in {"ci", "mim"}
+    if (statement is None or statement.industry not in SUPPORTED_REPAIR_INDUSTRIES
             or statement.statement_type != "income_statement"
             or statement.period_kind != "cumulative_to_quarter"
             or statement.currency != "TWD"
@@ -80,11 +142,28 @@ def verified_prior_record(anchor, raw, fetched_at, decision_cutoff):
             raise ValueError("FinMind 財報期間欄位重複")
         indexed[key] = row
     anchor_facts = {fact.metric_key: fact for fact in statement.facts}
+    spec = REPAIR_SPECS[statement.industry]
+    fields = spec.fields
+    if spec.anchor_provided_only:
+        # 官方表本身缺欄位的業別只核對有提供的項目；必要項目缺少即拒絕整筆。
+        provided = {
+            metric for metric in fields
+            if (fact := anchor_facts.get(metric)) is not None and fact.value_status == "provided"
+        }
+        missing_required = [metric for metric in spec.required if metric not in provided]
+        if missing_required:
+            raise ValueError("%s 業官方基準缺少 %s" % (statement.industry, "、".join(missing_required)))
+        present_types = {
+            str(key[1]) for key in indexed if str(key[1]) in AMBIGUOUS_NET_INCOME_TYPES
+        }
+        if len(present_types) > 1:
+            raise ValueError("FinMind 同時提供多種稅後淨利欄位，語意不明")
+        fields = {metric: fields[metric] for metric in sorted(provided)}
     totals = {}
     proof = {}
     for year in (statement.fiscal_year, statement.fiscal_year - 1):
         totals[year] = {}
-        for metric, (field, origin) in FIELDS.items():
+        for metric, (field, origin) in fields.items():
             values = []
             for quarter in range(1, statement.fiscal_quarter + 1):
                 month = quarter * 3
@@ -112,7 +191,9 @@ def verified_prior_record(anchor, raw, fetched_at, decision_cutoff):
                             "body_sha256": canonical_sha256(anchor.document.body),
                             "raw_body": anchor.document.body,
                             "available_at": anchor.document.available_at},
-        "matched_current_ytd_twd": proof, "mapping_version": MAPPING_VERSION,
+        "matched_current_ytd_twd": proof,
+        "mapping_version": spec.mapping_version,
+        "reconciled_metrics": sorted(fields),
         "source_published_at": None, "timestamp_basis": "observed_at_fetch",
         "scope_limit": "當期金額相符不證明去年未重編；未取得可用時保留 reporting_scope=unknown",
     })
@@ -125,10 +206,11 @@ def verified_prior_record(anchor, raw, fetched_at, decision_cutoff):
     prior = FinancialStatement(
         symbol, "income_statement", statement.industry, year, statement.fiscal_quarter,
         "%s-01-01" % year, end, "cumulative_to_quarter", "unknown", "TWD", 1,
-        observed.date().isoformat(), None, MAPPING_VERSION,
+        observed.date().isoformat(), None,
+        spec.mapping_version,
         tuple(FinancialStatementFact(metric, "SUM_Q1_Q%s:%s" % (statement.fiscal_quarter, field),
                                     totals[year][metric], "provided", "TWD", 1)
-              for metric, (field, _) in FIELDS.items()),
+              for metric, (field, _) in fields.items()),
     )
     return CorporateRecord(document, financial_statement=prior)
 
@@ -151,7 +233,7 @@ class FundamentalRepairProvider:
         failures = []
         for anchor in self.anchors:
             statement = anchor.financial_statement
-            if statement is None or statement.industry not in {"ci", "mim"}:
+            if statement is None or statement.industry not in SUPPORTED_REPAIR_INDUSTRIES:
                 continue
             try:
                 raw = self.provider.fetch("TaiwanStockFinancialStatements", statement.symbol.split(".")[0],

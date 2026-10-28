@@ -57,7 +57,7 @@ from etf_agent.data import MarketDataDatabase, UniverseLoader  # noqa: E402
 from etf_agent.data.inferred_closures import update_inferred_closed_days  # noqa: E402
 from etf_agent.data.trading_calendar import DECISION_DEADLINE  # noqa: E402
 from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
-from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs  # noqa: E402
+from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs, trade_date_from_session_start  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
 from etf_agent.virtual_account.daily import (  # noqa: E402
@@ -287,12 +287,14 @@ def refresh_before_deadline(captures_root: Path, snapshot_path: Path, now: datet
         return False
 
 
-def daily_run_path(runs_root: Path, run_id: str) -> Path:
-    """每日 run 放在 <runs_root>/<台北日期>/<run_id>；已存在則沿用其位置。"""
+def daily_run_path(runs_root: Path, run_id: str, day_hint: "str | None" = None) -> Path:
+    """每日 run 放在 <runs_root>/<台北日期>/<run_id>；已存在則沿用其位置。
+
+    新建時優先用 day_hint（目標交易日，跟 D-Plan 一致），缺少才退回 run_id 內的執行日期。"""
     existing = find_run_dir(runs_root, run_id, RuntimeError)
     if existing is not None:
         return existing
-    day = day_from_run_id(run_id)
+    day = day_hint or day_from_run_id(run_id)
     if day is None:
         raise RuntimeError("每日 run 名稱沒有日期：%s" % run_id)
     return runs_root / day / run_id
@@ -760,15 +762,17 @@ def _main(args) -> int:
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
             return 1
     day_run_prefix = "daily-%s" % now.strftime("%Y%m%d")
+    session_start_hint = upcoming_session_start(captures_root, now)
     if not args.force:
         # 同一時段剛完成才略過；另一時段（早上為當天、晚上為隔天）或完成已久的照常另開新 run。
-        done = completed_run_for_session(runs_root, day_run_prefix, upcoming_session_start(captures_root, now), now)
+        done = completed_run_for_session(runs_root, day_run_prefix, session_start_hint, now)
         if done is not None:
             log("%s 已完成（%s），不重跑。" % done)
             return 0
-    # 每次 run 目錄都帶台北時間，同日多次執行各自保留、互不覆蓋。
+    # 每次 run 目錄都帶台北時間，同日多次執行各自保留、互不覆蓋；資料夾改用目標交易日
+    # （跟 D-Plan 一致），日曆缺漏等估不出目標時段時才退回執行日期。
     run_id = "%s-%s" % (day_run_prefix, now.strftime("%H%M%S"))
-    run_dir = daily_run_path(runs_root, run_id)
+    run_dir = daily_run_path(runs_root, run_id, trade_date_from_session_start(session_start_hint))
     summary_path = run_dir / "pipeline.json"
     if args.resume not in (None, RESUME_LATEST):
         try:

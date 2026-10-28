@@ -132,7 +132,7 @@ class TradeDecisionAllocationTests(unittest.TestCase):
             conviction_by_symbol={"2317.TW": "medium", "1101.TW": "medium"},
             support_by_symbol={"2317.TW": 2, "1101.TW": 0},
         )
-        ordered, _ = engine._conviction_targets(["1101.TW", "2317.TW"], set(), {}, Decimal("1000000"), 0, {"cash_buffer_rate": Decimal("0.1")})
+        ordered, _, _ = engine._conviction_targets(["1101.TW", "2317.TW"], set(), {}, Decimal("1000000"), 0, {"cash_buffer_rate": Decimal("0.1")}, 0)
         self.assertEqual(ordered, ["2317.TW", "1101.TW"])
 
     def test_invalid_cash_stance_is_rejected(self):

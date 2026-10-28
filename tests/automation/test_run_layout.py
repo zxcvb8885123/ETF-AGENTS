@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from etf_agent.core.artifact_store import ImmutableRunStore
-from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs, taipei_day
+from etf_agent.core.run_layout import (
+    day_from_run_id,
+    find_run_dir,
+    list_run_dirs,
+    taipei_day,
+    trade_date_from_session,
+    trade_date_from_session_start,
+)
 
 
 class RunLayoutTests(unittest.TestCase):
@@ -25,6 +32,21 @@ class RunLayoutTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             taipei_day(datetime(2026, 10, 1))
         self.assertEqual(taipei_day(datetime(2026, 10, 1, 17, tzinfo=timezone.utc)), "2026-10-02")
+
+    def test_trade_date_from_session_start_converts_to_taipei_date(self):
+        self.assertEqual(trade_date_from_session_start("2026-10-23T09:00:00+08:00"), "2026-10-23")
+        # 跨日時區換算：UTC 23:00 是台北隔天 07:00。
+        self.assertEqual(trade_date_from_session_start("2026-10-23T23:00:00Z"), "2026-10-24")
+        self.assertIsNone(trade_date_from_session_start(None))
+        self.assertIsNone(trade_date_from_session_start(""))
+        self.assertIsNone(trade_date_from_session_start("2026-10-23T09:00:00"))  # 缺時區
+        self.assertIsNone(trade_date_from_session_start("不是時間"))
+
+    def test_trade_date_from_session_reads_start_field(self):
+        self.assertEqual(trade_date_from_session({"start": "2026-10-23T09:00:00+08:00", "end": "x"}), "2026-10-23")
+        self.assertIsNone(trade_date_from_session(None))
+        self.assertIsNone(trade_date_from_session({}))
+        self.assertIsNone(trade_date_from_session("2026-10-23"))
 
     def test_find_run_dir_requires_exactly_one_match(self):
         self.assertIsNone(find_run_dir(self.root, "run-a"))
