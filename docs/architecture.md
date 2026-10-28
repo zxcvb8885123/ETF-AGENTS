@@ -36,6 +36,8 @@
 3. 仍相同時，ATR14 占價格比例低者先（波動小的先入選）。
 4. 再相同時，依股票代號。
 
+未持有的新股只能用賣出後空出的檔數：持股已達上限時，新股不佔名額（標 `MAX_POSITIONS`），已持有的 add 候選照常入選，不會被買不進去的新股擠掉。
+
 舊 Decision run 沒有 `positions_by_breadth`，仍填滿 `max_positions` 且不看 ATR；更舊的沒有 `support_by_symbol`，只依等級與代號。策略回放遇到沒有持股廣度的舊封存時，拿掉樣板的 `positions_by_breadth` 沿用舊行為並在報告註明。
 
 ## 對應參賽策略文件的四類因子

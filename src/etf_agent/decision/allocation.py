@@ -665,10 +665,16 @@ class AllocationOrderEngine:
             )
             max_positions = min(max_positions, max(target, int(self.policy["min_positions"])))
         slots = max_positions - len(active_symbols - set(ordered))
+        # 未持有的新股只能用賣出後空出的檔數；滿檔時不得排進名額，否則會擠掉已持有、買得進去的加碼。
+        free_for_new = max_positions - len(active_symbols)
         eligible: List[str] = []
         for symbol in ordered:
             if symbol not in self.prices or len(eligible) >= slots:
                 continue
+            if symbol not in active_symbols:
+                if free_for_new <= 0:
+                    continue
+                free_for_new -= 1
             if symbol not in volatility:
                 raise DecisionToolError("%s 缺少可用 ATR，不能依波動度配置" % symbol)
             eligible.append(symbol)

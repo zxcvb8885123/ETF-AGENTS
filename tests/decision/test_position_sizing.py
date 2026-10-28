@@ -20,7 +20,9 @@ from etf_agent.decision import (
     ScenarioEngine,
     apply_trade_decision,
     build_decision_policy,
+    decision_bundle_sha256,
     decision_policy_sha256,
+    decision_rules_sha256,
     seal_trade_decision,
     trade_decision_envelope,
 )
@@ -38,11 +40,11 @@ SIZING = {
 }
 
 
-def sized_inputs(tier_2317="high", tier_2330="low", stance="neutral"):
+def sized_inputs(tier_2317="high", tier_2330="low", stance="neutral", chain_bundle=None):
     """(bundle, intent, cash_stance, policy)：2317 買進、2330 加碼的交易決策，policy 為尚未綁定的基礎 policy。"""
     from test_trader import items as trade_items  # 延後匯入：test_trader 也匯入本模組的 SIZING
 
-    bundle, _, debate, _, _, _, _, _ = chain_inputs()
+    bundle, _, debate, _, _, _, _, _ = chain_inputs(chain_bundle)
     decisions = trade_items()
     decisions[0] = dict(decisions[0], conviction=tier_2317)
     decisions[1] = dict(
@@ -277,3 +279,29 @@ class PolicyBuilderCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FullPortfolioSlotTests(unittest.TestCase):
+    def full_portfolio_proposal(self, tier_new, tier_held):
+        # 2330 已持有（唯一一檔），max_positions=1 即滿檔；2317 是想新買的股票。
+        from test_team_chain import tradable_bundle  # 延後匯入：test_team_chain 也匯入本模組的 SIZING
+
+        full = tradable_bundle()
+        full["rules"]["max_positions"] = 1
+        full["rules"]["min_positions"] = 1
+        full["rules"]["config_sha256"] = decision_rules_sha256(full["rules"])
+        full["bundle_sha256"] = decision_bundle_sha256(full)
+        bundle, intent, stance, policy = sized_inputs(tier_new, tier_held, chain_bundle=full)
+        policy["max_positions"] = 1
+        policy["min_positions"] = 1
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        policy = sized_policy(policy, intent, stance, bundle)
+        return AllocationOrderEngine(bundle, policy).run(intent)
+
+    def test_new_buy_does_not_take_slot_from_held_add_when_full(self):
+        # 新股信心高於持股加碼：舊邏輯會把唯一名額給買不進去的 2317，讓 2330 沒有目標權重。
+        proposal = self.full_portfolio_proposal("high", "low")
+        self.assertEqual(list(proposal["position_sizing"]["target_weights"]), ["2330.TW"])
+        flagged = {flag["symbol"] for flag in proposal["constraint_flags"] if flag["code"] == "MAX_POSITIONS"}
+        self.assertEqual(flagged, {"2317.TW"})
+        self.assertNotIn("2317.TW", {order["symbol"] for order in proposal["order_proposal"]["orders"]})
