@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from etf_agent.core import parse_aware_time, canonical_sha256
 from etf_agent.core.artifact_store import ImmutableRunStore
-from etf_agent.core.run_layout import day_from_run_id, taipei_day
+from etf_agent.core.run_layout import day_from_run_id, taipei_day, trade_date_from_session
 from .contracts import DeliveryError, VERSION
 
 
@@ -63,8 +63,20 @@ class DeliveryRepository(ImmutableRunStore):
 
     @staticmethod
     def _day_of(artifacts):
-        """交付放進哪個台北日期資料夾：決策日，其次本次執行開始日，最後才是今天。"""
+        """優先使用已封存決策的目標交易日；診斷缺少可用時段時退回執行日期。"""
+        from etf_agent.decision import DecisionRepository
+
         request = artifacts["request"]
+        if request.get("decision_repository") and request.get("decision_run_id"):
+            try:
+                path = DecisionRepository(Path(request["decision_repository"])).verify(request["decision_run_id"])
+                bundle = json.loads((path / "decision_input.json").read_text(encoding="utf-8"))
+                day = trade_date_from_session((bundle.get("trading_status_bundle") or {}).get("target_session"))
+                if day is not None:
+                    return day
+            except (ValueError, OSError, KeyError, TypeError):
+                # 來源不存在或驗證失敗的診斷交付仍須能保存；不採用未驗證的時段。
+                pass
         day = day_from_run_id(str(request.get("decision_run_id") or ""))
         if day is None and request.get("started_at"):
             day = taipei_day(parse_aware_time(request["started_at"], "started_at", error=DeliveryError))
@@ -88,7 +100,7 @@ class DeliveryRepository(ImmutableRunStore):
         return path, view
 
     def publish_dated_copy(self, run_id):
-        """ready 報告另存一份檔名含決策日期時間（台北）的閱讀副本；失敗或診斷報告不產生。
+        """ready 報告依目標交易日分資料夾，檔名保留決策執行時間（台北）；失敗或診斷報告不產生。
 
         views/ 的資料夾名稱是內容雜湊，是驗證識別，不能改名；這份副本只方便人工尋找。"""
         artifacts = self.verify_delivery(run_id)
@@ -98,7 +110,7 @@ class DeliveryRepository(ImmutableRunStore):
         if match is None:
             return None
         taipei = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc) + timedelta(hours=8)
-        target = self.delivery_root / "dated" / taipei.strftime("%Y-%m-%d") / ("決策報告_%s_%s.md" % (taipei.strftime("%Y-%m-%d_%H%M"), artifacts["delivery_status"]["decision_status"]))
+        target = self.delivery_root / "dated" / self._day_of(artifacts) / ("決策報告_%s_%s.md" % (taipei.strftime("%Y-%m-%d_%H%M"), artifacts["delivery_status"]["decision_status"]))
         with publication_lock(self.delivery_root):
             atomic_text(target, artifacts["rendering"]["markdown"])
         return target

@@ -25,6 +25,7 @@ from etf_agent.decision import (
     seal_stance_packet,
     seal_trade_decision,
     sentiment_unavailable_report,
+    target_trade_date,
     trade_decision_envelope,
 )
 
@@ -109,6 +110,34 @@ class TeamChainFinalizationTests(unittest.TestCase):
             self.assertTrue(saved["verified"])
             run_dir = DecisionRepository(root / "repo").verify("team-run")
             self.assertTrue((run_dir / "team_inputs.json").exists())
+
+    def test_target_trade_date_reads_trading_status_bundle(self):
+        # save_run_files 存檔用的目標交易日：有 trading_status_bundle 就用它的 target_session，
+        # 沒有（例如評測重跑）就回傳 None，讓存檔退回執行日期。
+        self.assertEqual(
+            target_trade_date({"trading_status_bundle": {
+                "target_session": {"start": "2026-10-29T09:00:00+08:00", "end": "2026-10-29T13:30:00+08:00"},
+            }}),
+            "2026-10-29",
+        )
+        self.assertIsNone(target_trade_date({}))
+        self.assertIsNone(target_trade_date({"trading_status_bundle": {}}))
+
+    def test_save_without_trading_status_bundle_keeps_execution_day(self):
+        # 沒有 trading_status_bundle（例如評測重跑）時退回 run_id 內的執行日期，跟現有行為一致。
+        bundle, momentum, debate, trade, policy, team, _, _ = team_world()
+        artifacts, result = finalize(bundle, momentum, debate, trade, policy, team)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {}
+            for name, payload in {**artifacts, "momentum": momentum, "debate": debate, "intent": trade,
+                                  "policy": policy, "decision": result, "team_inputs": team}.items():
+                paths[name] = root / ("%s.json" % name)
+                paths[name].write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            saved = PortfolioDecisionApplicationService(bundle).save_run_files(
+                "decision-20261028T125822Z", root / "repo", paths,
+            )
+            self.assertEqual(Path(saved["output"]), root / "repo" / "2026-10-28" / "decision-20261028T125822Z")
 
     def test_team_chain_without_team_inputs_is_rejected(self):
         bundle, momentum, debate, trade, policy, _, _, _ = team_world()

@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from etf_agent.decision import DecisionRepository, DecisionFinalizer, RevisionHistoryBuilder, decision_policy_sha256, decision_rules_sha256, decision_bundle_sha256
 from etf_agent.decision_delivery import build_delivery, validate_delivery, save_failure, DeliveryError
+from etf_agent.core import canonical_sha256
+from etf_agent.decision_delivery.repository import DeliveryRepository
 from etf_agent.decision_delivery.builder import build_report
 from etf_agent.decision_delivery.renderer import render_report, render_report_v2, renderer_for
 from etf_agent.decision_delivery.renderer_v1 import render_report_v1
@@ -23,6 +25,47 @@ def world(rejected=False):
         a["revision_history"] = RevisionHistoryBuilder(b, p, t).create(a["proposal"], a["scenario"], a["guard"], a["risk_review"])
         result = DecisionFinalizer(b, p, m, d, t, team).run(*(a[k] for k in ("proposal", "scenario", "guard", "risk_review", "revision_history")))
     return {**a, "decision_input": b, "momentum": m, "debate": d, "intent": t, "policy": p, "team_inputs": team, "decision": result}
+
+
+class DeliveryRepositoryLayoutTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.repository = DeliveryRepository(self.root / "reports")
+        self.decision_run_id = "decision-20261028T125822Z"
+
+    def test_evening_delivery_uses_target_day_and_preserves_filename_clock(self):
+        # 只測封存佈局，不將此最小 fixture 宣稱為完整決策。
+        DecisionRepository(self.root / "decisions").save(self.decision_run_id, {
+            "decision_input": {"trading_status_bundle": {
+                "target_session": {"start": "2026-10-29T01:00:00Z"}}}}, day="2026-10-29")
+        artifacts = {
+            "request": {"decision_repository": str(self.root / "decisions"),
+                "decision_run_id": self.decision_run_id},
+            "delivery_status": {"report_status": "ready", "decision_status": "approved"},
+            "rendering": {"markdown": "測試報告"}}
+        identity = "delivery-" + canonical_sha256(artifacts)[:32]
+        path, view = self.repository.save_delivery(identity, artifacts)
+        self.assertEqual(path, self.root / "reports/runs/2026-10-29" / identity)
+        self.assertEqual(view, self.root / "reports/views/2026-10-29" / identity / "report.md")
+        self.assertEqual(self.repository.verify_delivery(identity), artifacts)
+        dated = self.repository.publish_dated_copy(identity)
+        self.assertEqual(dated, self.root / "reports/dated/2026-10-29/決策報告_2026-10-28_2058_approved.md")
+        self.assertEqual(dated.read_text(encoding="utf-8"), "測試報告")
+
+    def test_calendar_diagnostic_keeps_execution_day(self):
+        result = save_failure(self.root / "reports", "行事曆不可用", "calendar-20261028T125822Z",
+            started_at="2026-10-28T20:58:22+08:00")
+        self.assertEqual(Path(result["directory"]).parent.name, "2026-10-28")
+        self.assertEqual(Path(result["report_path"]).parents[1].name, "2026-10-28")
+        self.repository.verify_delivery(result["delivery_id"])
+        self.assertIsNone(self.repository.publish_dated_copy(result["delivery_id"]))
+
+    def test_missing_decision_keeps_run_execution_day(self):
+        artifacts = {"request": {"decision_repository": str(self.root / "missing"),
+            "decision_run_id": self.decision_run_id, "started_at": "2026-10-29T07:00:00+08:00"}}
+        self.assertEqual(self.repository._day_of(artifacts), "2026-10-28")
 
 
 class DeliveryTests(unittest.TestCase):
