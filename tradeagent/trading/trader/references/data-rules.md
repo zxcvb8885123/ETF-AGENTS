@@ -17,9 +17,26 @@
 
 | prior_decision | 可能沒有。上一份已封存決策對這檔持股的 intent、conviction 與 invalidation_conditions；只有目前持股且前次有裁決的股票才有。 | 只用來檢查一致性與前次重估條件是否已出現；不是證據，不得引用（見下）。 |
 
-整體背景包括 regime_assessment（程式判定的市場狀態）、account（現金、淨值、持股代號與檔數）、rules（競賽限制）及可能的 prior_decision_background（前次決策的狀態、cutoff、snapshot 是否相同與說明）；本批各股票的 `held_shares` 另列於逐股輸入。完整帳戶與每檔股數仍在同 Snapshot 的原始決策輸入供 Validator 重建，不需在每批 brief 重貼。這些欄位幫助你理解交易條件，不替你決定哪方論點成立。
+整體背景包括 regime_assessment（程式判定的市場狀態）、account（現金、淨值、持股代號與檔數）、rules（競賽限制）、可能的 portfolio_slots（程式算好的名額狀態，見下）及可能的 prior_decision_background（前次決策的狀態、cutoff、snapshot 是否相同與說明）；本批各股票的 `held_shares` 另列於逐股輸入。完整帳戶與每檔股數仍在同 Snapshot 的原始決策輸入供 Validator 重建，不需在每批 brief 重貼。這些欄位幫助你理解交易條件，不替你決定哪方論點成立。
 
 公司事件與全市場情緒是不同範圍。analyst_outlooks 裡的 event 表示該公司事件，不表示整體台股情緒；不能用公司結果補出全市場看法。目前事件已由第三位分析師整合，不另跑事件四子 Agent。
+
+### 名額狀態（portfolio_slots）不是證據
+
+可能沒有這個欄位（未啟用換股名額的 policy）。有的時候，它全部由程式計算，你不輸出任何數字：
+
+- `held_positions`：目前持股檔數；`max_positions`：競賽硬上限；`free_slots`：真正的空名額。
+- `positions_by_breadth`：風險 Agent 稍後才選的目標檔數對照表；交易階段還沒決定，只是參考。
+- `rotation`：`enabled`、`max_swaps_per_run`（本次最多幾個出場名額可給新股）、`min_new_conviction`（用換股名額的最低信心）。
+- `held_by_bear_strength`／`unheld_by_bull_strength`：全池持股的空頭強度與未持有股票的多頭強度分布計數。這是對**共同輸入**的統計，不是其他批的輸出。
+
+使用規則：
+
+- `free_slots` 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交；由程式依信心等級配對，名額不足者程式不建立買單並標 `MAX_POSITIONS`，信心低於門檻者標 `ROTATION_CONVICTION`。
+- 你看不到其他批的候選，也不需要指定「賣誰換誰」；配對是程式的工作。
+- 持股若空頭 claim 已經成立、多頭理由不再成立，應該給 exit 或 trim，不要慣性 hold。
+- 不得只為了騰出名額而出場：exit 與 trim 一律必須採納至少一個該股票的空頭 claim。也不得為了填滿名額而買進沒有多頭依據的股票。
+- 沒有 evidence ID，不可寫進 rationale、unresolved_questions 或 invalidation_conditions。
 
 ### 前次決策背景不是證據
 

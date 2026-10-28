@@ -12,6 +12,7 @@ from etf_agent.decision import (
     build_analyst_brief,
     canonical_sha256,
     decision_bundle_sha256,
+    growth_signal_quality,
     high_materiality_events,
     seal_report,
     sentiment_unavailable_report,
@@ -175,6 +176,62 @@ class AnalystBriefTests(unittest.TestCase):
         self.assertEqual({item["financial_status"] for item in fundamental["symbols"]}, {"unavailable"})
         # 沒有已核對的現金流文件時明確標為資料缺口，不留空白讓分析師自行推測。
         self.assertEqual({item["cash_flow"]["status"] for item in fundamental["symbols"]}, {"unavailable"})
+
+
+class GrowthSignalQualityTests(unittest.TestCase):
+    """程式判定成長訊號可不可跨股比較；只標記，不改變分析師的 outlook 規則。"""
+
+    def quality(self, available=(), missing=()):
+        metrics = {
+            "metrics": [
+                {"metric_key": key, "status": "available"} for key in available
+            ] + [
+                {"metric_key": "operating_margin_pct", "status": "unavailable"}
+            ],
+            "missing_data": [{"reason_code": code} for code in missing],
+        }
+        return growth_signal_quality(metrics)
+
+    def test_comparable_when_statement_yoy_exists(self):
+        for key in ("revenue_yoy_pct", "net_income_yoy_pct"):
+            result = self.quality(available=(key,))
+            self.assertEqual(result["level"], "comparable", key)
+            self.assertEqual(result["comparable_growth_metrics"], [key])
+
+    def test_unsupported_industry_is_reported_separately(self):
+        result = self.quality(missing=("UNSUPPORTED_INDUSTRY_fh",))
+        self.assertEqual(result["level"], "industry_formula_unsupported")
+        self.assertEqual(result["comparable_growth_metrics"], [])
+        # 金融業的月營收與一般業營業收入不可並列比較，說明必須寫明這點。
+        self.assertIn("不可用它與其他產業並列比較", result["note"])
+
+    def test_monthly_revenue_only_when_comparison_statement_missing(self):
+        result = self.quality(missing=("COMPARISON_STATEMENT_MISSING",))
+        self.assertEqual(result["level"], "monthly_revenue_only")
+        self.assertEqual(result["missing_reason_codes"], ["COMPARISON_STATEMENT_MISSING"])
+
+    def test_statement_yoy_wins_over_unsupported_industry_flag(self):
+        result = self.quality(available=("revenue_yoy_pct",), missing=("UNSUPPORTED_INDUSTRY_fh",))
+        self.assertEqual(result["level"], "comparable")
+
+    def test_empty_metrics_fall_back_to_monthly_revenue_only(self):
+        self.assertEqual(growth_signal_quality({})["level"], "monthly_revenue_only")
+
+    def test_brief_carries_the_marking_for_every_symbol(self):
+        bundle = bundle_with_event()
+        brief = build_analyst_brief(bundle, MomentumEngine(bundle).run(), "fundamental", None)
+        for item in brief["symbols"]:
+            self.assertIn("growth_signal_quality", item)
+            self.assertIn(item["growth_signal_quality"]["level"],
+                          ("comparable", "monthly_revenue_only", "industry_formula_unsupported"))
+
+    def test_other_analysts_do_not_get_the_marking(self):
+        bundle = bundle_with_event()
+        momentum = MomentumEngine(bundle).run()
+        for analyst in ("technical", "event"):
+            brief = build_analyst_brief(bundle, momentum, analyst)
+            for item in brief["symbols"]:
+                self.assertNotIn("growth_signal_quality", item, analyst)
 
 
 class AnalystTeamTests(unittest.TestCase):

@@ -6,6 +6,16 @@
 
 只讀主控提供的基本面摘要：本批股票的 `metrics`（程式由已驗證財報計算的可用指標）、`unavailable_metrics`（無法計算的指標與原因）、`monthly_revenue`（官方月營收年增、月增、累計年增）與 `cash_flow`（程式由已核對的累計現金流量表計算：營業活動現金流、資本支出、自由現金流＝營業現金流＋資本支出、營業現金流對稅前淨利比率；`status=unavailable` 時附原因）。現金流來自 FinMind，只有稅前淨利與官方累計損益表相符才接入，引用時要說是資料商來源。
 
+摘要另附程式判定的 `growth_signal_quality`（`level`、`comparable_growth_metrics`、`missing_reason_codes`、`note`），只標記成長訊號能否跨股比較，不替你決定 outlook：
+
+| level | 意義 | 使用規則 |
+| --- | --- | --- |
+| `comparable` | 有同口徑財報算出的營收或淨利年增 | 可以比較成長幅度 |
+| `monthly_revenue_only` | 缺去年同期損益表，只剩月營收年增 | 只有當期金額仍不得宣稱比去年改善（既有規則）；說明限制 |
+| `industry_formula_unsupported` | 金融業等格式，程式算不出任何比率 | 月營收的會計內容與一般業營業收入不同；說明限制 |
+
+`level` 不是 `comparable` 時，理由裡要寫清楚判斷受什麼限制，缺少的期間與報表寫進 `data_gaps`。這個欄位只提供事實，不改變 outlook 的判斷標準。`missing_reason_codes` 是內部代碼，不抄進對外文字。
+
 摘要可提供 `financial_facts`：金融業當期的稅後淨利及淨收益原值。逐筆保留來源欄位、期間、幣別、單位倍率及證據。這些是當期金額，不是成長率。不得自行換單位、計算年增或把淨收益改稱一般業營業收入；沒有可比去年資料時，不能宣稱獲利改善。其 evidence_ids 可引用。
 
 ## 資料不足時先補資料

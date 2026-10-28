@@ -239,6 +239,7 @@ class AllocationOrderEngine:
         self.policy = dict(policy)
         self.prices = self._latest_prices()
         self._volatility: Optional[Dict[str, Decimal]] = None
+        self._returns: Optional[Dict[str, Decimal]] = None
 
     def run(
         self,
@@ -451,9 +452,12 @@ class AllocationOrderEngine:
                 constraint_flags.append({"symbol": symbol, "code": "RISK_ACTIVE_SHARE", "detail": detail})
         candidates = [symbol for symbol in candidates if symbol not in (active_share_dropped or {})]
         sized_weights: Optional[Dict[str, Decimal]] = None
+        skipped: Dict[str, str] = {}
+        rotation = (self.policy.get("position_sizing") or {}).get("rotation")
         if "position_sizing" in self.policy:
-            candidates, sized_weights = self._conviction_targets(
-                candidates, active_symbols, target_shares, marked_nav, max_positions, effective
+            candidates, sized_weights, skipped = self._conviction_targets(
+                candidates, active_symbols, target_shares, marked_nav, max_positions, effective,
+                len(current),
             )
         for symbol in candidates:
             if symbol not in self.prices:
@@ -461,13 +465,16 @@ class AllocationOrderEngine:
                     {"symbol": symbol, "code": "MISSING_PRICE", "detail": "缺少 cutoff 行情"}
                 )
                 continue
-            if (symbol not in active_symbols and len(active_symbols) >= max_positions) or (
-                sized_weights is not None and symbol not in sized_weights
-            ):
-                breadth = breadth_target(self.policy.get("position_sizing") or {})
+            # 啟用 rotation 時名額已由 _conviction_targets 全權配對（換股名額可超過廣度目標），
+            # 這裡只看是否入選，否則換股進來的新股會被下面的持股數上限誤擋成 MAX_POSITIONS。
+            over_max = (
+                rotation is None
+                and symbol not in active_symbols
+                and len(active_symbols) >= max_positions
+            )
+            if over_max or (sized_weights is not None and symbol not in sized_weights):
                 constraint_flags.append(
-                    {"symbol": symbol, "code": "MAX_POSITIONS",
-                     "detail": "持股檔數已達上限" if breadth is None else "持股檔數已達風險 Agent 持股廣度對應的 %d 檔" % breadth}
+                    {"symbol": symbol, **self._slot_flag(symbol, skipped, rotation)}
                 )
                 continue
             limit = self._weight_limit(symbol, effective)
@@ -637,8 +644,14 @@ class AllocationOrderEngine:
         marked_nav: Decimal,
         max_positions: int,
         effective: Mapping[str, object],
-    ) -> Tuple[List[str], Dict[str, Decimal]]:
-        """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。"""
+        held_count: int,
+    ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str]]:
+        """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。
+
+        回傳 (ordered, weights, skipped)；skipped 記錄被名額規則擋下的新股與對應旗標代碼，
+        啟用 rotation 時才會有內容，舊 policy 一律為空並由 `_run` 沿用原本的旗標文案。
+        """
+        hard_max = max_positions
         sizing = self.policy["position_sizing"]
         tiers = sizing.get("conviction_by_symbol")
         if tiers is None:
@@ -655,26 +668,62 @@ class AllocationOrderEngine:
                 key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),
             )
         else:
-            # 持股廣度啟用後，同等級同支持數改由 ATR 低者優先，不再只靠股票代號決定誰入選。
+            # 持股廣度啟用後，同等級同支持數由 selection_tiebreak 決定誰入選；
+            # 省略此欄位的舊 Decision run 沿用 atr_low（低波動優先），重建結果不變。
+            tiebreak = str(sizing.get("selection_tiebreak", "atr_low"))
             ordered = sorted(
                 candidates,
                 key=lambda symbol: (
                     CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0),
-                    volatility.get(symbol, Decimal("Infinity")), symbol,
+                    *self._tiebreak_key(symbol, tiebreak, volatility), symbol,
                 ),
             )
             max_positions = min(max_positions, max(target, int(self.policy["min_positions"])))
-        slots = max_positions - len(active_symbols - set(ordered))
-        # 未持有的新股只能用賣出後空出的檔數；滿檔時不得排進名額，否則會擠掉已持有、買得進去的加碼。
-        free_for_new = max_positions - len(active_symbols)
+        # held_add_priority：未持有的新股只能用賣出後空出的檔數；滿檔時不得排進名額，
+        # 否則會擠掉已持有、買得進去的加碼。省略此欄位的舊 Decision run 維持原重建行為。
+        held_add_priority = "held_add_priority" in sizing
+        rotation = sizing.get("rotation")
+        skipped: Dict[str, str] = {}
+        if rotation is None:
+            slots = max_positions - len(active_symbols - set(ordered))
+            free_for_new = max_positions - len(active_symbols)
+            growth_left = swap_left = new_cap = 0
+            min_tier = 0
+        else:
+            # 廣度收窄只停止「淨增加」，不凍結既有持股的加碼與換股：cap 以目前持股數為底，
+            # 否則持有 30 檔而廣度選 22 時 slots 會變負數，連 add 都一起被凍住。
+            cap = max(max_positions, min(held_count, hard_max))
+            slots = cap - len(active_symbols - set(ordered))
+            # growth：廣度目標之下、出場前就存在的真正空名額，不設信心門檻。
+            growth_left = max(0, max_positions - held_count)
+            # swap：本次實際出場（被 RISK_MIN_POSITIONS 留住或不可交易而續抱者不計）釋出的名額。
+            released = max(0, held_count - len(active_symbols))
+            swap_left = min(released, int(rotation["max_swaps_per_run"]))
+            new_cap = max(0, hard_max - len(active_symbols))
+            min_tier = CONVICTION_LEVELS.index(str(rotation["min_new_conviction"]))
+            free_for_new = 0
         eligible: List[str] = []
         for symbol in ordered:
             if symbol not in self.prices or len(eligible) >= slots:
                 continue
-            if symbol not in active_symbols:
-                if free_for_new <= 0:
+            if rotation is None:
+                if held_add_priority and symbol not in active_symbols:
+                    if free_for_new <= 0:
+                        continue
+                    free_for_new -= 1
+            elif symbol not in active_symbols:
+                if new_cap <= 0 or (growth_left <= 0 and swap_left <= 0):
+                    skipped[symbol] = "MAX_POSITIONS"
                     continue
-                free_for_new -= 1
+                if growth_left > 0:
+                    growth_left -= 1
+                elif CONVICTION_LEVELS.index(tiers[symbol]) > min_tier:
+                    # 換股釋出的名額只給信心足夠的新股，避免為了填名額而換進弱候選。
+                    skipped[symbol] = "ROTATION_CONVICTION"
+                    continue
+                else:
+                    swap_left -= 1
+                new_cap -= 1
             if symbol not in volatility:
                 raise DecisionToolError("%s 缺少可用 ATR，不能依波動度配置" % symbol)
             eligible.append(symbol)
@@ -696,8 +745,59 @@ class AllocationOrderEngine:
             decimal_value(sizing["volatility_floor"], "volatility_floor"),
             {symbol: self._weight_limit(symbol, effective) * LIMIT_HEADROOM for symbol in eligible},
             Decimal("1") - effective["cash_buffer_rate"] - held_outside,  # type: ignore[operator]
+            # 省略 volatility_exponent 的舊 policy 傳 None，conviction_weights 走 v1 原式。
+            decimal_value(sizing["volatility_exponent"], "volatility_exponent")
+            if "volatility_exponent" in sizing
+            else None,
         )
-        return ordered, weights
+        return ordered, weights, skipped
+
+    def _slot_flag(
+        self,
+        symbol: str,
+        skipped: Mapping[str, str],
+        rotation: Optional[Mapping[str, object]],
+    ) -> Dict[str, str]:
+        """名額不足時的旗標；rotation 省略時文案與舊 Decision run 逐字相同。"""
+        if rotation is None:
+            breadth = breadth_target(self.policy.get("position_sizing") or {})
+            return {
+                "code": "MAX_POSITIONS",
+                "detail": "持股檔數已達上限" if breadth is None
+                else "持股檔數已達風險 Agent 持股廣度對應的 %d 檔" % breadth,
+            }
+        if skipped.get(symbol) == "ROTATION_CONVICTION":
+            return {
+                "code": "ROTATION_CONVICTION",
+                "detail": "出場釋出的名額只給信心不低於 %s 的新股（交易 Agent 的意圖未被改寫）"
+                % rotation["min_new_conviction"],
+            }
+        return {
+            "code": "MAX_POSITIONS",
+            "detail": "持股已滿且本次沒有出場釋出名額（交易 Agent 的意圖未被改寫）",
+        }
+
+    def _tiebreak_key(
+        self, symbol: str, tiebreak: str, volatility: Mapping[str, Decimal]
+    ) -> Tuple[Decimal, ...]:
+        """同等級同支持數的排序值（升冪）；缺值一律排到最後，不補假值。"""
+        if tiebreak == "symbol":
+            return ()
+        if tiebreak == "momentum_high":
+            value = self._returns_20d().get(symbol)
+            # 近期報酬高者優先，所以取負值；缺 20 日報酬者排最後。
+            return (Decimal("Infinity") if value is None else -value,)
+        return (volatility.get(symbol, Decimal("Infinity")),)
+
+    def _returns_20d(self) -> Dict[str, Decimal]:
+        if self._returns is None:
+            items = MomentumEngine(self.context.bundle).run()["items"]
+            self._returns = {
+                str(item["symbol"]).upper(): Decimal(str(item["return_20d"]))
+                for item in items
+                if item.get("status") == "available" and item.get("return_20d") is not None
+            }
+        return self._returns
 
     def _atr_pct(self) -> Dict[str, Decimal]:
         if self._volatility is None:

@@ -21,8 +21,21 @@ from .contracts import (
 
 
 SIZING_METHOD = "conviction_volatility_v1"
+# 2026-10-28 後新增 v2：以 volatility_exponent 控制低波動偏好的強度（0 為完全不看波動度）。
+# v1 的語意與程式路徑完全不動，舊 Decision run 仍以原式重建。
+SIZING_METHOD_V2 = "conviction_volatility_v2"
+SIZING_METHODS = (SIZING_METHOD, SIZING_METHOD_V2)
+# 同等級同支持數的入選順序；省略欄位即沿用 atr_low（低波動優先）。
+SELECTION_TIEBREAKS = ("atr_low", "symbol", "momentum_high")
 # 2026-10-19 後新增的單股硬上限整張減碼；省略此欄位的舊 Decision run 維持原重建行為。
 STOCK_WEIGHT_FIT = "v1"
+# 2026-10-28 後新增：持股滿檔時未持有的新股不佔名額，已持有的 add 照常入選。
+# 省略此欄位的舊 Decision run 維持新股可佔滿檔名額的原重建行為。
+HELD_ADD_PRIORITY = "v1"
+# 2026-10-28 後新增：滿檔時本次出場釋出的名額可以給未持有的新股（換股）。省略 rotation 的
+# Decision run 維持「滿檔完全不進新股」的原重建行為；名額配對全部由程式計算，Agent 不參與。
+ROTATION_VERSION = "v1"
+ROTATION_FIELDS = {"version", "max_swaps_per_run", "min_new_conviction"}
 CONVICTION_LEVELS = ("high", "medium", "low")
 # 現金姿態由積極到防守；對應的現金緩衝由 Policy 設定，必須低於競賽現金上限。
 CASH_STANCES = ("aggressive", "neutral", "defensive")
@@ -57,6 +70,51 @@ def validate_cash_stance(context: DecisionContext, stance: object, prefix: str, 
         errors.append("%s 引用不存在：%s" % (prefix, ", ".join(unknown)))
 
 
+def _validate_volatility_exponent(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """v2 必須給 0～1 的波動度指數；v1 不得出現此欄位，確保舊 run 走原式重建。"""
+    present = "volatility_exponent" in sizing
+    if sizing.get("method") == SIZING_METHOD_V2:
+        if not present:
+            errors.append("position_sizing.volatility_exponent 是 %s 的必要欄位" % SIZING_METHOD_V2)
+            return
+    elif present:
+        errors.append(
+            "position_sizing.volatility_exponent 只允許用於 %s；%s 必須省略"
+            % (SIZING_METHOD_V2, SIZING_METHOD)
+        )
+        return
+    if not present:
+        return
+    try:
+        exponent = decimal_value(sizing["volatility_exponent"], "position_sizing.volatility_exponent")
+    except DecisionToolError as error:
+        errors.append(str(error))
+        return
+    if exponent < 0 or exponent > 1:
+        errors.append("position_sizing.volatility_exponent 必須介於 0 與 1（含）")
+
+
+def _validate_rotation(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """滿檔換股名額的政策欄位；省略即舊行為（滿檔完全不進新股）。"""
+    if "rotation" not in sizing:
+        return
+    rotation = sizing["rotation"]
+    if not isinstance(rotation, Mapping):
+        errors.append("position_sizing.rotation 必須是物件")
+        return
+    reject_unknown_fields(rotation, ROTATION_FIELDS, "position_sizing.rotation", errors)
+    if rotation.get("version") != ROTATION_VERSION:
+        errors.append("position_sizing.rotation.version 只允許 %s" % ROTATION_VERSION)
+    swaps = rotation.get("max_swaps_per_run")
+    if isinstance(swaps, bool) or not isinstance(swaps, int) or swaps < 0:
+        errors.append("position_sizing.rotation.max_swaps_per_run 必須是非負整數")
+    if rotation.get("min_new_conviction") not in CONVICTION_LEVELS:
+        errors.append("position_sizing.rotation.min_new_conviction 必須是 high／medium／low 之一")
+    # 換股名額的前提是「新股不佔滿檔名額」，否則釋出名額的計算沒有意義。
+    if "held_add_priority" not in sizing:
+        errors.append("position_sizing.rotation 必須與 held_add_priority 同時存在")
+
+
 def validate_position_sizing(
     policy: Mapping[str, object], universe: Sequence[str], errors: List[str]
 ) -> None:
@@ -70,14 +128,23 @@ def validate_position_sizing(
             "method", "conviction_multipliers", "volatility_floor", "cash_buffer_by_stance",
             "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
             "support_by_symbol", "stock_weight_fit", "positions_by_breadth", "position_breadth",
+            "held_add_priority", "rotation", "volatility_exponent", "selection_tiebreak",
         },
         "DecisionPolicy.position_sizing",
         errors,
     )
-    if sizing.get("method") != SIZING_METHOD:
-        errors.append("position_sizing.method 必須為 %s" % SIZING_METHOD)
+    if sizing.get("method") not in SIZING_METHODS:
+        errors.append("position_sizing.method 必須為 %s" % "或".join(SIZING_METHODS))
+    _validate_volatility_exponent(sizing, errors)
+    if "selection_tiebreak" in sizing and sizing["selection_tiebreak"] not in SELECTION_TIEBREAKS:
+        errors.append(
+            "position_sizing.selection_tiebreak 必須是 %s" % "／".join(SELECTION_TIEBREAKS)
+        )
     if "stock_weight_fit" in sizing and sizing["stock_weight_fit"] != STOCK_WEIGHT_FIT:
         errors.append("position_sizing.stock_weight_fit 只允許 %s；舊 Decision run 省略此欄位" % STOCK_WEIGHT_FIT)
+    if "held_add_priority" in sizing and sizing["held_add_priority"] != HELD_ADD_PRIORITY:
+        errors.append("position_sizing.held_add_priority 只允許 %s；舊 Decision run 省略此欄位" % HELD_ADD_PRIORITY)
+    _validate_rotation(sizing, errors)
     multipliers = sizing.get("conviction_multipliers")
     if not isinstance(multipliers, Mapping) or set(multipliers) != set(CONVICTION_LEVELS):
         errors.append("position_sizing.conviction_multipliers 必須剛好包含 high／medium／low")
@@ -200,12 +267,23 @@ def conviction_weights(
     volatility_floor: Decimal,
     limits: Mapping[str, Decimal],
     budget: Decimal,
+    volatility_exponent: Optional[Decimal] = None,
 ) -> Dict[str, Decimal]:
-    """Split budget ∝ multiplier / max(ATR%, floor); cap at limits and redistribute."""
-    raw = {
-        symbol: multipliers[tiers[symbol]] / max(volatility[symbol], volatility_floor)
-        for symbol in order
-    }
+    """Split budget ∝ multiplier / max(ATR%, floor) ** exponent; cap at limits and redistribute.
+
+    ``volatility_exponent`` 為 None 時走 v1 原式（不經過 ``**``），保證舊 Decision run 逐位重建；
+    0 代表完全不看波動度（同等級等權），1 與 v1 數值相同。
+    """
+    def _raw(symbol: str) -> Decimal:
+        multiplier = multipliers[tiers[symbol]]
+        floored = max(volatility[symbol], volatility_floor)
+        if volatility_exponent is None:
+            return multiplier / floored
+        if volatility_exponent == 0:
+            return multiplier
+        return multiplier / (floored ** volatility_exponent)
+
+    raw = {symbol: _raw(symbol) for symbol in order}
     weights = {symbol: Decimal("0") for symbol in order}
     remaining = list(order)
     left = max(budget, Decimal("0"))

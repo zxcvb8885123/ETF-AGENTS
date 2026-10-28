@@ -21,6 +21,7 @@ from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS
 from .prior_decision import PriorDecisionContextValidator
+from .rotation import validate_portfolio_slots
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
@@ -32,11 +33,16 @@ INTEGRATED_TEAM_VERSION = "2.1"
 INTEGRATED_TEAM_FIELDS = {"schema_version", "analyst_reports", "cash_stance"}
 MEMORY_TEAM_VERSION = "2.2"
 MEMORY_TEAM_FIELDS = INTEGRATED_TEAM_FIELDS | {"prior_decision_context"}
+ROTATION_TEAM_VERSION = "2.3"
+ROTATION_TEAM_FIELDS = MEMORY_TEAM_FIELDS | {"portfolio_slots"}
 TEAM_FIELDS_BY_VERSION = {
     STANCE_SCHEMA_VERSION: TEAM_INPUT_FIELDS,
     INTEGRATED_TEAM_VERSION: INTEGRATED_TEAM_FIELDS,
     MEMORY_TEAM_VERSION: MEMORY_TEAM_FIELDS,
+    ROTATION_TEAM_VERSION: ROTATION_TEAM_FIELDS,
 }
+# 2.2 起都附前次決策背景；2.3 再加程式算好的名額脈絡。
+MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION)
 
 
 def build_team_inputs(
@@ -44,15 +50,21 @@ def build_team_inputs(
     research_result: Optional[Mapping[str, object]],
     cash_stance: Mapping[str, object],
     prior_decision_context: Optional[Mapping[str, object]] = None,
+    portfolio_slots: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
     2.0：舊封存，另含事件研究 ``research_result``；2.1：三份分析報告與現金姿態；
-    2.2：再加交易 Agent 看到的前次決策背景 ``prior_decision_context``（available 或 unavailable 都要存）。
+    2.2：再加交易 Agent 看到的前次決策背景 ``prior_decision_context``（available 或 unavailable 都要存）；
+    2.3：再加程式算好的名額脈絡 ``portfolio_slots``（滿檔換股），是 2.2 的超集。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
-    if prior_decision_context is not None:
+    if portfolio_slots is not None and prior_decision_context is None:
+        raise DecisionToolError("team_inputs 2.3 的名額脈絡必須與前次決策背景同時存在")
+    if portfolio_slots is not None:
+        version = ROTATION_TEAM_VERSION
+    elif prior_decision_context is not None:
         version = MEMORY_TEAM_VERSION
     elif research_result is None:
         version = INTEGRATED_TEAM_VERSION
@@ -67,6 +79,8 @@ def build_team_inputs(
         team["research_result"] = dict(research_result)
     if prior_decision_context is not None:
         team["prior_decision_context"] = dict(prior_decision_context)
+    if portfolio_slots is not None:
+        team["portfolio_slots"] = dict(portfolio_slots)
     return team
 
 
@@ -186,16 +200,25 @@ class DecisionFinalizer:
         version = team.get("schema_version")
         fields = TEAM_FIELDS_BY_VERSION.get(str(version))
         if fields is None:
-            return ["team_inputs.schema_version 必須為 2.0（舊封存）、2.1（事件併入分析團隊）或 2.2（附前次決策背景）"]
+            return [
+                "team_inputs.schema_version 必須為 2.0（舊封存）、2.1（事件併入分析團隊）、"
+                "2.2（附前次決策背景）或 2.3（再附名額脈絡）"
+            ]
         if set(team) != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
         integrated = version != STANCE_SCHEMA_VERSION
-        # 2.2 的前次決策背景先自行重建驗證，再交給 TradeDecisionValidator 檢查交易 Agent 沒有引用它。
-        prior = team.get("prior_decision_context") if version == MEMORY_TEAM_VERSION else None
-        if version == MEMORY_TEAM_VERSION:
+        # 2.2／2.3 的前次決策背景先自行重建驗證，再交給 TradeDecisionValidator 檢查交易 Agent 沒有引用它。
+        prior = team.get("prior_decision_context") if version in MEMORY_TEAM_VERSIONS else None
+        if version in MEMORY_TEAM_VERSIONS:
             errors.extend(
                 "team_inputs.prior_decision_context：%s" % error
                 for error in PriorDecisionContextValidator(self.bundle).validate(prior)
+            )
+        # 2.3 的名額脈絡全部由程式算；以最終 policy 重算比對（build_portfolio_slots 只讀
+        # apply_trade_decision 不會改動的欄位，所以與交易階段用基礎 policy 建出的結果相同）。
+        if version == ROTATION_TEAM_VERSION:
+            validate_portfolio_slots(
+                self.bundle, self.policy, self.debate, team.get("portfolio_slots"), errors
             )
         reports = team.get("analyst_reports")
         research = {} if integrated else team.get("research_result")

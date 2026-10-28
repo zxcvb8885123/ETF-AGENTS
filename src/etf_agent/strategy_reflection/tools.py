@@ -8,7 +8,14 @@ from typing import Dict, List, Mapping, Sequence
 
 from etf_agent.decision.sizing import validate_position_sizing
 
-from .contracts import FORBIDDEN_PREFIXES, KNOBS, SIZING_GROUPS, Knob, ReflectionError
+from .contracts import (
+    FORBIDDEN_PREFIXES,
+    KNOBS,
+    POSITION_COUNT_KNOBS,
+    SIZING_GROUPS,
+    Knob,
+    ReflectionError,
+)
 
 
 def _container(template: Dict[str, object], path: str):
@@ -34,7 +41,15 @@ def read_knob(template: Mapping[str, object], path: str):
 
 
 def current_knobs(template: Mapping[str, object]) -> Dict[str, str]:
-    return {path: str(read_knob(template, path)) for path in sorted(KNOBS)}
+    """樣板目前的旋鈕值；樣板沒有的選配旋鈕（例如 v1 沒有 volatility_exponent、未啟用
+    rotation 時沒有 max_swaps_per_run）直接略過，不列入也不報錯。"""
+    values: Dict[str, str] = {}
+    for path in sorted(KNOBS):
+        try:
+            values[path] = str(read_knob(template, path))
+        except ReflectionError:
+            continue
+    return values
 
 
 def _number(knob: Knob, raw: object, label: str) -> Decimal:
@@ -65,7 +80,8 @@ def check_proposal(knob_path: str, proposed: object, template: Mapping[str, obje
     if abs(value - current) > knob.step:
         raise ReflectionError("旋鈕 %s 單次變幅 %s 超過上限 %s" % (knob_path, abs(value - current), knob.step))
     low, high = knob.low, knob.high
-    if knob.kind == "int":
+    # 檔數類整數旋鈕的範圍由競賽規則決定；其他整數旋鈕（例如換股上限）用自己的 low／high。
+    if knob_path in POSITION_COUNT_KNOBS:
         low = max(low, Decimal(str(rules["min_positions"])))
         high = Decimal(str(rules["max_positions"]))
     if value < low or (high is not None and value > high):

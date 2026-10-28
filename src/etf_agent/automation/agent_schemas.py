@@ -73,6 +73,11 @@ CASH_STANCE_SCHEMA = _object(
      "rationale": _TEXT, "evidence_ids": _strings(1)},
     ("level", "breadth", "rationale", "evidence_ids"),
 )
+# Codex strict JSON Schema 要求 properties 內宣告的欄位全部列入 required，但 revision_actions 的
+# symbol 與 value 只有部分 type 適用，不適用者必須能送出空字串；因此這兩個欄位不套用 _TEXT 的
+# minLength 1（_TEXT 其他用途不變）。條件必填由 RiskReviewValidator._validate_action 負責。
+_EMPTIABLE_TEXT = {"type": "string"}
+
 REVIEW_SCHEMA = _object(
     {
         "decision": {"enum": ["approve", "revise", "reject"]},
@@ -85,8 +90,8 @@ REVIEW_SCHEMA = _object(
             "items": _object(
                 {
                     "type": {"enum": ["remove_candidate", "increase_cash_buffer", "reduce_max_stock_weight", "reduce_turnover_limit"]},
-                    "symbol": _TEXT,
-                    "value": _TEXT,
+                    "symbol": _EMPTIABLE_TEXT,
+                    "value": _EMPTIABLE_TEXT,
                     "reason": _TEXT,
                 },
                 # Codex strict JSON Schema 要求 properties 內宣告的欄位全部列入 required；

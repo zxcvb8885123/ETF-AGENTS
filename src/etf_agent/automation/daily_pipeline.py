@@ -26,6 +26,7 @@ from etf_agent.decision import (
     apply_trade_decision,
     bind_drawdown,
     build_decision_policy,
+    build_portfolio_slots,
     build_team_inputs,
     decision_policy_sha256,
     revision_effects,
@@ -239,12 +240,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         with self._timed("research"):
             debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
 
-        self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
-        prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
-        with self._timed("trader"):
-            trade = self.run_trader(bundle, momentum, analysts, debate, decision_run_id, prior_context)
-
-        self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
+        # 基礎 policy 在交易階段之前建立：啟用 rotation 時交易 Agent 需要程式算好的名額脈絡。
+        # build_decision_policy 與 bind_drawdown 都是純函式，提前建立不改變內容，只讓樣板錯誤
+        # 在花費子 Agent 呼叫之前就被發現；policy_base artifact 仍在 decision 6 保存。
         base_policy = build_decision_policy(
             service.read_json(policy_template_path, " 策略樣板"),
             bundle,
@@ -253,6 +251,21 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         # 回撤由程式從帳本 NAV 歷史計算並綁進 policy；風險 Agent 只看到結果與現金姿態下限。
         base_policy = bind_drawdown(base_policy, bundle, nav_history)
         base_policy["content_sha256"] = decision_policy_sha256(base_policy)
+        # 沒有 rotation 的樣板一律不建名額脈絡，team_inputs 維持 2.2、brief 與舊版逐位相同。
+        slots = (
+            build_portfolio_slots(bundle, base_policy, debate)
+            if isinstance((base_policy.get("position_sizing") or {}).get("rotation"), Mapping)
+            else None
+        )
+
+        self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
+        prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
+        with self._timed("trader"):
+            trade = self.run_trader(
+                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots
+            )
+
+        self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         self.save_artifact("policy_base", base_policy)
         with self._timed("cash_stance"):
             stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"),
@@ -297,7 +310,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.stage_durations["allocation_review"] = round(time.monotonic() - review_started, 1)
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
-        team = build_team_inputs(analysts, None, stance, prior_context)
+        team = build_team_inputs(analysts, None, stance, prior_context, slots)
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team).run(
             proposal, scenario, guard, review, history
         )

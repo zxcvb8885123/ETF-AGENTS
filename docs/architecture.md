@@ -33,10 +33,19 @@
 
 1. 信心等級：`high`、`medium`、`low`。
 2. 同等級時，交易決策採納的多頭 claim 數減空頭 claim 數，越大越先（`support_by_symbol`，綁在 Policy 並由 Validator 重算）。
-3. 仍相同時，ATR14 占價格比例低者先（波動小的先入選）。
+3. 仍相同時，依 `position_sizing.selection_tiebreak`：`atr_low`（ATR14 占價格比例低者先，省略欄位時的預設與舊行為）、`symbol`（不看波動度）、`momentum_high`（20 日報酬高者先，缺值排最後）。
 4. 再相同時，依股票代號。
 
-未持有的新股只能用賣出後空出的檔數：持股已達上限時，新股不佔名額（標 `MAX_POSITIONS`），已持有的 add 候選照常入選，不會被買不進去的新股擠掉。
+未持有的新股只能用賣出後空出的檔數：持股已達上限時，新股不佔名額（標 `MAX_POSITIONS`），已持有的 add 候選照常入選，不會被買不進去的新股擠掉。此行為由 `position_sizing.held_add_priority`（目前 `v1`）開啟；2026-10-28 前封存、沒有此欄位的舊 Decision run 維持新股可佔滿檔名額的原重建行為，確保仍能通過重建驗證。
+
+啟用 `position_sizing.rotation` 時，名額改由程式全域配對（須與 `held_add_priority` 同時存在）：
+
+- `cap = max(廣度目標, min(目前持股數, max_positions))`：廣度收窄只停止淨增加，不再凍結既有持股的加碼。
+- `growth = max(0, 廣度目標 − 目前持股數)` 是目標之下的真正空名額，不設信心門檻。
+- `swap = min(本次實際出場檔數, max_swaps_per_run)` 是出場釋出的名額，只給信心不低於 `min_new_conviction` 的新股，否則標 `ROTATION_CONVICTION`。
+- 新股總數不超過 `max_positions − 配置後持股數`；出場與空名額都為 0 時新股數必為 0。
+
+交易 Agent 會在 brief 與 `team_inputs` 2.3 收到程式算好的 `portfolio_slots`（持股檔數、硬上限、空名額、全池多空強度統計）當背景，知道滿檔時買新股必須有持股出場；它不指定誰換誰，配對是程式的工作，且出場仍必須採納該股票的空頭 claim。
 
 舊 Decision run 沒有 `positions_by_breadth`，仍填滿 `max_positions` 且不看 ATR；更舊的沒有 `support_by_symbol`，只依等級與代號。策略回放遇到沒有持股廣度的舊封存時，拿掉樣板的 `positions_by_breadth` 沿用舊行為並在報告註明。
 
@@ -200,6 +209,10 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 - 沒有前次 run（新帳戶、評測重跑、決策庫為空）或本次沒有目標交易時段時輸出 `status=unavailable`（`reason` 說明），不是錯誤。
 - 續跑沿用本 run 已存的 `prior_decision_context.json`（仍須通過驗證），避免決策庫變動改變輸入。
 - 實作：`src/etf_agent/decision/prior_decision.py`；`team_inputs` 2.2 由 Finalizer 以 `PriorDecisionContextValidator` 重建驗證，2.1／2.0 舊封存照舊。
+
+### 決策與每日 run 的日期資料夾
+
+`artifacts/decisions/<date>/` 與 `artifacts/daily/<date>/` 的 `<date>` 是本次**目標交易日**（`target_session.start` 換算的台北日期），跟 `artifacts/competition_d_plan/` 一致；晚上做隔天備案時，`<date>` 就是隔天。缺少 `target_session`（評測重跑或行事曆缺漏）才退回**執行當天**。資料夾日期只是佈局，不影響 `run_id`、manifest 或雜湊封印；查找既有 run 一律先用 `find_run_dir`／`list_run_dirs` 全域掃描，不受資料夾改名或日期估算影響。`artifacts/reports/` 的 `runs/`、`views/` 與 `dated/` 亦依決策封存的目標交易日歸類；缺少可用目標時段的診斷交付沿用執行日期。`dated/` 報告檔名中的日期時間保留決策執行時間（台北），供稽核辨識。
 
 ## 校準旁觀者
 

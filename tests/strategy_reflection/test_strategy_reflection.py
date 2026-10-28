@@ -1,3 +1,4 @@
+import copy
 import json
 import re
 import shutil
@@ -10,7 +11,8 @@ from unittest import mock
 from etf_agent.automation.agent_runner import AgentCall
 from etf_agent.core import canonical_sha256
 from etf_agent.strategy_reflection import (
-    ReflectionError, ReflectionRepository, apply_proposals, apply_reflection, build_brief, check_proposal, from_agent_output,
+    ReflectionError, ReflectionRepository, apply_proposals, apply_reflection, build_brief, check_proposal,
+    current_knobs, from_agent_output,
     observe_only, replay_gate, rollback, run_auto, save_reflection, validate_reflection,
 )
 from etf_agent.strategy_reflection import service
@@ -73,6 +75,56 @@ class KnobTests(Fixture):
         for knob, value in cases:
             with self.assertRaises(ReflectionError, msg=(knob, value)):
                 check_proposal(knob, value, self.template, self.rules)
+
+    def test_version_gates_stay_forbidden(self):
+        """版本閘門是切換程式路徑，不是調整幅度；反思員不得提案。"""
+        for knob in ("held_add_priority", "rotation.version", "method", "stock_weight_fit"):
+            with self.assertRaises(ReflectionError, msg=knob):
+                check_proposal(knob, "v2", self.template, self.rules)
+
+    def test_volatility_exponent_is_adjustable_within_limits(self):
+        """低波動偏好強度是正式旋鈕：反思員可依校準報告調整，但受變幅與範圍限制。"""
+        template = copy.deepcopy(self.template)
+        template["position_sizing"]["method"] = "conviction_volatility_v2"
+        template["position_sizing"]["volatility_exponent"] = "0.5"
+        self.assertEqual(
+            check_proposal("volatility_exponent", "0.25", template, self.rules),
+            {"current": "0.5", "proposed": "0.25"},
+        )
+        for bad in ("0.1", "1.1", "-0.1", "0.5"):  # 超過 0.25 變幅、超出範圍、與現值相同
+            with self.assertRaises(ReflectionError, msg=bad):
+                check_proposal("volatility_exponent", bad, template, self.rules)
+
+    def test_max_swaps_is_adjustable_and_not_clamped_by_position_rules(self):
+        """換股上限是整數旋鈕，但範圍是自己的 0～10，不該被持股檔數規則夾成 20～30。"""
+        template = copy.deepcopy(self.template)
+        template["position_sizing"]["rotation"] = {
+            "version": "v1", "max_swaps_per_run": 10, "min_new_conviction": "low",
+        }
+        self.assertEqual(
+            check_proposal("rotation.max_swaps_per_run", "8", template, self.rules),
+            {"current": "10", "proposed": "8"},
+        )
+        for bad in ("5", "11", "8.5"):  # 超過 2 檔變幅、超出上限、不是整數
+            with self.assertRaises(ReflectionError, msg=bad):
+                check_proposal("rotation.max_swaps_per_run", bad, template, self.rules)
+
+    def test_current_knobs_skips_optional_knobs_absent_from_template(self):
+        """舊樣板（v1、未啟用 rotation）的選配旋鈕必須略過，而不是讓反思員整個失敗。"""
+        legacy = copy.deepcopy(self.template)
+        legacy["position_sizing"]["method"] = "conviction_volatility_v1"
+        legacy["position_sizing"].pop("volatility_exponent", None)
+        legacy["position_sizing"].pop("rotation", None)
+        values = current_knobs(legacy)
+        self.assertNotIn("volatility_exponent", values)
+        self.assertNotIn("rotation.max_swaps_per_run", values)
+        self.assertIn("conviction_multipliers.high", values)
+
+    def test_current_knobs_includes_optional_knobs_once_enabled(self):
+        """正式樣板已啟用：反思員必須看得到這兩個旋鈕才可能依校準報告調整。"""
+        values = current_knobs(self.template)
+        self.assertEqual(values["volatility_exponent"], "0")
+        self.assertEqual(values["rotation.max_swaps_per_run"], "10")
 
     def test_drawdown_can_only_tighten(self):
         self.assertEqual(check_proposal("drawdown_control.neutral_at", "0.04", self.template, self.rules)["proposed"], "0.04")

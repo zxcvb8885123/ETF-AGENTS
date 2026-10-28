@@ -17,6 +17,7 @@ from .analysts import (
     ANALYSTS,
     AnalystReportValidator,
     build_analyst_brief,
+    growth_signal_quality,
     compute_fundamental_metrics,
     high_materiality_events,
     seal_report,
@@ -65,6 +66,11 @@ from .finalization import (
     DecisionRepository,
     DecisionResultValidator,
 )
+from .rotation import (
+    PORTFOLIO_SLOTS_VERSION,
+    build_portfolio_slots,
+    validate_portfolio_slots,
+)
 from .prior_decision import (
     PRIOR_DECISION_VERSION,
     PriorDecisionContextValidator,
@@ -74,7 +80,7 @@ from .prior_decision import (
     read_decision_run,
 )
 from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
-from .service import PortfolioDecisionApplicationService
+from .service import PortfolioDecisionApplicationService, target_trade_date
 
 __all__ = [
     "DECISION_SCHEMA_VERSION",
@@ -94,6 +100,7 @@ __all__ = [
     "ANALYSTS",
     "AnalystReportValidator",
     "build_analyst_brief",
+    "growth_signal_quality",
     "compute_fundamental_metrics",
     "high_materiality_events",
     "seal_report",
@@ -132,6 +139,9 @@ __all__ = [
     "liquidity_exposure",
     "DecisionFinalizer",
     "build_team_inputs",
+    "PORTFOLIO_SLOTS_VERSION",
+    "build_portfolio_slots",
+    "validate_portfolio_slots",
     "DecisionResultValidator",
     "DecisionRepository",
     "PRIOR_DECISION_VERSION",
@@ -143,4 +153,5 @@ __all__ = [
     "RevisionHistoryBuilder",
     "RevisionHistoryValidator",
     "PortfolioDecisionApplicationService",
+    "target_trade_date",
 ]

@@ -51,6 +51,16 @@ _PRIOR_RULES = (
     "不得寫進 rationale、unresolved_questions 或 invalidation_conditions，也不得只因前次曾買進就續抱或加碼；"
     "延續或改變行動都必須由本次採納的 claim 支持。沒有附前次決策的股票，照一般方式判斷。"
 )
+_ROTATION_RULES = (
+    "輸入的 portfolio_slots 是程式算好的名額狀態：held_positions 是目前持股檔數，max_positions 是硬上限，"
+    "free_slots 是真正的空名額，held_by_bear_strength 與 unheld_by_bull_strength 是全池統計。"
+    "free_slots 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交，"
+    "由程式依信心等級配對，名額不足者一律不建立買單；你看不到其他批的候選，也不需要指定誰換誰。"
+    "因此持股若空頭 claim 已經成立、多頭理由不再成立，應該給 exit 或 trim，而不是慣性 hold；"
+    "但不得只為了騰出名額而出場：exit 與 trim 一律必須採納至少一個該股票的空頭 claim，"
+    "也不得為了填滿名額而買進沒有多頭依據的股票。名額、權重、股數與現金全部由程式計算，"
+    "portfolio_slots 沒有 evidence_id，不可寫進 rationale、unresolved_questions 或 invalidation_conditions。"
+)
 
 
 class TeamStagesMixin:
@@ -277,10 +287,13 @@ class TeamStagesMixin:
         debate: Mapping[str, object],
         run_id: str,
         prior_context: Optional[Mapping[str, object]] = None,
+        portfolio_slots: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
-        ``prior_context`` 是 ``load_prior_decision_context`` 的結果：只放進 brief 當背景，Validator 禁止引用。"""
+        ``prior_context`` 是 ``load_prior_decision_context`` 的結果：只放進 brief 當背景，Validator 禁止引用。
+        ``portfolio_slots`` 是 ``build_portfolio_slots`` 算好的名額脈絡（啟用 rotation 才有）：讓交易 Agent
+        知道滿檔時買新股必須有持股出場。名額與配對仍由程式決定，Agent 不輸出任何數字。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
         background, prior_by_symbol = prior_decision_brief(prior_context) if prior_context is not None else (None, {})
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
@@ -311,6 +324,7 @@ class TeamStagesMixin:
                         "position_count": len(held),
                     },
                     "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
+                    **({"portfolio_slots": portfolio_slots} if portfolio_slots is not None else {}),
                     **({"prior_decision_background": background} if background is not None else {}),
                     "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                     "symbols": [
@@ -337,11 +351,13 @@ class TeamStagesMixin:
                 "rationale 只寫整合後的判斷，不逐條重貼多空報告或論點全文；論點識別碼保留在採納／否決陣列供程式核對。"
                 "理由用簡短繁體中文分段：先寫主導決定的理由，再寫主要風險為何改變或沒有改變行動；"
                 "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
-                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s%s"
+                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]),
-                    _PRIOR_RULES if background is not None else "", _SHARED_RULES,
+                    _PRIOR_RULES if background is not None else "",
+                    _ROTATION_RULES if portfolio_slots is not None else "",
+                    _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
             )
