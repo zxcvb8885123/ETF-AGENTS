@@ -177,7 +177,9 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
         raise ReplayError("Decision run %s 的 team_inputs 缺少現金姿態" % run_id)
     prior = team.get("prior_decision_context") if isinstance(team.get("prior_decision_context"), Mapping) else None
     try:
-        errors = TradeDecisionValidator(bundle, momentum, files["debate"], prior_context=prior).validate(files["intent"])
+        errors = TradeDecisionValidator(
+            bundle, momentum, files["debate"], prior_context=prior, position_review=team.get("position_review")
+        ).validate(files["intent"])
     except DecisionToolError as error:
         errors = [str(error)]
     if errors:

@@ -18,6 +18,7 @@ from .contracts import (
     string_list,
 )
 from .drawdown import stance_meets_floor
+from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
@@ -78,13 +79,24 @@ class TradeDecisionValidator:
         debate: Mapping[str, object],
         symbols: Optional[Sequence[str]] = None,
         prior_context: Optional[Mapping[str, object]] = None,
+        position_review: Optional[Mapping[str, object]] = None,
     ):
         """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
-        交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。"""
+        交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。
+
+        ``position_review`` 是程式算好的持股檢視（team_inputs 2.4）：其警示 ``review_id`` 與 claim 一樣
+        必須在 ``adopted_claim_ids`` 剛好處理一次、不可否決；沒有檢視的舊 run 傳 None，驗證不變。"""
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.debate = dict(debate)
         self.claims = claims_by_symbol(debate)
+        self.reviews = review_ids_by_symbol(position_review)
+        for symbol, flags in self.reviews.items():
+            self.claims.setdefault(symbol, {}).update({review: "review" for review in flags})
+        # 選用的「持股事實」編號：減碼／出場可引用它當依據（交易 Agent 對報酬與回落的自主判斷），但不強制處理、可不採納。
+        self.position_ids = position_ids_by_symbol(position_review)
+        for symbol, identifier in self.position_ids.items():
+            self.claims.setdefault(symbol, {})[identifier] = "position"
         self.prior_tokens = prior_reference_tokens(prior_context)
         self.available = {
             str(item.get("symbol", "")).upper()
@@ -167,20 +179,31 @@ class TradeDecisionValidator:
         if cited:
             errors.append("%s 不得引用前次決策背景（%s）；它不是本次證據" % (prefix, ", ".join(cited)))
         available = self.claims.get(symbol, {})
+        repeated = sorted({claim for claim in (*adopted, *rejected) if (*adopted, *rejected).count(claim) > 1})
+        if repeated:
+            errors.append("%s claim／警示必須剛好處理一次，不得重複：%s" % (prefix, ", ".join(repeated)))
         both = set(adopted) & set(rejected)
         if both:
             errors.append("%s claim 不得同時採納與否決：%s" % (prefix, ", ".join(sorted(both))))
         unknown = sorted((set(adopted) | set(rejected)) - set(available))
         if unknown:
             errors.append("%s 引用不屬於該股票的 claim：%s" % (prefix, ", ".join(unknown)))
-        missing = sorted(set(available) - set(adopted) - set(rejected))
+        optional = {claim for claim, role in available.items() if role == "position"}
+        missing = sorted(set(available) - optional - set(adopted) - set(rejected))
         if missing:
             errors.append("%s 未處理全部 claim：%s" % (prefix, ", ".join(missing)))
         adopted_roles: Set[str] = {available[claim] for claim in adopted if claim in available}
         if intent in SIZED and "bull" not in adopted_roles:
             errors.append("%s %s 必須採納至少一個多頭 claim" % (prefix, intent))
-        if intent in REDUCING and "bear" not in adopted_roles:
-            errors.append("%s %s 必須採納至少一個空頭 claim" % (prefix, intent))
+        if intent in REDUCING and not adopted_roles & {"bear", "review", "position"}:
+            errors.append("%s %s 必須採納至少一個空頭 claim、持股檢視警示或持股事實" % (prefix, intent))
+        rejected_reviews = sorted(claim for claim in rejected if available.get(claim) == "review")
+        if rejected_reviews:
+            errors.append("%s 持股檢視警示是程式事實，只能採納不可否決：%s" % (prefix, ", ".join(rejected_reviews)))
+        # 虧損警示的持股若要續抱或加碼，必須有多頭依據；沒有多頭論點時只剩減碼或出場。
+        loss_alert = any(flag == "loss_alert" for flag in self.reviews.get(symbol, {}).values())
+        if loss_alert and intent in {"hold", "add", "no_trade"} and "bull" not in adopted_roles:
+            errors.append("%s 虧損警示的持股 %s 必須採納至少一個多頭 claim，否則請 trim 或 exit" % (prefix, intent))
 
 
 def support_by_symbol(

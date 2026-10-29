@@ -53,7 +53,7 @@ class PortfolioDecisionApplication:
                 )
                 self.emit(result)
                 return 0 if result["valid"] else 2
-            service = PortfolioDecisionApplicationService.from_path(args.bundle)
+            service = PortfolioDecisionApplicationService.from_path(args.bundle, args.position_review)
             if args.command == "validate-input":
                 result = service.validate_input()
                 self.emit(result)
@@ -179,6 +179,10 @@ class PortfolioDecisionApplication:
             "--bundle",
             type=Path,
             default=self.root / "artifacts" / "data" / "decision_input_latest.json",
+        )
+        parser.add_argument(
+            "--position-review", type=Path, default=None,
+            help="team_inputs 2.4 的持股檢視 JSON；有它的 run 必須附上，否則 review:… 引用會被當成未知 claim",
         )
         commands = parser.add_subparsers(dest="command", required=True)
         build_input = commands.add_parser(

@@ -216,7 +216,7 @@ class DecisionFinalizer:
             )
         # 2.3 的名額脈絡全部由程式算；以最終 policy 重算比對（build_portfolio_slots 只讀
         # apply_trade_decision 不會改動的欄位，所以與交易階段用基礎 policy 建出的結果相同）。
-        if version == ROTATION_TEAM_VERSION:
+        if version in SLOTS_TEAM_VERSIONS:
             validate_portfolio_slots(
                 self.bundle, self.policy, self.debate, team.get("portfolio_slots"), errors
             )
@@ -243,11 +243,19 @@ class DecisionFinalizer:
         except DecisionToolError as error:
             errors.append(str(error))
         errors.extend(
-            TradeDecisionValidator(self.bundle, self.momentum, self.debate, prior_context=prior).validate(self.intent)
+            TradeDecisionValidator(
+                self.bundle, self.momentum, self.debate, prior_context=prior, position_review=review
+            ).validate(self.intent)
         )
         stance = team.get("cash_stance")
         validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors)
         sizing = self.policy.get("position_sizing")
+        # 持股檢視與 policy 的 position_review 必須同時存在；數值以 bundle 與 policy 重算比對。
+        review = team.get("position_review") if version in REVIEW_TEAM_VERSIONS else None
+        if version in REVIEW_TEAM_VERSIONS:
+            validate_position_review(self.bundle, self.policy, review, errors)
+        if (version in REVIEW_TEAM_VERSIONS) != ("position_review" in self.policy):
+            errors.append("DecisionPolicy 的 position_review 必須與 team_inputs 2.4 同時存在")
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {

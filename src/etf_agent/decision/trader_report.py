@@ -2,7 +2,7 @@
 
 from datetime import timedelta, timezone
 import re
-from typing import Mapping
+from typing import Mapping, Optional
 
 from etf_agent.core import parse_aware_time
 
@@ -59,9 +59,10 @@ def _paragraphs(text: str) -> str:
 def render_trader_report(
     bundle: Mapping[str, object], momentum: Mapping[str, object],
     debate: Mapping[str, object], trade: Mapping[str, object],
+    position_review: Optional[Mapping[str, object]] = None,
 ) -> str:
     """保留原判斷，只將識別碼、等級與長段落轉成閱讀版。"""
-    errors = TradeDecisionValidator(bundle, momentum, debate).validate(trade)
+    errors = TradeDecisionValidator(bundle, momentum, debate, position_review=position_review).validate(trade)
     if errors:
         raise DecisionToolError("交易整合結果驗證失敗：" + "；".join(errors))
     cutoff = parse_aware_time(bundle["decision_cutoff"], "decision_cutoff", error=DecisionToolError)

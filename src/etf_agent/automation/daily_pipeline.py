@@ -260,9 +260,16 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
 
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
         prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
+        # 沒有 position_review 的樣板一律不建持股檢視，team_inputs 維持 2.3、brief 與舊版逐位相同。
+        position_review = build_position_review(bundle, base_policy) if "position_review" in base_policy else None
+        if position_review is not None:
+            if slots is None:
+                raise DailyPipelineError("policy 啟用 position_review 時也必須啟用 position_sizing.rotation（team_inputs 2.4 含名額脈絡）")
+            self.save_artifact("position_review", position_review)
+
         with self._timed("trader"):
             trade = self.run_trader(
-                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots
+                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots, position_review
             )
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")

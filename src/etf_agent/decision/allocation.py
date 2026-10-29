@@ -20,6 +20,7 @@ from .contracts import (
 )
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
+from .position_review import validate_position_review_policy
 from .momentum import MomentumEngine
 from .sizing import (
     CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, breadth_target, conviction_weights, validate_position_sizing,
@@ -85,6 +86,7 @@ class DecisionPolicyValidator:
         "max_revisions",
         "position_sizing",
         "drawdown_control",
+        "position_review",
         "content_sha256",
     }
 
@@ -191,6 +193,8 @@ class DecisionPolicyValidator:
             validate_position_sizing(policy, self.context.universe, errors)
         if "drawdown_control" in policy:
             validate_drawdown_control(policy, self.context.bundle, errors)
+        if "position_review" in policy:
+            validate_position_review_policy(policy["position_review"], errors)
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):
             errors.append("DecisionPolicy.cash_buffer_rate 必須小於 1")
         rules = self.context.bundle.get("rules", {})

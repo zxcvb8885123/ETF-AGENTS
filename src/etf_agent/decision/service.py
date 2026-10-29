@@ -41,12 +41,16 @@ def target_trade_date(bundle: Mapping[str, object]) -> Optional[str]:
 class PortfolioDecisionApplicationService:
     """Read one input bundle and expose deterministic portfolio operations."""
 
-    def __init__(self, bundle: Mapping[str, object]):
+    def __init__(self, bundle: Mapping[str, object], position_review: Optional[Mapping[str, object]] = None):
+        """``position_review`` 是 team_inputs 2.4 的持股檢視；有它的 run 必須讓每個驗證路徑都認得警示 ID，否則合法的
+        ``review:…`` 引用會被當成未知 claim。舊 run 傳 None，驗證不變。"""
         self.bundle = dict(bundle)
+        self.position_review = position_review
 
     @classmethod
-    def from_path(cls, path: Path) -> "PortfolioDecisionApplicationService":
-        return cls(cls.read_json(path, " DecisionInputBundle"))
+    def from_path(cls, path: Path, position_review_path: Optional[Path] = None) -> "PortfolioDecisionApplicationService":
+        review = cls.read_json(position_review_path, " PositionReview") if position_review_path else None
+        return cls(cls.read_json(path, " DecisionInputBundle"), review)
 
     @staticmethod
     def read_json(path: Path, label: str) -> Mapping[str, object]:
@@ -218,7 +222,7 @@ class PortfolioDecisionApplicationService:
         debate = self.read_json(debate_path, " ResearchDebateBundle")
         result = self.read_json(result_path, " TradeDecision")
         errors = TradeDecisionValidator(
-            self.bundle, momentum, debate
+            self.bundle, momentum, debate, position_review=self.position_review
         ).validate(result)
         response: Dict[str, object] = {"valid": not errors, "errors": errors}
         if not errors:
@@ -240,7 +244,7 @@ class PortfolioDecisionApplicationService:
         debate = self.read_json(debate_path, " ResearchDebateBundle")
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         if errors:
             raise DecisionToolError("TradeDecision 驗證失敗：" + "；".join(errors))
         result = AllocationOrderEngine(self.bundle, policy).run(intent)
@@ -260,7 +264,7 @@ class PortfolioDecisionApplicationService:
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         return {"valid": not errors, "errors": errors}
 
@@ -279,7 +283,7 @@ class PortfolioDecisionApplicationService:
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         if errors:
             raise DecisionToolError("ProposalBundle 驗證失敗：" + "；".join(errors))
@@ -304,7 +308,7 @@ class PortfolioDecisionApplicationService:
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         if errors:
@@ -333,7 +337,7 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
@@ -364,7 +368,7 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
@@ -413,7 +417,7 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        intent_errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        intent_errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         if intent_errors:
             raise DecisionToolError("TradeDecision 驗證失敗：" + "；".join(intent_errors))
         builder = RevisionHistoryBuilder(self.bundle, policy, intent)
@@ -438,7 +442,7 @@ class PortfolioDecisionApplicationService:
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         history = self.read_json(history_path, " RevisionHistory")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate).validate(intent)
+        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review).validate(intent)
         errors.extend(RevisionHistoryValidator(self.bundle, policy, intent).validate(history))
         return {"valid": not errors, "errors": errors}
 
