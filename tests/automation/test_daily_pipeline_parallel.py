@@ -178,7 +178,7 @@ class ParallelPipelineTests(unittest.TestCase):
 
         self.assertEqual(result.status, "completed", result.errors)
         self.assertEqual(
-            list(result.stage_durations), ["analysts", "research", "trader", "cash_stance", "allocation_review"]
+            list(result.stage_durations), ["analysts", "research", "trader", "ranking", "cash_stance", "allocation_review"]
         )
         self.assertTrue(all(isinstance(value, float) and value >= 0 for value in result.stage_durations.values()))
 

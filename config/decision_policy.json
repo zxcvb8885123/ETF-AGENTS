@@ -32,6 +32,7 @@
     "volatility_floor": "0.01",
     "volatility_exponent": "0",
     "stock_weight_fit": "v1",
+    "selection_ranking": "v1",
     "held_add_priority": "v1",
     "rotation": {
       "version": "v1",

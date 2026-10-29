@@ -175,8 +175,10 @@ class DailyPipelineTests(unittest.TestCase):
             self.assertEqual(result.position_breadth, "balanced")
             policy = json.loads((run_dir / "policy.json").read_text(encoding="utf-8"))
             self.assertEqual(policy["position_sizing"]["position_breadth"], "balanced")
-            # 正式樣板已啟用 rotation，所以 team_inputs 是 2.3（2.2 加上程式算好的名額脈絡）。
-            self.assertEqual(team["schema_version"], "2.3")
+            # 正式樣板已啟用 rotation、position_review 與 selection_ranking，所以 team_inputs 是 2.5（2.3 再加持股檢視與入選排序）。
+            self.assertEqual(team["schema_version"], "2.5")
+            self.assertEqual(team["selection_ranking"]["schema_version"], "1.0")
+            self.assertEqual(team["position_review"]["schema_version"], "1.0")
             self.assertNotIn("research_result", team)
             slots = team["portfolio_slots"]
             self.assertEqual(slots["max_positions"], policy["max_positions"])

@@ -20,8 +20,15 @@ from etf_agent.decision import (
     find_prior_decision_run,
     prior_decision_brief,
     read_decision_run,
+    position_review_brief,
+    program_ranking,
+    ranking_envelope,
+    ranking_needs_agent,
     render_trader_report,
     seal_report,
+    seal_selection_ranking,
+    selection_ranking_brief,
+    SelectionRankingValidator,
     seal_stance_packet,
     seal_trade_decision,
     trade_decision_envelope,
@@ -38,6 +45,7 @@ from .agent_schemas import (
     EVENT_BATCH_SIZE,
     STANCE_SCHEMA,
     TRADE_SCHEMA,
+    RANKING_SCHEMA,
     _EVENT_RULES,
     _SHARED_RULES,
 )
@@ -396,3 +404,48 @@ _REVIEW_RULES = (
             render_trader_report(bundle, momentum, debate, decision, position_review), encoding="utf-8"
         )
         return decision
+
+    def run_selection_ranking(
+        self,
+        bundle: Mapping[str, object],
+        momentum: Mapping[str, object],
+        analyst_reports: Mapping[str, Mapping[str, object]],
+        debate: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """排序 Agent 一次看全部 buy／add 候選，只在同信心等級內排先後並附理由；不改信心、不新增事實。
+
+        沒有任何等級有兩檔以上候選時沒有先後可排，由程式直接封存，不呼叫 Agent。"""
+        envelope = ranking_envelope(bundle, trade_decision, "selection-ranking:%s" % run_id)
+        if not ranking_needs_agent(trade_decision):
+            ranking = program_ranking(envelope, trade_decision)
+        else:
+            brief_path = self.save_brief(
+                "brief_selection_ranking",
+                {
+                    "regime_assessment": momentum.get("regime_assessment"),
+                    "candidates": selection_ranking_brief(trade_decision, debate, analyst_reports, momentum),
+                    "account": {"held_symbols": sorted(
+                        str(item["symbol"]).upper() for item in bundle["account_snapshot"].get("positions", [])
+                    )},
+                },
+            )
+            validator = SelectionRankingValidator(bundle, trade_decision)
+            task = AgentTask(
+                "ranker",
+                "你是 $trader 交易 Agent，現在做**第二輪入選排序**。先讀 %s 與 %s，再讀全部 buy／add 候選 %s。"
+                "第一輪已給每檔信心等級；你只在**同一信心等級內**決定先後，把你最想優先入選的放在陣列最前面，"
+                "每一檔都附一句白話理由。不得改信心等級，不得新增事實或論點，不得輸出任何數字或權重；"
+                "每個信心等級必須剛好列出該等級的全部候選，不多不少。%s"
+                % (self.root / "tradeagent/trading/trader/SKILL.md", self.root / "tradeagent/trading/trader/references/ranking.md", brief_path, _SHARED_RULES),
+                RANKING_SCHEMA,
+            )
+            ranking = self.agent_step(
+                task, lambda output: seal_selection_ranking(envelope, output["tiers"]), validator.validate
+            )
+        errors = SelectionRankingValidator(bundle, trade_decision).validate(ranking)
+        if errors:
+            raise DailyPipelineError("SelectionRanking 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("selection_ranking", ranking)
+        return ranking

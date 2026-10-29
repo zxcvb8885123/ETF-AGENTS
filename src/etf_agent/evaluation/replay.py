@@ -30,7 +30,9 @@ from etf_agent.decision import (
     DecisionToolError,
     MomentumEngine,
     ScenarioEngine,
+    SelectionRankingValidator,
     TradeDecisionValidator,
+    apply_selection_ranking,
     apply_trade_decision,
     bind_drawdown,
     build_decision_policy,
@@ -184,8 +186,14 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
         errors = [str(error)]
     if errors:
         raise ReplayError("Decision run %s 的 TradeDecision 重建驗證失敗：%s" % (run_id, "；".join(errors[:5])))
+    # team_inputs 2.5 的入選排序：回放要用同一份名次，否則候選策略與實際配置的入選順序不同。
+    ranking = team.get("selection_ranking") if isinstance(team.get("selection_ranking"), Mapping) else None
+    if ranking is not None:
+        ranking_errors = SelectionRankingValidator(bundle, files["intent"]).validate(ranking)
+        if ranking_errors:
+            raise ReplayError("Decision run %s 的入選排序重建驗證失敗：%s" % (run_id, "；".join(ranking_errors[:5])))
     manifest = _read_json(run_dir / "manifest.json", "manifest")
-    return {"run_id": run_id, "bundle": bundle, "intent": files["intent"], "debate": files["debate"],
+    return {"run_id": run_id, "ranking": ranking, "bundle": bundle, "intent": files["intent"], "debate": files["debate"],
             "momentum": momentum, "policy": files["policy"], "stance": dict(stance),
             "manifest_sha256": manifest.get("manifest_sha256")}
 
@@ -194,7 +202,7 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
 def bind_replay_policy(
     template: Mapping[str, object], bundle: Mapping[str, object], archived_policy: Mapping[str, object],
     intent: Mapping[str, object], debate: Mapping[str, object], stance: Mapping[str, object],
-    nav_history: Sequence[Mapping[str, object]],
+    nav_history: Sequence[Mapping[str, object]], ranking: Optional[Mapping[str, object]] = None,
 ) -> Tuple[Dict[str, object], Dict[str, object]]:
     """以指定樣板重建當日 policy：產業分類沿用封存 policy（當時已驗證），回撤由回放 NAV 歷史計算，
     封存的現金姿態低於回撤下限時由程式提高到下限並標示。"""
@@ -221,6 +229,10 @@ def bind_replay_policy(
             base["position_sizing"] = {key: value for key, value in sizing.items() if key != "positions_by_breadth"}
             base["content_sha256"] = decision_policy_sha256(base)
         policy = apply_trade_decision(base, intent, bound_stance, bundle, debate)
+        # 樣板啟用 selection_ranking 且封存 run 有排序（2.5）才綁名次；舊 run 沒有排序，沿用原本入選規則。
+        ranked = isinstance(policy.get("position_sizing"), Mapping) and "selection_ranking" in policy["position_sizing"] and ranking is not None
+        if ranked:
+            policy = apply_selection_ranking(policy, ranking)
         policy["content_sha256"] = decision_policy_sha256(policy)
     except DecisionToolError as error:
         raise ReplayError("回放 policy 建立失敗：%s" % error) from error
@@ -230,7 +242,7 @@ def bind_replay_policy(
     notes = {
         "policy_id": policy["policy_id"], "content_sha256": policy["content_sha256"],
         "available_at_overridden": overridden, "archived_cash_stance": level, "cash_stance": bound_stance["level"],
-        "stance_floor": floor, "stance_raised_to_floor": raised, "breadth_unavailable": breadth_dropped, "cash_buffer_rate": policy["cash_buffer_rate"],
+        "stance_floor": floor, "stance_raised_to_floor": raised, "selection_ranking_applied": ranked, "breadth_unavailable": breadth_dropped, "cash_buffer_rate": policy["cash_buffer_rate"],
         "drawdown": (base.get("drawdown_control") or {}).get("drawdown"),
     }
     return policy, notes
@@ -265,7 +277,8 @@ def replay_day(
     if errors:
         raise ReplayError("%s 換成回放帳戶後輸入驗證失敗：%s" % (run_id, "；".join(errors[:5])))
     policy, policy_notes = bind_replay_policy(
-        template, bundle, archived["policy"], archived["intent"], archived["debate"], archived["stance"], nav_history)
+        template, bundle, archived["policy"], archived["intent"], archived["debate"], archived["stance"], nav_history,
+        archived.get("ranking"))
     try:
         proposal = AllocationOrderEngine(bundle, policy).run(archived["intent"])
         scenario = ScenarioEngine(bundle, policy).run(proposal)

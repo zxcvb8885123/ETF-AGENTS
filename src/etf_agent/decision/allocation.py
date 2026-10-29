@@ -666,7 +666,13 @@ class AllocationOrderEngine:
         support = sizing.get("support_by_symbol", {})
         volatility = self._atr_pct()
         target = breadth_target(sizing)
-        if target is None:
+        rank = sizing.get("rank_by_symbol")
+        if rank is not None:
+            # 排序 Agent 已在每個信心等級內排好先後：排序鍵是（信心、名次、代號），取代支持數與 selection_tiebreak。
+            ordered = sorted(candidates, key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), rank[symbol], symbol))
+            if target is not None:
+                max_positions = min(max_positions, max(target, int(self.policy["min_positions"])))
+        elif target is None:
             ordered = sorted(
                 candidates,
                 key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),

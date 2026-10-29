@@ -21,6 +21,8 @@ from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS
 from .prior_decision import PriorDecisionContextValidator
+from .position_review import validate_position_review
+from .selection_ranking import SelectionRankingValidator, rank_by_symbol
 from .rotation import validate_portfolio_slots
 from .sizing import validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
@@ -35,14 +37,24 @@ MEMORY_TEAM_VERSION = "2.2"
 MEMORY_TEAM_FIELDS = INTEGRATED_TEAM_FIELDS | {"prior_decision_context"}
 ROTATION_TEAM_VERSION = "2.3"
 ROTATION_TEAM_FIELDS = MEMORY_TEAM_FIELDS | {"portfolio_slots"}
+REVIEW_TEAM_VERSION = "2.4"
+REVIEW_TEAM_FIELDS = ROTATION_TEAM_FIELDS | {"position_review"}
+RANKING_TEAM_VERSION = "2.5"
+RANKING_TEAM_FIELDS = REVIEW_TEAM_FIELDS | {"selection_ranking"}
 TEAM_FIELDS_BY_VERSION = {
     STANCE_SCHEMA_VERSION: TEAM_INPUT_FIELDS,
     INTEGRATED_TEAM_VERSION: INTEGRATED_TEAM_FIELDS,
     MEMORY_TEAM_VERSION: MEMORY_TEAM_FIELDS,
     ROTATION_TEAM_VERSION: ROTATION_TEAM_FIELDS,
+    REVIEW_TEAM_VERSION: REVIEW_TEAM_FIELDS,
+    RANKING_TEAM_VERSION: RANKING_TEAM_FIELDS,
 }
 # 2.2 起都附前次決策背景；2.3 再加程式算好的名額脈絡。
-MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION)
+# 2.4 再加程式算好的持股檢視（停損／停利警示），是 2.3 的超集。
+# 2.5 再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集。
+MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION)
+SLOTS_TEAM_VERSIONS = (ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION)
+REVIEW_TEAM_VERSIONS = (REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION)
 
 
 def build_team_inputs(
@@ -51,18 +63,30 @@ def build_team_inputs(
     cash_stance: Mapping[str, object],
     prior_decision_context: Optional[Mapping[str, object]] = None,
     portfolio_slots: Optional[Mapping[str, object]] = None,
+    position_review: Optional[Mapping[str, object]] = None,
+    selection_ranking: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
     2.0：舊封存，另含事件研究 ``research_result``；2.1：三份分析報告與現金姿態；
     2.2：再加交易 Agent 看到的前次決策背景 ``prior_decision_context``（available 或 unavailable 都要存）；
-    2.3：再加程式算好的名額脈絡 ``portfolio_slots``（滿檔換股），是 2.2 的超集。
+    2.3：再加程式算好的名額脈絡 ``portfolio_slots``（滿檔換股），是 2.2 的超集；
+    2.4：再加程式算好的持股檢視 ``position_review``（停損／停利警示），是 2.3 的超集；
+    2.5：再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
     if portfolio_slots is not None and prior_decision_context is None:
         raise DecisionToolError("team_inputs 2.3 的名額脈絡必須與前次決策背景同時存在")
-    if portfolio_slots is not None:
+    if position_review is not None and portfolio_slots is None:
+        raise DecisionToolError("team_inputs 2.4 的持股檢視必須與名額脈絡同時存在")
+    if selection_ranking is not None and position_review is None:
+        raise DecisionToolError("team_inputs 2.5 的入選排序必須與持股檢視同時存在")
+    if selection_ranking is not None:
+        version = RANKING_TEAM_VERSION
+    elif position_review is not None:
+        version = REVIEW_TEAM_VERSION
+    elif portfolio_slots is not None:
         version = ROTATION_TEAM_VERSION
     elif prior_decision_context is not None:
         version = MEMORY_TEAM_VERSION
@@ -81,6 +105,10 @@ def build_team_inputs(
         team["prior_decision_context"] = dict(prior_decision_context)
     if portfolio_slots is not None:
         team["portfolio_slots"] = dict(portfolio_slots)
+    if position_review is not None:
+        team["position_review"] = dict(position_review)
+    if selection_ranking is not None:
+        team["selection_ranking"] = dict(selection_ranking)
     return team
 
 
@@ -202,7 +230,7 @@ class DecisionFinalizer:
         if fields is None:
             return [
                 "team_inputs.schema_version 必須為 2.0（舊封存）、2.1（事件併入分析團隊）、"
-                "2.2（附前次決策背景）或 2.3（再附名額脈絡）"
+                "2.2（附前次決策背景）、2.3（再附名額脈絡）、2.4（再附持股檢視）或 2.5（再附入選排序）"
             ]
         if set(team) != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
@@ -220,6 +248,12 @@ class DecisionFinalizer:
             validate_portfolio_slots(
                 self.bundle, self.policy, self.debate, team.get("portfolio_slots"), errors
             )
+        # 持股檢視與 policy 的 position_review 必須同時存在；數值以 bundle 與 policy 重算比對。
+        review = team.get("position_review") if version in REVIEW_TEAM_VERSIONS else None
+        if version in REVIEW_TEAM_VERSIONS:
+            validate_position_review(self.bundle, self.policy, review, errors)
+        if (version in REVIEW_TEAM_VERSIONS) != ("position_review" in self.policy):
+            errors.append("DecisionPolicy 的 position_review 必須與 team_inputs 2.4 同時存在")
         reports = team.get("analyst_reports")
         research = {} if integrated else team.get("research_result")
         if not isinstance(reports, Mapping) or not isinstance(research, Mapping):
@@ -250,12 +284,6 @@ class DecisionFinalizer:
         stance = team.get("cash_stance")
         validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors)
         sizing = self.policy.get("position_sizing")
-        # 持股檢視與 policy 的 position_review 必須同時存在；數值以 bundle 與 policy 重算比對。
-        review = team.get("position_review") if version in REVIEW_TEAM_VERSIONS else None
-        if version in REVIEW_TEAM_VERSIONS:
-            validate_position_review(self.bundle, self.policy, review, errors)
-        if (version in REVIEW_TEAM_VERSIONS) != ("position_review" in self.policy):
-            errors.append("DecisionPolicy 的 position_review 必須與 team_inputs 2.4 同時存在")
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {
@@ -272,6 +300,21 @@ class DecisionFinalizer:
             expected["support_by_symbol"] = support_by_symbol(self.intent, self.debate)
         if "positions_by_breadth" in sizing:
             expected["position_breadth"] = stance.get("breadth") if isinstance(stance, Mapping) else None
+        # 入選排序與 policy 的 selection_ranking 必須同時存在；排序以交易決策重建驗證，名次由程式綁定。
+        ranking = team.get("selection_ranking") if version == RANKING_TEAM_VERSION else None
+        if (version == RANKING_TEAM_VERSION) != ("selection_ranking" in sizing):
+            errors.append("DecisionPolicy 的 position_sizing.selection_ranking 必須與 team_inputs 2.5 同時存在")
+        if version == RANKING_TEAM_VERSION:
+            if not isinstance(ranking, Mapping):
+                errors.append("team_inputs.selection_ranking 必須是物件")
+            else:
+                errors.extend(
+                    "team_inputs.selection_ranking：%s"
+                    % error for error in SelectionRankingValidator(self.bundle, self.intent).validate(ranking)
+                )
+                expected["rank_by_symbol"] = rank_by_symbol(ranking)
+                expected["selection_ranking_id"] = ranking.get("ranking_id")
+                expected["selection_ranking_sha256"] = ranking.get("content_sha256")
         for field, value in expected.items():
             if sizing.get(field) != value:
                 errors.append("DecisionPolicy.position_sizing.%s 與交易決策或現金姿態不一致" % field)

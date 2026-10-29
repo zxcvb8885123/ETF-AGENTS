@@ -66,6 +66,23 @@ from .finalization import (
     DecisionRepository,
     DecisionResultValidator,
 )
+from .position_review import (
+    POSITION_REVIEW_VERSION,
+    build_position_review,
+    position_review_brief,
+    validate_position_review,
+)
+from .selection_ranking import (
+    SELECTION_RANKING_VERSION,
+    SelectionRankingValidator,
+    apply_selection_ranking,
+    candidates_by_conviction,
+    needs_agent as ranking_needs_agent,
+    program_ranking,
+    ranking_envelope,
+    seal_selection_ranking,
+    selection_ranking_brief,
+)
 from .rotation import (
     PORTFOLIO_SLOTS_VERSION,
     build_portfolio_slots,
@@ -139,6 +156,19 @@ __all__ = [
     "liquidity_exposure",
     "DecisionFinalizer",
     "build_team_inputs",
+    "SELECTION_RANKING_VERSION",
+    "SelectionRankingValidator",
+    "apply_selection_ranking",
+    "candidates_by_conviction",
+    "ranking_needs_agent",
+    "program_ranking",
+    "ranking_envelope",
+    "seal_selection_ranking",
+    "selection_ranking_brief",
+    "POSITION_REVIEW_VERSION",
+    "build_position_review",
+    "position_review_brief",
+    "validate_position_review",
     "PORTFOLIO_SLOTS_VERSION",
     "build_portfolio_slots",
     "validate_portfolio_slots",

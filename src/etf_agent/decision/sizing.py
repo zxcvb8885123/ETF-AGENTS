@@ -32,6 +32,7 @@ STOCK_WEIGHT_FIT = "v1"
 # 2026-10-28 後新增：持股滿檔時未持有的新股不佔名額，已持有的 add 照常入選。
 # 省略此欄位的舊 Decision run 維持新股可佔滿檔名額的原重建行為。
 HELD_ADD_PRIORITY = "v1"
+SELECTION_RANKING = "v1"
 # 2026-10-28 後新增：滿檔時本次出場釋出的名額可以給未持有的新股（換股）。省略 rotation 的
 # Decision run 維持「滿檔完全不進新股」的原重建行為；名額配對全部由程式計算，Agent 不參與。
 ROTATION_VERSION = "v1"
@@ -129,6 +130,7 @@ def validate_position_sizing(
             "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
             "support_by_symbol", "stock_weight_fit", "positions_by_breadth", "position_breadth",
             "held_add_priority", "rotation", "volatility_exponent", "selection_tiebreak",
+            "selection_ranking", "rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256",
         },
         "DecisionPolicy.position_sizing",
         errors,
@@ -140,6 +142,8 @@ def validate_position_sizing(
         errors.append(
             "position_sizing.selection_tiebreak 必須是 %s" % "／".join(SELECTION_TIEBREAKS)
         )
+    if "selection_ranking" in sizing and sizing["selection_ranking"] != SELECTION_RANKING:
+        errors.append("position_sizing.selection_ranking 只允許 %s；舊 Decision run 省略此欄位" % SELECTION_RANKING)
     if "stock_weight_fit" in sizing and sizing["stock_weight_fit"] != STOCK_WEIGHT_FIT:
         errors.append("position_sizing.stock_weight_fit 只允許 %s；舊 Decision run 省略此欄位" % STOCK_WEIGHT_FIT)
     if "held_add_priority" in sizing and sizing["held_add_priority"] != HELD_ADD_PRIORITY:
@@ -217,6 +221,7 @@ def validate_position_sizing(
         if tier not in CONVICTION_LEVELS:
             errors.append("position_sizing.conviction_by_symbol.%s 等級無效" % symbol)
     _validate_support(sizing, tiers, errors)
+    _validate_rank(sizing, tiers, errors)
 
 
 def _validate_breadth_targets(
@@ -247,6 +252,20 @@ def breadth_target(sizing: Mapping[str, object]) -> Optional[int]:
     if not isinstance(targets, Mapping) or level not in targets:
         return None
     return int(targets[level])
+
+
+def _validate_rank(sizing: Mapping[str, object], tiers: Mapping[str, object], errors: List[str]) -> None:
+    ranked = [field for field in ("rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256") if field in sizing]
+    if not ranked:
+        return
+    if sizing.get("selection_ranking") != SELECTION_RANKING or len(ranked) != 3:
+        errors.append("position_sizing.rank_by_symbol 需與 selection_ranking、selection_ranking_id、selection_ranking_sha256 一起出現")
+        return
+    rank = sizing["rank_by_symbol"]
+    if not isinstance(rank, Mapping) or set(rank) != set(tiers):
+        errors.append("position_sizing.rank_by_symbol 必須與 conviction_by_symbol 股票一致")
+    elif any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in rank.values()):
+        errors.append("position_sizing.rank_by_symbol 必須是從 1 開始的整數")
 
 
 def _validate_support(sizing: Mapping[str, object], tiers: Mapping[str, object], errors: List[str]) -> None:
