@@ -137,7 +137,7 @@ class PipelineWorld:
         self.run_dir.mkdir()
         self.repository = directory / "decisions"
 
-    def run(self, runner, analyst_runner=None, fear_greed=None, research_runner=None):
+    def run(self, runner, analyst_runner=None, fear_greed=None, research_runner=None, overnight=None):
         pipeline = DailyDecisionPipeline(
             ROOT, self.run_dir, runner, self.repository, log=lambda _: None, analyst_runner=analyst_runner, research_runner=research_runner,
         )
@@ -146,6 +146,7 @@ class PipelineWorld:
             self.paths["rules"], self.paths["database"],
             self.paths["template"], self.paths["sectors"], "decision-fixture",
             **({"fear_greed_root": fear_greed[0], "fear_greed_approvals_path": fear_greed[1]} if fear_greed else {}),
+            **({"overnight_root": overnight[0], "overnight_approvals_path": overnight[1]} if overnight else {}),
         )
 
 
@@ -233,6 +234,66 @@ class DailyPipelineTests(unittest.TestCase):
             bull = json.loads((world.run_dir / "brief_bull_b0.json").read_text(encoding="utf-8"))
             self.assertEqual(bull["market_sentiment"], event_report["market_sentiment"])
             DecisionRepository(world.repository).verify("decision-fixture")
+
+    def overnight_world(self, directory):
+        """台股最近交易日設為週五 2026-09-18，週五美股時段在截止前已完成，隔夜背景才有資料。"""
+        from datetime import datetime, timedelta
+        from etf_agent.perception.overnight_market.service import _store
+        from test_overnight_market import approvals, captures
+        world = PipelineWorld(Path(directory), approved_status=True)
+        world.snapshot["latest_trade_date"] = "2026-09-18"
+        world.paths["snapshot"].write_text(json.dumps(world.snapshot, ensure_ascii=False), encoding="utf-8")
+        cutoff = datetime.fromisoformat(world.snapshot["decision_cutoff"])
+        rows = captures(available=(cutoff - timedelta(minutes=5)).isoformat())
+        root, approval_path = Path(directory) / "overnight", Path(directory) / "overnight_sources.json"
+        _store(root).save("overnight-20260919T120000Z-fixture", {"captures": {"items": rows}})
+        approval_path.write_text(json.dumps({"sources": approvals()}), encoding="utf-8")
+        return world, (root, approval_path)
+
+    def test_overnight_market_flows_to_cash_stance_and_report_only(self):
+        from etf_agent.decision_delivery.service import build_delivery
+        with tempfile.TemporaryDirectory() as directory:
+            world, overnight = self.overnight_world(directory)
+            baseline = world.run(FakeRunner(team_outputs()))
+            self.assertEqual(baseline.status, "completed", baseline.errors)
+            self.assertNotIn("overnight_market_input", json.loads((world.run_dir / "decision_input.json").read_text()))
+            self.assertNotIn("overnight_market", json.loads((world.run_dir / "brief_cash_stance.json").read_text()))
+        with tempfile.TemporaryDirectory() as directory:
+            world, overnight = self.overnight_world(directory)
+            runner = FakeRunner(team_outputs(cash_stance=[dict(STANCE, evidence_ids=["price-2330"])]))
+            result = world.run(runner, overnight=overnight)
+            self.assertEqual(result.status, "completed", result.errors)
+            bundle = json.loads((world.run_dir / "decision_input.json").read_text(encoding="utf-8"))
+            ids = [row["evidence_id"] for row in bundle["overnight_market_input"]["result"]["components"]]
+            self.assertEqual(bundle["overnight_market_input"]["result"]["status"], "available")
+            brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
+            self.assertEqual(brief["overnight_market"]["status"], "available")
+            self.assertIsNone(brief["overnight_market"]["night_session"])
+            self.assertTrue(set(ids) <= set(brief["citable_evidence_ids"]))
+            self.assertEqual(brief["market_sentiment"]["status"], "unavailable")
+            self.assertIn("overnight_market 是隔夜市場背景", dict(runner.prompts)["cash_stance"])
+            for name in ("brief_bull_b0", "brief_bear_b0", "brief_trader_b0"):
+                self.assertNotIn("overnight", (world.run_dir / (name + ".json")).read_text(encoding="utf-8"))
+            DecisionRepository(world.repository).verify("decision-fixture")
+            delivery = build_delivery(world.repository, "decision-fixture", Path(directory) / "reports")
+            self.assertEqual(delivery["report_status"], "ready", delivery)
+            self.assertTrue(any("隔夜市場背景" in path.read_text(encoding="utf-8")
+                                for path in (Path(directory) / "reports").rglob("*.md")))
+
+    def test_overnight_cash_stance_may_cite_overnight_but_not_unknown_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world, overnight = self.overnight_world(directory)
+            from etf_agent.perception.overnight_market import build_overnight_market_input
+            pair = build_overnight_market_input(overnight[0], overnight[1], world.snapshot["snapshot_id"],
+                                                world.snapshot["decision_cutoff"], "2026-09-18")
+            good = dict(STANCE, evidence_ids=["price-2330", pair["result"]["components"][0]["evidence_id"]])
+            result = world.run(FakeRunner(team_outputs(cash_stance=[good])), overnight=overnight)
+            self.assertEqual(result.status, "completed", result.errors)
+        with tempfile.TemporaryDirectory() as directory:
+            world, overnight = self.overnight_world(directory)
+            bad = dict(STANCE, evidence_ids=["overnight:YAHOO_FINANCE:^GSPC:" + "f" * 20])
+            result = world.run(FakeRunner(team_outputs(cash_stance=[bad, bad, bad, bad])), overnight=overnight)
+            self.assertEqual(result.status, "failed")
 
     def test_analyst_runner_only_handles_analyst_batches(self):
         with tempfile.TemporaryDirectory() as directory:

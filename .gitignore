@@ -16,3 +16,5 @@ var/*.json
 .claude
 var/datapack/
 var/strategy_reflection/
+graphify-out/
+.archify

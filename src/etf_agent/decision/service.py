@@ -87,6 +87,8 @@ class PortfolioDecisionApplicationService:
         perception_result_path: Optional[Path] = None,
         fear_greed_root: Optional[Path] = None,
         fear_greed_approvals_path: Optional[Path] = None,
+        overnight_root: Optional[Path] = None,
+        overnight_approvals_path: Optional[Path] = None,
         market_news_input: Optional[Mapping[str, object]] = None,
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
@@ -97,6 +99,7 @@ class PortfolioDecisionApplicationService:
         ``company_news`` 為真時，FinMind 個股新聞在截止時間前已核准才附上（白名單媒體、截止前 3 天）；未核准則不附。
 
         指定 ``fear_greed_root`` 時，附上截止前最後一次保存的恐懼貪婪抓取；沒有任何抓取則不附。
+        指定 ``overnight_root`` 時，同樣附上截止前最後一次保存的隔夜市場抓取（只給風險 Agent 現金姿態與報告背景）。
         規則有 ``required_benchmark_ids`` 時，必須提供主動型 ETF 持股檔與來源核准檔，缺少即拒絕。
         """
         if lookback_bars < 1:
@@ -125,6 +128,13 @@ class PortfolioDecisionApplicationService:
         if fear_greed_root is not None:
             from etf_agent.perception.market_fear_greed import build_fear_greed_input
             fear_greed = build_fear_greed_input(fear_greed_root, fear_greed_approvals_path, snapshot.get("snapshot_id"), cutoff)
+        if (overnight_root is None) != (overnight_approvals_path is None):
+            raise DecisionToolError("隔夜市場抓取目錄與來源核准檔必須成對提供")
+        overnight = None
+        if overnight_root is not None:
+            from etf_agent.perception.overnight_market import build_overnight_market_input
+            overnight = build_overnight_market_input(
+                overnight_root, overnight_approvals_path, snapshot.get("snapshot_id"), cutoff, latest_date)
         company_news_input = None
         if company_news:
             from etf_agent.perception.company_news import build_company_news_input
@@ -157,6 +167,7 @@ class PortfolioDecisionApplicationService:
                 else None
             ),
             market_fear_greed_input=fear_greed,
+            overnight_market_input=overnight,
             market_news_input=market_news_input,
             benchmarks=benchmarks,
             company_news_input=company_news_input,

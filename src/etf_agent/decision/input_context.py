@@ -33,6 +33,7 @@ class DecisionContext:
             for item in account.get("positions", [])
             if isinstance(item, Mapping) and int(item.get("shares", 0)) > 0
         }
+        self.overnight_evidence_ids = set()
         self.evidence_symbols = self._build_evidence_symbols()
 
     def _build_evidence_symbols(self) -> Dict[str, Optional[str]]:
@@ -64,6 +65,15 @@ class DecisionContext:
             if evidence_id in result:
                 raise DecisionToolError("evidence_id 跨輸入來源重複：%s" % evidence_id)
             result[evidence_id] = str(item["symbol"]).upper()
+        # 隔夜市場背景是市場層級證據（symbol=None）；只有現金姿態可引用，股票層級引用一律拒絕。
+        overnight = self.bundle.get("overnight_market_input", {})
+        for component in (overnight.get("result", {}).get("components") or []) if isinstance(overnight, Mapping) else []:
+            if isinstance(component, Mapping) and component.get("evidence_id"):
+                evidence_id = str(component["evidence_id"])
+                if evidence_id in result:
+                    raise DecisionToolError("evidence_id 跨輸入來源重複：%s" % evidence_id)
+                result[evidence_id] = None
+                self.overnight_evidence_ids.add(evidence_id)
         status_bundle = self.bundle.get("trading_status_bundle", {})
         if isinstance(status_bundle, Mapping):
             for record in status_bundle.get("records", []):
@@ -87,6 +97,8 @@ class DecisionContext:
             linked_symbol = self.evidence_symbols.get(evidence_id)
             if evidence_id not in self.evidence_symbols:
                 errors.append("%s 引用不存在：%s" % (prefix, evidence_id))
+            elif evidence_id in self.overnight_evidence_ids:
+                errors.append("%s 隔夜市場證據只能用於現金姿態，不得支持個股主張：%s" % (prefix, evidence_id))
             elif (
                 evidence_id == str(self.account["source_evidence_id"])
                 and symbol.upper() not in self.held_symbols

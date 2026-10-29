@@ -104,6 +104,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         applied_decision_run_ids: Optional[Sequence[str]] = None,
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
+        overnight_root: Optional[Path] = None,
+        overnight_approvals_path: Optional[Path] = None,
     ) -> PipelineResult:
         """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
         挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。"""
@@ -117,6 +119,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 applied_decision_run_ids,
                 active_share_holdings_path=active_share_holdings_path,
                 active_share_approvals_path=active_share_approvals_path,
+                overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -136,6 +139,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         applied_decision_run_ids: Optional[Sequence[str]] = None,
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
+        overnight_root: Optional[Path] = None,
+        overnight_approvals_path: Optional[Path] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -168,6 +173,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             trading_status_path=trading_status_path, account_path=account_snapshot_path,
             perception_bundle_path=perception_bundle_path, perception_result_path=perception_result_path,
             fear_greed_root=fear_greed_root, fear_greed_approvals_path=fear_greed_approvals_path,
+            overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
             market_news_input=market_news,
             active_share_holdings_path=active_share_holdings_path,
             active_share_approvals_path=active_share_approvals_path,

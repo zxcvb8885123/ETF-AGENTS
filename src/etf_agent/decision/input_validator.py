@@ -62,6 +62,7 @@ class DecisionInputValidator:
                 "perception_inputs",
                 "market_news_input",
                 "market_fear_greed_input",
+                "overnight_market_input",
                 "company_news_input",
                 "trading_status_bundle",
                 "tradability_assessment",
@@ -110,6 +111,13 @@ class DecisionInputValidator:
                 validate_fear_greed(self.bundle["market_fear_greed_input"], self.bundle.get("snapshot_id"), self.bundle.get("decision_cutoff"))
             except (FearGreedError, TypeError, KeyError) as error:
                 errors.append("恐懼貪婪指標輸入：%s" % error)
+        if "overnight_market_input" in self.bundle:
+            from etf_agent.perception.overnight_market import validate_pair as validate_overnight, OvernightMarketError
+            try:
+                validate_overnight(self.bundle["overnight_market_input"], self.bundle.get("snapshot_id"),
+                                   self.bundle.get("decision_cutoff"), self.snapshot.get("latest_trade_date"))
+            except (OvernightMarketError, TypeError, KeyError) as error:
+                errors.append("隔夜市場輸入：%s" % error)
         if "company_news_input" in self.bundle:
             from etf_agent.perception.company_news import validate_pack, CompanyNewsError
             try:
@@ -771,6 +779,11 @@ class DecisionInputValidator:
             for item_index, item in enumerate(news["items"]):
                 if isinstance(item, Mapping):
                     register(item.get("evidence_id"), "company_news_input.items[%d]" % item_index)
+        overnight = self.bundle.get("overnight_market_input")
+        if isinstance(overnight, Mapping) and isinstance(overnight.get("result"), Mapping):
+            for component_index, component in enumerate(overnight["result"].get("components") or []):
+                if isinstance(component, Mapping) and component.get("evidence_id"):
+                    register(component["evidence_id"], "overnight_market_input.result.components[%d]" % component_index)
         status_bundle = self.bundle.get("trading_status_bundle")
         if isinstance(status_bundle, Mapping):
             for evidence_index, evidence in enumerate(status_bundle.get("source_evidence", [])):

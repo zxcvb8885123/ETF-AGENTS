@@ -302,6 +302,16 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     DATA_STATUS=2
   fi
   stage_time "恐懼貪婪指標"
+  # 隔夜市場背景（美股指數與台股代理）只給風險 Agent 現金姿態與報告背景；失敗只降級，不中止，也不影響 DATA_STATUS。
+  echo "[3b+/4] 抓取隔夜市場背景（^GSPC、^IXIC、^SOX、EWT、TSM；夜盤尚未接入）"
+  set +e
+  docker compose run --rm agent python3 cli/overnight_market.py capture >/dev/null
+  OVERNIGHT_EXIT=$?
+  set -e
+  if [ "$OVERNIGHT_EXIT" -ne 0 ]; then
+    echo "隔夜市場背景來源未完整（exit ${OVERNIGHT_EXIT}）；現金姿態將不附隔夜背景或標為資料不足。" >&2
+  fi
+  stage_time "隔夜市場背景"
   # 全市場新聞也必須在 cutoff 前抓；失敗只讓市場情緒改用恐懼貪婪指標，不中止每日流程。
   echo "[3b+/4] 抓取全市場新聞 RSS（中央社、自由時報）"
   set +e

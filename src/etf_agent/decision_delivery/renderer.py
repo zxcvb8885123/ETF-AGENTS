@@ -70,6 +70,8 @@ def _render(report, template):
     # 持股廣度是 2026-10-26 後新增的欄位；舊封存沒有它，輸出維持原樣。
     breadth = "；持股廣度：%s" % cell({"concentrated": "集中", "balanced": "平衡", "diversified": "分散"}.get(stance["breadth"])) if "breadth" in stance else ""
     lines += ["## 風控與修正", "", "現金姿態：%s%s；修正次數：%s。" % (cell({"aggressive": "積極", "neutral": "中性", "defensive": "防守"}.get(stance["level"])), breadth, risk["revision_count"]), ""]
+    if "overnight_market" in report:
+        lines += [_overnight_line(report["overnight_market"]), ""]
     for entry in risk["revisions"]:
         review = entry["review"]
         lines += ["- %s：%s" % (cell({"approve": "核准", "reject": "拒絕", "revise": "要求修正"}.get(review["decision"])), cell(review["rationale"]))]
@@ -107,6 +109,14 @@ def _render(report, template):
     lines += ["| %s | %s | %s | %s | %s |" % tuple(cell(price.get(k)) for k in ("symbol", "trade_date", "close_price", "source", "source_evidence_id")) for price in report["reference_prices"]]
     lines += ["", "報告識別：%s；內容雜湊：%s。" % (cell(report["report_id"]), report["content_sha256"]), ""]
     return "\n".join(lines)
+
+
+def _overnight_line(channel):
+    """隔夜市場背景一行：只引用結果原文；非 available 寫資料不足，不當成結論。"""
+    head = "隔夜市場背景（%s，美股指數與台股代理；台指期夜盤尚未接入，只作現金姿態背景）：" % cell(channel["signal_version"])
+    if channel["status"] == "available":
+        return head + "；".join(cell(item["text"]) for item in channel["findings"])
+    return head + "資料不足（不當成結論）。" + "；".join(cell(gap) for gap in channel["data_gaps"])
 
 
 def _intent(item):

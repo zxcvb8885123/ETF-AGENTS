@@ -220,6 +220,8 @@ def build_performance_summary(repository: VirtualAccountRepository, decision_rep
     unsettled = _dec(latest["unsettled_cash"], "unsettled_cash")
     positions = _positions(latest)
     market_value = sum((_dec(row["market_value"], "market_value") for row in positions if row["market_value"] is not None), Decimal(0))
+    for row in positions:  # 權重＝該檔市值占 NAV（與現金比同分母）
+        row["weight"] = _rate(_dec(row["market_value"], "market_value"), nav) if row["market_value"] is not None else None
 
     history = []
     previous: Optional[Decimal] = None

@@ -7,13 +7,13 @@
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --ink: #1c2230; --muted: #6b7385; --line: #e3e6ec;
-    --up: #d4343c; --down: #16915a; --accent: #3a63d8;
+    --up: #d4343c; --down: #16915a; --accent: #3a63d8; --b1: #e08a00; --b2: #7a3fc9;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151c; --card: #1b1f29; --ink: #e8ebf2; --muted: #9098aa; --line: #2b3140;
-      --up: #ff5a5f; --down: #2fc27f; --accent: #7d9bff;
+      --up: #ff5a5f; --down: #2fc27f; --accent: #7d9bff; --b1: #ffb43a; --b2: #b88bff;
       color-scheme: dark;
     }
   }
@@ -61,7 +61,7 @@
   <div id="notice"></div>
   <div class="grid" id="kpis"></div>
   <section class="card">
-    <h2>總資產（NAV）走勢</h2>
+    <h2>總資產（NAV）走勢 <button id="chart-mode" type="button" style="margin-left:8px"></button></h2>
     <div id="chart"></div>
   </section>
   <section class="card">
@@ -121,7 +121,7 @@ document.getElementById("unit-toggle").addEventListener("click", () => {
   if (lastBenchmarks) renderBenchmarks(lastBenchmarks);
 });
 syncUnitButton();
-const BENCH_COLORS = ["var(--accent)", "var(--muted)"];
+const BENCH_COLORS = ["var(--b1)", "var(--b2)"];
 
 function renderChart(history, benchmarks) {
   const el = document.getElementById("chart");
@@ -129,39 +129,85 @@ function renderChart(history, benchmarks) {
   const series = [{ label: "帳戶", points: history.map(h => [h.trade_date, Number(h.nav)]), dash: "" }];
   (benchmarks || []).forEach((b, i) => {
     if (b.status !== "ok") return;
-    series.push({ label: b.label, points: b.series.filter(p => p.nav != null).map(p => [p.trade_date, Number(p.nav)]), dash: "6 4", color: BENCH_COLORS[i % BENCH_COLORS.length] });
+    series.push({ label: b.label, points: b.series.filter(p => p.nav != null).map(p => [p.trade_date, Number(p.nav)]), dash: "", color: BENCH_COLORS[i % BENCH_COLORS.length] });
   });
+  // 差距模式：每條基準線減去同日帳戶 NAV，帳戶變成 0 的基準線，兩條基準才拉得開
+  const diff = chartMode === "diff" && series.length > 1;
+  if (diff) {
+    const acct0 = new Map(series[0].points);
+    series.forEach((s, i) => { s.points = s.points.filter(p => acct0.has(p[0])).map(p => [p[0], i === 0 ? 0 : p[1] - acct0.get(p[0])]); });
+    series[0].label = "帳戶（0 線）";
+  }
+  const fmt = v => (diff && v > 0 ? "+" : "") + nf.format(Math.round(v));
   const dates = [...new Set(series.flatMap(s => s.points.map(p => p[0])))].sort();
   if (dates.length < 2) { el.innerHTML = '<div class="empty">至少需要兩個交易日的估值才會出現走勢。</div>'; return; }
-  const W = 1000, H = 240, P = { l: 90, r: 16, t: 12, b: 28 };
+  // 依實際寬度畫（不縮放 viewBox），線與字才會清楚
+  const W = Math.max(320, Math.round(el.clientWidth || 900)), H = 340, P = { l: 78, r: 70, t: 16, b: 32 };
   const all = series.flatMap(s => s.points.map(p => p[1]));
   let lo = Math.min(...all), hi = Math.max(...all);
   if (lo === hi) { lo -= 1; hi += 1; }
   const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
   const x = d => P.l + (W - P.l - P.r) * dates.indexOf(d) / (dates.length - 1);
   const y = v => P.t + (H - P.t - P.b) * (1 - (v - lo) / (hi - lo));
-  const base = Number(history[0].nav);
+  const base = diff ? 0 : Number(history[0].nav);
   const last = Number(history[history.length - 1].nav);
-  const accountColor = last >= base ? "var(--up)" : "var(--down)";
-  const ticks = [lo + pad, (lo + hi) / 2, hi - pad].map(v =>
-    `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/>
-     <text x="${P.l - 8}" y="${y(v) + 4}" text-anchor="end">${nf.format(v)}</text>`).join("");
-  const step = Math.max(1, Math.ceil(dates.length / 8));
+  const accountColor = last >= Number(history[0].nav) ? "var(--up)" : "var(--down)";
+  const ticks = [0, 1, 2, 3, 4].map(i => lo + pad + (hi - lo - 2 * pad) * i / 4).map(v =>
+    `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>
+     <text x="${P.l - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" font-size="12">${fmt(v)}</text>`).join("");
+  const step = Math.max(1, Math.ceil(dates.length / Math.max(2, Math.floor((W - P.l - P.r) / 70))));
   const labels = dates.map((d, i) => i % step && i !== dates.length - 1 ? "" :
-    `<text x="${x(d)}" y="${H - 8}" text-anchor="middle">${d.slice(5)}</text>`).join("");
+    `<text x="${x(d).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="12">${d.slice(5)}</text>`).join("");
+  const acct = series[0].points;
+  const area = `<path d="M${x(acct[0][0]).toFixed(1)},${y(lo + pad).toFixed(1)} ${acct.map(p => `L${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ")} L${x(acct[acct.length - 1][0]).toFixed(1)},${y(lo + pad).toFixed(1)} Z" fill="${accountColor}" opacity="0.10"/>`;
   const lines = series.map((s, i) => {
     const color = i === 0 ? accountColor : s.color;
     const pts = s.points.map(p => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
-    const dots = i === 0 ? s.points.map(p => `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="3" fill="${color}"><title>${p[0]}  ${nf.format(p[1])}</title></circle>`).join("") : "";
-    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${i === 0 ? 2 : 1.5}" stroke-dasharray="${s.dash}"><title>${esc(s.label)}</title></polyline>${dots}`;
+    const dots = i === 0 && s.points.length <= 40 ? s.points.map(p => `<circle cx="${x(p[0]).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="3.5" fill="var(--card)" stroke="${color}" stroke-width="2"/>`).join("") : "";
+    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${i === 0 ? 2.5 : 2.25}" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="${s.dash}"/>${dots}`;
   }).join("");
-  const legend = series.map((s, i) => `<span class="tag"><span style="display:inline-block;width:18px;border-top:2px ${i === 0 ? "solid" : "dashed"} ${i === 0 ? accountColor : s.color};vertical-align:middle;margin-right:4px"></span>${esc(s.label)}</span>`).join(" ");
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="NAV 走勢">
+  const endLabel = series.map((s, i) => {
+    const q = s.points[s.points.length - 1];
+    return `<text x="${(x(q[0]) + 6).toFixed(1)}" y="${(y(q[1]) + 4).toFixed(1)}" font-size="12" font-weight="600" style="fill:${i === 0 ? accountColor : s.color}">${fmt(q[1])}</text>`;
+  }).join("");
+  const legend = series.map((s, i) => `<span class="tag"><span style="display:inline-block;width:18px;border-top:3px solid ${i === 0 ? accountColor : s.color};vertical-align:middle;margin-right:4px"></span>${esc(s.label)}</span>`).join(" ");
+  el.style.position = "relative";
+  el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="NAV 走勢" style="display:block">
     ${ticks}
-    <line x1="${P.l}" x2="${W - P.r}" y1="${y(base)}" y2="${y(base)}" stroke="var(--muted)" stroke-dasharray="4 4"/>
-    ${lines}
-    ${labels}</svg><div class="sub">${legend}</div>`;
+    <line x1="${P.l}" x2="${W - P.r}" y1="${y(base).toFixed(1)}" y2="${y(base).toFixed(1)}" stroke="var(--muted)" stroke-dasharray="4 4"/>
+    ${area}${lines}${endLabel}${labels}
+    <line id="hover-line" y1="${P.t}" y2="${H - P.b}" stroke="var(--muted)" stroke-width="1" style="display:none"/>
+    <rect id="hover-area" x="${P.l}" y="${P.t}" width="${W - P.l - P.r}" height="${H - P.t - P.b}" fill="transparent"/>
+  </svg><div id="hover-tip" style="display:none;position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:12px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.15)"></div><div class="sub">${legend}</div>`;
+  const area_ = el.querySelector("#hover-area"), vline = el.querySelector("#hover-line"), tip = el.querySelector("#hover-tip");
+  area_.addEventListener("mousemove", ev => {
+    const r = el.querySelector("svg").getBoundingClientRect();
+    const i = Math.max(0, Math.min(dates.length - 1, Math.round((ev.clientX - r.left - P.l) / (W - P.l - P.r) * (dates.length - 1))));
+    const d = dates[i], cx = x(d);
+    vline.setAttribute("x1", cx); vline.setAttribute("x2", cx); vline.style.display = "";
+    tip.innerHTML = `<b>${d}</b>` + series.map(s => { const q = s.points.find(p => p[0] === d); return q ? `<br>${esc(s.label)}：${fmt(q[1])}` : ""; }).join("");
+    tip.style.display = "";
+    tip.style.left = Math.min(W - tip.offsetWidth - 4, cx + 12) + "px"; tip.style.top = (P.t + 4) + "px";
+  });
+  area_.addEventListener("mouseleave", () => { vline.style.display = "none"; tip.style.display = "none"; });
 }
+let chartMode = "nav";
+try { chartMode = localStorage.getItem("chartMode") === "diff" ? "diff" : "nav"; } catch (e) {}
+document.getElementById("chart-mode").addEventListener("click", () => {
+  chartMode = chartMode === "diff" ? "nav" : "diff";
+  try { localStorage.setItem("chartMode", chartMode); } catch (e) {}
+  syncChartMode();
+  if (lastPerformance && lastPerformance.history) renderChart(lastPerformance.history, lastBenchmarks ? lastBenchmarks.benchmarks : null);
+});
+function syncChartMode() {
+  document.getElementById("chart-mode").textContent = chartMode === "diff" ? "看法：基準減帳戶（點擊改看總資產）" : "看法：總資產（點擊改看基準減帳戶）";
+}
+syncChartMode();
+let chartResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(chartResizeTimer);
+  chartResizeTimer = setTimeout(() => { if (lastPerformance && lastPerformance.history) renderChart(lastPerformance.history, lastBenchmarks ? lastBenchmarks.benchmarks : null); }, 150);
+});
 
 function renderBenchmarks(b) {
   const el = document.getElementById("benchmarks");
@@ -219,7 +265,7 @@ function renderTrades(d) {
 // 持倉表：點欄位標題排序（再點一次反向、第三次回原順序）；空值一律排最後
 const POSITION_COLUMNS = [
   ["symbol", "代號", false], ["lots", "張數", true], ["average_cost", "均價", true], ["price", "現價", true],
-  ["cost_value", "成本", true], ["market_value", "市值", true], ["unrealized_pnl", "未實現損益", true],
+  ["cost_value", "成本", true], ["market_value", "市值", true], ["weight", "權重", true], ["unrealized_pnl", "未實現損益", true],
   ["unrealized_return", null, true],
 ];
 let positionSort = { key: null, dir: -1 };
@@ -247,7 +293,7 @@ function renderPositions(d) {
     <tr>${head}</tr>
     ${rows.map(p => `<tr><td>${esc(p.symbol)}</td><td>${nf.format(p.lots)}</td>
       <td>${Number(p.average_cost).toFixed(2)}</td><td>${p.price == null ? "—" : Number(p.price).toFixed(2)}</td>
-      <td>${money(p.cost_value)}</td><td>${money(p.market_value)}</td>
+      <td>${money(p.cost_value)}</td><td>${money(p.market_value)}</td><td>${plain(p.weight)}</td>
       <td class="${tone(p.unrealized_pnl)}">${signed(p.unrealized_pnl)}</td>
       <td class="${tone(p.unrealized_return)}">${ret(p.unrealized_return, p.unrealized_pnl)}</td></tr>`).join("")}
   </table>`;
