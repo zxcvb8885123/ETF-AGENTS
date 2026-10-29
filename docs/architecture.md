@@ -45,7 +45,20 @@
 - `swap = min(本次實際出場檔數, max_swaps_per_run)` 是出場釋出的名額，只給信心不低於 `min_new_conviction` 的新股，否則標 `ROTATION_CONVICTION`。
 - 新股總數不超過 `max_positions − 配置後持股數`；出場與空名額都為 0 時新股數必為 0。
 
-交易 Agent 會在 brief 與 `team_inputs` 2.3 收到程式算好的 `portfolio_slots`（持股檔數、硬上限、空名額、全池多空強度統計）當背景，知道滿檔時買新股必須有持股出場；它不指定誰換誰，配對是程式的工作，且出場仍必須採納該股票的空頭 claim。
+交易 Agent 會在 brief 與 `team_inputs` 2.3 收到程式算好的 `portfolio_slots`（持股檔數、硬上限、空名額、全池多空強度統計）當背景，知道滿檔時買新股必須有持股出場；它不指定誰換誰，配對是程式的工作，且出場必須採納該股票的空頭 claim 或持股檢視警示。
+
+### 入選排序
+
+交易 Agent 逐批執行，各批看不到其他批的候選，因此信心等級只有 high／medium／low。同一等級有兩檔以上候選時，交易 Agent 的第二輪（`run_selection_ranking`，Skill `trader` 的 `references/ranking.md`，不另設 Agent）一次看全部 buy／add 候選與程式算好的 20 日報酬、ATR，只在同等級內排先後並附理由；各等級只有一檔時由程式直接封存，不呼叫 Agent。`decision/selection_ranking.py` 驗證排序剛好涵蓋每個等級的候選，並把名次綁成 `position_sizing.rank_by_symbol`（含 `selection_ranking_id`／`selection_ranking_sha256`）；配置排序鍵為（信心、名次、代號）。`team_inputs` 升為 2.5（2.4 再加 `selection_ranking`），Finalizer 重建驗證；樣板沒有 `selection_ranking` 時維持原排序。
+
+### 持股檢視（停損／停利）
+
+`config/decision_policy.json` 的 `position_review`（`version`、`loss_alert`、`retrace_alert_20d`、`gain_alert`，不啟用的門檻寫 `null`）啟用時，程式（`decision/position_review.py`）依帳戶成本與同 Snapshot 行情算出每檔持股的帳面報酬、近 5／20 日高點回落與選用的持股事實編號（`review:<代號>:position`），門檻預設全為 `null`（停損停利由交易 Agent 自行判斷）；人另設門檻時才標出必須處理的警示（`review:<代號>:<旗標>`）。警示隨交易 Agent 的 brief 與 `team_inputs` 2.4（2.3 再加 `position_review`）封存；Finalizer 以 bundle 與 policy 重算整份比對，改寫即拒絕。
+
+- 警示不是賣出指令，也不是固定百分比就賣：賣、減碼或續抱仍由交易 Agent 判斷，門檻只決定「何時必須正視」。
+- 若有設門檻：警示與 claim 一樣必須在 `adopted_claim_ids` 剛好處理一次，不可否決；`trim`／`exit` 可採納警示取代空頭 claim；`loss_alert` 的持股要 hold／add／no_trade 必須同時採納多頭 claim。
+- 比賽開帳或重建日的成本是當日結算收盤價，不是真實買價（警示內附固定 note）。
+- 停損停利預設不設死門檻，由交易 Agent 依檢視事實判斷，`trim`／`exit` 可引用 `position_id` 當依據；人另設門檻時，策略反思旁觀者只能在試用觀察期保護下小幅調整 `loss_alert`／`retrace_alert_20d`（門檻為 null 時不可調，`position_review.version`、`gain_alert` 列入禁區）；沒有 `position_review` 的 policy 維持 2.3 行為。風險 Agent 不處理停損停利。
 
 舊 Decision run 沒有 `positions_by_breadth`，仍填滿 `max_positions` 且不看 ATR；更舊的沒有 `support_by_symbol`，只依等級與代號。策略回放遇到沒有持股廣度的舊封存時，拿掉樣板的 `positions_by_breadth` 沿用舊行為並在報告註明。
 
@@ -220,7 +233,7 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 
 ## 策略反思旁觀者
 
-`src/etf_agent/strategy_reflection/` 讀校準報告，讓 Agent 提出策略樣板旋鈕（信心乘數、現金姿態比例、持股廣度檔數、回撤門檻、波動下限、減碼比例）的調整提案，通過程式驗證與影子回放後自動改寫 `config/decision_policy.json`。**不在決策鏈內**：每日決策只讀樣板，不匯入它；Agent 不輸出數字以外的任何決定，也不碰硬性規則與模擬假設。完整流程、邊界與回滾見[策略反思旁觀者](../src/etf_agent/strategy_reflection/README.md)。
+`src/etf_agent/strategy_reflection/` 讀校準報告，每週五晚上讓 Agent 提出策略樣板旋鈕（信心乘數、現金姿態比例、持股廣度檔數、回撤門檻、波動下限、減碼比例）的調整提案，通過程式驗證與影子回放後自動改寫 `config/decision_policy.json`。**不在決策鏈內**：每日決策只讀樣板，不匯入它；Agent 不輸出數字以外的任何決定，也不碰硬性規則與模擬假設。每週產生診斷包與反思報告，週六才套用，套用後有試用觀察期與自動還原。完整流程、邊界與回滾見[策略反思旁觀者](../src/etf_agent/strategy_reflection/README.md)。
 
 ## 事件如何處理
 
