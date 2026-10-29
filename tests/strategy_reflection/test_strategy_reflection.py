@@ -48,7 +48,7 @@ class Fixture(unittest.TestCase):
         self.repository = ReflectionRepository(self.tmp)
 
     def output(self, **overrides):
-        item = {"knob": "conviction_multipliers.high", "proposed": "1.25", "rationale": "high 信心超額報酬為正，但幅度小", "evidence_ids": ["cal.h1.by_conviction.high.mean_excess_return"]}
+        item = {"knob": "conviction_multipliers.high", "proposed": "1.4", "rationale": "high 信心超額報酬為正，但幅度小", "evidence_ids": ["cal.h1.by_conviction.high.mean_excess_return"]}
         item.update(overrides)
         return {"summary": "一則提案", "observations": [{"text": "high 平均超額報酬 0.4%", "evidence_ids": ["cal.h1.by_conviction.high.mean_excess_return"]}], "proposals": [item]}
 
@@ -61,7 +61,7 @@ class Fixture(unittest.TestCase):
 
 class KnobTests(Fixture):
     def test_valid_proposal_returns_normalised_values(self):
-        self.assertEqual(check_proposal("conviction_multipliers.high", "1.25", self.template, self.rules), {"current": "1.5", "proposed": "1.25"})
+        self.assertEqual(check_proposal("conviction_multipliers.high", "1.4", self.template, self.rules), {"current": "1.5", "proposed": "1.4"})
 
     def test_forbidden_and_unknown_knobs_are_rejected(self):
         for knob in ("slippage_bps", "max_stock_weight", "stress_price_decline_rate", "cash_weight_ceiling", "policy_id", "nope.nope"):
@@ -88,10 +88,10 @@ class KnobTests(Fixture):
         template["position_sizing"]["method"] = "conviction_volatility_v2"
         template["position_sizing"]["volatility_exponent"] = "0.5"
         self.assertEqual(
-            check_proposal("volatility_exponent", "0.25", template, self.rules),
-            {"current": "0.5", "proposed": "0.25"},
+            check_proposal("volatility_exponent", "0.4", template, self.rules),
+            {"current": "0.5", "proposed": "0.4"},
         )
-        for bad in ("0.1", "1.1", "-0.1", "0.5"):  # 超過 0.25 變幅、超出範圍、與現值相同
+        for bad in ("0.25", "1.1", "-0.1", "0.5"):  # 超過 0.10 變幅、超出範圍、與現值相同
             with self.assertRaises(ReflectionError, msg=bad):
                 check_proposal("volatility_exponent", bad, template, self.rules)
 
@@ -102,10 +102,10 @@ class KnobTests(Fixture):
             "version": "v1", "max_swaps_per_run": 10, "min_new_conviction": "low",
         }
         self.assertEqual(
-            check_proposal("rotation.max_swaps_per_run", "8", template, self.rules),
-            {"current": "10", "proposed": "8"},
+            check_proposal("rotation.max_swaps_per_run", "9", template, self.rules),
+            {"current": "10", "proposed": "9"},
         )
-        for bad in ("5", "11", "8.5"):  # 超過 2 檔變幅、超出上限、不是整數
+        for bad in ("5", "11", "8.5"):  # 超過 1 檔變幅、超出上限、不是整數
             with self.assertRaises(ReflectionError, msg=bad):
                 check_proposal("rotation.max_swaps_per_run", bad, template, self.rules)
 
@@ -135,9 +135,9 @@ class KnobTests(Fixture):
 
     def test_apply_proposals_does_not_mutate_the_input(self):
         before = canonical_sha256(self.template)
-        candidate = apply_proposals(self.template, [{"knob": "conviction_multipliers.high", "proposed": "1.25"}], self.rules)
+        candidate = apply_proposals(self.template, [{"knob": "conviction_multipliers.high", "proposed": "1.4"}], self.rules)
         self.assertEqual(canonical_sha256(self.template), before)
-        self.assertEqual(candidate["position_sizing"]["conviction_multipliers"]["high"], "1.25")
+        self.assertEqual(candidate["position_sizing"]["conviction_multipliers"]["high"], "1.4")
 
 
 class BriefAndValidatorTests(Fixture):
@@ -217,7 +217,7 @@ class ApplyTests(Fixture):
         result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository)
         self.assertTrue(result["applied"])
         live = self.live()
-        self.assertEqual(live["position_sizing"]["conviction_multipliers"]["high"], "1.25")
+        self.assertEqual(live["position_sizing"]["conviction_multipliers"]["high"], "1.4")
         self.assertEqual(live["policy_id"], "strategy-2026-11-20-r1")
         self.assertTrue(live["available_at"].startswith("2026-11-20T20:30"))
         self.assertEqual(self.repository.history()[0]["policy_id_before"], self.template["policy_id"])
@@ -276,11 +276,12 @@ class ApplyTests(Fixture):
         reflection_id = self.save()
         apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository)
         second_brief = build_brief(report(), self.live(), NOW.isoformat())
-        second = from_agent_output(self.output(knob="trim_fraction", proposed="0.4"),
+        second = from_agent_output(self.output(knob="trim_fraction", proposed="0.45"),
                                    second_brief, self.live(), self.rules, datetime(2026, 11, 20, 12, 31, tzinfo=timezone.utc))
         save_reflection(self.repository, second, second_brief)
-        result = apply_reflection(self.tmp, str(second["reflection_id"]), self.replayer(), NOW, self.repository)
-        self.assertFalse(result["applied"])
+        # 試用觀察期沒結案時，驗證器擋下新提案，所以同一天不可能再套用第二次。
+        with self.assertRaises(ReflectionError):
+            apply_reflection(self.tmp, str(second["reflection_id"]), self.replayer(), NOW, self.repository)
 
     def test_rollback_restores_the_previous_file_and_refuses_after_manual_edit(self):
         original = (self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")

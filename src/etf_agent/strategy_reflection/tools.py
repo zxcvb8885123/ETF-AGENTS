@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import copy
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Mapping, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
+from etf_agent.decision.position_review import validate_position_review_policy
 from etf_agent.decision.sizing import validate_position_sizing
 
 from .contracts import (
     FORBIDDEN_PREFIXES,
+    MAX_DRIFT_STEPS,
     KNOBS,
     POSITION_COUNT_KNOBS,
     SIZING_GROUPS,
@@ -46,10 +48,30 @@ def current_knobs(template: Mapping[str, object]) -> Dict[str, str]:
     values: Dict[str, str] = {}
     for path in sorted(KNOBS):
         try:
-            values[path] = str(read_knob(template, path))
+            value = read_knob(template, path)
         except ReflectionError:
             continue
+        # 樣板明確寫 null 代表「未啟用」（例如 gain_alert），不是數值，不能列為旋鈕。
+        if value is not None:
+            values[path] = str(value)
     return values
+
+
+def knob_origins(history: Sequence[Mapping[str, object]]) -> Dict[str, str]:
+    """每個旋鈕的「人設定起點」：目前仍有效的套用紀錄中，最早一次套用前的值。
+
+    回滾會把最近一次尚未回滾的套用從堆疊移除；整串都被還原的旋鈕不再有起點（回到人設定的值本身）。"""
+    stack: List[Mapping[str, object]] = []
+    for entry in history:
+        if entry.get("action") == "apply":
+            stack.append(entry)
+        elif entry.get("action") == "rollback" and stack:
+            stack.pop()
+    origins: Dict[str, str] = {}
+    for entry in stack:
+        for knob, before in (entry.get("origins") or {}).items():  # type: ignore[union-attr]
+            origins.setdefault(str(knob), str(before))
+    return origins
 
 
 def _number(knob: Knob, raw: object, label: str) -> Decimal:
@@ -66,13 +88,36 @@ def _number(knob: Knob, raw: object, label: str) -> Decimal:
     return value
 
 
-def check_proposal(knob_path: str, proposed: object, template: Mapping[str, object], rules: Mapping[str, object]) -> Dict[str, str]:
-    """單筆提案的白名單、變幅、上下限與方向檢查；通過回傳 {current, proposed}。"""
+def _check_enum(knob: Knob, knob_path: str, proposed: object, template: Mapping[str, object], origin: object) -> Dict[str, str]:
+    """有序列舉旋鈕：目前值與提案都必須在選項內，單次只准移到相鄰一階，且離人設定起點不超過 MAX_DRIFT_STEPS 階。"""
+    current = read_knob(template, knob_path)
+    if current not in knob.choices or proposed not in knob.choices:
+        raise ReflectionError("旋鈕 %s 的值必須是 %s" % (knob_path, "／".join(knob.choices)))
+    if proposed == current:
+        raise ReflectionError("旋鈕 %s 提案與目前值相同" % knob_path)
+    position = knob.choices.index(str(proposed))
+    if abs(position - knob.choices.index(str(current))) > 1:
+        raise ReflectionError("旋鈕 %s 單次只准移到相鄰一階（目前 %s）" % (knob_path, current))
+    if origin is not None and abs(position - knob.choices.index(str(origin))) > MAX_DRIFT_STEPS:
+        raise ReflectionError("旋鈕 %s 離人設定的起點 %s 已超過 %d 階" % (knob_path, origin, MAX_DRIFT_STEPS))
+    return {"current": str(current), "proposed": str(proposed)}
+
+
+def check_proposal(
+    knob_path: str, proposed: object, template: Mapping[str, object], rules: Mapping[str, object],
+    origins: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
+    """單筆提案的白名單、變幅、上下限、方向與累積偏移檢查；通過回傳 {current, proposed}。
+
+    ``origins`` 是 ``knob_origins`` 的結果：旋鈕離人設定的起點最多偏離 ``MAX_DRIFT_STEPS`` 個 step。"""
     if any(knob_path == prefix or knob_path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES):
         raise ReflectionError("旋鈕 %s 屬禁區，反思員不得提案" % knob_path)
     knob = KNOBS.get(knob_path)
     if knob is None:
         raise ReflectionError("旋鈕 %s 不在可調白名單" % knob_path)
+    origin = (origins or {}).get(knob_path)
+    if knob.kind == "enum":
+        return _check_enum(knob, knob_path, proposed, template, origin)
     current = _number(knob, read_knob(template, knob_path), "目前 %s" % knob_path)
     value = _number(knob, proposed, "提案 %s" % knob_path)
     if value == current:
@@ -86,6 +131,8 @@ def check_proposal(knob_path: str, proposed: object, template: Mapping[str, obje
         high = Decimal(str(rules["max_positions"]))
     if value < low or (high is not None and value > high):
         raise ReflectionError("旋鈕 %s 提案 %s 超出允許範圍 [%s, %s]" % (knob_path, value, low, high))
+    if origin is not None and abs(value - Decimal(str(origin))) > knob.step * MAX_DRIFT_STEPS:
+        raise ReflectionError("旋鈕 %s 離人設定的起點 %s 已超過 %d 個 step（%s）" % (knob_path, origin, MAX_DRIFT_STEPS, knob.step * MAX_DRIFT_STEPS))
     if knob.tighten_only and value > current:
         raise ReflectionError("旋鈕 %s 只准調低（更保守），提案 %s 高於目前 %s" % (knob_path, value, current))
     return {"current": str(current), "proposed": str(int(value) if knob.kind == "int" else value.normalize())}
@@ -104,7 +151,8 @@ def apply_proposals(
         seen.add(path)
         checked = check_proposal(path, proposal["proposed"], template, rules)
         container, key = _container(candidate, path)
-        container[key] = int(checked["proposed"]) if KNOBS[path].kind == "int" else checked["proposed"]
+        kind = KNOBS[path].kind
+        container[key] = int(checked["proposed"]) if kind == "int" else checked["proposed"]
     validate_template(candidate, rules)
     return candidate
 
@@ -115,6 +163,8 @@ def validate_template(template: Mapping[str, object], rules: Mapping[str, object
     policy["cash_weight_ceiling"] = rules["cash_weight_must_be_below"]
     errors: List[str] = []
     validate_position_sizing(policy, [], errors)
+    if "position_review" in template:
+        validate_position_review_policy(template["position_review"], errors)
     drawdown = template.get("drawdown_control")
     if isinstance(drawdown, Mapping):
         if Decimal(str(drawdown["neutral_at"])) >= Decimal(str(drawdown["defensive_at"])):
