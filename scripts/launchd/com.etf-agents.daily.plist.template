@@ -3,7 +3,7 @@
 <!-- 安裝：將 __PROJECT_ROOT__ 與 __HOME__ 換成實際路徑後複製到 ~/Library/LaunchAgents/，
      先 mkdir -p __PROJECT_ROOT__/var/logs（launchd 不會自動建立資料夾），
      再執行 launchctl load ~/Library/LaunchAgents/com.etf-agents.daily.plist。
-     平日與週日 21:00 先做隔天時段的決策當備案（週日那次看得到週末新聞，替週一再做一份）（主辦方約 19:00 才產生隔天的 DataPack，須先下載到 var/datapack），隔天 07:00 在交件期限（08:55）前用新資料重做
+     週一到週四與週日 21:00 先做隔天時段的決策當備案（**週五不跑晚上那次**：週一的決策繳交時間是前一日（週日）19:30 起，週五晚上交不了；週一的決策由週日 21:00 與週一 07:00 負責，也讓週六 10:00 套用的新策略先被讀到）（週日那次看得到週末新聞，替週一再做一份）（主辦方約 19:00 才產生隔天的 DataPack，須先下載到 var/datapack），隔天 07:00 在交件期限（08:55）前用新資料重做
      （日線不重抓，事件、新聞與情緒重抓；沒產生新 D-Plan 時自動還原晚上的備案；本機時區須為 Asia/Taipei）。
      週末、休市日與同一時段 1 小時內已完成由腳本自行略過；休市日 15:00 後若隔天是交易日，晚上仍照常做隔天的備案。
      需要 Docker Desktop 已啟動、claude CLI 已登入，且 Mac 在該時間未休眠；以 caffeinate -i 執行，跑的途中不會因閒置而睡著，
@@ -40,7 +40,6 @@
     <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>StandardOutPath</key>
