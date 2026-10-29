@@ -1,4 +1,4 @@
 interface:
   display_name: "策略反思"
-  short_description: "讀校準簡報，提出受限的策略旋鈕調整提案"
-  default_prompt: "使用 $strategy-reflection 讀取校準簡報，輸出有證據支持且受限的策略旋鈕提案；樣本不足或看不出方向時不提案。"
+  short_description: "讀校準簡報提出受限的旋鈕提案；每週另逐檔檢視當初買進的理由是否仍成立（只出報告）"
+  default_prompt: "使用 $strategy-reflection 讀取校準簡報，輸出有證據支持且受限的策略旋鈕提案；樣本不足或看不出方向時不提案；做論點檢視時改依 references/thesis-review.md 逐檔判斷買進理由是否仍成立；整理經驗教訓時依 references/lessons.md 歸納最多 3 條做法建議。"
