@@ -113,7 +113,10 @@ def _render(report, template):
 
 def _overnight_line(channel):
     """隔夜市場背景一行：只引用結果原文；非 available 寫資料不足，不當成結論。"""
-    head = "隔夜市場背景（%s，美股指數與台股代理；台指期夜盤尚未接入，只作現金姿態背景）：" % cell(channel["signal_version"])
+    if channel["signal_version"] == "overnight-v1":  # 舊封存：只有美股指數與台股代理
+        head = "隔夜市場背景（%s，美股指數與台股代理；台指期夜盤尚未接入，只作現金姿態背景）：" % cell(channel["signal_version"])
+    else:
+        head = "隔夜市場背景（%s，美股、日韓指數、VIX 與台指期夜盤；夜盤結束後的決策才有，只作現金姿態背景）：" % cell(channel["signal_version"])
     if channel["status"] == "available":
         return head + "；".join(cell(item["text"]) for item in channel["findings"])
     return head + "資料不足（不當成結論）。" + "；".join(cell(gap) for gap in channel["data_gaps"])

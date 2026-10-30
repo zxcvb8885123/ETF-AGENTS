@@ -11,7 +11,7 @@ from etf_agent.perception.overnight_market import OvernightMarketError, build_ov
 
 
 def main():
-    parser = argparse.ArgumentParser(description="補抓 ^GSPC、^IXIC、^SOX、EWT、TSM 日線，或檢視截止前的隔夜市場背景")
+    parser = argparse.ArgumentParser(description="補抓 ^GSPC、^IXIC、^SOX、EWT、TSM、^N225、^KS11、^VIX 日線與台指期夜盤報價，或檢視截止前的隔夜市場背景")
     sub = parser.add_subparsers(dest="action", required=True)
     capture = sub.add_parser("capture", help="抓取並保存不可變原始回應")
     capture.add_argument("--output-root", type=Path, default=ROOT / "artifacts" / "data" / "overnight_market")
@@ -31,8 +31,8 @@ def main():
             if pair is None:
                 raise OvernightMarketError("截止時間前沒有任何隔夜市場抓取")
             result = pair["result"]
-            output = {key: result[key] for key in ("status", "outlook", "signal_pct", "proxy_signal_pct", "window", "findings",
-                                                   "components", "night_session", "data_gaps")}
+            output = {key: result.get(key) for key in ("status", "outlook", "signal_pct", "proxy_signal_pct", "window", "findings",
+                                                   "agreement", "components", "night_session", "data_gaps")}
             code = 0 if result["status"] == "available" else 2
     except OvernightMarketError as error:
         print(json.dumps({"error": str(error)}, ensure_ascii=False))

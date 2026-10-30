@@ -14,7 +14,9 @@ from etf_agent.perception.overnight_market import (
     OvernightMarketError, OvernightProvider, attach_overnight_market, build_overnight_market_input,
     capture_overnight_market, evaluate, validate_pair,
 )
-from etf_agent.perception.overnight_market.contracts import PACK_VERSION, SOURCES, SYMBOLS, seal
+from etf_agent.perception.overnight_market.contracts import (
+    NIGHT_SYMBOL, PACK_VERSION, PACK_VERSION_V11, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, seal,
+)
 from etf_agent.perception.overnight_market.provider import chart_url, raw_text
 from etf_agent.perception.overnight_market.tools import session_end, window_start
 from test_analysts import bundle_with_event
@@ -82,6 +84,12 @@ def pack(snapshot_id=SNAPSHOT_ID, cutoff=MONDAY_CUTOFF, trade_date=LATEST_TRADE_
 def pair_of(**kwargs):
     value = pack(**kwargs)
     return {"bundle": value, "result": evaluate(value)}
+
+
+NIGHT_ROWS = [{"SymbolID": "TXFK6-M", "CDate": "20260921", "CTime": "045958", "CLastPrice": "47000.00",
+               "CRefPrice": "46000.00", "CTotalVolume": "30000"},
+              {"SymbolID": "TXFL6-M", "CDate": "20260921", "CTime": "045900", "CLastPrice": "47100.00",
+               "CRefPrice": "46100.00", "CTotalVolume": "500"}]
 
 
 def by_symbol(result):
@@ -272,6 +280,135 @@ class RejectTests(unittest.TestCase):
         self.assertTrue(any(gap.startswith("TSM 格式無法解析") for gap in result["data_gaps"]))
 
 
+TAIFEX_FETCHED = "2026-09-21T00:00:00+00:00"  # 週一 08:00 台北：夜盤已在 05:00 結束、日盤 08:45 才開
+
+
+def night_capture(rows=None, available=TAIFEX_FETCHED, status="fetched", url=TAIFEX_QUOTE_URL):
+    from etf_agent.perception.overnight_market.provider import night_raw_text
+    text = night_raw_text(rows if rows is not None else NIGHT_ROWS) if status == "fetched" else ""
+    return {"source": "TAIFEX_MIS", "symbol": NIGHT_SYMBOL, "url": url, "raw_text": text,
+            "raw_sha256": canonical_sha256(text), "available_at": available, "status": status,
+            "error": "" if status == "fetched" else "連線失敗"}
+
+
+def v11_captures(end=date(2026, 9, 18), returns=None, night=None, failed=()):
+    base = dict(DEFAULT_RETURNS, **{"^N225": ["-0.012"], "^KS11": ["-0.015"], "^VIX": ["0.08"]}, **(returns or {}))
+    rows = []
+    for symbol in SYMBOLS_V11:
+        if symbol in failed:
+            rows.append(capture_row(symbol, [], FETCHED, "failed"))
+        else:
+            rows.append(capture_row(symbol, make_bars(end, base[symbol]), FETCHED))
+    rows.append(night if night is not None else night_capture())
+    return rows
+
+
+def pair_v11(rows=None, source_approvals=None, cutoff=MONDAY_CUTOFF):
+    value = seal({"schema_version": PACK_VERSION_V11, "snapshot_id": SNAPSHOT_ID, "decision_cutoff": cutoff,
+                  "latest_trade_date": LATEST_TRADE_DATE, "captures": rows if rows is not None else v11_captures(),
+                  "source_approvals": source_approvals if source_approvals is not None else approvals()})
+    return {"bundle": value, "result": evaluate(value)}
+
+
+class OvernightV11Tests(unittest.TestCase):
+    def test_night_asia_and_vix_join_with_agreement(self):
+        result = pair_v11()["result"]
+        rows = by_symbol(result)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["signal_version"], "overnight-v1.1")
+        for symbol in ("^N225", "^KS11", "^VIX", NIGHT_SYMBOL):
+            self.assertEqual(rows[symbol]["status"], "available", symbol)
+            self.assertTrue(rows[symbol]["evidence_id"].startswith("overnight:"))
+        self.assertEqual(rows["^N225"]["session_end"], "2026-09-18T06:30:00+00:00")  # 15:30 JST
+        self.assertEqual(rows["^VIX"]["session_end"], "2026-09-18T20:15:00+00:00")  # 16:15 EDT
+        night = result["night_session"]
+        self.assertEqual((night["contract"], night["last"], night["reference_settlement"], night["change_pct"]),
+                         ("TXFK6-M", "47000", "46000", "2.17"))  # 取成交量最大的合約
+        self.assertEqual(rows[NIGHT_SYMBOL]["session_end"], "2026-09-20T21:00:00+00:00")  # 週一 05:00 台北
+        # 美股、台股代理、日韓皆跌、夜盤上漲：不是全部同向。
+        self.assertEqual(result["agreement"]["label"], "mixed")
+        self.assertEqual((result["agreement"]["down"], result["agreement"]["up"]), (7, 1))
+        self.assertNotIn("尚未接入", " ".join(result["data_gaps"]))
+
+    def test_all_down_is_aligned_down_and_vix_is_not_a_direction(self):
+        rows = v11_captures(night=night_capture([dict(NIGHT_ROWS[0], CLastPrice="45000.00")]))
+        agreement = pair_v11(rows)["result"]["agreement"]
+        self.assertEqual((agreement["label"], agreement["down"], agreement["total"]), ("aligned_down", 8, 8))
+
+    def test_night_in_progress_is_unavailable_not_error(self):
+        # 週五 21:00 台北的 run：夜盤才剛開始（抓取時間在 05:00 之前，報價在今晚）。
+        rows = [capture_row(symbol, make_bars(date(2026, 9, 17), ["-0.01"]), FRIDAY_NIGHT_FETCHED) for symbol in SYMBOLS_V11]
+        rows.append(night_capture([dict(NIGHT_ROWS[0], CDate="20260918", CTime="205900")], available=FRIDAY_NIGHT_FETCHED))
+        result = pair_v11(rows, approvals(reviewed_at="2026-09-17T00:00:00+00:00"), FRIDAY_NIGHT_CUTOFF)["result"]
+        self.assertEqual(by_symbol(result)[NIGHT_SYMBOL]["status"], "unavailable")
+        self.assertIsNone(result["night_session"])
+        self.assertTrue(any("夜盤" in gap for gap in result["data_gaps"]))
+
+    def test_day_session_quote_or_stale_night_is_refused(self):
+        for row in (dict(NIGHT_ROWS[0], CTime="090500"),                       # 已是日盤報價
+                    dict(NIGHT_ROWS[0], CDate="20260918", CTime="045958"),      # 台股收盤前就結束的舊夜盤
+                    dict(NIGHT_ROWS[0], CLastPrice="0"), dict(NIGHT_ROWS[0], CDate="bad")):
+            result = pair_v11(v11_captures(night=night_capture([row])))["result"]
+            self.assertEqual(by_symbol(result)[NIGHT_SYMBOL]["status"], "unavailable", row)
+            self.assertEqual(result["status"], "available")  # 夜盤失敗只降級
+
+    def test_unapproved_night_source_registers_no_evidence_and_does_not_block(self):
+        rows = [r for r in approvals() if r["source"] != "TAIFEX_MIS"] + [
+            dict(r, license_status="unverified") for r in approvals() if r["source"] == "TAIFEX_MIS"]
+        result = pair_v11(source_approvals=rows)["result"]
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(by_symbol(result)[NIGHT_SYMBOL]["status"], "unavailable")
+        self.assertIsNone(result["night_session"])
+        self.assertTrue(any("尚未核准" in gap for gap in result["data_gaps"]))
+
+    def test_approval_after_cutoff_degrades_instead_of_aborting(self):
+        late = approvals(reviewed_at="2026-09-22T00:00:00+00:00")  # 晚於週一 cutoff
+        result = pair_v11(source_approvals=late)["result"]
+        self.assertEqual(result["status"], "unavailable")  # 主來源視同未核准
+        self.assertTrue(any("視同未核准" in gap for gap in result["data_gaps"]))
+        with self.assertRaises(OvernightMarketError):  # 1.0 維持原本直接拒絕
+            pair_of(source_approvals=late)
+
+    def test_taifex_source_with_wrong_host_or_yahoo_with_night_symbol_is_rejected(self):
+        value = pair_v11()["bundle"]
+        for change in (lambda b: b["captures"][-1].update(url="https://openapi.taifex.com.tw/futures/api/getQuoteList"),
+                       lambda b: b["captures"][0].update(symbol=NIGHT_SYMBOL, url=chart_url(NIGHT_SYMBOL)),
+                       lambda b: b["captures"][0].update(source="TAIFEX_MIS")):
+            broken = copy.deepcopy(value)
+            change(broken)
+            with self.assertRaises(OvernightMarketError):
+                evaluate(seal(broken))
+
+    def test_failed_night_or_asia_fetch_only_degrades(self):
+        result = pair_v11(v11_captures(night=night_capture(status="failed"), failed=("^KS11",)))["result"]
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(by_symbol(result)["^KS11"]["status"], "unavailable")
+        self.assertEqual(result["agreement"]["total"], 6)
+
+    def test_tampered_night_inputs_are_rejected(self):
+        value = pair_v11()["bundle"]
+        for change in (lambda b: b["captures"][-1].update(raw_text=b["captures"][-1]["raw_text"].replace("47000", "49000")),
+                       lambda b: b["captures"][-1].update(url="https://example.com/futures/api/getQuoteList"),
+                       lambda b: b["captures"][-1].update(symbol="TXF_DAY"),
+                       lambda b: b["captures"].append(dict(b["captures"][-1])),
+                       lambda b: b["captures"][-1].update(available_at="2026-09-21T01:00:00+00:00")):
+            broken = copy.deepcopy(value)
+            change(broken)
+            with self.assertRaises(OvernightMarketError):
+                evaluate(seal(broken))
+        pair = pair_v11()
+        pair["result"] = dict(pair["result"], night_session=None)
+        with self.assertRaises(OvernightMarketError):
+            validate_pair(pair, SNAPSHOT_ID, MONDAY_CUTOFF, LATEST_TRADE_DATE)
+
+    def test_v10_pack_still_rebuilds_without_new_fields(self):
+        result = pair_of()["result"]
+        self.assertEqual(result["signal_version"], "overnight-v1")
+        self.assertNotIn("agreement", result)
+        self.assertIsNone(result["night_session"])
+        self.assertEqual(len(result["components"]), 5)
+
+
 class ProviderServiceTests(unittest.TestCase):
     def test_provider_records_failure_without_raising(self):
         def fetcher(symbol, start, end):
@@ -279,8 +416,8 @@ class ProviderServiceTests(unittest.TestCase):
                 raise ValueError("Yahoo 無回應")
             return make_bars(date(2026, 9, 18), ["-0.01"])
 
-        rows = OvernightProvider(fetcher).capture_all(datetime(2026, 9, 21, tzinfo=timezone.utc))
-        self.assertEqual([r["symbol"] for r in rows], list(SYMBOLS))
+        rows = OvernightProvider(fetcher, lambda: NIGHT_ROWS).capture_all(datetime(2026, 9, 21, tzinfo=timezone.utc))
+        self.assertEqual([r["symbol"] for r in rows], list(SYMBOLS_V11) + [NIGHT_SYMBOL])
         failed = [r for r in rows if r["status"] == "failed"]
         self.assertEqual([r["symbol"] for r in failed], ["TSM"])
         self.assertIn("Yahoo 無回應", failed[0]["error"])
@@ -288,12 +425,12 @@ class ProviderServiceTests(unittest.TestCase):
         self.assertEqual(rows[0]["raw_sha256"], canonical_sha256(rows[0]["raw_text"]))
 
     def test_capture_then_build_uses_only_runs_before_cutoff(self):
-        provider = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["-0.01"]))
+        provider = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["-0.01"]), lambda: NIGHT_ROWS)
         with tempfile.TemporaryDirectory() as directory:
             root, approval_path = Path(directory) / "overnight", Path(directory) / "sources.json"
             approval_path.write_text(json.dumps({"sources": approvals()}), encoding="utf-8")
             output = capture_overnight_market(root, provider, datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc))
-            self.assertEqual((output["captured"], output["failures"]), (5, []))
+            self.assertEqual((output["captured"], output["failures"]), (9, []))
             self.assertIsNone(build_overnight_market_input(
                 root, approval_path, SNAPSHOT_ID, "2026-09-20T23:59:00+00:00", LATEST_TRADE_DATE))
             built = build_overnight_market_input(root, approval_path, SNAPSHOT_ID, MONDAY_CUTOFF, LATEST_TRADE_DATE)
@@ -308,7 +445,7 @@ class ProviderServiceTests(unittest.TestCase):
 
     def test_missing_approval_file_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
-            provider = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["0"]))
+            provider = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["0"]), lambda: NIGHT_ROWS)
             capture_overnight_market(Path(directory) / "o", provider, datetime(2026, 9, 21, tzinfo=timezone.utc))
             with self.assertRaises(OvernightMarketError):
                 build_overnight_market_input(Path(directory) / "o", Path(directory) / "missing.json", SNAPSHOT_ID,
@@ -318,7 +455,7 @@ class ProviderServiceTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[2] / "config" / "overnight_market_sources.json"
         rows = json.loads(path.read_text(encoding="utf-8"))["sources"]
         self.assertEqual([(r["source"], r["license_status"], r["approved_by"]) for r in rows],
-                         [("YAHOO_FINANCE", "approved", "apollo")])
+                         [("YAHOO_FINANCE", "approved", "apollo"), ("TAIFEX_MIS", "approved", "apollo")])
 
 
 def with_trade_date(bundle, trade_date=LATEST_TRADE_DATE):
@@ -346,6 +483,14 @@ class DecisionIntegrationTests(unittest.TestCase):
     def rows(self):
         cutoff = datetime.fromisoformat(self.cutoff)
         return captures(available=(cutoff - timedelta(minutes=5)).isoformat())
+
+    def test_channel_carries_agreement_only_for_v11(self):
+        v11 = seal({"schema_version": PACK_VERSION_V11, "snapshot_id": self.snapshot_id, "decision_cutoff": self.cutoff,
+                    "latest_trade_date": LATEST_TRADE_DATE, "captures": self.rows(), "source_approvals": approvals()})
+        newer = dict(self.base, overnight_market_input={"bundle": v11, "result": evaluate(v11)})
+        self.assertIn("agreement", overnight_market_channel(newer))
+        older = attach_overnight_market(self.base, self.pair(rows=self.rows()))
+        self.assertNotIn("agreement", overnight_market_channel(older))
 
     def test_bundle_without_input_is_unchanged(self):
         self.assertNotIn("overnight_market_input", self.base)

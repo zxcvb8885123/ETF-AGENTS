@@ -197,7 +197,7 @@
 
 | 版本 | 內容 |
 | --- | --- |
-| 2.2（目前） | 三份分析報告、現金姿態，以及交易 Agent 看到的前次決策背景 `prior_decision_context`（available 或 unavailable 都要存） |
+| 2.2（舊封存，目前為 2.5，見上方說明） | 三份分析報告、現金姿態，以及交易 Agent 看到的前次決策背景 `prior_decision_context`（available 或 unavailable 都要存） |
 | 2.1（舊封存） | 三份分析報告與現金姿態 |
 | 2.0（舊封存） | 依原始分析報告與事件研究輸入重建 |
 
@@ -267,4 +267,4 @@ OpenCode 的限制：
 
 全市場情緒優先使用全市場新聞（`automation/market_news_stage.py`：截止前 RSS 抓取、子 Agent 逐則標註、程式重建，失敗時降級）；新聞不可用時改用[台股恐懼貪婪指標](market_fear_greed.md)（程式計算，cutoff 前抓取）；兩者都不可用時維持 `unavailable`。不得用公司新聞或交易背景補值。
 
-[隔夜市場背景](overnight_market.md)是另一條只給風險 Agent 現金姿態與最終報告的次級背景（美股指數與台股代理 EWT、TSM，程式計算，不併入 `market_sentiment`，不給個股層級 Agent）；來源授權目前待使用者核准（未核准為 `unavailable`），台指期夜盤尚未接入。
+[隔夜市場背景](overnight_market.md)是另一條只給風險 Agent 現金姿態與最終報告的次級背景（美股指數、台股代理 EWT／TSM、日韓指數、VIX 與台指期夜盤，程式計算，不併入 `market_sentiment`，不給個股層級 Agent）；來源已由使用者核准（未核准為 `unavailable`），夜盤只在台北 05:00 後的決策才有。

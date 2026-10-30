@@ -5,7 +5,7 @@ from pathlib import Path
 
 from etf_agent.core import canonical_sha256, parse_aware_time
 from etf_agent.core.artifact_store import ImmutableRunStore
-from .contracts import PACK_VERSION, OvernightMarketError, seal
+from .contracts import PACK_VERSION_V11, OvernightMarketError, seal
 from .provider import OvernightProvider
 from .tools import evaluate
 from .validator import validate_pair
@@ -59,7 +59,7 @@ def build_overnight_market_input(output_root, approvals_path, snapshot_id, decis
     captures = latest_captures(output_root, decision_cutoff)
     if captures is None:
         return None
-    pack = seal({"schema_version": PACK_VERSION, "snapshot_id": snapshot_id, "decision_cutoff": decision_cutoff,
+    pack = seal({"schema_version": PACK_VERSION_V11, "snapshot_id": snapshot_id, "decision_cutoff": decision_cutoff,
                  "latest_trade_date": latest_trade_date, "captures": captures,
                  "source_approvals": load_approvals(approvals_path)})
     return {"bundle": pack, "result": evaluate(pack)}

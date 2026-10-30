@@ -264,7 +264,7 @@ class DailyPipelineTests(unittest.TestCase):
             result = world.run(runner, overnight=overnight)
             self.assertEqual(result.status, "completed", result.errors)
             bundle = json.loads((world.run_dir / "decision_input.json").read_text(encoding="utf-8"))
-            ids = [row["evidence_id"] for row in bundle["overnight_market_input"]["result"]["components"]]
+            ids = [row["evidence_id"] for row in bundle["overnight_market_input"]["result"]["components"] if row["evidence_id"]]
             self.assertEqual(bundle["overnight_market_input"]["result"]["status"], "available")
             brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
             self.assertEqual(brief["overnight_market"]["status"], "available")

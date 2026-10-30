@@ -303,7 +303,7 @@ if [ "$DAILY_RUN" -eq 1 ]; then
   fi
   stage_time "恐懼貪婪指標"
   # 隔夜市場背景（美股指數與台股代理）只給風險 Agent 現金姿態與報告背景；失敗只降級，不中止，也不影響 DATA_STATUS。
-  echo "[3b+/4] 抓取隔夜市場背景（^GSPC、^IXIC、^SOX、EWT、TSM；夜盤尚未接入）"
+  echo "[3b+/4] 抓取隔夜市場背景（美股、日韓、VIX 與台指期夜盤；夜盤要台北 05:00 後才有）"
   set +e
   docker compose run --rm agent python3 cli/overnight_market.py capture >/dev/null
   OVERNIGHT_EXIT=$?
