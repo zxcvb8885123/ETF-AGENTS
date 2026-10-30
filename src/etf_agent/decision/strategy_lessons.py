@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
-from etf_agent.core import canonical_sha256
+from etf_agent.core import canonical_sha256, parse_aware_time
 
 LESSONS_PATH = Path("config") / "strategy_lessons.json"
 SCHEMA_VERSION = "1.0"
@@ -77,8 +77,10 @@ def validate_lessons_file(data: object) -> List[str]:
     return errors
 
 
-def load_strategy_lessons(root: Path) -> Optional[Dict[str, object]]:
-    """交易 Agent 的背景教訓：{"lessons_id", "texts", "sha256"}；沒有或不合格回 None（不影響決策）。"""
+def load_strategy_lessons(root: Path, decision_cutoff: Optional[str] = None) -> Optional[Dict[str, object]]:
+    """交易 Agent 的背景教訓：{"lessons_id", "texts", "sha256"}；沒有或不合格回 None（不影響決策）。
+
+    給了 ``decision_cutoff`` 時，建立時間晚於截止時間（或無法判讀）的教訓視同沒有，避免重跑舊 Snapshot 讀到後來才產生的經驗。"""
     path = Path(root) / LESSONS_PATH
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -86,6 +88,12 @@ def load_strategy_lessons(root: Path) -> Optional[Dict[str, object]]:
         return None
     if validate_lessons_file(data) or not data["lessons"]:
         return None
+    if decision_cutoff is not None:
+        try:
+            if parse_aware_time(data["created_at"], "created_at") > parse_aware_time(decision_cutoff, "decision_cutoff"):
+                return None
+        except ValueError:
+            return None
     return {"lessons_id": data["lessons_id"], "texts": [str(item["text"]) for item in data["lessons"]], "sha256": data["content_sha256"]}
 
 

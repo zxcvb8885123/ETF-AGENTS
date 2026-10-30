@@ -123,7 +123,9 @@ class DecisionFinalizer:
         debate: Mapping[str, object],
         intent_result: Mapping[str, object],
         team_inputs: Optional[Mapping[str, object]] = None,
+        decision_repository: Optional[Path] = None,
     ):
+        self.decision_repository = decision_repository
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.policy = dict(policy)
@@ -240,7 +242,7 @@ class DecisionFinalizer:
         if version in MEMORY_TEAM_VERSIONS:
             errors.extend(
                 "team_inputs.prior_decision_context：%s" % error
-                for error in PriorDecisionContextValidator(self.bundle).validate(prior)
+                for error in PriorDecisionContextValidator(self.bundle, self.decision_repository).validate(prior)
             )
         # 2.3 的名額脈絡全部由程式算；以最終 policy 重算比對（build_portfolio_slots 只讀
         # apply_trade_decision 不會改動的欄位，所以與交易階段用基礎 policy 建出的結果相同）。
@@ -332,9 +334,10 @@ class DecisionResultValidator:
         debate: Mapping[str, object],
         intent_result: Mapping[str, object],
         team_inputs: Optional[Mapping[str, object]] = None,
+        decision_repository: Optional[Path] = None,
     ):
         self.finalizer = DecisionFinalizer(
-            bundle, policy, momentum_result, debate, intent_result, team_inputs
+            bundle, policy, momentum_result, debate, intent_result, team_inputs, decision_repository
         )
 
     def validate(

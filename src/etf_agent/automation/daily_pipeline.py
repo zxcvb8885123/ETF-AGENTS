@@ -337,10 +337,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
         team = build_team_inputs(analysts, None, stance, prior_context, slots, position_review, ranking)
-        final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team).run(
+        final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository).run(
             proposal, scenario, guard, review, history
         )
-        errors = DecisionResultValidator(bundle, policy, momentum, debate, trade, team).validate(
+        errors = DecisionResultValidator(bundle, policy, momentum, debate, trade, team, self.decision_repository).validate(
             proposal, scenario, guard, review, history, final
         )
         if errors:

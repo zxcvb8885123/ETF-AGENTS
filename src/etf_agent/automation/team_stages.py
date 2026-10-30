@@ -270,7 +270,7 @@ class TeamStagesMixin:
         帳本結算記錄的 ``applied_run_ids``，否則取該時段 cutoff 最新者），整理目前持股的前次意圖與重估條件；找不到或本次
         沒有目標時段時 unavailable。續跑時沿用本 run 已存且仍通過驗證的版本，避免決策庫變動改變輸入。"""
         path = self._path("prior_decision_context")
-        validator = PriorDecisionContextValidator(bundle)
+        validator = PriorDecisionContextValidator(bundle, self.decision_repository)
         if self.resume and path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
             if not validator.validate(saved):
@@ -332,7 +332,7 @@ class TeamStagesMixin:
             for name, report in analyst_reports.items()
         }
         review_brief = position_review_brief(position_review) if position_review is not None else {}
-        lessons_background = lessons_brief(load_strategy_lessons(self.root))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
+        lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]

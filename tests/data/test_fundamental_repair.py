@@ -121,7 +121,7 @@ class FundamentalRepairTests(unittest.TestCase):
                          "net_revenue": {"value_status": "provided", "value": "5446990", "currency": "TWD",
                                          "unit_multiplier": 1000, "source_field": "淨收益"}}}
         document = {"symbol": "2881.TW", "document_type": "financial_statement", "source_evidence_id": "financial-2881",
-                    "financial_statement": statement}
+                    "available_at": self.cutoff, "financial_statement": statement}
         bundle = {"bundle_id": "research", "snapshot_id": "s", "decision_cutoff": self.cutoff, "bundle_sha256": "test",
                   "snapshot": {"latest_prices": [{"symbol": "2881.TW"}], "documents": [document]}}
         metrics = {"items": [{"symbol": "2881.TW", "period": "2026Q2", "metrics": []}]}
@@ -130,6 +130,17 @@ class FundamentalRepairTests(unittest.TestCase):
         self.assertEqual(facts[0]["value"], "97780594")
         self.assertEqual(facts[0]["unit_multiplier"], 1000)
         self.assertEqual(facts[0]["evidence_ids"], ["financial-2881"])
+
+    def test_documents_available_after_cutoff_are_refused(self):
+        from etf_agent.decision.analysts import build_analyst_brief
+        from etf_agent.decision.fields import DecisionToolError
+        for document_type in ("monthly_revenue", "financial_statement"):
+            document = {"symbol": "2881.TW", "document_type": document_type, "source_evidence_id": "e-1",
+                        "available_at": "2099-01-01T00:00:00+00:00"}
+            bundle = {"bundle_id": "research", "snapshot_id": "s", "decision_cutoff": self.cutoff, "bundle_sha256": "test",
+                      "snapshot": {"latest_prices": [{"symbol": "2881.TW"}], "documents": [document]}}
+            with self.assertRaises(DecisionToolError, msg=document_type):
+                build_analyst_brief(bundle, {}, "fundamental", {"items": []})
 
 
 class FinancialIndustryRepairTests(unittest.TestCase):
