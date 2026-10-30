@@ -931,6 +931,8 @@ def _main(args) -> int:
                 perception_bundle_path=perception_bundle, perception_result_path=perception_result,
                 fear_greed_root=ROOT / "artifacts" / "data" / "market_fear_greed",
                 fear_greed_approvals_path=ROOT / "config" / "market_fear_greed_sources.json",
+                overnight_root=ROOT / "artifacts" / "data" / "overnight_market",
+                overnight_approvals_path=ROOT / "config" / "overnight_market_sources.json",
                 market_news_root=None if args.no_market_news else ROOT / "artifacts" / "data" / "market_news",
                 nav_history=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).nav_history(),
                 applied_decision_run_ids=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).applied_decision_run_ids(),

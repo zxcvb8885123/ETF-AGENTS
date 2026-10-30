@@ -263,6 +263,48 @@ class PolicyReplayTests(unittest.TestCase):
             self.replay(self.policy_a, run_ids=[DAYS[0][0]], initial_cash="0")
 
 
+class ReplayRankingBindingTests(unittest.TestCase):
+    """樣板啟用 selection_ranking 時，回放要用封存 run 的入選名次，否則候選策略與實際配置的入選順序不同。"""
+
+    def setUp(self):
+        from etf_agent.decision import program_ranking, ranking_envelope
+        from etf_agent.evaluation.replay import bind_replay_policy
+
+        cutoff, trade_date, p2330, p2317 = DAYS[0][1:]
+        with localcontext() as context:
+            context.prec = DECISION_DECIMAL_PRECISION
+            self.bundle, _, self.debate, self.trade, self.policy, self.team, _, _ = team_world(
+                day_bundle(cutoff, trade_date, p2330, p2317))
+        self.ranking = program_ranking(ranking_envelope(self.bundle, self.trade, "r-1"), self.trade)
+        self.template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        self.template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
+        self.bind = bind_replay_policy
+
+    def bound(self, template, ranking):
+        with localcontext() as context:
+            context.prec = DECISION_DECIMAL_PRECISION
+            return self.bind(template, self.bundle, self.policy, self.trade, self.debate,
+                             self.team["cash_stance"], [], ranking)
+
+    def test_ranking_is_bound_when_template_enables_it(self):
+        policy, notes = self.bound(self.template, self.ranking)
+        self.assertTrue(notes["selection_ranking_applied"])
+        self.assertEqual(policy["position_sizing"]["selection_ranking_id"], "r-1")
+        self.assertIn("rank_by_symbol", policy["position_sizing"])
+
+    def test_old_archived_run_without_ranking_keeps_old_ordering(self):
+        policy, notes = self.bound(self.template, None)
+        self.assertFalse(notes["selection_ranking_applied"])
+        self.assertNotIn("rank_by_symbol", policy["position_sizing"])
+
+    def test_candidate_template_without_selection_ranking_ignores_it(self):
+        template = copy.deepcopy(self.template)
+        template["position_sizing"].pop("selection_ranking")
+        policy, notes = self.bound(template, self.ranking)
+        self.assertFalse(notes["selection_ranking_applied"])
+        self.assertNotIn("rank_by_symbol", policy["position_sizing"])
+
+
 class NavMetricsTests(unittest.TestCase):
     def test_metrics_from_nav_series(self):
         navs = [Decimal(1000)]

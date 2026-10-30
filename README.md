@@ -116,7 +116,9 @@ uv python install 3.12
 - **公司事件**：每則事件寫影響、反證（`counter_evidence`）與尚待確認事項（`pending_confirmations`）。
 - **市場與風險**：風險 Agent 讀整體市場情緒、產業集中、每筆委託佔 20 日均量比例與壓力情境（比賽以成交均價結算，成交量只作提醒，不限制成交）。
 - **持股檔數**：風險 Agent 和現金姿態一起選持股廣度：集中、平衡或分散，分別對應 22、26、30 檔（`config/decision_policy.json` 的 `positions_by_breadth`）。程式照交易 Agent 的信心高 → 中 → 低挑到該檔數；信心和支持數都一樣時，依 `selection_tiebreak` 決定（`atr_low` 波動低的優先，預設；`symbol` 不看波動；`momentum_high` 近 20 日漲多的優先）。Agent 不輸出檔數。
-- **滿檔換股**：持股已達上限時，未持有的新股只能用本次出場釋出的名額，上限是 `rotation.max_swaps_per_run`，且信心不得低於 `rotation.min_new_conviction`。名額配對由程式全域計算；交易 Agent 只看到程式算好的名額狀態（`portfolio_slots`）當背景，出場仍必須有該股票的空頭論點支持，不得為了騰名額而賣。
+- **滿檔換股**：持股已達上限時，未持有的新股只能用本次出場釋出的名額，上限是 `rotation.max_swaps_per_run`，且信心不得低於 `rotation.min_new_conviction`。名額配對由程式全域計算；交易 Agent 只看到程式算好的名額狀態（`portfolio_slots`）當背景，出場必須有該股票的空頭論點或程式持股檢視警示支持，不得為了騰名額而賣。
+- **持股檢視（停損／停利）**：程式依帳戶成本與行情算出每檔持股的帳面報酬與近 20 日高點回落，達 `position_review` 門檻時標警示，交易 Agent 必須正視並自行判斷賣、減碼或續抱（虧損警示的持股續抱須有多頭論點）。門檻只決定何時必須正視，不是固定百分比就賣；`team_inputs` 升為 2.4，尚未實跑。
+- **入選排序**：交易 Agent 只能給高中低三級信心；同一等級內誰優先入選，改由交易 Agent 在各批合併後做第二輪（同一個 Skill、不另設 Agent），一次看全部候選判斷並附理由（不改信心、不輸出數字），程式照名次挑；沒有排序時沿用原規則。`team_inputs` 升為 2.5，尚未實跑。
 - **低波動偏好強度**：`conviction_volatility_v2` 的 `volatility_exponent` 控制權重要多看波動度（1 與舊版相同、0 完全不看）。這個值與換股上限都可由策略反思依校準報告調整；版本開關只由人設定。
 - **控制回撤**：程式算帳戶峰值回撤，達 5% 時現金姿態至少 neutral、達 10% 時至少 defensive（`config/decision_policy.json` 的 `drawdown_control`）。
 
@@ -268,6 +270,7 @@ ETF_AGENTS/
 - **已接入**：150 檔交易池、yfinance 研究日線、官方月營收／重大訊息／財報、虛擬帳本、每日決策鏈與可重建的中文報告。帳本使用 TWSE／TPEx 官方價量。
 - **價格口徑**：Snapshot 的決策與帳本用價是同日官方原價（`execution_close_price`），研究指標用調整價；上市與上櫃官方歷史月行情皆可補抓。缺官方價時退回調整價，重放過去日期時含事後除權息調整，見[架構](docs/architecture.md)。
 - **已接入**：[台股恐懼貪婪指標](docs/market_fear_greed.md)（期交所 VIX、Put/Call 比、FinMind 融資），`./start.sh daily` 在 cutoff 前抓取，由程式算出整體台股情緒；VIX 依使用者決定以非商業比賽研究用途核准，見[來源核對](docs/source_audit/2026-10-23_market_fear_greed_sources.md)。
+- **部分接入（來源已由使用者核准）**：[隔夜市場背景](docs/overnight_market.md)（Yahoo Finance 的 ^GSPC、^IXIC、^SOX 與台股代理 EWT、TSM，`overnight-v1`）只給風險 Agent 現金姿態與最終報告當背景，不併入全市場情緒。`./start.sh daily` 在 cutoff 前抓取，`config/overnight_market_sources.json` 已核准（2026-10-30，apollo），空窗或抓取失敗時為 `unavailable`；改回未核准也是 `unavailable`。**台指期夜盤尚未接入**（Phase 2）。
 - **已接入**：全市場新聞（中央社、自由時報 RSS，2026-10-23 核准）。`./start.sh daily` 在 cutoff 前抓取，每日決策由子 Agent 逐則標註後程式重建；至少 5 則獨立市場新聞、2 家媒體才算可用，否則改用恐懼貪婪指標。新聞步驟失敗不會讓整天失敗。
 - **已接入**：FinMind 現金流量表（稅前淨利與官方損益表相符才用）進基本面分析；FinMind 單季財報經官方金額核對後，可補足去年同期累計財報（`cli/fundamental_repair.py`）。
 - **已接入（待執行核對）**：FinMind 個股新聞進事件分析師（只進公司事件通道，不代表全市場情緒）。只在決策截止時已核准時加入，且只用截止前最後一批抓取、連結網域在媒體白名單內的標題；事件報告升為 2.3。使用者已於 2026-10-25 自行判斷核准（僅標題、內部研究、不轉載，不是媒體書面同意），但**尚未執行**核對指令：`cli/company_news.py review --database var/etf_agent.db --status approved --evidence "..."`；執行前每日決策不會讀到個股新聞。見[來源核對](docs/source_audit/2026-10-25_finmind_stock_news.md)。
@@ -288,7 +291,7 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 
 ### 每日排程：晚上備案、早上重做
 
-排程（`scripts/launchd/`）平日 21:00、07:00 各跑一次 `run`；週日 21:00 也跑一次，替週一再做一份看得到週末新聞的備案（週一就有週五晚上、週日晚上、週一早上三份，後做的取代先做的）：
+排程（`scripts/launchd/`）週一到週五 07:00、週一到週四 21:00 各跑一次 `run`；週五晚上不跑（週一的決策繳交時間從前一日週日 19:30 才開始），改由週日 21:00 做週一的決策（看得到週末新聞，也讀到週六套用的新策略），週一 07:00 再重做（後做的取代先做的）：
 
 - **21:00 備案**：用當天收盤資料做下一個交易日的決策與 D-Plan。早上出事時，手上仍有一份能交。主辦方約 19:00 才產生隔天的 DataPack，**21:00 前要先下載到 `var/datapack/`**，否則對帳不過、不會有備案。
 - **07:00 重做**：在 08:55 交件期限前，用晚上到早上的新事件、新聞與情緒重做，取代晚上那份。

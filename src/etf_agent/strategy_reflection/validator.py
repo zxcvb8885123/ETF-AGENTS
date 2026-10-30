@@ -7,10 +7,11 @@ from typing import Dict, List, Mapping, Sequence
 from etf_agent.core import canonical_sha256
 
 from .contracts import (
-    COOLDOWN_DECISION_DAYS, MAX_PROPOSALS, SCHEMA_VERSION, STATUS_OBSERVE_ONLY, STATUS_PROPOSED, ReflectionError,
-    require_mapping,
+    COOLDOWN_DECISION_DAYS, KNOBS, MAX_PROPOSALS, SCHEMA_VERSION, STATUS_OBSERVE_ONLY, STATUS_PROPOSED,
+    VERIFICATION_OBSERVE, ReflectionError, require_mapping,
 )
-from .tools import check_proposal
+from .tools import check_proposal, knob_origins
+from .trial import open_trial
 
 REFLECTION_FIELDS = {
     "schema_version", "reflection_id", "as_of", "brief_sha256", "base_policy_id", "base_policy_sha256", "decision_days",
@@ -73,6 +74,12 @@ def validate_reflection(
         raise ReflectionError("樣本不足（決策日 %s／%s），不得提案" % (brief["decision_days"], brief["required_decision_days"]))
     if not 1 <= len(proposals) <= MAX_PROPOSALS:
         raise ReflectionError("提案數必須在 1～%d 之間" % MAX_PROPOSALS)
+    if open_trial(history) is not None:
+        raise ReflectionError("上一次套用的試用觀察期尚未結案，結案前不得再提案（避免還原時無法分辨是哪次變更造成的）")
+    if sum(1 for item in proposals if isinstance(item, Mapping) and KNOBS.get(str(item.get("knob")), None) is not None
+           and KNOBS[str(item["knob"])].verification == VERIFICATION_OBSERVE) > 1:
+        raise ReflectionError("影子回放驗不了的旋鈕（停損／停利門檻）每週最多提一個")
+    origins = knob_origins(history)
     seen: List[str] = []
     for index, proposal in enumerate(proposals):
         label = "proposals[%d]" % index
@@ -83,12 +90,12 @@ def validate_reflection(
         if path in seen:
             raise ReflectionError("%s 重複提案同一旋鈕 %s" % (label, path))
         seen.append(path)
-        checked = check_proposal(path, proposal["proposed"], template, rules)
+        checked = check_proposal(path, proposal["proposed"], template, rules, origins)
         if str(proposal["current"]) != checked["current"] or str(proposal["proposed"]) != checked["proposed"]:
             raise ReflectionError("%s 的 current／proposed 與重算結果不符" % label)
         _evidence(proposal["evidence_ids"], evidence, label)
-        if not any(item.startswith("cal.h") for item in proposal["evidence_ids"]):
-            raise ReflectionError("%s 至少要引用一則校準統計（cal.h*），只引用目前旋鈕值不算證據" % label)
+        if not any(item.startswith(("cal.h", "diag.")) for item in proposal["evidence_ids"]):
+            raise ReflectionError("%s 至少要引用一則校準統計（cal.h*）或診斷統計（diag.*），只引用目前旋鈕值不算證據" % label)
         for entry in reversed(history):
             if entry.get("action") == "apply" and path in entry.get("knobs", []):
                 waited = int(brief["decision_days"]) - int(entry["decision_days"])

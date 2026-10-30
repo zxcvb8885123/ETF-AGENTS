@@ -68,6 +68,12 @@ TRADE_SCHEMA = _object(
     {"items": {"type": "array", "items": _object(_TRADE_ITEM, list(_TRADE_ITEM))}},
     ("items",),
 )
+_RANK_ENTRY = _object({"symbol": _TEXT, "reason": _TEXT}, ("symbol", "reason"))
+_RANK_TIER = _object(
+    {"conviction": {"enum": list(CONVICTION_LEVELS)}, "ordered": {"type": "array", "items": _RANK_ENTRY}},
+    ("conviction", "ordered"),
+)
+RANKING_SCHEMA = _object({"tiers": {"type": "array", "items": _RANK_TIER}}, ("tiers",))
 CASH_STANCE_SCHEMA = _object(
     {"level": {"enum": list(CASH_STANCES)}, "breadth": {"enum": list(POSITION_BREADTHS)},
      "rationale": _TEXT, "evidence_ids": _strings(1)},

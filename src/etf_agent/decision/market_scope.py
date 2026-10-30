@@ -35,3 +35,25 @@ def market_sentiment_channel(bundle):
         elif index["status"] != "available":
             channel["data_gaps"] = channel["data_gaps"] + ["恐懼貪婪指標：" + gap for gap in index["data_gaps"]]
     return channel
+
+
+def overnight_market_channel(bundle):
+    """隔夜市場背景通道（美股指數＋台股代理）；與全市場情緒分開，不併入 ``market_sentiment``。
+
+    沒有隔夜市場輸入時回傳 None。非 available 時不附逐標的數字，避免被當成結論。
+    """
+    if "overnight_market_input" not in bundle:
+        return None
+    from etf_agent.perception.overnight_market import validate_pair
+    result = validate_pair(bundle["overnight_market_input"], bundle["snapshot_id"], bundle["decision_cutoff"],
+                           bundle.get("snapshot", {}).get("latest_trade_date"))
+    available = result["status"] == "available"
+    channel = {"scope": "US_OVERNIGHT_AND_TW_PROXY", "signal_version": result["signal_version"],
+               "snapshot_id": bundle["snapshot_id"], "decision_cutoff": bundle["decision_cutoff"],
+               "status": result["status"], "outlook": result["outlook"], "signal_pct": result["signal_pct"],
+               "window": result["window"], "findings": result["findings"], "night_session": result["night_session"],
+               "components": [{key: row[key] for key in (
+                   "symbol", "role", "as_of", "change_pct", "cumulative_change_pct", "percentile_20d", "evidence_id")}
+                   for row in result["components"] if row["status"] == "available"] if available else [],
+               "data_gaps": result["data_gaps"], "limitations": result["limitations"]}
+    return channel

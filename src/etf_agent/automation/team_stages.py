@@ -20,8 +20,15 @@ from etf_agent.decision import (
     find_prior_decision_run,
     prior_decision_brief,
     read_decision_run,
+    position_review_brief,
+    program_ranking,
+    ranking_envelope,
+    ranking_needs_agent,
     render_trader_report,
     seal_report,
+    seal_selection_ranking,
+    selection_ranking_brief,
+    SelectionRankingValidator,
     seal_stance_packet,
     seal_trade_decision,
     trade_decision_envelope,
@@ -29,6 +36,7 @@ from etf_agent.decision import (
 from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_market_report
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.stance import STANCE_ROLES
+from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
 
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import (
@@ -37,6 +45,7 @@ from .agent_schemas import (
     EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
     STANCE_SCHEMA,
+    RANKING_SCHEMA,
     TRADE_SCHEMA,
     _EVENT_RULES,
     _SHARED_RULES,
@@ -60,6 +69,15 @@ _ROTATION_RULES = (
     "但不得只為了騰出名額而出場：exit 與 trim 一律必須採納至少一個該股票的空頭 claim，"
     "也不得為了填滿名額而買進沒有多頭依據的股票。名額、權重、股數與現金全部由程式計算，"
     "portfolio_slots 沒有 evidence_id，不可寫進 rationale、unresolved_questions 或 invalidation_conditions。"
+)
+_REVIEW_RULES = (
+    "輸入的 position_review_background 與各持股的 position_review 是程式算好的持股檢視（帳面報酬、近 20 日高點回落與警示），"
+    "數字不可改寫。flags 內的 review_id 是程式警示：你必須把它放進 adopted_claim_ids 剛好一次，不可放進 rejected_claim_ids，"
+    "也不得新增或改寫任何數字。警示只代表需要正視，不是賣出指令：請結合多空論點判斷是 hold、trim 還是 exit。"
+    "loss_alert 的持股若要 hold、add 或 no_trade，必須同時採納至少一個多頭 claim，否則請 trim 或 exit；"
+    "retrace_alert 代表從近期高點回落，可作為停利依據。trim 與 exit 可以採納警示取代空頭 claim。"
+    "賺賠自帳戶成本起算，開帳日成本是當日結算收盤價，請參考 note；review_id 可寫進 adopted_claim_ids，"
+    "但說明理由時請用白話描述虧損或回落，不要貼出識別碼。"
 )
 
 
@@ -288,12 +306,15 @@ class TeamStagesMixin:
         run_id: str,
         prior_context: Optional[Mapping[str, object]] = None,
         portfolio_slots: Optional[Mapping[str, object]] = None,
+        position_review: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
         ``prior_context`` 是 ``load_prior_decision_context`` 的結果：只放進 brief 當背景，Validator 禁止引用。
         ``portfolio_slots`` 是 ``build_portfolio_slots`` 算好的名額脈絡（啟用 rotation 才有）：讓交易 Agent
-        知道滿檔時買新股必須有持股出場。名額與配對仍由程式決定，Agent 不輸出任何數字。"""
+        知道滿檔時買新股必須有持股出場。名額與配對仍由程式決定，Agent 不輸出任何數字。
+        ``position_review`` 是 ``build_position_review`` 算好的持股檢視（policy 有 ``position_review`` 才有）：
+        警示 ``review_id`` 必須和 claim 一樣處理一次，停損／停利的判斷仍由 Agent 做，數字由程式算。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
         background, prior_by_symbol = prior_decision_brief(prior_context) if prior_context is not None else (None, {})
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
@@ -310,6 +331,8 @@ class TeamStagesMixin:
             name: {str(item["symbol"]).upper(): item.get("outlook") for item in report.get("items", [])}
             for name, report in analyst_reports.items()
         }
+        review_brief = position_review_brief(position_review) if position_review is not None else {}
+        lessons_background = lessons_brief(load_strategy_lessons(self.root))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]
@@ -325,7 +348,10 @@ class TeamStagesMixin:
                     },
                     "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
                     **({"portfolio_slots": portfolio_slots} if portfolio_slots is not None else {}),
+                    **({"position_review_background": {key: review_brief[key] for key in ("policy", "note")}}
+                       if position_review is not None else {}),
                     **({"prior_decision_background": background} if background is not None else {}),
+                    **({"strategy_lessons": lessons_background} if lessons_background is not None else {}),
                     "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                     "symbols": [
                         {
@@ -337,12 +363,14 @@ class TeamStagesMixin:
                             "bull": {key: stances["bull"][symbol][key] for key in ("strength", "claims", "invalidation_conditions")},
                             "bear": {key: stances["bear"][symbol][key] for key in ("strength", "claims", "invalidation_conditions")},
                             **({"prior_decision": prior_by_symbol.get(symbol)} if background is not None else {}),
+                            **({"position_review": review_brief["by_symbol"][symbol]}
+                               if symbol in review_brief.get("by_symbol", {}) else {}),
                         }
                         for symbol in batch["symbols"]
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context)
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
@@ -351,12 +379,13 @@ class TeamStagesMixin:
                 "rationale 只寫整合後的判斷，不逐條重貼多空報告或論點全文；論點識別碼保留在採納／否決陣列供程式核對。"
                 "理由用簡短繁體中文分段：先寫主導決定的理由，再寫主要風險為何改變或沒有改變行動；"
                 "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
-                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s%s%s"
+                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]),
                     _PRIOR_RULES if background is not None else "",
                     _ROTATION_RULES if portfolio_slots is not None else "",
+                    _REVIEW_RULES if position_review is not None else "",
                     _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
@@ -369,11 +398,58 @@ class TeamStagesMixin:
         partials = self._run_jobs([make_job(batch) for batch in batches])
         outputs: List[List[Dict[str, object]]] = [partial["items"] for partial in partials]
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
-        errors = TradeDecisionValidator(bundle, momentum, debate, prior_context=prior_context).validate(decision)
+        errors = TradeDecisionValidator(
+            bundle, momentum, debate, prior_context=prior_context, position_review=position_review
+        ).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("trade_decision", decision)
         (self.run_dir / "trader_report.md").write_text(
-            render_trader_report(bundle, momentum, debate, decision), encoding="utf-8"
+            render_trader_report(bundle, momentum, debate, decision, position_review), encoding="utf-8"
         )
         return decision
+
+    def run_selection_ranking(
+        self,
+        bundle: Mapping[str, object],
+        momentum: Mapping[str, object],
+        analyst_reports: Mapping[str, Mapping[str, object]],
+        debate: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """排序 Agent 一次看全部 buy／add 候選，只在同信心等級內排先後並附理由；不改信心、不新增事實。
+
+        沒有任何等級有兩檔以上候選時沒有先後可排，由程式直接封存，不呼叫 Agent。"""
+        envelope = ranking_envelope(bundle, trade_decision, "selection-ranking:%s" % run_id)
+        if not ranking_needs_agent(trade_decision):
+            ranking = program_ranking(envelope, trade_decision)
+        else:
+            brief_path = self.save_brief(
+                "brief_selection_ranking",
+                {
+                    "regime_assessment": momentum.get("regime_assessment"),
+                    "candidates": selection_ranking_brief(trade_decision, debate, analyst_reports, momentum),
+                    "account": {"held_symbols": sorted(
+                        str(item["symbol"]).upper() for item in bundle["account_snapshot"].get("positions", [])
+                    )},
+                },
+            )
+            validator = SelectionRankingValidator(bundle, trade_decision)
+            task = AgentTask(
+                "ranker",
+                "你是 $trader 交易 Agent，現在做**第二輪入選排序**。先讀 %s 與 %s，再讀全部 buy／add 候選 %s。"
+                "第一輪已給每檔信心等級；你只在**同一信心等級內**決定先後，把你最想優先入選的放在陣列最前面，"
+                "每一檔都附一句白話理由。不得改信心等級，不得新增事實或論點，不得輸出任何數字或權重；"
+                "每個信心等級必須剛好列出該等級的全部候選，不多不少。%s"
+                % (self.root / "tradeagent/trading/trader/SKILL.md", self.root / "tradeagent/trading/trader/references/ranking.md", brief_path, _SHARED_RULES),
+                RANKING_SCHEMA,
+            )
+            ranking = self.agent_step(
+                task, lambda output: seal_selection_ranking(envelope, output["tiers"]), validator.validate
+            )
+        errors = SelectionRankingValidator(bundle, trade_decision).validate(ranking)
+        if errors:
+            raise DailyPipelineError("SelectionRanking 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("selection_ranking", ranking)
+        return ranking

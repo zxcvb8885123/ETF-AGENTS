@@ -54,6 +54,16 @@ def build_report(artifacts, run_id):
         "reference_prices": b["snapshot"]["latest_prices"],
         "errors": decision["errors"],
     }
+    # 隔夜市場背景只在決策輸入有附時才入報告；舊封存沒有這個鍵，重建結果逐位元不變。
+    if "overnight_market_input" in b:
+        from etf_agent.decision.market_scope import overnight_market_channel
+        channel = overnight_market_channel(b)
+        report["overnight_market"] = channel
+        report["evidence_index"] = [*report["evidence_index"], *(
+            {"evidence_id": row["evidence_id"], "source": "overnight_market:%s" % row["source"], "symbol": None,
+             "title": "%s %s" % (row["symbol"], row["name"]), "available_at": row["available_at"],
+             "content_sha256": row["raw_sha256"]}
+            for row in b["overnight_market_input"]["result"]["components"] if row["evidence_id"])]
     report["report_id"] = "report:" + canonical_sha256(report)[:24]
     report["content_sha256"] = canonical_sha256(report)
     return report

@@ -13,6 +13,8 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 同一次輸出另給持股廣度 `breadth`：`concentrated`（集中）、`balanced`（平衡）或 `diversified`（分散）。對應檔數由 Policy 的 `positions_by_breadth` 決定（目前 22／26／30，夾在競賽 20～30 檔之間），程式依交易 Agent 的信心 high → medium → low 挑到該檔數，同等級同支持數時 ATR14 低者優先。高信心候選明確且集中時偏集中；高信心少、看法分歧或事件風險高時偏分散。Agent 不得輸出檔數，`rationale` 要同時說明現金姿態與持股廣度的理由。
 
+若 brief 有 `overnight_market`（隔夜市場背景：Yahoo Finance 美股指數 ^GSPC、^IXIC、^SOX 與在美掛牌的台股代理 EWT、TSM，由程式依 overnight-v1 計算），只把它當現金姿態的背景之一：`status` 非 `available` 時不得當成結論；它不含台指期夜盤（`night_session` 固定為 null）；不得用它推論個股、不得寫成對今日台股指數方向的預測、不得與全市場情緒 `market_sentiment` 混為一談。要引用時只能使用 `overnight_market.components` 的 `evidence_id`（格式 `overnight:<來源>:<代號>:<雜湊>`），這些編號只能用於現金姿態，不能支持任何個股主張。
+
 ## 審查方式
 
 1. 先確認三個輸入的 bundle、proposal、policy、版本與內容雜湊一致。不同版本停止，不拼接結論。

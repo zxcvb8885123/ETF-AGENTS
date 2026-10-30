@@ -27,6 +27,8 @@ from etf_agent.decision import (
     bind_drawdown,
     build_decision_policy,
     build_portfolio_slots,
+    apply_selection_ranking,
+    build_position_review,
     build_team_inputs,
     decision_policy_sha256,
     revision_effects,
@@ -102,6 +104,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         applied_decision_run_ids: Optional[Sequence[str]] = None,
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
+        overnight_root: Optional[Path] = None,
+        overnight_approvals_path: Optional[Path] = None,
     ) -> PipelineResult:
         """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
         挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。"""
@@ -115,6 +119,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 applied_decision_run_ids,
                 active_share_holdings_path=active_share_holdings_path,
                 active_share_approvals_path=active_share_approvals_path,
+                overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
             )
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
@@ -134,6 +139,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         applied_decision_run_ids: Optional[Sequence[str]] = None,
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
+        overnight_root: Optional[Path] = None,
+        overnight_approvals_path: Optional[Path] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -166,6 +173,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             trading_status_path=trading_status_path, account_path=account_snapshot_path,
             perception_bundle_path=perception_bundle_path, perception_result_path=perception_result_path,
             fear_greed_root=fear_greed_root, fear_greed_approvals_path=fear_greed_approvals_path,
+            overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
             market_news_input=market_news,
             active_share_holdings_path=active_share_holdings_path,
             active_share_approvals_path=active_share_approvals_path,
@@ -258,12 +266,28 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             else None
         )
 
+        # 沒有 position_review 的樣板一律不建持股檢視，team_inputs 維持 2.3、brief 與舊版逐位相同。
+        position_review = build_position_review(bundle, base_policy) if "position_review" in base_policy else None
+        if position_review is not None:
+            if slots is None:
+                raise DailyPipelineError("policy 啟用 position_review 時也必須啟用 position_sizing.rotation（team_inputs 2.4 含名額脈絡）")
+            self.save_artifact("position_review", position_review)
+
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
         prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
         with self._timed("trader"):
             trade = self.run_trader(
-                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots
+                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots, position_review
             )
+
+        # 樣板啟用 position_sizing.selection_ranking 才加這一步；沒有的樣板維持舊排序與 team_inputs 版本。
+        ranking = None
+        if (base_policy.get("position_sizing") or {}).get("selection_ranking") is not None:
+            if position_review is None:
+                raise DailyPipelineError("policy 啟用 selection_ranking 時也必須啟用 position_review（team_inputs 2.5 含持股檢視）")
+            self.log("[decision 5b] 交易 Agent 第二輪：同信心等級內決定入選先後")
+            with self._timed("ranking"):
+                ranking = self.run_selection_ranking(bundle, momentum, analysts, debate, trade, decision_run_id)
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         self.save_artifact("policy_base", base_policy)
@@ -271,6 +295,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"),
                                           (base_policy.get("position_sizing") or {}).get("positions_by_breadth"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
+        if ranking is not None:
+            policy = apply_selection_ranking(policy, ranking)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy)
         if policy_errors:
@@ -310,7 +336,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.stage_durations["allocation_review"] = round(time.monotonic() - review_started, 1)
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
-        team = build_team_inputs(analysts, None, stance, prior_context, slots)
+        team = build_team_inputs(analysts, None, stance, prior_context, slots, position_review, ranking)
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team).run(
             proposal, scenario, guard, review, history
         )

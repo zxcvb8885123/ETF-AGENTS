@@ -16,6 +16,12 @@
     "neutral_at": "0.05",
     "defensive_at": "0.10"
   },
+  "position_review": {
+    "version": "v1",
+    "loss_alert": null,
+    "retrace_alert_20d": null,
+    "gain_alert": null
+  },
   "position_sizing": {
     "method": "conviction_volatility_v2",
     "conviction_multipliers": {
@@ -26,6 +32,7 @@
     "volatility_floor": "0.01",
     "volatility_exponent": "0",
     "stock_weight_fit": "v1",
+    "selection_ranking": "v1",
     "held_add_priority": "v1",
     "rotation": {
       "version": "v1",

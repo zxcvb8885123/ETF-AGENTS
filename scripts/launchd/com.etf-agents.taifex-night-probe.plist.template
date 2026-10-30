@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 每天 05:30、06:30、07:00、09:00、17:00（主機時區 Asia/Taipei）記錄期交所 OpenAPI 的最新日期與台指期夜盤何時出現，用來判斷夜盤能否趕上 07:00 決策。只觀察，不進決策；確認後可移除。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etf-agents.taifex-night-probe</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__PROJECT_ROOT__/scripts/probe_taifex_night.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>Asia/Taipei</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/var/logs/taifex_night_probe.out</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/var/logs/taifex_night_probe.out</string>
+</dict>
+</plist>

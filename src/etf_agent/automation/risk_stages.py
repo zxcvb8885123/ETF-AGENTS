@@ -9,11 +9,17 @@ from etf_agent.decision import (
 )
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
-from etf_agent.decision.market_scope import market_sentiment_channel
+from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
 from etf_agent.decision.sizing import POSITION_BREADTHS, validate_cash_stance
 
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
+
+OVERNIGHT_PROMPT = (
+    "overnight_market 是隔夜市場背景（美股指數與台股代理 EWT、TSM，不含台指期夜盤），只作現金姿態背景；"
+    "status 非 available 時不得當成結論，不得用它推論個股，也不得寫成對今日台股指數方向的預測；"
+    "要引用時只能用 overnight_market.components 的 evidence_id。"
+)
 
 
 class RiskStagesMixin:
@@ -39,6 +45,8 @@ class RiskStagesMixin:
         price_evidence = sorted(
             {str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"] if row.get("source_evidence_id")}
         )
+        # 隔夜市場背景只在決策輸入有附時才進 brief 與提示詞，沒有附的舊流程維持原樣。
+        overnight = overnight_market_channel(bundle)
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
@@ -68,6 +76,9 @@ class RiskStagesMixin:
                 # 持股廣度對應的目標檔數由 Policy 決定；風險 Agent 只選等級，程式依信心順序挑到該檔數。
                 "positions_by_breadth": dict(breadth_targets) if breadth_targets else None,
                 "citable_evidence_ids": price_evidence,
+                **({"overnight_market": overnight, "citable_evidence_ids": sorted(
+                    set(price_evidence) | {row["evidence_id"] for row in overnight["components"] if row["evidence_id"]})}
+                   if overnight is not None else {}),
             },
         )
         floor = (drawdown_control or {}).get("stance_floor")
@@ -92,8 +103,9 @@ class RiskStagesMixin:
             "高信心明確且集中時偏集中；你不得輸出檔數，rationale 要同時說明現金姿態與持股廣度的理由。"
             "market_sentiment 是整體台股情緒（全市場新聞，不可用時為恐懼貪婪指標），status 非 available 時不得當成情緒結論；"
             "drawdown_control 是程式從帳本計算的峰值回撤；stance_floor 不是 aggressive 時，姿態不得比它更積極。"
-            "evidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
-            % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md", brief_path, _SHARED_RULES),
+            "%sevidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
+            % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md", brief_path,
+               OVERNIGHT_PROMPT if overnight is not None else "", _SHARED_RULES),
             CASH_STANCE_SCHEMA,
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)

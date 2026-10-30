@@ -21,6 +21,7 @@
 | [基準標的](#基準標的) | TWSE 官方個股日成交資訊（0050） | `cli/benchmark.py collect` | 只供績效比較，不進交易池、不進決策 |
 | [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV × 7、TWSE 開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
 | [交易池](#交易池) | 主辦方名單 | `data/universe.py` | 可，一次性版本化輸入 |
+| [隔夜市場背景](overnight_market.md) | Yahoo Finance 日線（經 yfinance）：`^GSPC`、`^IXIC`、`^SOX`、`EWT`、`TSM` | `cli/overnight_market.py capture` | 待使用者核准授權（`config/overnight_market_sources.json` 目前 `unverified`）；只作現金姿態與報告背景，夜盤尚未接入 |
 | [台股恐懼貪婪指標](market_fear_greed.md) | 期交所 VIX 月檔、期交所 Put/Call 開放資料、FinMind `TaiwanStockTotalMarginPurchaseShortSale` | `cli/market_fear_greed.py capture` | 可，作全市場情緒；核准見[來源核對](source_audit/2026-10-23_market_fear_greed_sources.md)（VIX 為使用者決定） |
 
 ## 150 檔研究日線

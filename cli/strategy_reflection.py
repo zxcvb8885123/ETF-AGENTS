@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""策略反思 CLI：整理簡報、每日自動反思並套用、手動套用指定反思、回滾。
+"""策略反思 CLI：整理簡報、每週自動反思並寫週報、套用待處理提案、手動套用指定反思、回滾。
 
 樣本不足時 auto 不呼叫 Agent。設定檔 config/decision_policy.json 只由本 CLI 以確定性程式原子改寫。
 """
@@ -17,7 +17,7 @@ from etf_agent.automation.agent_runner import ClaudeAgentRunner, DailyPipelineEr
 from etf_agent.calibration import CalibrationError  # noqa: E402
 from etf_agent.decision_delivery.repository import publication_lock  # noqa: E402
 from etf_agent.strategy_reflection import (  # noqa: E402
-    ReflectionError, ReflectionRepository, apply_reflection, default_replayer, make_brief, rollback, run_auto,
+    ReflectionError, ReflectionRepository, apply_pending, apply_reflection, default_replayer, make_brief, rollback, rollback_lessons, run_auto,
 )
 from etf_agent.evaluation import EvaluationError, ReplayError  # noqa: E402
 from etf_agent.strategy_reflection.service import load_reflection  # noqa: E402
@@ -40,14 +40,17 @@ def main(argv=None) -> int:
     auto = sub.add_parser("auto", help="每日自動：樣本足夠才呼叫 Agent；提案通過驗證與影子回放後自動套用")
     auto.add_argument("--model", help="反思使用的模型；預設沿用 Claude CLI 設定")
     auto.add_argument("--no-apply", action="store_true", help="只產生並封存反思，不套用")
+    auto.add_argument("--force", action="store_true", help="距上一份反思不到 6 天也照跑（手動補跑）")
+    sub.add_parser("apply-pending", help="套用最近一份已封存、尚未套用且未過期的提案（週六早上；仍要通過驗證、影子回放與時段保護）")
     apply = sub.add_parser("apply", help="套用指定的已封存反思（同樣要通過驗證與影子回放）")
     apply.add_argument("--reflection-id", required=True)
     sub.add_parser("rollback", help="把最近一次套用的策略樣板還原為備份")
+    sub.add_parser("lessons-rollback", help="把最近一次套用的經驗教訓還原成套用前（沒有前一版就刪檔）")
     sub.add_parser("history", help="列出套用與回滾歷史")
     args = parser.parse_args(argv)
     try:
         if args.command == "brief":
-            result = make_brief(ROOT, args.database, _now().isoformat())
+            result = make_brief(ROOT, args.database, _now().isoformat(), args.decisions)
             result = {key: value for key, value in result.items() if key != "evidence"} | {"evidence_count": len(result["evidence"])}
         elif args.command == "history":
             result = ReflectionRepository(ROOT).history()
@@ -55,7 +58,9 @@ def main(argv=None) -> int:
             if args.command == "auto":
                 result = run_auto(ROOT, args.database, args.decisions,
                                   ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=3.0, timeout_seconds=600),
-                                  _now(), apply=not args.no_apply, write_lock=_daily_lock)
+                                  _now(), apply=not args.no_apply, write_lock=_daily_lock, force=args.force)
+            elif args.command == "apply-pending":
+                result = apply_pending(ROOT, args.database, args.decisions, _now(), write_lock=_daily_lock)
             elif args.command == "apply":
                 reflection, brief = load_reflection(ReflectionRepository(ROOT), args.reflection_id)
                 replayer = default_replayer(ROOT, args.database, args.decisions, str(brief["as_of"]))
@@ -63,7 +68,7 @@ def main(argv=None) -> int:
             else:
                 try:
                     with _daily_lock():
-                        result = rollback(ROOT, _now())
+                        result = rollback_lessons(ROOT, _now()) if args.command == "lessons-rollback" else rollback(ROOT, _now())
                 except BlockingIOError:
                     print("每日決策進行中，稍後再試。", file=sys.stderr)
                     return 3
