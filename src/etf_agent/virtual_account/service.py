@@ -517,7 +517,7 @@ class VirtualAccountService:
             "schema_version": "1.0", "account_id": account_id, "sequence": sequence,
             "parent_state_id": parent_state_id, "as_of": as_of,
             "settled_cash": str(settled_cash), "unsettled_cash": str(unsettled_cash),
-            "pending_settlements": [dict(item) for item in pending_settlements],
+            "pending_settlements": [{**item, "amount": str(item["amount"])} for item in pending_settlements],
             "positions": [dict(item) for item in positions], "nav": str(nav),
             "provenance": dict(provenance),
         }
