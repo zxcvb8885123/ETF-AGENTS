@@ -118,6 +118,29 @@ class SensitiveReadTests(unittest.TestCase):
                 with self.assertRaises(DailyPipelineError):
                     CodexAgentRunner(root).run(self.task, root)
 
+    def test_claude_failure_text_is_scrubbed_of_env_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text("FINMIND_TOKEN=tok-abcdef123456\n", encoding="utf-8")
+            failures = [
+                subprocess.CompletedProcess([], 1, "not json", "bad key tok-abcdef123456"),
+                subprocess.CompletedProcess([], 1, json.dumps({"is_error": True, "result": "bad tok-abcdef123456"}), ""),
+            ]
+            for completed in failures:
+                with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=completed):
+                    with self.assertRaises(TransientAgentError) as raised:
+                        ClaudeAgentRunner(root).run(self.task, root)
+                self.assertNotIn("tok-abcdef123456", str(raised.exception))
+
+    def test_claude_nonzero_exit_with_structured_output_is_not_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = json.dumps({"structured_output": {"items": []}})
+            with patch("etf_agent.automation.agent_runner.subprocess.run",
+                       return_value=subprocess.CompletedProcess([], 1, payload, "")):
+                with self.assertRaises(TransientAgentError):
+                    ClaudeAgentRunner(root).run(self.task, root)
+
     def test_missing_env_file_does_not_block(self):
         with tempfile.TemporaryDirectory() as directory:
             reject_secret_leak("trader_b0", {"items": []}, Path(directory))
