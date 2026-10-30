@@ -11,19 +11,27 @@
 
 from __future__ import annotations
 
+from datetime import timezone
 from decimal import Decimal
 from typing import Dict, List, Mapping, Optional
+
+from etf_agent.core import parse_aware_time
 
 from .fields import DecisionToolError, decimal_value, reject_unknown_fields, snapshot_execution_price
 
 
 POSITION_REVIEW_VERSION = "1.0"
 POLICY_VERSION = "v1"
-POLICY_FIELDS = {"version", "loss_alert", "retrace_alert_20d", "gain_alert"}
+POLICY_FIELDS = {"version", "loss_alert", "retrace_alert_20d", "gain_alert", "context"}
+CONTEXT_VERSION = "v1"  # policy 設 context=v1 才在每檔附上相對交易池的報酬與基本面資料日期
 REVIEW_FIELDS = {"schema_version", "policy", "cost_basis_note", "items"}
 ITEM_FIELDS = {
     "symbol", "position_id", "average_cost", "price", "unrealized_return", "retrace_from_high_5d", "retrace_from_high_20d",
     "flags", "evidence_ids",
+}
+CONTEXT_ITEM_FIELDS = {
+    "return_5d", "pool_return_5d", "relative_to_pool_5d", "return_20d", "pool_return_20d", "relative_to_pool_20d",
+    "pool_size", "latest_revenue_available_at", "latest_financial_available_at",
 }
 FLAG_FIELDS = {"review_id", "flag"}
 FLAGS = ("loss_alert", "retrace_alert", "gain_alert")
@@ -55,6 +63,8 @@ def validate_position_review_policy(policy: object, errors: List[str]) -> None:
     reject_unknown_fields(policy, POLICY_FIELDS, prefix, errors)
     if policy.get("version") != POLICY_VERSION:
         errors.append("%s.version 必須為 %s" % (prefix, POLICY_VERSION))
+    if policy.get("context") not in (None, CONTEXT_VERSION):
+        errors.append("%s.context 只允許省略或 %s" % (prefix, CONTEXT_VERSION))
     for field in ("loss_alert", "retrace_alert_20d", "gain_alert"):
         if field not in policy:
             errors.append("%s 缺少 %s（不啟用請明確寫 null）" % (prefix, field))
@@ -79,6 +89,35 @@ def _quantize(value: Decimal) -> str:
     return str(value.quantize(QUANTUM))
 
 
+def _window_return(bars: List[Mapping[str, object]], window: int) -> Optional[Decimal]:
+    """最近 ``window`` 個交易日的報酬（調整價收盤）；根數不足不補假值。"""
+    if len(bars) < window + 1:
+        return None
+    start = decimal_value(bars[-1 - window]["close"], "close")
+    end = decimal_value(bars[-1]["close"], "close")
+    return None if start <= 0 else end / start - Decimal(1)
+
+
+def _pool_return(series: Mapping[str, Mapping[str, object]], window: int) -> tuple:
+    """交易池（同 Snapshot 全部有足夠行情的股票）等權平均報酬與檔數。"""
+    values = [value for row in series.values() for value in [_window_return(row["bars"], window)] if value is not None]
+    return (sum(values) / len(values), len(values)) if values else (None, 0)
+
+
+def _latest_available(bundle: Mapping[str, object], symbol: str, document_type: str) -> Optional[str]:
+    """該檔最新文件的可得時間（UTC ISO）。用時間而不是字串比大小（不同時區偏移的字串不能直接比）；
+    晚於 ``decision_cutoff`` 的文件不算，缺時區或無法解析就拒絕，不猜。"""
+    cutoff = parse_aware_time(bundle["decision_cutoff"], "decision_cutoff", error=DecisionToolError)
+    times = []
+    for doc in bundle["snapshot"].get("documents", []):
+        if isinstance(doc, Mapping) and doc.get("document_type") == document_type \
+                and str(doc.get("symbol", "")).upper() == symbol and doc.get("available_at"):
+            moment = parse_aware_time(doc["available_at"], "%s.available_at" % document_type, error=DecisionToolError)
+            if moment <= cutoff:
+                times.append(moment)
+    return max(times).astimezone(timezone.utc).isoformat() if times else None
+
+
 def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, object]) -> Dict[str, object]:
     """逐檔持股的帳面報酬、近 20 日高點回落與警示；policy 沒有 ``position_review`` 時呼叫端不應建立。
 
@@ -93,6 +132,7 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
     loss_limit = _threshold(settings, "loss_alert")
     retrace_limit = _threshold(settings, "retrace_alert_20d")
     gain_limit = _threshold(settings, "gain_alert")
+    with_context = settings.get("context") == CONTEXT_VERSION
     account = bundle["account_snapshot"]
     latest = {str(row["symbol"]).upper(): row for row in bundle["snapshot"]["latest_prices"]}
     series = {str(row["symbol"]).upper(): row for row in bundle["price_series"]}
@@ -131,7 +171,21 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
             flags.append({"review_id": review_id(symbol, "retrace_alert"), "flag": "retrace_alert"})
         if gain_limit is not None and unrealized >= gain_limit:
             flags.append({"review_id": review_id(symbol, "gain_alert"), "flag": "gain_alert"})
+        context: Dict[str, object] = {}
+        if with_context:
+            for window in (SHORT_RETRACE_WINDOW, RETRACE_WINDOW):
+                own = _window_return(bars, window)
+                pool, size = _pool_return(series, window)
+                tag = "%dd" % window
+                context["return_" + tag] = None if own is None else _quantize(own)
+                context["pool_return_" + tag] = None if pool is None else _quantize(pool)
+                context["relative_to_pool_" + tag] = None if own is None or pool is None else _quantize(own - pool)
+                if window == RETRACE_WINDOW:
+                    context["pool_size"] = size
+            context["latest_revenue_available_at"] = _latest_available(bundle, symbol, "monthly_revenue")
+            context["latest_financial_available_at"] = _latest_available(bundle, symbol, "financial_statement")
         items.append({
+            **context,
             "symbol": symbol,
             "position_id": position_id(symbol),
             "average_cost": _quantize(cost),
@@ -144,7 +198,7 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
         })
     return {
         "schema_version": POSITION_REVIEW_VERSION,
-        "policy": {key: settings.get(key) for key in sorted(POLICY_FIELDS)},
+        "policy": {key: settings.get(key) for key in sorted(POLICY_FIELDS) if key != "context" or "context" in settings},
         "cost_basis_note": COST_BASIS_NOTE,
         "items": items,
     }
@@ -199,6 +253,7 @@ def position_review_brief(review: Mapping[str, object]) -> Dict[str, object]:
         "by_symbol": {
             str(item["symbol"]): {key: item[key] for key in (
                 "position_id", "average_cost", "price", "unrealized_return", "retrace_from_high_5d", "retrace_from_high_20d", "flags", "evidence_ids",
+                *sorted(CONTEXT_ITEM_FIELDS & set(item)),
             )}
             for item in review["items"]
         },

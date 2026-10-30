@@ -71,7 +71,7 @@ _ROTATION_RULES = (
     "portfolio_slots 沒有 evidence_id，不可寫進 rationale、unresolved_questions 或 invalidation_conditions。"
 )
 _REVIEW_RULES = (
-    "輸入的 position_review_background 與各持股的 position_review 是程式算好的持股檢視（帳面報酬、近 20 日高點回落與警示），"
+    "輸入的 position_review_background 與各持股的 position_review 是程式算好的持股檢視（帳面報酬、近 5／20 日高點回落、警示，以及可能附上的相對交易池報酬 relative_to_pool_* 與最新月營收／財報可得時間 latest_*_available_at；這些是程式算的事實，不是證據，不可引用為 evidence_id），"
     "數字不可改寫。flags 內的 review_id 是程式警示：你必須把它放進 adopted_claim_ids 剛好一次，不可放進 rejected_claim_ids，"
     "也不得新增或改寫任何數字。警示只代表需要正視，不是賣出指令：請結合多空論點判斷是 hold、trim 還是 exit。"
     "loss_alert 的持股若要 hold、add 或 no_trade，必須同時採納至少一個多頭 claim，否則請 trim 或 exit；"

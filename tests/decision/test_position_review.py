@@ -16,6 +16,7 @@ from etf_agent.decision import (
 from etf_agent.decision.fields import DecisionToolError, decision_bundle_sha256
 from etf_agent.decision.finalization import REVIEW_TEAM_FIELDS, REVIEW_TEAM_VERSION
 from etf_agent.decision.position_review import (
+    CONTEXT_ITEM_FIELDS,
     ITEM_FIELDS,
     POSITION_REVIEW_VERSION,
     review_id,
@@ -120,6 +121,82 @@ class BuildPositionReviewTests(unittest.TestCase):
         errors = []
         validate_position_review_policy({"version": "v1", "loss_alert": "0.1"}, errors)
         self.assertTrue(errors)
+
+
+class PositionContextTests(unittest.TestCase):
+    """policy position_review.context=v1：每檔附上相對交易池的報酬與基本面資料日期；沒設則與舊版逐位元相同。"""
+
+    def setUp(self):
+        self.bundle, _, _, _ = world()
+
+    def test_without_context_items_and_policy_are_unchanged(self):
+        review = build_position_review(self.bundle, policy())
+        self.assertEqual(set(review["items"][0]), ITEM_FIELDS)
+        self.assertNotIn("context", review["policy"])
+
+    def test_context_adds_relative_returns_and_document_dates(self):
+        review = build_position_review(self.bundle, policy(context="v1"))
+        item = review["items"][0]
+        self.assertEqual(review["policy"]["context"], "v1")
+        self.assertTrue(CONTEXT_ITEM_FIELDS <= set(item))
+        bars = next(row for row in self.bundle["price_series"] if row["symbol"] == "2330.TW")["bars"]
+        if len(bars) > 20:
+            own = Decimal(bars[-1]["close"]) / Decimal(bars[-21]["close"]) - 1
+            self.assertEqual(item["return_20d"], str(own.quantize(Decimal("0.000001"))))
+            pool = Decimal(item["pool_return_20d"])
+            self.assertEqual(item["relative_to_pool_20d"], str((own - pool).quantize(Decimal("0.000001"))))
+        self.assertGreaterEqual(item["pool_size"], 1)
+        self.assertIn("latest_revenue_available_at", item)
+
+    def test_document_dates_compare_as_times_and_ignore_documents_after_cutoff(self):
+        changed = copy.deepcopy(self.bundle)
+        cutoff = changed["decision_cutoff"]
+        docs = changed["snapshot"].setdefault("documents", [])
+        docs[:] = [
+            {"document_type": "monthly_revenue", "symbol": "2330.TW", "available_at": "2026-09-20T12:00:00+08:00"},  # 04:00Z
+            {"document_type": "monthly_revenue", "symbol": "2330.TW", "available_at": "2026-09-20T05:00:00+00:00"},  # 較晚
+            {"document_type": "monthly_revenue", "symbol": "2330.TW", "available_at": "2099-01-01T00:00:00+00:00"},  # cutoff 後
+            {"document_type": "financial_statement", "symbol": "2330.TW", "available_at": "2099-01-01T00:00:00+00:00"},
+        ]
+        changed["decision_cutoff"] = "2026-12-31T00:00:00+00:00" if cutoff < "2026-12-31" else cutoff
+        changed["bundle_sha256"] = decision_bundle_sha256(changed)
+        item = build_position_review(changed, policy(context="v1"))["items"][0]
+        self.assertEqual(item["latest_revenue_available_at"], "2026-09-20T05:00:00+00:00")
+        self.assertIsNone(item["latest_financial_available_at"])
+        docs[0]["available_at"] = "2026-09-20T12:00:00"  # 缺時區
+        with self.assertRaises(DecisionToolError):
+            build_position_review(changed, policy(context="v1"))
+
+    def test_short_history_gives_none_not_made_up_numbers(self):
+        changed = copy.deepcopy(self.bundle)
+        for row in changed["price_series"]:
+            row["bars"] = row["bars"][-3:]
+        changed["bundle_sha256"] = decision_bundle_sha256(changed)
+        item = build_position_review(changed, policy(context="v1"))["items"][0]
+        self.assertIsNone(item["return_20d"])
+        self.assertIsNone(item["relative_to_pool_5d"])
+        self.assertEqual(item["pool_size"], 0)
+
+    def test_context_values_are_recomputed_by_validator_and_unknown_context_rejected(self):
+        settings = policy(context="v1")
+        review = build_position_review(self.bundle, settings)
+        errors = []
+        validate_position_review(self.bundle, settings, review, errors)
+        self.assertEqual(errors, [])
+        forged = copy.deepcopy(review)
+        forged["items"][0]["relative_to_pool_20d"] = "0.5"
+        validate_position_review(self.bundle, settings, forged, errors)
+        self.assertTrue(errors)
+        bad = []
+        validate_position_review_policy({**SETTINGS, "context": "v2"}, bad)
+        self.assertTrue(bad)
+
+    def test_trader_brief_carries_context_only_when_present(self):
+        from etf_agent.decision.position_review import position_review_brief
+        plain = position_review_brief(build_position_review(self.bundle, policy()))["by_symbol"]["2330.TW"]
+        rich = position_review_brief(build_position_review(self.bundle, policy(context="v1")))["by_symbol"]["2330.TW"]
+        self.assertNotIn("relative_to_pool_20d", plain)
+        self.assertIn("relative_to_pool_20d", rich)
 
 
 class ValidatePositionReviewTests(unittest.TestCase):

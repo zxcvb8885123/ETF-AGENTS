@@ -20,7 +20,8 @@
     "version": "v1",
     "loss_alert": null,
     "retrace_alert_20d": null,
-    "gain_alert": null
+    "gain_alert": null,
+    "context": "v1"
   },
   "position_sizing": {
     "method": "conviction_volatility_v2",

@@ -50,7 +50,7 @@ flowchart TD
 | `prior_decision.py` | 前次決策背景：從決策庫找同帳戶、目標交易時段更早、approved／no_trade 的封存 run（同時段多個時優先帳本結算記錄），整理持股的前次意圖與重估條件為不可引用的 `PriorDecisionContext`，並重建驗證 | `find_prior_decision_run`、`read_decision_run`、`build_prior_decision_context`、`prior_decision_brief`、`prior_reference_tokens`、`PriorDecisionContextValidator` |
 | `trader_report.py` | 以已驗證 `TradeDecision` 呈現交易整合結果，不重貼多空全文 | `render_trader_report` |
 | `sizing.py` | conviction 等級、現金姿態、持股廣度（`positions_by_breadth` 對應檔數）、換股名額（`rotation`）、入選順序（`selection_tiebreak`）與低波動偏好強度（v2 的 `volatility_exponent`），及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`breadth_target`、`conviction_weights` |
-| `position_review.py` | 持股檢視（停損／停利警示）：程式算帳面報酬與近 20 日高點回落、依 `position_review` 門檻標警示，交易 Agent 須處理，Finalizer 重算比對（team_inputs 2.4） | `build_position_review`、`validate_position_review`、`position_review_brief`、`POSITION_REVIEW_VERSION` |
+| `position_review.py` | 持股檢視（停損／停利警示）：程式算帳面報酬與近 20 日高點回落（policy `context: "v1"` 時另附相對交易池的 5／20 日報酬與基本面資料可得時間）、依 `position_review` 門檻標警示，交易 Agent 須處理，Finalizer 重算比對（team_inputs 2.4） | `build_position_review`、`validate_position_review`、`position_review_brief`、`POSITION_REVIEW_VERSION` |
 | `selection_ranking.py` | 入選排序：交易 Agent 第二輪在同信心等級內排先後；封存、驗證涵蓋範圍、轉成 `rank_by_symbol` 綁進 policy（team_inputs 2.5） | `SelectionRankingValidator`、`apply_selection_ranking`、`program_ranking`、`selection_ranking_brief` |
 | `rotation.py` | 滿檔換股的名額脈絡：程式算好的持股檔數、硬上限、空名額與全池多空強度統計，交給交易 Agent 當背景並由 Finalizer 重算比對 | `build_portfolio_slots`、`validate_portfolio_slots`、`PORTFOLIO_SLOTS_VERSION` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
