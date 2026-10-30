@@ -1,7 +1,8 @@
 """隔夜市場背景契約：來源白名單、標的、訊號常數與欄位檢查。
 
 這是現金姿態與報告用的次級背景，不是台股情緒、不是個股訊號，也不預測指數方向。
-數字只由程式依 Yahoo Finance 日線計算；模型不得覆寫。
+數字只由程式依 Yahoo Finance 日線與期交所官網夜盤報價計算；模型不得覆寫。
+``tools.historical_signals`` 只給離線回測（research/cross_market_study）用，不在決策鏈。
 """
 from etf_agent.core import canonical_sha256
 
@@ -30,11 +31,19 @@ YAHOO_HOST = "query1.finance.yahoo.com"
 YAHOO_CHART_PREFIX = "https://%s/v8/finance/chart/" % YAHOO_HOST
 
 SOURCE_ID = "YAHOO_FINANCE"
+TAIFEX_SOURCE_ID = "TAIFEX_MIS"
+TAIFEX_HOST = "mis.taifex.com.tw"
+TAIFEX_QUOTE_URL = "https://%s/futures/api/getQuoteList" % TAIFEX_HOST
 SOURCES = {
     SOURCE_ID: {
         "name": "Yahoo Finance 美股日線收盤（經 yfinance）",
         "hosts": {YAHOO_HOST},
         "terms_url": "https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html",
+    },
+    TAIFEX_SOURCE_ID: {
+        "name": "期交所官網即時行情（台指期盤後）",
+        "hosts": {TAIFEX_HOST},
+        "terms_url": "https://www.taifex.com.tw/cht/edu/userTerms",
     },
 }
 
@@ -46,6 +55,22 @@ SYMBOLS = {
     "EWT": {"name": "iShares MSCI Taiwan ETF（美股掛牌）", "role": "taiwan_proxy"},
     "TSM": {"name": "台積電 ADR（美股掛牌）", "role": "taiwan_proxy"},
 }
+
+# overnight-market-1.1：加入日韓指數、VIX 與台指期夜盤，並算出方向一致性。1.0 的資料包與結果維持原重建行為。
+PACK_VERSION_V11 = "overnight-market-1.1"
+RESULT_VERSION_V11 = "overnight-market-result-1.1"
+SIGNAL_VERSION_V11 = "overnight-v1.1"
+SYMBOLS_V11 = dict(SYMBOLS, **{
+    "^N225": {"name": "日經 225 指數", "role": "asia_index"},
+    "^KS11": {"name": "韓國 KOSPI 指數", "role": "asia_index"},
+    "^VIX": {"name": "CBOE 波動率指數 VIX", "role": "volatility"},
+})
+NIGHT_SYMBOL = "TXF_NIGHT"
+NIGHT_NAME = "台指期近月盤後（相對前一日日盤結算價）"
+# 方向一致性：|漲跌幅| 低於此值算持平；至少 AGREEMENT_MIN_TOTAL 個方向訊號、且同向比例達 AGREEMENT_RATIO 才算一致。
+DIRECTION_DEADBAND = 0.30
+AGREEMENT_MIN_TOTAL = 3
+AGREEMENT_RATIO = 0.75
 
 OUTLOOK_LABELS = {"negative": "偏負面", "neutral": "中性", "positive": "偏正面", "mixed": "訊號分歧", "unknown": "未知"}
 

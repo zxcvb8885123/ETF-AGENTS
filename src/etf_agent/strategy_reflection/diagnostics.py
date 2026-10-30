@@ -138,6 +138,8 @@ def _turnover(runs: List[Mapping[str, object]], book: OfficialPriceBook) -> Dict
     ratios, fees, swaps = [], [], 0
     for run in days:
         decision = run["decision"]
+        if not isinstance(decision.get("portfolio"), Mapping):  # type: ignore[union-attr]
+            continue  # rejected 的決策沒有 portfolio，沒有成交也沒有 NAV
         nav = Decimal(str(decision["portfolio"]["nav"]))  # type: ignore[index]
         if nav <= 0:
             continue

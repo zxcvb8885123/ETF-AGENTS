@@ -25,6 +25,9 @@ def passing_replayer(path, replay_id):
     return replay_body("101") if replay_id.endswith("candidate") else replay_body()
 
 
+from etf_agent.strategy_reflection import diagnostics as diagnostics_module
+
+
 class DiagnosticsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -52,6 +55,18 @@ class DiagnosticsTests(unittest.TestCase):
         turnover = self.diagnostics["turnover"]
         self.assertEqual(turnover["status"], "ok")
         self.assertGreater(turnover["days"], 0)
+
+    def test_rejected_decision_without_portfolio_does_not_break_turnover_or_thesis(self):
+        from etf_agent.strategy_reflection.diagnostics import _turnover
+        from etf_agent.strategy_reflection.thesis import build_thesis_tracking
+        rejected = {"decision": {"status": "rejected", "portfolio": None, "orders": []}, "intent": {"items": []}, "team_inputs": {}}
+        original = diagnostics_module._latest_per_entry_day
+        diagnostics_module._latest_per_entry_day = lambda runs, book: ({"2026-11-02": rejected}, [])
+        try:
+            self.assertEqual(_turnover([rejected], None)["status"], "ok")
+        finally:
+            diagnostics_module._latest_per_entry_day = original
+        self.assertEqual(build_thesis_tracking({"2026-11-02": rejected}, None), [])
 
     def test_thesis_numbers_are_in_diagnostics_but_the_reasons_are_not(self):
         thesis = self.diagnostics["thesis"]
@@ -157,7 +172,7 @@ class WeeklyRunTests(Fixture):
     def test_report_marks_unavailable_and_insufficient_items(self):
         brief = self.closed()
         text = render_weekly_report(NOW, brief, observe_only(brief, NOW))
-        self.assertIn("決策日 2／10", text)
+        self.assertIn("決策日 2／5", text)
         self.assertIn("尚無 team_inputs 2.4", text)
 
 

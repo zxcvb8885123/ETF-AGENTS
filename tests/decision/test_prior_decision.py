@@ -228,6 +228,23 @@ class PriorDecisionContextValidatorTests(unittest.TestCase):
         self.assertTrue(any("content_sha256" in error for error in errors), errors)
         self.assertTrue(any("context_id" in error for error in errors), errors)
 
+    def test_context_is_rebuilt_from_source_run_when_repository_is_given(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            DecisionRepository(root).save("decision-prior", sealed_run(), day="2026-09-20")
+            bundle = later_bundle()
+            context = build_prior_decision_context(bundle, read_decision_run(root, "decision-prior"))
+            validator = PriorDecisionContextValidator(bundle, root)
+            self.assertEqual(validator.validate(context), [])
+            forged = copy.deepcopy(context)
+            forged["items"][0]["invalidation_conditions"] = ["改寫過的重估條件"]
+            forged = seal_prior_decision_context(forged)
+            self.assertEqual(PriorDecisionContextValidator(bundle).validate(forged), [])  # 只驗自身一致時看不出來
+            self.assertTrue(any("來源 run" in error for error in validator.validate(forged)))
+            missing = copy.deepcopy(context)
+            missing["source"]["run_id"] = "decision-gone"
+            self.assertTrue(validator.validate(seal_prior_decision_context(missing)))
+
     def test_resealed_violations_are_rejected(self):
         source = self.context["source"]
         cases = {

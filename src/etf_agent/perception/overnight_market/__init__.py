@@ -1,4 +1,4 @@
-"""隔夜市場背景：Yahoo Finance 美股指數與台股代理（EWT、TSM）的確定性結果，只作現金姿態與報告背景。"""
+"""隔夜市場背景：美股指數、台股代理、日韓指數、VIX 與台指期夜盤的確定性結果（1.0 只有美股與台股代理），只作現金姿態與報告背景。"""
 from .contracts import OvernightMarketError
 from .provider import OvernightProvider
 from .service import (

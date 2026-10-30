@@ -7,6 +7,9 @@
 - 前次 cutoff 必須早於本次 cutoff（含時區）；snapshot 不同時明確標為 ``cross_snapshot_exception``，
   因為前次結論不是本次 Snapshot 的事實，所以不配 evidence_id、``citable`` 永遠為 false。
 - 只整理目前持股的 ``intent``／``conviction``／``invalidation_conditions``；不含數字、權重或訂單。
+- 給了決策庫位置（``PriorDecisionContextValidator(repository_root=...)``）時，驗證會讀回來源 run 重建整份背景比對內容，
+  防止改寫後重算自身雜湊；但它只驗「來源 run 的內容」，不重跑 ``find_prior_decision_run``，所以不驗證「為什麼挑這個 run」
+  （換成另一個合法且更早時段的 run 會通過）。下游重建者（帳本、交付、D-Plan）目前沒有傳決策庫，只驗內部一致性。
 - 找不到前次 run 時輸出 ``status=unavailable``，不是錯誤；內容由 ``PriorDecisionContextValidator`` 重建驗證。
 - 交易 Agent 的文字欄位若出現本背景的識別碼，``TradeDecisionValidator`` 以 ``prior_reference_tokens`` 拒絕；
   行動的改變或延續仍必須由本次多空 claim 支持（既有 buy／add 與 trim／exit 規則）。
@@ -286,7 +289,9 @@ def prior_decision_brief(context: Mapping[str, object]) -> Tuple[Dict[str, objec
 class PriorDecisionContextValidator:
     """重建驗證 PriorDecisionContext：欄位白名單、雜湊、時間順序、持股對應與不可引用旗標。"""
 
-    def __init__(self, bundle: Mapping[str, object]):
+    def __init__(self, bundle: Mapping[str, object], repository_root: Optional[Path] = None):
+        # 給了決策庫位置時，available 的背景會讀回來源 run 重建比對；沒給時只驗內部一致性（舊呼叫端）。
+        self.repository_root = Path(repository_root) if repository_root is not None else None
         self.bundle = dict(bundle)
         self.held = _held_symbols(bundle)
         self.cutoff = parse_time(bundle.get("decision_cutoff"), "decision_cutoff")
@@ -357,7 +362,21 @@ class PriorDecisionContextValidator:
             errors.append("%s.items 股票不得重複" % prefix)
         if sorted(set(seen) | {str(symbol).upper() for symbol in uncovered}) != self.held or set(seen) & set(uncovered):
             errors.append("%s 的 items 與 uncovered_symbols 必須剛好涵蓋目前持股" % prefix)
+        if not errors and self.repository_root is not None:
+            self._validate_against_source(context, prefix, errors)
         return errors
+
+    def _validate_against_source(self, context: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+        """讀回來源 run 重建整份背景並比對；內容被改寫（即使重算了自身雜湊）就拒絕。"""
+        source = context["source"]  # type: ignore[index]
+        try:
+            prior = read_decision_run(self.repository_root, str(source["run_id"]))  # type: ignore[index,arg-type]
+            expected = build_prior_decision_context(self.bundle, prior, selection=str(source["selection"]))  # type: ignore[index]
+        except DecisionToolError as error:
+            errors.append("%s 無法由來源 run 重建：%s" % (prefix, error))
+            return
+        if dict(context) != expected:
+            errors.append("%s 與來源 run 重建結果不一致" % prefix)
 
     def _validate_unavailable(
         self, context: Mapping[str, object], items: List[object], uncovered: List[object], prefix: str, errors: List[str]

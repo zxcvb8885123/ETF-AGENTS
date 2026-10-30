@@ -71,7 +71,7 @@ _ROTATION_RULES = (
     "portfolio_slots 沒有 evidence_id，不可寫進 rationale、unresolved_questions 或 invalidation_conditions。"
 )
 _REVIEW_RULES = (
-    "輸入的 position_review_background 與各持股的 position_review 是程式算好的持股檢視（帳面報酬、近 20 日高點回落與警示），"
+    "輸入的 position_review_background 與各持股的 position_review 是程式算好的持股檢視（帳面報酬、近 5／20 日高點回落、警示，以及可能附上的相對交易池報酬 relative_to_pool_* 與最新月營收／財報可得時間 latest_*_available_at；這些是程式算的事實，不是證據，不可引用為 evidence_id），"
     "數字不可改寫。flags 內的 review_id 是程式警示：你必須把它放進 adopted_claim_ids 剛好一次，不可放進 rejected_claim_ids，"
     "也不得新增或改寫任何數字。警示只代表需要正視，不是賣出指令：請結合多空論點判斷是 hold、trim 還是 exit。"
     "loss_alert 的持股若要 hold、add 或 no_trade，必須同時採納至少一個多頭 claim，否則請 trim 或 exit；"
@@ -270,7 +270,7 @@ class TeamStagesMixin:
         帳本結算記錄的 ``applied_run_ids``，否則取該時段 cutoff 最新者），整理目前持股的前次意圖與重估條件；找不到或本次
         沒有目標時段時 unavailable。續跑時沿用本 run 已存且仍通過驗證的版本，避免決策庫變動改變輸入。"""
         path = self._path("prior_decision_context")
-        validator = PriorDecisionContextValidator(bundle)
+        validator = PriorDecisionContextValidator(bundle, self.decision_repository)
         if self.resume and path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
             if not validator.validate(saved):
@@ -332,7 +332,7 @@ class TeamStagesMixin:
             for name, report in analyst_reports.items()
         }
         review_brief = position_review_brief(position_review) if position_review is not None else {}
-        lessons_background = lessons_brief(load_strategy_lessons(self.root))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
+        lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]

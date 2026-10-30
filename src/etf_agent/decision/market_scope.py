@@ -38,7 +38,7 @@ def market_sentiment_channel(bundle):
 
 
 def overnight_market_channel(bundle):
-    """隔夜市場背景通道（美股指數＋台股代理）；與全市場情緒分開，不併入 ``market_sentiment``。
+    """隔夜市場背景通道（美股指數、台股代理；1.1 另含日韓、VIX、台指期夜盤與方向一致性 ``agreement``）；與全市場情緒分開，不併入 ``market_sentiment``。
 
     沒有隔夜市場輸入時回傳 None。非 available 時不附逐標的數字，避免被當成結論。
     """
@@ -52,6 +52,7 @@ def overnight_market_channel(bundle):
                "snapshot_id": bundle["snapshot_id"], "decision_cutoff": bundle["decision_cutoff"],
                "status": result["status"], "outlook": result["outlook"], "signal_pct": result["signal_pct"],
                "window": result["window"], "findings": result["findings"], "night_session": result["night_session"],
+               **({"agreement": result["agreement"]} if "agreement" in result else {}),  # 1.0 結果沒有此鍵，舊 run 的通道不變
                "components": [{key: row[key] for key in (
                    "symbol", "role", "as_of", "change_pct", "cumulative_change_pct", "percentile_20d", "evidence_id")}
                    for row in result["components"] if row["status"] == "available"] if available else [],

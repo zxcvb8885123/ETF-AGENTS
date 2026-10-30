@@ -1,7 +1,24 @@
 {
-  "version": "overnight-market-sources-2026-10-30",
+  "version": "overnight-market-sources-2026-10-30b",
   "note": "隔夜市場背景的來源使用核准。只有 license_status=approved 的來源進入正式結果；unverified 時整體結果為 unavailable，只作診斷。授權核准是使用者的決定：確認 Yahoo Finance 使用條款可用於非商業比賽研究後，才由使用者自行把 license_status 改為 approved，並填入 approved_by 與 evidence。reviewed_at 晚於決策截止時間的核准不適用於該次決策。",
   "sources": [
-    {"source": "YAHOO_FINANCE", "license_status": "approved", "terms_url": "https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html", "usage_scope": "competition_research", "reviewed_at": "2026-10-30T01:26:50+08:00", "approved_by": "apollo", "evidence": "使用者 apollo 於 2026-10-30 親自核准，依據與既有 Yahoo 研究日線相同的非商業比賽研究用途判斷"}
+    {
+      "source": "YAHOO_FINANCE",
+      "license_status": "approved",
+      "terms_url": "https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html",
+      "usage_scope": "competition_research",
+      "reviewed_at": "2026-10-30T01:26:50+08:00",
+      "approved_by": "apollo",
+      "evidence": "使用者 apollo 於 2026-10-30 親自核准，依據與既有 Yahoo 研究日線相同的非商業比賽研究用途判斷"
+    },
+    {
+      "source": "TAIFEX_MIS",
+      "license_status": "approved",
+      "terms_url": "https://www.taifex.com.tw/cht/edu/userTerms",
+      "usage_scope": "competition_research",
+      "reviewed_at": "2026-10-30T20:30:25+08:00",
+      "approved_by": "apollo",
+      "evidence": "使用者 apollo 於 2026-10-30T20:30:25+08:00 在對話中明確決定核准：已被告知實際端點是期交所官網即時行情 mis.taifex.com.tw（不是 OpenAPI），仍核准用於比賽研究的台指期夜盤背景。"
+    }
   ]
 }

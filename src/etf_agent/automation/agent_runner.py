@@ -74,6 +74,13 @@ def _secret_values(project_root: Path) -> list[str]:
     return values
 
 
+def scrub_secrets(text: str, project_root: Path) -> str:
+    """把專案 ``.env``／``.envrc`` 的值從 CLI 錯誤文字遮蔽掉，錯誤才能安全進日誌與執行紀錄。"""
+    for value in _secret_values(project_root):
+        text = text.replace(value, "[已遮蔽]")
+    return text
+
+
 def reject_secret_leak(name: str, output: Mapping[str, object], project_root: Path) -> None:
     """Agent 輸出含專案 ``.env``／``.envrc`` 的值時拒絕；錯誤訊息不帶出該值。
 
@@ -150,13 +157,14 @@ class ClaudeAgentRunner:
             payload = json.loads(completed.stdout)
         except json.JSONDecodeError as error:
             raise TransientAgentError(
-                "%s Agent 輸出不是 JSON（exit %d）：%s" % (task.name, completed.returncode, completed.stderr[-500:])
+                "%s Agent 輸出不是 JSON（exit %d）：%s" % (task.name, completed.returncode, scrub_secrets(completed.stderr[-500:], self.project_root))
             ) from error
         if not isinstance(payload, dict):
             raise TransientAgentError("%s Agent 輸出不是 JSON 物件" % task.name)
         output = payload.get("structured_output")
-        if payload.get("is_error") or not isinstance(output, dict):
-            raise TransientAgentError("%s Agent 未產生結構化輸出：%s" % (task.name, str(payload.get("result"))[:500]))
+        if completed.returncode != 0 or payload.get("is_error") or not isinstance(output, dict):
+            raise TransientAgentError("%s Agent 未產生結構化輸出（exit %d）：%s" % (
+                task.name, completed.returncode, scrub_secrets(str(payload.get("result"))[:500], self.project_root)))
         reject_secret_leak(task.name, output, self.project_root)
         return AgentCall(task.name, 0, output, float(payload.get("total_cost_usd") or 0.0), _claude_usage_tokens(payload))
 
@@ -216,7 +224,7 @@ class CodexAgentRunner:
             if completed.returncode != 0:
                 raise TransientAgentError(
                     "%s Codex Agent 失敗（exit %d）：%s" %
-                    (task.name, completed.returncode, completed.stderr[-500:])
+                    (task.name, completed.returncode, scrub_secrets(completed.stderr[-500:], self.project_root))
                 )
             try:
                 output = json.loads(output_path.read_text(encoding="utf-8"))
@@ -275,7 +283,7 @@ class OpenCodeAgentRunner:
             raise TransientAgentError("%s OpenCode Agent 執行失敗：%s" % (task.name, error)) from error
         if completed.returncode != 0:
             raise TransientAgentError("%s OpenCode Agent 失敗（exit %d）：%s" %
-                                      (task.name, completed.returncode, completed.stderr[-500:]))
+                                      (task.name, completed.returncode, scrub_secrets(completed.stderr[-500:], self.project_root)))
         messages: Dict[str, list[str]] = {}
         final_message = None
         usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0}

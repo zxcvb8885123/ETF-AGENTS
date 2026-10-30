@@ -18,6 +18,7 @@
     <string>__PROJECT_ROOT__/cli/strategy_reflection.py</string>
     <string>auto</string>
     <string>--no-apply</string>
+    <string>--force</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__PROJECT_ROOT__</string>

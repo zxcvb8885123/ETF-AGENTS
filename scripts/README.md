@@ -23,6 +23,7 @@
 | `collect_cash_flow.py` | 把已擷取的 FinMind 現金流量表以官方累計稅前淨利核對後轉成快照文件；不連網，部分股票核對不過回傳 2 | `start.sh`（FinMind 之後） | 一般不用 |
 | `finmind_schedule.py` | 決定 FinMind 財報資料集今天要不要抓（`plan`），並記錄完成狀態（`done`） | `start.sh` | 不需要；`FORCE_FETCH=1` 可強制 |
 | `run_finmind_news.sh` | 讀取 `FINMIND_TOKEN`（環境變數或 `.env`）後擷取當日個股新聞候選 | `launchd/com.etf-agents.finmind-news.plist.template` | 補抓某日新聞：`scripts/run_finmind_news.sh YYYY-MM-DD` |
+| `probe_taifex_mis.py` | 只觀察：記錄期交所官網即時行情的臺指期月合約報價（夜盤 `TAIFEX_MIS` 來源）到 `var/logs/taifex_mis_probe.jsonl`，附「報價時間是否在 05:05 前」「抓取是否在夜盤結束後」判斷；不進決策 | `launchd/com.etf-agents.taifex-mis-probe.plist.template` | 手動：`.venv/bin/python scripts/probe_taifex_mis.py` |
 | `probe_data_sources.py` | 探測白名單官方來源並驗證 150 檔交易池 | `start.sh`（`daily` 流程） | 懷疑來源改版時 |
 | `capture_trading_status_candidates.py` | 封存八份政府開放交易狀態候選 CSV（含開休市日期表）的時間版本 | `start.sh`（`daily`，`--only-if-missing`） | 要重新封存時 |
 | `normalize_trading_status_candidates.py` | 從封存的八份 CSV 建立 150 檔候選事實報告；不核准來源 | 無（`grep` 未發現呼叫者） | 來源稽核時手動 |
@@ -70,8 +71,9 @@ macOS `launchd` 排程樣板（`.plist.template`）。
 | --- | --- | --- | --- | --- |
 | `com.etf-agents.data.plist.template` | `com.etf-agents.data` | 平日 20:00 | `start.sh data`（即 `auto`，只更新資料） | 不呼叫決策 Agent |
 | `com.etf-agents.finmind-news.plist.template` | `com.etf-agents.finmind-news` | 平日 20:40 | `scripts/run_finmind_news.sh` | 離 20:00 財報請求隔 40 分鐘避開額度，且在 21:00 決策前抓完；需 `FINMIND_TOKEN` |
-| `com.etf-agents.reflection.plist.template` | `com.etf-agents.reflection` | 每週五 19:30 | `.venv/bin/python cli/strategy_reflection.py auto --no-apply` | 在週五 20:00 資料更新與 21:00 決策之前（報告涵蓋到週四收盤）產生診斷包與每週反思報告（`var/strategy_reflection/reports/weekly-<日期>.md`）並封存提案，**不套用**；決策日不足時不呼叫 Agent，仍會產生報告；距上一份不到 6 天略過（手動補跑加 `--force`）；日誌在 `var/logs/strategy-reflection-launchd.log` |
+| `com.etf-agents.reflection.plist.template` | `com.etf-agents.reflection` | 每週五 19:30 | `.venv/bin/python cli/strategy_reflection.py auto --no-apply --force` | 在週五 20:00 資料更新與 21:00 決策之前（報告涵蓋到週四收盤）產生診斷包與每週反思報告（`var/strategy_reflection/reports/weekly-<日期>.md`）並封存提案，**不套用**；決策日不足時不呼叫 Agent，仍會產生報告；排程固定加 `--force`，不受「距上一份不到 6 天」限制，確保每週都有報告；日誌在 `var/logs/strategy-reflection-launchd.log` |
 | `com.etf-agents.reflection-apply.plist.template` | `com.etf-agents.reflection-apply` | 每週六 10:00 | `.venv/bin/python cli/strategy_reflection.py apply-pending` | 套用週五封存、尚未套用且未過期（8 天內）的提案；仍要通過重建驗證、影子回放、取鎖與 20:50～09:00 不套用的保護；週日 21:00 是第一個讀到新策略的決策；日誌在 `var/logs/strategy-reflection-apply-launchd.log` |
+| `com.etf-agents.taifex-mis-probe.plist.template` | `com.etf-agents.taifex-mis-probe` | 每天 05:05、07:00、08:50 | `.venv/bin/python scripts/probe_taifex_mis.py` | 驗證夜盤完成條件（夜盤結束後的 `CDate`／`CTime`、週末與週一早上是否還看得到最後報價、日盤開盤後何時切換）。第一次真實驗證是週六 05:05；驗證完可 `launchctl bootout gui/$(id -u)/com.etf-agents.taifex-mis-probe` 移除；日誌在 `var/logs/taifex_mis_probe.out` |
 | `com.etf-agents.daily.plist.template` | `com.etf-agents.daily` | 週一到週五 07:00；週一到週四與週日 21:00 | `.venv/bin/python scripts/run_daily_pipeline.py` | 21:00 做隔天時段的備案決策（須先下載主辦方約 19:00 產生的 DataPack 到 `var/datapack/`）；07:00 在 08:55 交件期限前用新的事件、新聞與情緒資料重做（日線不重抓），帳本把同時段未執行的舊決策移到封存區；重做沒產生新 D-Plan（失敗或被擋）時自動還原帳本、舊決策與 Snapshot，晚上的備案 D-Plan 仍可上傳；決策跑完已過 08:55 時不產生 D-Plan，該 run 不能 `--resume`，要重做改用 `--force`。需 Docker Desktop 已啟動、Claude CLI 已登入、Mac 未休眠；週末、休市日或同一時段 1 小時內已完成由腳本略過，但休市日 15:00 後若隔天是交易日，晚上仍做隔天的備案（例如 06:30 手動跑完，07:00 不再跑；半夜手動跑的不算，07:00 照常重做） |
 
 ```mermaid

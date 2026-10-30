@@ -1,12 +1,17 @@
 """以 yfinance 讀取 Yahoo Finance 日線；只保存原始收盤，不解讀、不核准來源。"""
 import importlib
 import json
+import re
 import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from etf_agent.core import canonical_sha256, decimal_string
-from .contracts import LOOKBACK_CALENDAR_DAYS, SOURCE_ID, SYMBOLS, YAHOO_CHART_PREFIX, OvernightMarketError
+from .contracts import (
+    LOOKBACK_CALENDAR_DAYS, NIGHT_SYMBOL, SOURCE_ID, SYMBOLS_V11, TAIFEX_QUOTE_URL, TAIFEX_SOURCE_ID, YAHOO_CHART_PREFIX,
+    OvernightMarketError,
+)
 
 
 def chart_url(symbol):
@@ -33,9 +38,32 @@ def yfinance_bars(symbol, start, end):
     return bars
 
 
+_NIGHT_FIELDS = ("SymbolID", "CDate", "CTime", "CLastPrice", "CRefPrice", "CTotalVolume")
+_QUOTE_REQUEST = {"MarketType": "1", "SymbolType": "F", "KindID": "1", "CID": "TXF", "ExpireMonth": "",
+                  "RowSize": "全部", "PageNo": "", "SortColumn": "", "AscDesc": "A"}
+
+
+def taifex_night_rows():
+    """期交所官網即時行情的臺指期月合約報價（盤後時段結束後即為夜盤最後報價）；只留需要的欄位。"""
+    request = urllib.request.Request(
+        TAIFEX_QUOTE_URL, data=json.dumps(_QUOTE_REQUEST, ensure_ascii=False).encode("utf-8"),
+        headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    rows = payload["RtData"]["QuoteList"]
+    return [{field: str(row.get(field, "")) for field in _NIGHT_FIELDS}
+            for row in rows if re.fullmatch(r"TXF[A-L]\d-M", str(row.get("SymbolID", "")))]
+
+
+def night_raw_text(rows):
+    return json.dumps({"rows": sorted(rows, key=lambda row: row["SymbolID"])}, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"))
+
+
 class OvernightProvider:
-    def __init__(self, fetcher=None):
+    def __init__(self, fetcher=None, night_fetcher=None):
         self.fetcher = fetcher or yfinance_bars
+        self.night_fetcher = night_fetcher or taifex_night_rows
 
     def capture(self, symbol, now):
         """抓一個標的；失敗時保留原因，不拋出，讓其他標的照常計算。"""
@@ -52,6 +80,20 @@ class OvernightProvider:
                 "raw_sha256": canonical_sha256(text), "available_at": now.astimezone(timezone.utc).isoformat(),
                 "status": status, "error": error}
 
+    def capture_night(self, now):
+        """抓台指期夜盤報價；失敗時保留原因，不拋出。"""
+        text, error, status = "", "", "fetched"
+        try:
+            rows = self.night_fetcher()
+            if not rows:
+                raise OvernightMarketError("原始回應為空")
+            text = night_raw_text(rows)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            status, error, text = "failed", str(exc) or type(exc).__name__, ""
+        return {"source": TAIFEX_SOURCE_ID, "symbol": NIGHT_SYMBOL, "url": TAIFEX_QUOTE_URL, "raw_text": text,
+                "raw_sha256": canonical_sha256(text), "available_at": now.astimezone(timezone.utc).isoformat(),
+                "status": status, "error": error}
+
     def capture_all(self, now=None):
         now = now or datetime.now(timezone.utc)
-        return [self.capture(symbol, now) for symbol in SYMBOLS]
+        return [self.capture(symbol, now) for symbol in SYMBOLS_V11] + [self.capture_night(now)]

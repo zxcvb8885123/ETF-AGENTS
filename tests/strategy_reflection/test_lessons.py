@@ -33,6 +33,18 @@ def row(symbol, conviction, ret, days=5, status="within_tolerance"):
             "max_drawdown_since_entry": "-0.02", "status": status}
 
 
+class LoadCutoffTests(unittest.TestCase):
+    def test_lessons_created_after_decision_cutoff_are_not_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / LESSONS_PATH).write_text(json.dumps(lessons()), encoding="utf-8")
+            self.assertIsNotNone(load_strategy_lessons(root))
+            self.assertIsNotNone(load_strategy_lessons(root, (NOW + timedelta(days=1)).isoformat()))
+            self.assertIsNone(load_strategy_lessons(root, (NOW - timedelta(days=1)).isoformat()))
+            self.assertIsNone(load_strategy_lessons(root, "沒有時區"))
+
+
 class TextRuleTests(unittest.TestCase):
     def test_general_advice_passes(self):
         self.assertEqual(lesson_text_errors(GOOD), [])

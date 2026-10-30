@@ -9,7 +9,7 @@
 
 | 檔案 | 職責 | 主要公開項目 |
 | --- | --- | --- |
-| `contracts.py` | 常數與錯誤型別：horizon（1、5、20 日）、最少 10 個決策日、單日覆蓋率 80% | `CalibrationError`、`HORIZONS`、`MIN_DECISION_DAYS` |
+| `contracts.py` | 常數與錯誤型別：horizon（1、5、20 日）、最少 5 個決策日、單日覆蓋率 80% | `CalibrationError`、`HORIZONS`、`MIN_DECISION_DAYS` |
 | `tools.py` | 確定性統計（Decimal）：前瞻報酬、平均名次、Rank IC、分組平均、百分位 | `forward_return`、`rank_ic`、`average_ranks`、`group_summary` |
 | `prices.py` | 官方成交均價查詢，只讀 SQLite；沿用帳本的 `OfficialCloseMarket` | `OfficialPriceBook` |
 | `repository.py` | 觀測的不可變保存，獨立根目錄 `artifacts/calibration/` | `CalibrationRepository` |

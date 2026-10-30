@@ -16,7 +16,8 @@ from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
 
 OVERNIGHT_PROMPT = (
-    "overnight_market 是隔夜市場背景（美股指數與台股代理 EWT、TSM，不含台指期夜盤），只作現金姿態背景；"
+    "overnight_market 是隔夜市場背景（美股指數、台股代理 EWT／TSM、日韓指數、VIX，與夜盤結束後才有的台指期夜盤 night_session；"
+    "agreement 是各方向訊號的同向程度，可能為 null），只作現金姿態背景；"
     "status 非 available 時不得當成結論，不得用它推論個股，也不得寫成對今日台股指數方向的預測；"
     "要引用時只能用 overnight_market.components 的 evidence_id。"
 )

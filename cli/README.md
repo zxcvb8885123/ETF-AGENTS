@@ -33,7 +33,7 @@
 | `fundamental_research.py` | 基本面研究的唯讀資料包、指標、結果驗證與封存 |
 | `fundamental_repair.py` | 資料不足時補抓官方當期與 FinMind 去年同期累計財報；不執行分析或交易 Agent |
 | `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）、已判讀輸入接入（`integrate`）與來源使用核對（`review`） |
-| `overnight_market.py` | 隔夜市場背景（Yahoo 美股指數與 EWT、TSM）補抓（`capture`）與截止前結果檢視（`show`，需 `--latest-trade-date`）；授權未核准時 `show` 為 unavailable |
+| `overnight_market.py` | 隔夜市場背景（Yahoo 美股指數、EWT／TSM、日韓指數、VIX 與期交所官網夜盤報價）補抓（`capture`）與截止前結果檢視（`show`，需 `--latest-trade-date`）；授權未核准時 `show` 為 unavailable |
 | `market_fear_greed.py` | 台股恐懼貪婪指標來源補抓（`capture`）與截止前分數檢視（`show`） |
 | `news_sentiment.py` | 核對資料庫新聞候選、保存原頁版本並驗證全量情緒標註 |
 | `company_news.py` | FinMind 個股新聞來源核對（`review --database --status approved\|unverified\|restricted --evidence`）：抓規範頁原文與 SHA-256，寫入 `company_news_source_reviews`；只對保存之後的決策截止時間生效 |

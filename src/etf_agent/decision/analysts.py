@@ -91,16 +91,23 @@ def _symbols(bundle: Mapping[str, object]) -> List[str]:
     )
 
 
+# 有 available_at 的文件類型；公司簡介沒有可得時間欄位，不在此檢查。
+_TIMED_DOCUMENT_TYPES = ("material_event", "monthly_revenue", "financial_statement")
+
+
 def _documents(bundle: Mapping[str, object], document_type: str) -> Dict[str, List[Mapping[str, object]]]:
     result: Dict[str, List[Mapping[str, object]]] = {}
     for document in bundle["snapshot"].get("documents", []):
         if isinstance(document, Mapping) and document.get("document_type") == document_type and document.get("symbol"):
-            if document_type == "material_event":
+            if document_type in _TIMED_DOCUMENT_TYPES:
                 cutoff = parse_aware_time(bundle["decision_cutoff"], "decision_cutoff", error=DecisionToolError)
-                available = parse_aware_time(document.get("available_at"), "事件資料可得時間", error=DecisionToolError)
+                available = parse_aware_time(document.get("available_at"), "文件資料可得時間", error=DecisionToolError)
+                if available > cutoff:
+                    raise DecisionToolError("%s 文件可得時間晚於截止時間" % document_type)
+            if document_type == "material_event":
                 published = parse_aware_time(document.get("published_at"), "事件發布時間", error=DecisionToolError)
-                if available > cutoff or published > available:
-                    raise DecisionToolError("事件時間超過截止時間或發布時間晚於可得時間")
+                if published > available:
+                    raise DecisionToolError("事件發布時間晚於可得時間")
             result.setdefault(str(document["symbol"]).upper(), []).append(document)
     return result
 
