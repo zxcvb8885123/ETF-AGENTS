@@ -133,6 +133,20 @@ class SettleTests(Fixture):
         result, _ = self.settle({}, [APPLY])
         self.assertEqual(result["trial"], "pending")
 
+    def test_auto_disable_during_settlement_stops_the_same_run_from_applying(self):
+        from unittest.mock import patch
+
+        def settle_and_disable(root, *args, **kwargs):
+            service.disable_auto_apply(root)
+            return {"trial": "reverted", "auto_apply_disabled": True}
+
+        with patch.object(service, "settle_open_trial", side_effect=settle_and_disable), \
+                patch.object(service, "_apply_pending_knobs") as knobs, patch.object(service, "_apply_pending_lessons") as taught:
+            result = service.apply_pending(self.tmp, self.tmp / "m.db", self.tmp / "d", SATURDAY, excess={})
+        self.assertFalse(result["applied"])
+        knobs.assert_not_called()
+        taught.assert_not_called()
+
     def test_enabled_switch_defaults_open_and_malformed_fails_closed(self):
         self.assertEqual(service.load_switch(self.tmp), {"enabled": True, "auto_apply": True})
         (self.tmp / "config" / "strategy_reflection.json").write_text("{bad", encoding="utf-8")

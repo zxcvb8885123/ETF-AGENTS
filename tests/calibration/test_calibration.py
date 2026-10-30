@@ -180,11 +180,11 @@ class EvaluateTests(DecisionRunFixture):
         self.assertGreater(Decimal(report["horizons"]["5"]["rank_ic"]["conviction"]["mean"]), Decimal("0.9"))
         self.assertEqual(report["horizons"]["5"]["rank_ic"]["conviction"]["n_days"], 10)
 
-    def test_fewer_than_ten_days_gives_counts_but_no_conclusion(self):
-        self.build_world(9)
+    def test_fewer_than_five_days_gives_counts_but_no_conclusion(self):
+        self.build_world(4)
         entry = evaluate(self.repository, self.db, "2026-12-31T00:00:00+00:00")["horizons"]["5"]
         self.assertEqual(entry["status"], "insufficient_sample")
-        self.assertEqual(entry["complete_days"], 9)
+        self.assertEqual(entry["complete_days"], 4)
         self.assertGreater(entry["n_obs"], 0)
         for key in ("by_conviction", "by_intent", "rank_ic"):
             self.assertNotIn(key, entry)

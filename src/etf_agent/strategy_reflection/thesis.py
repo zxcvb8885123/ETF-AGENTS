@@ -73,7 +73,11 @@ def build_thesis_tracking(
     ordered = sorted(chosen.items())
     if not ordered:
         return []
-    held = {str(p["symbol"]).upper() for p in ordered[-1][1]["decision"]["portfolio"].get("positions", [])}
+    # rejected 的決策沒有 portfolio；持股以最近一個有 portfolio 的決策日為準。
+    portfolios = [run["decision"].get("portfolio") for _, run in ordered if isinstance(run["decision"].get("portfolio"), Mapping)]
+    if not portfolios:
+        return []
+    held = {str(p["symbol"]).upper() for p in portfolios[-1].get("positions", [])}
     rows: List[Dict[str, object]] = []
     for symbol in sorted(held):
         found = _entry_for(symbol, ordered)

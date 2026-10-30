@@ -532,6 +532,8 @@ def apply_pending(
     trial = settle_open_trial(root, now, repository, excess, write_lock, clock)
     if trial is not None and trial["trial"] in {"pending", "extended", "revert_deferred", "revert_failed"}:
         return {"applied": False, "reason": "試用觀察期尚未結案（%s），本週不套用新提案" % trial["trial"], **trial}
+    if trial is not None and trial.get("auto_apply_disabled"):
+        switch = load_switch(root)  # 結算剛因連續還原關閉自動套用：以最新開關為準，本次不再套用
     if not switch["auto_apply"]:
         return {"applied": False, "reason": "config/strategy_reflection.json 的 auto_apply 為 false（人工模式）；提案已封存，請看週報後用 apply 手動套用",
                 **({"trial": trial} if trial else {})}

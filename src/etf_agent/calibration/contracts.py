@@ -12,7 +12,7 @@ from typing import Mapping, Sequence
 SCHEMA_VERSION = "1.0"
 HORIZONS = (1, 5, 20)
 # 每個 horizon 至少要有這麼多個「完整的」決策日，才輸出平均報酬與 Rank IC。
-MIN_DECISION_DAYS = 10
+MIN_DECISION_DAYS = 5
 # 一個決策日內，有有效報酬的股票占全池比例至少這麼高，該日才算完整。
 MIN_DAY_COVERAGE = Decimal("0.8")
 CALENDAR_BASIS = "official_price_rows"
