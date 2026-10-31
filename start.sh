@@ -305,8 +305,13 @@ if [ "$DAILY_RUN" -eq 1 ]; then
   # 隔夜市場背景（美股指數與台股代理）只給風險 Agent 現金姿態與報告背景；失敗只降級，不中止，也不影響 DATA_STATUS。
   echo "[3b+/4] 抓取隔夜市場背景（美股、日韓、VIX 與台指期夜盤；夜盤要台北 05:00 後才有）"
   set +e
-  docker compose run --rm agent python3 cli/overnight_market.py capture >/dev/null
-  OVERNIGHT_EXIT=$?
+  # 有來源沒抓到（exit 非 0）就等一下重抓，最多共 3 次；每次都是新的不可變抓取，最後仍失敗才降級。
+  for OVERNIGHT_TRY in 1 2 3; do
+    docker compose run --rm agent python3 cli/overnight_market.py capture >/dev/null
+    OVERNIGHT_EXIT=$?
+    [ "$OVERNIGHT_EXIT" -eq 0 ] && break
+    [ "$OVERNIGHT_TRY" -lt 3 ] && { echo "隔夜市場背景第 ${OVERNIGHT_TRY} 次抓取未完整（exit ${OVERNIGHT_EXIT}），20 秒後重抓。" >&2; sleep 20; }
+  done
   set -e
   if [ "$OVERNIGHT_EXIT" -ne 0 ]; then
     echo "隔夜市場背景來源未完整（exit ${OVERNIGHT_EXIT}）；現金姿態將不附隔夜背景或標為資料不足。" >&2

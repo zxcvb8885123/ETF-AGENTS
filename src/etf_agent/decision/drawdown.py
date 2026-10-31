@@ -9,14 +9,15 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence
 
-from etf_agent.core import parse_decimal
+from etf_agent.core import canonical_sha256, parse_aware_time, parse_decimal
 
 from .contracts import DecisionToolError, reject_unknown_fields
 
 
 CASH_STANCE_RANK = {"aggressive": 0, "neutral": 1, "defensive": 2}
 THRESHOLD_FIELDS = ("neutral_at", "defensive_at")
-OBSERVED_FIELDS = ("status", "peak_nav", "peak_as_of", "current_nav", "drawdown", "history_length", "stance_floor")
+OBSERVED_FIELDS = ("status", "peak_nav", "peak_as_of", "current_nav", "drawdown", "history_length", "stance_floor",
+                   "history_ref")
 DRAWDOWN_STATUSES = ("available", "unavailable")
 _PRECISION = Decimal("0.000001")
 
@@ -56,6 +57,41 @@ def measure_drawdown(current_nav: Decimal, nav_history: Sequence[Mapping[str, ob
             "drawdown": str(max(drawdown, Decimal(0))), "history_length": len(nav_history)}
 
 
+def history_reference(nav_history: Sequence[Mapping[str, object]]) -> Optional[Dict[str, object]]:
+    """帳本 NAV 歷史的可驗證參照：最新一筆的 run_id、筆數與（run_id、as_of、nav）序列的 canonical sha256。
+
+    歷史列沒有 run_id（例如回放的記憶體序列）或為空時回傳 None，維持沒有此欄位的舊行為。"""
+    if not nav_history or any(not isinstance(row, Mapping) or not row.get("run_id") for row in nav_history):
+        return None
+    rows = [{"run_id": str(row["run_id"]), "as_of": str(row.get("as_of")), "nav": str(row.get("nav"))}
+            for row in nav_history]
+    return {"head_run_id": rows[-1]["run_id"], "length": len(rows), "sha256": canonical_sha256(rows)}
+
+
+def verify_history_reference(
+    control: Mapping[str, object], current_nav: Decimal, nav_history: Sequence[Mapping[str, object]],
+    errors: List[str],
+) -> None:
+    """以可讀的帳本歷史（須止於 history_ref.head_run_id）重算參照、峰值、峰值時間與筆數並逐項比對。"""
+    prefix = "DecisionPolicy.drawdown_control"
+    ref = control.get("history_ref")
+    if not isinstance(ref, Mapping):
+        errors.append("%s 有帳本歷史可驗證時必須含 history_ref" % prefix)
+        return
+    expected_ref = history_reference(nav_history)
+    if expected_ref is None or dict(ref) != expected_ref:
+        errors.append("%s.history_ref 與帳本 NAV 歷史不一致" % prefix)
+        return
+    try:
+        measured = measure_drawdown(current_nav, nav_history)
+    except DecisionToolError as error:
+        errors.append(str(error))
+        return
+    for field in ("peak_nav", "peak_as_of", "history_length"):
+        if control.get(field) != measured[field]:
+            errors.append("%s.%s 與帳本 NAV 歷史重算不一致" % (prefix, field))
+
+
 def bind_drawdown(
     policy: Mapping[str, object], bundle: Mapping[str, object],
     nav_history: Optional[Sequence[Mapping[str, object]]],
@@ -77,13 +113,22 @@ def bind_drawdown(
     else:
         observed = {"status": "available", **measure_drawdown(current, nav_history)}
         observed["stance_floor"] = stance_floor(thresholds, Decimal(observed["drawdown"]))
+        reference = history_reference(nav_history)
+        if reference is not None:
+            observed["history_ref"] = reference
     result["drawdown_control"] = {**thresholds, **observed}
     result.pop("content_sha256", None)
     return result
 
 
-def validate_drawdown_control(policy: Mapping[str, object], bundle: Mapping[str, object], errors: List[str]) -> None:
-    """門檻合理、觀察值可由 policy 內的峰值與共同輸入的 NAV 重算，且已綁定的現金姿態不低於下限。"""
+def validate_drawdown_control(
+    policy: Mapping[str, object], bundle: Mapping[str, object], errors: List[str],
+    nav_history: Optional[Sequence[Mapping[str, object]]] = None,
+) -> None:
+    """門檻合理、觀察值可由 policy 內的峰值與共同輸入的 NAV 重算，且已綁定的現金姿態不低於下限。
+
+    policy 帶 ``history_ref`` 且呼叫端提供帳本歷史（``nav_history``，止於 head_run_id）時，另由歷史重算
+    參照與峰值；未提供帳本歷史（舊 run 重建）時只做結構檢查，行為與舊版相同。"""
     control = policy.get("drawdown_control")
     prefix = "DecisionPolicy.drawdown_control"
     if not isinstance(control, Mapping):
@@ -121,6 +166,25 @@ def validate_drawdown_control(policy: Mapping[str, object], bundle: Mapping[str,
         if peak < current or peak <= 0:
             errors.append("%s.peak_nav 不得低於目前 NAV" % prefix)
             return
+        ref = control.get("history_ref")
+        length = control.get("history_length")
+        # 嚴格的時間／筆數檢查只套用在帶 history_ref 的新 policy；舊 policy 逐位元維持原行為。
+        if ref is not None:
+            # 目前 NAV 就是峰值時 peak_as_of 為 None（沒有更高的歷史點）；有值時必須含時區且不晚於 cutoff。
+            if control.get("peak_as_of") is not None:
+                peak_as_of = parse_aware_time(control.get("peak_as_of"), prefix + ".peak_as_of", error=DecisionToolError)
+                if peak_as_of > parse_aware_time(bundle.get("decision_cutoff"), "decision_cutoff", error=DecisionToolError):
+                    errors.append("%s.peak_as_of 晚於 decision_cutoff" % prefix)
+            if not isinstance(length, int) or isinstance(length, bool) or length < 0:
+                errors.append("%s.history_length 必須是非負整數" % prefix)
+        if ref is not None:
+            if not isinstance(ref, Mapping) or set(ref) != {"head_run_id", "length", "sha256"} or ref.get("length") != length:
+                errors.append("%s.history_ref 必須含 head_run_id、length（等於 history_length）、sha256" % prefix)
+            elif nav_history is not None:
+                verify_history_reference(control, current, nav_history, errors)
+        elif nav_history is not None and history_reference(nav_history) is not None:
+            # 呼叫端提供帳本歷史即要求嚴格驗證：新 policy 不得靠省略 history_ref 躲過重算。
+            errors.append("%s 有帳本歷史可驗證時必須含 history_ref" % prefix)
         expected = measure_drawdown(current, [{"nav": str(peak), "as_of": control.get("peak_as_of")}])["drawdown"]
         if control.get("drawdown") != expected:
             errors.append("%s.drawdown 與峰值／目前 NAV 重算不一致" % prefix)

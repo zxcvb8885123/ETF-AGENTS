@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, Iterator, List, Mapping, Optional
+from typing import Callable, Dict, Iterator, List, Mapping, Optional
 
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time, parse_decimal
 from etf_agent.decision.contracts import DecisionInputValidator
@@ -44,6 +44,28 @@ def _read(path: Path, label: str) -> Mapping[str, object]:
 def _write(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def ledger_nav_history_provider(ledger_root: Path, bundle: Mapping[str, object]) -> Callable[[str], List[Dict[str, str]]]:
+    """事後重建用的帳本 NAV 歷史來源：以 bundle 的 account_id 開啟帳本，依 ``head_run_id`` 往回走。
+
+    帳本、head 或雜湊鏈有問題時回傳的函式會拋例外（由 DecisionFinalizer 轉為拒絕）；只在呼叫時才讀帳本，
+    所以沒有 ``history_ref`` 的舊 run 不會碰到帳本。"""
+    cache: Dict[str, List[Dict[str, str]]] = {}  # 帳本 run 不可變：同一 head 的歷史不會變，同一次驗證內只讀一次
+
+    def provider(head_run_id: str) -> List[Dict[str, str]]:
+        if head_run_id in cache:
+            return [dict(row) for row in cache[head_run_id]]
+        snapshot = bundle.get("account_snapshot")
+        account_id = snapshot.get("account_id") if isinstance(snapshot, Mapping) else None
+        if not isinstance(account_id, str) or not account_id:
+            raise VirtualAccountError("DecisionInputBundle 缺少 account_snapshot.account_id，無法開啟帳本")
+        if not (Path(ledger_root).resolve() / account_id).is_dir():
+            raise VirtualAccountError("找不到帳本目錄：%s" % (Path(ledger_root).resolve() / account_id))
+        history = VirtualAccountRepository(Path(ledger_root), account_id).nav_history(head_run_id)
+        cache[head_run_id] = history
+        return [dict(row) for row in history]
+    return provider
 
 
 class VirtualAccountRepository:
@@ -213,12 +235,13 @@ class VirtualAccountRepository:
         return {"run_id": run_id, "state": state, "run_dir": run_dir}
 
 
-    def nav_history(self) -> List[Dict[str, str]]:
-        """沿 latest 的 parent_run_id 往回走到開帳，回傳每個狀態的 NAV（舊到新）；退回的 prepare 不在鏈上。"""
-        current = self.latest()
+    def nav_history(self, head_run_id: Optional[str] = None) -> List[Dict[str, str]]:
+        """沿 parent_run_id 往回走到開帳，回傳每個狀態的 NAV（舊到新）；退回的 prepare 不在鏈上。
+
+        預設從 latest 起走；給 ``head_run_id`` 則從該狀態起走（重建當時決策依據的歷史）。"""
         history: List[Dict[str, str]] = []
         seen = set()
-        run_id: Optional[str] = current["run_id"]
+        run_id: Optional[str] = head_run_id or self.latest()["run_id"]
         while run_id:
             if run_id in seen:
                 raise VirtualAccountError("帳本 parent_run_id 形成循環：%s" % run_id)
@@ -406,7 +429,7 @@ class VirtualAccountService:
         expected_account = state["provenance"].get("account_snapshot")
         if bundle.get("account_snapshot") != expected_account:
             raise VirtualAccountError("Decision run 使用的 AccountSnapshot 與本次 prepare 狀態不一致")
-        verifier = DecisionResultValidator(bundle, decision_files["policy"], decision_files["momentum"], decision_files["debate"], decision_files["intent"], decision_files.get("team_inputs"))
+        verifier = DecisionResultValidator(bundle, decision_files["policy"], decision_files["momentum"], decision_files["debate"], decision_files["intent"], decision_files.get("team_inputs"), nav_history_provider=self.repository.nav_history)
         decision_errors = verifier.validate(decision_files["proposal"], decision_files["scenario"], decision_files["guard"], decision_files["risk_review"], decision_files["revision_history"], decision_files["decision"])
         if decision_errors:
             raise VirtualAccountError("DecisionResult 重建驗證失敗：" + "；".join(decision_errors))

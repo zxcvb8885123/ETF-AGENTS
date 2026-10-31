@@ -233,8 +233,23 @@ class DecisionInputValidator:
         if not isinstance(documents, list):
             errors.append("snapshot.documents 必須是陣列")
         else:
+            known_evidence_ids = {
+                str(entry.get("evidence_id"))
+                for entry in evidence or []
+                if isinstance(entry, Mapping) and entry.get("evidence_id")
+            } if isinstance(evidence, list) else set()
             for index, item in enumerate(documents):
                 if isinstance(item, Mapping):
+                    prefix = "snapshot.documents[%d]" % index
+                    document_evidence = item.get("source_evidence_id")
+                    if document_evidence and str(document_evidence) not in known_evidence_ids:
+                        errors.append("%s 引用不存在的來源證據：%s" % (prefix, document_evidence))
+                    if item.get("available_at") is not None and self.cutoff is not None:
+                        try:
+                            if parse_time(item.get("available_at"), prefix + ".available_at") > self.cutoff:
+                                errors.append("%s 資料可得時間晚於 decision_cutoff" % prefix)
+                        except DecisionToolError as error:
+                            errors.append(str(error))
                     reject_unknown_fields(
                         item,
                         {

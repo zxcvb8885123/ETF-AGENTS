@@ -10,6 +10,10 @@
 | `src/etf_agent/` 各套件怎麼互相依賴 | [modules.md](modules.md)，各套件細節在 `src/etf_agent/<套件>/README.md` |
 | `artifacts/`、`var/` 裡每個資料夾是什麼、能不能刪 | [runtime-artifacts.md](runtime-artifacts.md) |
 | 每日決策怎麼跑（分析團隊 → 多空 → 交易 → 風險） | [architecture.md](architecture.md) |
+| 目前哪些功能已接入、來源核准狀態 | [status.md](status.md) |
+| 每日排程、D-Plan、資料包、開新帳戶、常見問題 | [operations.md](operations.md) |
+| `./start.sh run` 有哪些參數 | [run-options.md](run-options.md) |
+| 決策原則、參賽策略因子、權重／產業上限處理 | [decision-details.md](decision-details.md) |
 | 怎麼安裝、用 Docker 跑 | [docker.md](docker.md) |
 | 單步命令怎麼用 | [../cli/README.md](../cli/README.md) |
 | 資料從哪來、授權狀態 | [data_sources_inventory.md](data_sources_inventory.md) |
@@ -21,10 +25,14 @@
 - [repository-layout.md](repository-layout.md)：頂層資料夾架構圖。
 - [modules.md](modules.md)：核心程式套件依賴圖。
 - [architecture.md](architecture.md)：目前每日決策架構。
+- [decision-details.md](decision-details.md)：決策原則與參賽策略因子細節。
 - [runtime-artifacts.md](runtime-artifacts.md)：執行時產物資料夾。
 
 ### 操作
 
+- [operations.md](operations.md)：每日排程、D-Plan、主辦方資料包、開新帳戶、Agent 評測、常見問題。
+- [run-options.md](run-options.md)：`./start.sh run` 參數。
+- [status.md](status.md)：目前狀態與限制。
 - [docker.md](docker.md)：環境安裝與 Docker。
 - [../cli/README.md](../cli/README.md)：CLI 單步操作。
 - [../scripts/README.md](../scripts/README.md)：維運與補抓腳本。
@@ -65,6 +73,7 @@
 | --- | --- |
 | 2026-10-22 | 資料套件新增臨時休市日推斷（`inferred_closures.py`），說明見 `src/etf_agent/data/README.md`。 |
 | 2026-10-22 | 新增本索引、`repository-layout.md`、`modules.md`、`runtime-artifacts.md`；各資料夾與 `src/etf_agent/` 各套件新增 README；根 `README.md` 加上整體架構圖。 |
+| 2026-10-31 | 根 `README.md` 精簡為入口頁；目前狀態、日常操作、`run` 參數、決策流程細節分別移到 `status.md`、`operations.md`、`run-options.md`、`decision-details.md`。 |
 
 ## 維護規則
 

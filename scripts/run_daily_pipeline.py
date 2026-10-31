@@ -578,7 +578,7 @@ def _deliver_saved_run(root: Path, name: str) -> dict:
         raise ValueError("此 run 沒有封存決策識別，不能只續跑交付")
     delivery = build_delivery(root / "artifacts/decisions", decision_id,
         root / "artifacts/reports", reports_root=root / "artifacts/latest",
-        started_at=summary["started_at"])
+        started_at=summary["started_at"], ledger_repository=root / "artifacts/ledger")
     summary["delivery"] = delivery
     if delivery["report_status"] == "ready":
         summary["status"] = "completed"
@@ -977,7 +977,7 @@ def _main(args) -> int:
         summary["delivery"] = build_delivery(
             ROOT / "artifacts/decisions", result.decision_run_id,
             ROOT / "artifacts/reports", reports_root=ROOT / "artifacts/latest",
-            started_at=summary["started_at"],
+            started_at=summary["started_at"], ledger_repository=ROOT / "artifacts/ledger",
         )
         if summary["delivery"]["report_status"] != "ready":
             raise RuntimeError("最終報告重建失敗，詳見交付診斷")

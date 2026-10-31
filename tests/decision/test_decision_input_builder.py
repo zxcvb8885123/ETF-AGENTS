@@ -158,6 +158,35 @@ class DecisionInputBuilderTests(unittest.TestCase):
         builder = DecisionInputBuilder(snapshot, rules, history, account_snapshot=account)
         self.assertEqual(builder.validate(builder.build()), [])
 
+    def _snapshot_with_financial_document(self, **overrides):
+        snapshot, rules, history, account = builder_inputs()
+        evidence_id = "document:financial-1"
+        snapshot["source_evidence"].append(
+            {"evidence_id": evidence_id, "source": "TWSE_MOPS", "authority": "mops", "data_type": "financial_statement"}
+        )
+        document = {
+            "document_id": "financial-1", "source": "TWSE_MOPS", "external_id": "fs-1", "version": "1",
+            "document_type": "financial_statement", "symbol": "2330.TW", "title": "2330 2026Q2 損益表",
+            "body": "{}", "source_url": "https://mops.twse.com.tw", "published_at": "2026-08-14T00:00:00+00:00",
+            "available_at": "2026-08-14T00:00:00+00:00", "content_sha256": "b" * 64,
+            "source_evidence_id": evidence_id, "financial_statement": {"statement_type": "income_statement"},
+        }
+        document.update(overrides)
+        snapshot["documents"].append(document)
+        return DecisionInputBuilder(snapshot, rules, history, account_snapshot=account)
+
+    def test_document_with_unknown_source_evidence_is_rejected(self):
+        builder = self._snapshot_with_financial_document(source_evidence_id="nonexistent-source")
+        errors = builder.validate(builder.build())
+        self.assertTrue(any("引用不存在的來源證據" in error for error in errors))
+
+    def test_document_available_after_cutoff_is_rejected(self):
+        builder = self._snapshot_with_financial_document(
+            available_at="2099-01-01T00:00:00+00:00", published_at="2099-01-01T00:00:00+00:00"
+        )
+        errors = builder.validate(builder.build())
+        self.assertTrue(any("晚於 decision_cutoff" in error for error in errors))
+
     def test_history_on_or_after_snapshot_date_is_not_used(self):
         snapshot, rules, history, account = builder_inputs()
         latest = snapshot["latest_prices"][0]

@@ -19,7 +19,7 @@ from .input_builder import DEFAULT_LOOKBACK_BARS, DecisionInputBuilder
 from .policy_builder import build_decision_policy
 from .momentum import MomentumEngine, MomentumResultValidator
 from .allocation import AllocationOrderEngine, ProposalValidator
-from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator
+from .finalization import DecisionFinalizer, DecisionRepository, DecisionResultValidator, NavHistoryProvider
 from .risk import (
     CompetitionGuardV2,
     GuardValidator,
@@ -41,16 +41,24 @@ def target_trade_date(bundle: Mapping[str, object]) -> Optional[str]:
 class PortfolioDecisionApplicationService:
     """Read one input bundle and expose deterministic portfolio operations."""
 
-    def __init__(self, bundle: Mapping[str, object], position_review: Optional[Mapping[str, object]] = None):
+    def __init__(
+        self, bundle: Mapping[str, object], position_review: Optional[Mapping[str, object]] = None,
+        nav_history_provider: Optional[NavHistoryProvider] = None,
+    ):
         """``position_review`` 是 team_inputs 2.4 的持股檢視；有它的 run 必須讓每個驗證路徑都認得警示 ID，否則合法的
         ``review:…`` 引用會被當成未知 claim。舊 run 傳 None，驗證不變。"""
         self.bundle = dict(bundle)
         self.position_review = position_review
+        # policy 的 drawdown_control 帶 history_ref 時，重建與保存前驗證以此讀帳本歷史；None＝沒有帳本來源。
+        self.nav_history_provider = nav_history_provider
 
     @classmethod
-    def from_path(cls, path: Path, position_review_path: Optional[Path] = None) -> "PortfolioDecisionApplicationService":
+    def from_path(
+        cls, path: Path, position_review_path: Optional[Path] = None,
+        nav_history_provider: Optional[NavHistoryProvider] = None,
+    ) -> "PortfolioDecisionApplicationService":
         review = cls.read_json(position_review_path, " PositionReview") if position_review_path else None
-        return cls(cls.read_json(path, " DecisionInputBundle"), review)
+        return cls(cls.read_json(path, " DecisionInputBundle"), review, nav_history_provider)
 
     @staticmethod
     def read_json(path: Path, label: str) -> Mapping[str, object]:
@@ -481,7 +489,9 @@ class PortfolioDecisionApplicationService:
         review = self.read_json(review_path, " RiskReview")
         history = self.read_json(history_path, " RevisionHistory")
         team_inputs = self.read_json(team_inputs_path, " team_inputs")
-        result = DecisionFinalizer(self.bundle, policy, momentum, debate, intent, team_inputs).run(
+        result = DecisionFinalizer(
+            self.bundle, policy, momentum, debate, intent, team_inputs, nav_history_provider=self.nav_history_provider
+        ).run(
             proposal, scenario, guard, review, history
         )
         self._write(result, output)
@@ -513,7 +523,8 @@ class PortfolioDecisionApplicationService:
         team_inputs = self.read_json(team_inputs_path, " team_inputs")
         result = self.read_json(result_path, " DecisionResult")
         errors = DecisionResultValidator(
-            self.bundle, policy, momentum, debate, intent, team_inputs
+            self.bundle, policy, momentum, debate, intent, team_inputs,
+            nav_history_provider=self.nav_history_provider,
         ).validate(
             proposal, scenario, guard, review, history, result
         )
@@ -556,6 +567,7 @@ class PortfolioDecisionApplicationService:
                 artifacts["debate"],
                 artifacts["intent"],
                 artifacts["team_inputs"],
+                nav_history_provider=self.nav_history_provider,
             ).validate(
                 artifacts["proposal"],
                 artifacts["scenario"],

@@ -43,7 +43,7 @@ from .trader import (
 from .sizing import SIZING_METHOD
 from .trader_report import render_trader_report
 from .policy_builder import build_decision_policy
-from .drawdown import bind_drawdown, measure_drawdown, stance_floor, stance_meets_floor
+from .drawdown import bind_drawdown, history_reference, measure_drawdown, stance_floor, stance_meets_floor
 from .allocation import (
     AllocationOrderEngine,
     DecisionPolicyValidator,
@@ -65,6 +65,7 @@ from .finalization import (
     build_team_inputs,
     DecisionRepository,
     DecisionResultValidator,
+    NavHistoryProvider,
 )
 from .position_review import (
     POSITION_REVIEW_VERSION,
@@ -139,6 +140,7 @@ __all__ = [
     "SIZING_METHOD",
     "build_decision_policy",
     "bind_drawdown",
+    "history_reference",
     "measure_drawdown",
     "stance_floor",
     "stance_meets_floor",
@@ -155,6 +157,7 @@ __all__ = [
     "sector_exposure",
     "liquidity_exposure",
     "DecisionFinalizer",
+    "NavHistoryProvider",
     "build_team_inputs",
     "SELECTION_RANKING_VERSION",
     "SelectionRankingValidator",

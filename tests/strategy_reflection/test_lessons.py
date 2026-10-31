@@ -200,6 +200,23 @@ class ApplyAndRevertTests(Fixture):
         self.assertIn("20:50", self.pending(SATURDAY_LATE)["reason"])
         self.assertFalse((self.tmp / LESSONS_PATH).exists())
 
+    def test_applied_lessons_take_effect_at_apply_time_not_proposal_time(self):
+        history = []
+        apply_lessons(self.tmp, self.base, lessons(lessons_id="l-1"), history.append, 3, SATURDAY)
+        # 提案建立於 NOW（週五），週六才生效：週五晚間的 Snapshot 不得讀到。
+        self.assertIsNone(load_strategy_lessons(self.tmp, NOW.isoformat()))
+        self.assertIsNotNone(load_strategy_lessons(self.tmp, SATURDAY.isoformat()))
+
+    def test_history_is_recorded_before_live_file_and_failed_write_is_reverted(self):
+        from unittest import mock
+
+        history = []
+        with mock.patch("etf_agent.strategy_reflection.lessons.atomic_write_json", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                apply_lessons(self.tmp, self.base, lessons(lessons_id="l-1"), history.append, 3, SATURDAY)
+        self.assertEqual([entry["action"] for entry in history], [LESSONS_ACTION, "lessons_revert"])
+        self.assertFalse((self.tmp / LESSONS_PATH).exists())
+
     def test_revert_restores_previous_version_or_deletes_and_refuses_hand_edits(self):
         history = []
         apply_lessons(self.tmp, self.base, lessons(lessons_id="l-1"), history.append, 3, SATURDAY)

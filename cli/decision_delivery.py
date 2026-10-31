@@ -17,17 +17,20 @@ def main(argv=None):
     build = commands.add_parser("build", help="建立最終閱讀版或阻擋診斷")
     build.add_argument("--decision-repository", type=Path, default=ROOT / "artifacts/decisions")
     build.add_argument("--decision-run-id", required=True)
+    build.add_argument("--ledger-repository", type=Path, default=ROOT / "artifacts/ledger", help="帳本根目錄；policy 含 history_ref 時重算峰值")
     build.add_argument("--output-repository", type=Path, default=ROOT / "artifacts/reports")
     validate = commands.add_parser("validate", help="重建交付及檢查閱讀副本")
     validate.add_argument("--output-repository", type=Path, default=ROOT / "artifacts/reports")
     validate.add_argument("--delivery-id", required=True)
+    validate.add_argument("--ledger-repository", type=Path, default=ROOT / "artifacts/ledger", help="帳本根目錄；policy 含 history_ref 時重算峰值")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
-            result = build_delivery(args.decision_repository, args.decision_run_id, args.output_repository)
+            result = build_delivery(args.decision_repository, args.decision_run_id, args.output_repository,
+                                    ledger_repository=args.ledger_repository)
             code = 0 if result["report_status"] == "ready" else 2
         else:
-            result = validate_delivery(args.output_repository, args.delivery_id)
+            result = validate_delivery(args.output_repository, args.delivery_id, args.ledger_repository)
             code = 0
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return code

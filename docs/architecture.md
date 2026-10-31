@@ -78,7 +78,8 @@
 - 程式沿帳本 `parent_run_id` 往回取每個狀態的 NAV，峰值回撤 = (峰值 − 目前 NAV) ÷ 峰值。
 - Policy 的 `drawdown_control` 設門檻（目前回撤 ≥ 5% 時姿態至少 `neutral`、≥ 10% 時至少 `defensive`），觀察值與下限綁進 Policy，由 `DecisionPolicyValidator` 重算。
 - 風險 Agent 給的姿態比下限積極時，程式退回重答；Agent 不計算回撤，也不能放寬。
-- 舊 Decision run 的 Policy 沒有 `drawdown_control`，照原樣重建驗證。
+- 綁定時若歷史列都有 `run_id`（帳本鏈），另存 `history_ref`（`head_run_id`、`length`、歷史 `run_id／as_of／nav` 序列的 canonical sha256）。Validator 在有帳本歷史可讀時（每日 pipeline 綁定後的檢查，`nav_history` 止於 `head_run_id`，可用 `VirtualAccountRepository.nav_history(head_run_id)` 讀）重算參照、`peak_nav`、`peak_as_of`、`history_length` 並逐項比對，把峰值竄改成目前 NAV 會被拒絕；提供歷史卻缺 `history_ref` 同樣拒絕。`history_ref` 屬版本閘門，策略反思只能調兩個門檻、不能動它。
+- 事後重建已接入：`DecisionFinalizer`、`DecisionResultValidator` 接受選用的 `nav_history_provider(head_run_id)`；policy 含 `history_ref` 時以 `head_run_id` 讀帳本歷史（`ledger_nav_history_provider(帳本根目錄, bundle)`，依 `account_snapshot.account_id` 開帳本、呼叫 `nav_history(head_run_id)`）重算參照與峰值，帳本讀不到、head 不存在、歷史不符，或呼叫端沒有提供帳本來源，一律 fail-closed 拒絕。已接上的呼叫端：`cli/portfolio_decision.py`（`--ledger-repository`）、每日 pipeline（用綁定 policy 的同一份 `nav_history`）、D-Plan 匯出（`DPlanExporter.build`）、`decision_delivery`（`--ledger-repository`）與虛擬帳戶結算。沒有 `history_ref` 的舊 Policy／舊 Decision run 與沒有 `drawdown_control` 的舊 Policy 不讀帳本、照原樣重建驗證。
 
 ### 現金流
 
@@ -146,7 +147,7 @@
   | 合計 | 928.7 秒 | 601.0 秒 |
   | 呼叫數／重試 | 27／0 | 28／1（`event_b9` 驗證重試） |
 
-  - 兩次都 `approved`、30 筆委託，沒有撞到用量上限。實測當時 `agent_step` 只在輸出驗證失敗時重試；用量或執行錯誤會直接失敗，所以那次重試是輸出驗證問題，不是限流。（之後新增：CLI 逾時、無法啟動、非零結束、輸出不是 JSON 或沒有結構化輸出屬 `TransientAgentError`，會間隔 30 秒再試一次，失敗嘗試記在 `agent_calls` 的 `transient_error`／`transient_retry`，用量記 0、耗時保留；秘密外洩、使用未核准工具與驗證失敗不重試；平行任務有一個已失敗時不再重試；等待加重跑會超過交件期限 08:55 時也不重試。）
+  - 兩次都 `approved`、30 筆委託，沒有撞到用量上限。實測當時 `agent_step` 只在輸出驗證失敗時重試；用量或執行錯誤會直接失敗，所以那次重試是輸出驗證問題，不是限流。（之後新增：CLI 逾時、無法啟動、非零結束、輸出不是 JSON 或沒有結構化輸出屬 `TransientAgentError`，會間隔 30 秒再試一次，失敗嘗試記在 `agent_calls` 的 `transient_error`／`transient_retry`，用量記 0、耗時保留；秘密外洩、使用未核准工具不重試，驗證失敗不走暫時性重試（只走帶錯誤回饋的修正循環，最多 `max_attempts` 次）；平行任務有一個已失敗時不再重試；等待加重跑會超過交件期限 08:55 時也不重試。）
   - 每種設定只跑一次，LLM 本身有變異，不能當嚴格的加速比；8 尚未實測。
   - 實測當時的程式尚未包含 #69 的事件調整（當時事件分析師 10 批、分析師共 16 次呼叫）；之後無重大訊息的股票改由程式輸出，事件批次會減少，數字需重新量測。
 

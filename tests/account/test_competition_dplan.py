@@ -263,7 +263,9 @@ class DPlanExportServiceTests(unittest.TestCase):
                 with self.assertRaisesRegex(DPlanError, "DataPack 對帳"):
                     self._export(root, daily, plan)
             result = self._export(root, dict(base, datapack=dict(matched, nav_tradable="1000", close_prices={"2330.TW": "10"})), plan)
-            self.assertEqual(self.last_build.call_args.kwargs, {"official_nav": "1000", "official_prices": {"2330.TW": "10"}})
+            kwargs = dict(self.last_build.call_args.kwargs)
+            self.assertTrue(callable(kwargs.pop("nav_history_provider")))
+            self.assertEqual(kwargs, {"official_nav": "1000", "official_prices": {"2330.TW": "10"}})
             self.assertEqual(result["datapack"]["nav_tradable"], "1000")
             self.assertEqual(result["datapack"]["status"], "matched")
             with self.assertRaisesRegex(DPlanError, "賣出超過 DataPack"):

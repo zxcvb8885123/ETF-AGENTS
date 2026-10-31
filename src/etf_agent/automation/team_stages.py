@@ -81,6 +81,12 @@ _REVIEW_RULES = (
 )
 
 
+
+def _peer_deny_reads(role: str) -> Tuple[str, ...]:
+    peer = "bear" if role == "bull" else "bull"
+    return ("%s_*" % peer, "brief_%s_*" % peer, "research_debate*")
+
+
 class TeamStagesMixin:
     """由 ``DailyDecisionPipeline`` 組合；依賴 ``PipelineBase`` 的 save_*、agent_step 與 _run_jobs。"""
 
@@ -255,6 +261,8 @@ class TeamStagesMixin:
                     _SHARED_RULES,
                 ),
                 STANCE_SCHEMA,
+                # 多空互相隔離由讀檔權限強制：不得讀另一方的輸出、原始輸出與輸入摘要。
+                deny_reads=_peer_deny_reads(role),
             )
             return name, lambda: self.agent_step(
                 task, lambda output: seal_stance_packet(brief["packet_envelope"], output["items"]), validator.validate
