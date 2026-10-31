@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 每天 05:05（主機時區 Asia/Taipei）記錄期交所官網即時行情的臺指期報價，驗證夜盤（TAIFEX_MIS）完成條件：夜盤結束後的 CDate／CTime、週末與週一早上還看不看得到週六 05:00 的最後報價、08:45 日盤開盤後何時切換。只觀察，不進決策；驗證完可移除。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etf-agents.taifex-mis-probe</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/scripts/probe_taifex_mis.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>Asia/Taipei</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>5</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/var/logs/taifex_mis_probe.out</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/var/logs/taifex_mis_probe.out</string>
+</dict>
+</plist>
