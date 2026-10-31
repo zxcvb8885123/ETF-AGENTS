@@ -104,6 +104,29 @@ class SensitiveReadTests(unittest.TestCase):
             self.assertNotIn("tok-abcdef123456", str(raised.exception))
             reject_secret_leak("trader_b0", {"rationale": "持股 501 張"}, root)
 
+    def test_output_with_escaped_characters_in_secret_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text('API_TOKEN=tok\\abc"def-123456\n', encoding="utf-8")
+            with self.assertRaises(DailyPipelineError):
+                reject_secret_leak("trader_b0", {"rationale": 'x tok\\abc"def-123456 y'}, root)
+
+    def test_task_deny_reads_reach_claude_and_opencode_permissions(self):
+        import json as _json
+        from etf_agent.automation.agent_runner import _opencode_read_permission, claude_read_deny_settings
+
+        rules = _json.loads(claude_read_deny_settings(("bear_*",)))["permissions"]["deny"]
+        self.assertIn("Read(**/bear_*)", rules)
+        self.assertIn("Read(**/.env)", rules)
+        self.assertEqual(_opencode_read_permission(("bear_*",))["*/bear_*"], "deny")
+
+    def test_bull_and_bear_tasks_cannot_read_each_others_output(self):
+        from etf_agent.automation.team_stages import _peer_deny_reads
+
+        self.assertIn("bear_*", _peer_deny_reads("bull"))
+        self.assertIn("brief_bull_*", _peer_deny_reads("bear"))
+        self.assertIn("research_debate*", _peer_deny_reads("bull"))
+
     def test_codex_output_leak_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
