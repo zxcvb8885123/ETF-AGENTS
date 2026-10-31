@@ -159,8 +159,9 @@ FROM (
 WHERE source_rank = 1;
 """
 
-CORPORATE_DATA_SCHEMA = """
-CREATE TABLE IF NOT EXISTS source_documents (
+# 公司文件表。同一 (source, external_id) 內容可在 A→B→A 時再次出現，所以內容雜湊不設唯一約束，
+# 只有 (source, external_id, version) 唯一；重複判斷由收集器只與最新版本比較。
+SOURCE_DOCUMENTS_COLUMNS_SQL = """
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,
     external_id TEXT NOT NULL,
@@ -176,11 +177,16 @@ CREATE TABLE IF NOT EXISTS source_documents (
     raw_payload_id INTEGER NOT NULL REFERENCES raw_payloads(id),
     supersedes_document_id INTEGER REFERENCES source_documents(id),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source, external_id, content_sha256),
     UNIQUE(source, external_id, version)
-);
+"""
 
-CREATE INDEX IF NOT EXISTS idx_source_documents_cutoff
+CORPORATE_DATA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS source_documents (%s);
+
+CREATE INDEX IF NOT EXISTS idx_source_documents_content
+ON source_documents(source, external_id, content_sha256);
+
+""" % SOURCE_DOCUMENTS_COLUMNS_SQL + """CREATE INDEX IF NOT EXISTS idx_source_documents_cutoff
 ON source_documents(published_at, available_at);
 
 CREATE TABLE IF NOT EXISTS document_instruments (
@@ -347,7 +353,7 @@ class MarketDataDatabase:
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(str(self.path))
+        connection = sqlite3.connect(str(self.path), timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         try:
@@ -379,6 +385,9 @@ class MarketDataDatabase:
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (2)"
             )
+            connection.commit()
+            self.backup_before_source_document_migration(connection)
+            self.migrate_source_document_content_unique(connection)
             connection.executescript(CORPORATE_DATA_SCHEMA)
             connection.execute(
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (3)"
@@ -398,6 +407,83 @@ class MarketDataDatabase:
                 "INSERT OR IGNORE INTO schema_versions(version) VALUES (7)"
             )
             connection.executescript(ANALYSIS_VIEW)
+
+    def backup_before_source_document_migration(self, connection: sqlite3.Connection) -> None:
+        """需要重建 source_documents 時，先在同目錄留一份一致的備份（只做一次，已存在不覆蓋）。"""
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_documents'"
+        ).fetchone()
+        if not exists or not self.source_documents_has_content_unique(connection):
+            return
+        backup_path = self.path.with_name(self.path.name + ".pre-source-documents-migration.bak")
+        if backup_path.exists():
+            return
+        target = sqlite3.connect(str(backup_path))
+        try:
+            connection.backup(target)
+        finally:
+            target.close()
+
+    @staticmethod
+    def source_documents_has_content_unique(connection: sqlite3.Connection) -> bool:
+        """source_documents 是否仍有舊的 UNIQUE(source, external_id, content_sha256) 約束。"""
+        for index in connection.execute("PRAGMA index_list(source_documents)").fetchall():
+            if not int(index["unique"]):
+                continue
+            columns = [row["name"] for row in connection.execute("PRAGMA index_info(%s)" % index["name"]).fetchall()]
+            if columns == ["source", "external_id", "content_sha256"]:
+                return True
+        return False
+
+    @classmethod
+    def migrate_source_document_content_unique(cls, connection: sqlite3.Connection) -> int:
+        """移除舊的內容雜湊唯一約束，讓內容 A→B→A 時能新增第三個版本；回傳搬移列數（已遷移或沒有表回 0）。
+
+        SQLite 無法直接刪除表內的 UNIQUE，所以依官方 12 步重建：關閉外鍵、同一交易內建新表、
+        原 id 原樣搬移（子表的 document_id 不變）、檢查列數與外鍵、換名後重新開啟外鍵。可重複執行。
+        """
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_documents'"
+        ).fetchone()
+        if not exists or not cls.source_documents_has_content_unique(connection):
+            return 0
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("DROP TABLE IF EXISTS source_documents_rebuilt")
+                connection.execute("CREATE TABLE source_documents_rebuilt (%s)" % SOURCE_DOCUMENTS_COLUMNS_SQL)
+                columns = ", ".join(
+                    row["name"] for row in connection.execute("PRAGMA table_info(source_documents_rebuilt)").fetchall()
+                )
+                before = int(connection.execute("SELECT COUNT(*) FROM source_documents").fetchone()[0])
+                connection.execute(
+                    "INSERT INTO source_documents_rebuilt(%s) SELECT %s FROM source_documents ORDER BY id" % (columns, columns)
+                )
+                after = int(connection.execute("SELECT COUNT(*) FROM source_documents_rebuilt").fetchone()[0])
+                if before != after:
+                    raise ValueError("source_documents 遷移列數不符：%d → %d" % (before, after))
+                connection.execute("DROP TABLE source_documents")
+                connection.execute("ALTER TABLE source_documents_rebuilt RENAME TO source_documents")
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_source_documents_cutoff ON source_documents(published_at, available_at)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_source_documents_content "
+                    "ON source_documents(source, external_id, content_sha256)"
+                )
+                violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise ValueError("source_documents 遷移後外鍵檢查失敗：%d 筆" % len(violations))
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        return after
 
     @staticmethod
     def daily_prices_versioned(connection: sqlite3.Connection) -> bool:

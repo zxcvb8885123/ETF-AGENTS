@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Sequence, Tuple
 
+from etf_agent.core import parse_aware_time
 from .database import MarketDataDatabase
 from .universe import Instrument
 from .corporate_contracts import CorporateCollectionResult, CorporateRecord, CorporateResponse
@@ -162,6 +163,14 @@ class CorporateDataCollector:
             raise
 
 
+def _fetched_before(candidate: object, existing: object) -> bool:
+    """candidate 的抓取時間嚴格早於 existing；任一無法解析成含時區時間時視為否（維持原行為）。"""
+    try:
+        return parse_aware_time(candidate, "fetched_at") < parse_aware_time(existing, "fetched_at")
+    except Exception:
+        return False
+
+
 def _store_record(
     connection: sqlite3.Connection,
     record: CorporateRecord,
@@ -209,24 +218,20 @@ def _store_record(
         separators=(",", ":"),
     )
     content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    duplicate = connection.execute(
-        """
-        SELECT id FROM source_documents
-        WHERE source = ? AND external_id = ? AND content_sha256 = ?
-        """,
-        (document.source, document.external_id, content_sha256),
-    ).fetchone()
-    if duplicate:
-        return int(duplicate["id"]), False
-
     previous = connection.execute(
         """
-        SELECT id, version FROM source_documents
+        SELECT id, version, content_sha256, fetched_at FROM source_documents
         WHERE source = ? AND external_id = ?
         ORDER BY version DESC LIMIT 1
         """,
         (document.source, document.external_id),
     ).fetchone()
+    # 只與最新版本比較：內容 A→B→A 時，回到 A 是新的一版，Snapshot 才會選到最新狀態。
+    if previous and previous["content_sha256"] == content_sha256:
+        return int(previous["id"]), False
+    # 抓取時間比現有最新版更早的舊內容不得蓋過新版（亂序或快取的舊列會把更正倒轉回去）。
+    if previous and _fetched_before(document.fetched_at, previous["fetched_at"]):
+        return int(previous["id"]), False
     version = int(previous["version"]) + 1 if previous else 1
     supersedes_id = int(previous["id"]) if previous else None
     cursor = connection.execute(
