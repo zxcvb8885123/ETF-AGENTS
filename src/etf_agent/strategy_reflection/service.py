@@ -333,14 +333,15 @@ def apply_reflection(
                 return {"applied": False, "reason": "今天已套用過一次，明天再調"}
             live = dict(candidate)
             live["policy_id"] = "strategy-%s-r%d" % (today.date().isoformat(), 1)
-            live["available_at"] = today.isoformat()
+            live["available_at"] = moment.astimezone(TAIPEI).isoformat()  # 實際寫入時間，不是回放開始前的 now
             parse_aware_time(live["available_at"], "available_at", error=ReflectionError)
             validate_template(live, rules)
             backup = repository.policy_backups / ("%s.json" % template["policy_id"])
             repository.policy_backups.mkdir(parents=True, exist_ok=True)
             if not backup.exists():
                 shutil.copy2(root / POLICY_PATH, backup)
-            atomic_write_json(root / POLICY_PATH, live)
+            # 先記歷史再換 live 檔：中途中止時留下「有紀錄」的狀態（試用、冷卻仍生效；rollback 會因雜湊不符而拒絕並要求人工處理），
+            # 不會出現沒有紀錄的 live 變更。
             repository.append_history({
                 "action": "apply", "applied_at": today.isoformat(), "reflection_id": reflection_id,
                 "knobs": [item["knob"] for item in reflection["proposals"]], "decision_days": brief["decision_days"],  # type: ignore[union-attr]
@@ -350,6 +351,12 @@ def apply_reflection(
                 "origins": {item["knob"]: item["current"] for item in reflection["proposals"]},  # type: ignore[union-attr]
                 "trial": {"verification": trial_verification([item["knob"] for item in reflection["proposals"]])},  # type: ignore[union-attr]
             })
+            try:
+                atomic_write_json(root / POLICY_PATH, live)
+            except BaseException:
+                repository.append_history({"action": "rollback", "rolled_back_at": today.isoformat(),
+                                           "of": reflection_id, "policy_id_restored": template["policy_id"]})
+                raise
     except BlockingIOError:
         return {"applied": False, "reason": "每日決策進行中（artifacts/daily/.lock 被佔用），反思已封存，之後可用 apply 再套用"}
     return {"applied": True, "policy_id": live["policy_id"], "knobs": [item["knob"] for item in reflection["proposals"]]}  # type: ignore[union-attr]
@@ -582,6 +589,15 @@ def _apply_pending_lessons(root, now, repository, write_lock, clock) -> Dict[str
         with (write_lock or _no_lock)():
             if apply_window_blocked((clock or (lambda: datetime.now(timezone.utc)))()):
                 return {"applied": False, "reason": "目前在 20:50～09:00，教訓改天再套用"}
+            # 取鎖前的檢查可能已過期（別的程序剛套用、或另一件變更剛開始試用）：鎖內重讀歷史與待套用檔再判斷。
+            history = repository.history()
+            reloaded = load_pending(repository.base)
+            if reloaded is None or reloaded["lessons_id"] != pending["lessons_id"]:
+                return {"applied": False, "reason": "待套用的教訓在等待期間已改變，改天再套用"}
+            if any(entry.get("action") == LESSONS_ACTION and str(entry.get("reflection_id")) == pending["lessons_id"] for entry in history):
+                return {"applied": False, "reason": "這份教訓已套用過"}
+            if open_trial(history) is not None:
+                return {"applied": False, "reason": "已有另一件變更在試用觀察期，教訓改天再套用"}
             return apply_lessons(root, repository.base, pending, repository.append_history, _decision_days_of(repository, decision_days), now.astimezone(TAIPEI))
     except BlockingIOError:
         return {"applied": False, "reason": "每日決策進行中，教訓改天再套用"}
