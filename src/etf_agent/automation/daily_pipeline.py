@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
 from etf_agent.decision import (
     AllocationOrderEngine,
@@ -229,7 +229,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         applied_decision_run_ids: Optional[Sequence[str]] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
-        decision = service(bundle)
+        # 本次 policy 的 history_ref 由同一份 nav_history 綁定；重建驗證以它回應 head_run_id，其餘仍由 Validator 重算比對。
+        history_provider = _history_provider(nav_history)
+        decision = service(bundle, nav_history_provider=history_provider)
 
         self.log("[decision 2] 計算動能")
         momentum = MomentumEngine(bundle).run()
@@ -298,7 +300,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
         policy["content_sha256"] = decision_policy_sha256(policy)
-        policy_errors = DecisionPolicyValidator(bundle).validate(policy)
+        policy_errors = DecisionPolicyValidator(bundle).validate(policy, nav_history)
         if policy_errors:
             raise DailyPipelineError("綁定交易決策與現金姿態後 policy 無效：" + "；".join(policy_errors))
         self.save_artifact("policy", policy)
@@ -337,10 +339,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
         team = build_team_inputs(analysts, None, stance, prior_context, slots, position_review, ranking)
-        final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository).run(
+        final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history
         )
-        errors = DecisionResultValidator(bundle, policy, momentum, debate, trade, team, self.decision_repository).validate(
+        errors = DecisionResultValidator(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).validate(
             proposal, scenario, guard, review, history, final
         )
         if errors:
@@ -363,6 +365,19 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         result.decision_run_id = decision_run_id
         result.orders = list(final.get("orders", []))
 
+
+
+def _history_provider(nav_history: Optional[Sequence[Mapping[str, object]]]):
+    """把本次綁定 policy 用的 NAV 歷史包成 NavHistoryProvider；head 不符即拒絕。沒有歷史時回傳 None。"""
+    if nav_history is None:
+        return None
+    rows = [dict(row) for row in nav_history]
+
+    def provider(head_run_id: str) -> List[Dict[str, object]]:
+        if not rows or rows[-1].get("run_id") != head_run_id:
+            raise DailyPipelineError("帳本 NAV 歷史的最新一筆不是 history_ref.head_run_id：%s" % head_run_id)
+        return rows
+    return provider
 
 
 def validate_research_result(snapshot: Mapping[str, object], result: Mapping[str, object]) -> List[str]:

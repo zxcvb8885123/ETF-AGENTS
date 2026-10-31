@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
-from typing import Dict, List, Mapping, Optional, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .contracts import (
     DECISION_SCHEMA_VERSION,
@@ -108,7 +108,9 @@ class DecisionPolicyValidator:
     def __init__(self, bundle: Mapping[str, object]):
         self.context = DecisionContext(bundle)
 
-    def validate(self, policy: Mapping[str, object]) -> List[str]:
+    def validate(
+        self, policy: Mapping[str, object], nav_history: Optional[Sequence[Mapping[str, object]]] = None,
+    ) -> List[str]:
         errors: List[str] = []
         reject_unknown_fields(policy, self.FIELDS, "DecisionPolicy", errors)
         for field in (
@@ -192,7 +194,7 @@ class DecisionPolicyValidator:
         if "position_sizing" in policy:
             validate_position_sizing(policy, self.context.universe, errors)
         if "drawdown_control" in policy:
-            validate_drawdown_control(policy, self.context.bundle, errors)
+            validate_drawdown_control(policy, self.context.bundle, errors, nav_history)
         if "position_review" in policy:
             validate_position_review_policy(policy["position_review"], errors)
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):

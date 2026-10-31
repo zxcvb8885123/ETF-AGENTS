@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | `DeliveryError`、`build_delivery`、`save_failure`、`validate_delivery` |
 | `contracts.py` | 交付契約的錯誤型別 | `DeliveryError` |
-| `provider.py` | 只載入經 manifest 及完整決策鏈驗證的封存 | `verify_inputs`、`load_verified` |
+| `provider.py` | 只載入經 manifest 及完整決策鏈驗證的封存 | `verify_inputs`、`load_verified`（皆可傳 `ledger_repository`：policy 含回撤 `history_ref` 時以帳本重算峰值，未提供即拒絕） |
 | `builder.py` | 由決策封存建立同源閱讀資料 | `build_report` |
 | `renderer.py` | 現行固定模板（第 3 版：金額單位顯示 TWD、估值時間轉台北時間顯示，封存值不改）的中文 Markdown，判斷皆引用原文；另保留第 2 版只驗證舊交付 | `render_report`、`render_report_v2`、`renderer_for`、`cell` |
 | `renderer_v1.py` | 第 1 版樣板，只用來驗證舊交付 | `render_report_v1` |
@@ -42,7 +42,7 @@ flowchart LR
 
 ## 對應的 CLI／scripts／測試
 
-- CLI：`cli/decision_delivery.py`（`build`、`validate`）；scripts：`scripts/run_daily_pipeline.py`。
+- CLI：`cli/decision_delivery.py`（`build`、`validate`；`--ledger-repository` 預設 `artifacts/ledger`）；scripts：`scripts/run_daily_pipeline.py`。
 - 測試：`tests/decision/test_decision_delivery.py`。
 
 ## 規則與邊界

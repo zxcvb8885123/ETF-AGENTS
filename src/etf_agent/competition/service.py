@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional
 
 from etf_agent.core.run_layout import list_run_dirs
-from etf_agent.virtual_account import active_account_id
+from etf_agent.virtual_account import active_account_id, ledger_nav_history_provider
 
 from .context import DPlanContextBuilder
 from .datapack import check_sells
@@ -242,6 +242,7 @@ class DPlanExportService:
             team_id, effective_trade_date, context, artifacts,
             official_nav=datapack.get("nav_tradable") if matched else None,
             official_prices=datapack.get("close_prices") if matched else None,
+            nav_history_provider=ledger_nav_history_provider(self.root / "artifacts" / "ledger", artifacts.get("decision_input", {})),
         )
         if matched:
             oversell = check_sells(plan["orders"], datapack["sellable_shares"])
