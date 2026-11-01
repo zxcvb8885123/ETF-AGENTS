@@ -36,7 +36,7 @@
 ## 流程（`cli/strategy_reflection.py auto`）
 
 1. 程式用校準報告與目前樣板產生簡報 `brief`（每個統計一個 `evidence_id`；只收 `status=ok` 的 horizon）。
-2. **門檻**：1 日或 5 日 horizon 任一為 `ok`（完整決策日 ≥ `calibration.MIN_DECISION_DAYS`，目前 10）才呼叫 Agent；否則封存 `observe_only` 反思，**零用量**。
+2. **門檻**：1 日或 5 日 horizon 任一為 `ok`（完整決策日 ≥ `calibration.MIN_DECISION_DAYS`，目前 5）才呼叫 Agent；否則封存 `observe_only` 反思，**零用量**。
 3. Agent 只輸出 `{summary, observations, proposals}`（Skill：`tradeagent/risk/strategy-reflection`）；狀態、`current`、數值格式與雜湊由程式補算。
 4. `validate_reflection` 重建驗證：欄位白名單、雜湊、門檻、evidence 存在、旋鈕白名單／變幅／上下限／方向、冷卻期、樣板未過期。
 5. 影子回放：目前策略與候選策略各回放一次已封存決策（`evaluation.build_replay`，零 token）；候選期末 NAV 不得低於目前策略、Guard 拒絕日不得增加、至少完成一個成交日，否則不套用。回放只是必要條件，不是獲利證明。

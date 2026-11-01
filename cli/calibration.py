@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from etf_agent.calibration import CalibrationError, CalibrationRepository, evaluate, execution_gap_report, record_all  # noqa: E402
+from etf_agent.calibration import MIN_DECISION_DAYS, CalibrationError, CalibrationRepository, evaluate, execution_gap_report, record_all  # noqa: E402
 
 
 def _now() -> str:
@@ -23,7 +23,7 @@ def main(argv=None) -> int:
     snapshot = sub.add_parser("snapshot", help="把已封存的 Decision run 記成觀測（可重複執行，已記錄的不會重複）")
     snapshot.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decisions")
     snapshot.add_argument("--output", type=Path, default=ROOT / "artifacts" / "calibration")
-    report = sub.add_parser("report", help="以官方成交均價對答案；樣本不足 10 個決策日時不給結論")
+    report = sub.add_parser("report", help="以官方成交均價對答案；完整決策日不足 %d 天時不給結論" % MIN_DECISION_DAYS)
     report.add_argument("--observations", type=Path, default=ROOT / "artifacts" / "calibration")
     report.add_argument("--database", type=Path, default=ROOT / "var" / "etf_agent.db")
     report.add_argument("--as-of", default=None, help="含時區的 ISO 時間；預設現在")
