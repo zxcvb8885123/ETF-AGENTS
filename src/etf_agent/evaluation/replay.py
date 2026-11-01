@@ -495,9 +495,11 @@ def save_replay(
     repository = ReplayRepository(Path(root) / REPLAY_ROOT)
     if repository.run_dir(replay_id) is not None:
         raise ReplayError("回放 %s 已存在，不覆寫" % replay_id)
+    # 先渲染再封存：渲染失敗時不留下封存好的 run，同一個 ID 才能重跑。
+    markdown, page = render_replay_report(report), render_replay_html(report)
     run_dir = repository.save(replay_id, {"report": report, **artifacts})
-    (run_dir.parent / ("%s.md" % replay_id)).write_text(render_replay_report(report), encoding="utf-8")
-    (run_dir.parent / ("%s.html" % replay_id)).write_text(render_replay_html(report), encoding="utf-8")
+    (run_dir.parent / ("%s.md" % replay_id)).write_text(markdown, encoding="utf-8")
+    (run_dir.parent / ("%s.html" % replay_id)).write_text(page, encoding="utf-8")
     return replay_id, run_dir
 
 

@@ -114,6 +114,15 @@ class SensitiveReadTests(unittest.TestCase):
     def setUp(self):
         self.task = AgentTask("trader_b0", "只讀 brief，回覆 JSON", {"type": "object"})
 
+    def test_env_template_files_are_not_treated_as_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env.example").write_text("FINMIND_TOKEN=your_token_here\n", encoding="utf-8")
+            reject_secret_leak("trader", {"note": "your_token_here"}, root)
+            (root / ".env").write_text("FINMIND_TOKEN=real_secret_value\n", encoding="utf-8")
+            with self.assertRaises(DailyPipelineError):
+                reject_secret_leak("trader", {"note": "real_secret_value"}, root)
+
     def test_claude_command_denies_sensitive_reads(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -217,7 +226,7 @@ class SensitiveReadTests(unittest.TestCase):
         self.assertIn("bear_*", _peer_deny_reads("bull"))
         self.assertIn("brief_bull_*", _peer_deny_reads("bear"))
         self.assertIn("research_debate*", _peer_deny_reads("bull"))
-        for pattern in ("debate*", "intent*", "trade_decision*", "trader_b*", "trader_report*", "brief_trader_*", "team_inputs*"):
+        for pattern in ("debate*", "intent*", "trade_decision*", "trader_*", "brief_trader_*", "team_inputs*"):
             self.assertIn(pattern, _peer_deny_reads("bull"))
             self.assertIn(pattern, _peer_deny_reads("bear"))
         self.assertNotIn("decision*", _peer_deny_reads("bull"))

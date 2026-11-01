@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
-from .agent_runner import AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError, reject_secret_leak
+from .agent_runner import LATER_STAGE_GLOBS, AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError, reject_secret_leak
 
 
 def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dict[str, object]:
@@ -66,10 +66,7 @@ DEFAULT_TRANSIENT_RETRIES = 1  # 暫時性失敗（逾時、非零結束、輸�
 DEFAULT_RETRY_DELAY_SECONDS = 30.0
 # 研究階段暫存啟用時，run 目錄內出現這些檔代表多空研究員（或其後段產物）已落地；
 # 不含每次都會重寫的 brief_bull_*／brief_bear_*（兩方共同輸入，不含任何研究員輸出）。
-RESEARCH_RESIDUE_GLOBS = (
-    "bull_*.json", "bear_*.json", "research_debate*", "debate*", "intent*", "trade_decision*",
-    "trader_*", "brief_trader_*", "team_inputs*", "selection_ranking*",
-)
+RESEARCH_RESIDUE_GLOBS = ("bull_*.json", "bear_*.json") + LATER_STAGE_GLOBS
 _Job = TypeVar("_Job")
 
 

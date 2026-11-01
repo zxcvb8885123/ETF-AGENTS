@@ -328,8 +328,9 @@ def save_grid(root: Path, body: Mapping[str, object], grid_id: Optional[str] = N
     repository = GridRepository(Path(root) / GRID_ROOT)
     if repository.run_dir(grid_id) is not None:
         raise GridError("格子 %s 已存在，不覆寫" % grid_id)
+    page = render_grid_html(report)  # 先渲染再封存：渲染失敗時不留下封存好的 run，同一個 ID 才能重跑
     run_dir = repository.save(grid_id, {"grid": report})
-    (run_dir.parent / ("%s.html" % grid_id)).write_text(render_grid_html(report), encoding="utf-8")
+    (run_dir.parent / ("%s.html" % grid_id)).write_text(page, encoding="utf-8")
     return grid_id, run_dir
 
 
@@ -360,7 +361,9 @@ def verify_grid(
     grid, _ = read_grid(root, grid_id)
     if grid.get("content_sha256") != grid_body_sha256(grid):
         return {"valid": False, "errors": ["格子 content_sha256 與內容不一致"], "warnings": warnings}
-    inputs = grid["inputs"]
+    inputs = grid.get("inputs")
+    if not isinstance(inputs, Mapping) or not isinstance(grid.get("provenance"), Mapping):
+        return {"valid": False, "errors": ["格子缺少 inputs 或 provenance"], "warnings": warnings}
     try:
         rebuilt = build_grid(
             root, decision_root=Path(decision_root or inputs["decision_root"]), database=Path(database or inputs["database"]),

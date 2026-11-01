@@ -63,9 +63,21 @@ def notify(message: str) -> None:
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
 
 
+def _env_wait_seconds() -> float:
+    """環境變數不合法時退回預設並提醒，不讓排程因打錯字直接當掉。"""
+    raw = os.environ.get("ETF_DATA_LOCK_WAIT_SECONDS", "")
+    if not raw.strip():
+        return float(DEFAULT_WAIT_SECONDS)
+    try:
+        return float(raw)
+    except ValueError:
+        print("ETF_DATA_LOCK_WAIT_SECONDS=%r 不是數字，改用預設 %s 秒" % (raw, DEFAULT_WAIT_SECONDS), file=sys.stderr)
+        return float(DEFAULT_WAIT_SECONDS)
+
+
 def main(argv: Optional[Sequence[str]] = None, root: Path = ROOT) -> int:
     parser = argparse.ArgumentParser(description="取得資料抓取鎖後執行指令")
-    parser.add_argument("--wait-seconds", type=float, default=float(os.environ.get("ETF_DATA_LOCK_WAIT_SECONDS", DEFAULT_WAIT_SECONDS)))
+    parser.add_argument("--wait-seconds", type=float, default=_env_wait_seconds())
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command

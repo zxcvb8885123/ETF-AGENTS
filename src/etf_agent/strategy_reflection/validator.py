@@ -107,7 +107,7 @@ def validate_reflection(
         # 之後有別的結案（保留等）才解除。舊紀錄沒有 changes 方向時只套用加倍的冷卻。
         reverted = outcomes.get(path, {}).get("reverted_entry")
         if reverted is not None:
-            waited = int(brief["decision_days"]) - int(reverted["decision_days"])  # type: ignore[index]
+            waited = int(brief["decision_days"]) - int(reverted.get("decision_days", 0))  # type: ignore[union-attr]
             if waited < 2 * COOLDOWN_DECISION_DAYS:
                 raise ReflectionError("%s 旋鈕 %s 上次調整被試用還原，冷卻加倍（再等 %d 個決策日）" % (label, path, 2 * COOLDOWN_DECISION_DAYS - waited))
             change = (reverted.get("changes") or {}).get(path)  # type: ignore[union-attr]

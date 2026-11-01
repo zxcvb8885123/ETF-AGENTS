@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
@@ -11,6 +10,11 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Mapping
 
 from etf_agent.core.artifact_store import ImmutableRunStore
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows 沒有 fcntl，退回無跨程序鎖
+    fcntl = None  # type: ignore[assignment]
 
 from .contracts import POLICY_ROOT, SCHEMA_VERSION, ReflectionError
 
@@ -62,6 +66,9 @@ class ReflectionRepository(ImmutableRunStore):
         """歷史檔的讀改寫鎖（跨程序、阻塞等待）。與每日決策鎖 ``artifacts/daily/.lock`` 是不同的鎖：
         這裡只保護「讀整份 → 加一筆 → 原子換檔」這一小段，手動 apply／rollback 與排程 auto／apply-pending 同時寫歷史時不會互相覆蓋。"""
         self.base.mkdir(parents=True, exist_ok=True)
+        if fcntl is None:
+            yield
+            return
         with open(self.history_lock_path, "a+") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:

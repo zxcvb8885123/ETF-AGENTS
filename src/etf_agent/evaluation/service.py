@@ -165,7 +165,6 @@ def run_suite(
         if not eval_dir.is_dir():
             raise EvaluationError("找不到要續跑的評測 run：%s" % eval_dir)
         manifest = _check_resumable(eval_dir, suite, int(repeats), stop_after)
-        manifest["cases"] = []
         manifest.setdefault("resumes", []).append({"resumed_at": now, "reran": []})
         manifest.pop("finished_at", None)
     else:
@@ -210,7 +209,10 @@ def run_suite(
                 manifest["resumes"][-1]["reran"].append("%s/r%d" % (case["case_id"], repeat))
             runs.append(record)
             _write(run_dir / "eval_result.json", record)
-        manifest["cases"].append({"case_id": case["case_id"], "bundle_sha256": case["bundle_sha256"], "policy": policy, "runs": runs})
+        entry = {"case_id": case["case_id"], "bundle_sha256": case["bundle_sha256"], "policy": policy, "runs": runs}
+        # 續跑時保留先前已完成的案例，只替換這次重做的那一筆，中途再當掉也不會讓清單縮水。
+        kept = [row for row in manifest["cases"] if row.get("case_id") != case["case_id"]]
+        manifest["cases"] = kept + [entry]
         _write(eval_dir / "manifest.json", manifest)
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
     _write(eval_dir / "manifest.json", manifest)

@@ -29,6 +29,13 @@ class DataLockTests(unittest.TestCase):
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return handle
 
+    def test_malformed_wait_env_falls_back_to_default(self):
+        for raw in ("", "abc"):
+            with patch.dict("os.environ", {"ETF_DATA_LOCK_WAIT_SECONDS": raw}), redirect_stderr(io.StringIO()):
+                self.assertEqual(self.module._env_wait_seconds(), float(self.module.DEFAULT_WAIT_SECONDS))
+        with patch.dict("os.environ", {"ETF_DATA_LOCK_WAIT_SECONDS": "12"}):
+            self.assertEqual(self.module._env_wait_seconds(), 12.0)
+
     def test_free_lock_runs_command_and_returns_its_exit_code(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

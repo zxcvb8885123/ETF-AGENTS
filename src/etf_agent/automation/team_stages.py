@@ -38,7 +38,7 @@ from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.stance import STANCE_ROLES
 from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
 
-from .agent_runner import AgentTask, DailyPipelineError
+from .agent_runner import LATER_STAGE_GLOBS, AgentTask, DailyPipelineError
 from .agent_schemas import (
     ANALYST_SCHEMA,
     EVENT_ANALYST_SCHEMA,
@@ -85,8 +85,7 @@ _REVIEW_RULES = (
 def _peer_deny_reads(role: str) -> Tuple[str, ...]:
     peer = "bear" if role == "bull" else "bull"
     # 續跑時 run 目錄可能已有後段產物（含對方論點的 debate、交易與 team_inputs），一併擋掉；不用 ``decision*``，會擋到共同輸入。
-    return ("%s_*" % peer, "brief_%s_*" % peer, "research_debate*", "debate*", "intent*", "trade_decision*",
-            "trader_b*", "trader_report*", "brief_trader_*", "team_inputs*", "selection_ranking*")
+    return ("%s_*" % peer, "brief_%s_*" % peer) + LATER_STAGE_GLOBS
 
 
 class TeamStagesMixin:

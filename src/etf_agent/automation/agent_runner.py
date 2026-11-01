@@ -60,7 +60,14 @@ def _with_case_variants(patterns: Sequence[str]) -> Tuple[str, ...]:
 SENSITIVE_READ_GLOBS = _with_case_variants(_SENSITIVE_BASE_GLOBS)
 # 外洩掃描的檔案樣式，與 SENSITIVE_READ_GLOBS 的 .env 類一致（含 .env.local、.env.production 等）。
 _SECRET_FILE_GLOBS = (".env*", ".envrc")
+# 範本檔只放示意值，不是秘密；納入掃描會讓無害輸出被誤拒。
+_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist", ".tmpl")
 _MIN_SECRET_LENGTH = 8
+# 多空研究之後的段產物（含對方論點）。拒讀規則與 Codex 暫存的殘留偵測共用這一份，避免兩邊不一致。
+LATER_STAGE_GLOBS = (
+    "research_debate*", "debate*", "intent*", "trade_decision*",
+    "trader_*", "brief_trader_*", "team_inputs*", "selection_ranking*",
+)
 
 
 def claude_read_deny_settings(extra: Sequence[str] = ()) -> str:
@@ -83,7 +90,8 @@ def _opencode_read_permission(extra: Sequence[str] = (), run_dir: Optional[Path]
 
 
 def _secret_files(project_root: Path) -> list[Path]:
-    found = {path for pattern in _SECRET_FILE_GLOBS for path in project_root.glob(pattern) if path.is_file()}
+    found = {path for pattern in _SECRET_FILE_GLOBS for path in project_root.glob(pattern)
+             if path.is_file() and not path.name.endswith(_TEMPLATE_SUFFIXES)}
     return sorted(found)
 
 
