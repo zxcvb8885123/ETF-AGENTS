@@ -70,7 +70,7 @@ def history_reference(nav_history: Sequence[Mapping[str, object]]) -> Optional[D
 
 def verify_history_reference(
     control: Mapping[str, object], current_nav: Decimal, nav_history: Sequence[Mapping[str, object]],
-    errors: List[str],
+    errors: List[str], bundle_cutoff=None,
 ) -> None:
     """以可讀的帳本歷史（須止於 history_ref.head_run_id）重算參照、峰值、峰值時間與筆數並逐項比對。"""
     prefix = "DecisionPolicy.drawdown_control"
@@ -82,6 +82,17 @@ def verify_history_reference(
     if expected_ref is None or dict(ref) != expected_ref:
         errors.append("%s.history_ref 與帳本 NAV 歷史不一致" % prefix)
         return
+    cutoff = bundle_cutoff
+    if cutoff is not None:
+        for index, row in enumerate(nav_history):
+            try:
+                as_of = parse_aware_time(row.get("as_of"), "nav_history[%d].as_of" % index, error=DecisionToolError)
+            except DecisionToolError as error:
+                errors.append(str(error))
+                return
+            if as_of > cutoff:
+                errors.append("%s 帳本 NAV 歷史第 %d 列的時間晚於 decision_cutoff" % (prefix, index))
+                return
     try:
         measured = measure_drawdown(current_nav, nav_history)
     except DecisionToolError as error:
@@ -161,6 +172,9 @@ def validate_drawdown_control(
         if status == "unavailable":
             if control.get("stance_floor") is not None or control.get("drawdown") is not None:
                 errors.append("%s 無歷史時不得有回撤或姿態下限" % prefix)
+            # 呼叫端提供了可驗證的帳本歷史，就不能宣稱無歷史：否則清掉 drawdown／stance_floor 即可躲過下限。
+            if nav_history is not None and history_reference(nav_history) is not None:
+                errors.append("%s 帳本有可驗證的 NAV 歷史，status 不得為 unavailable" % prefix)
             return
         peak = _decimal(control.get("peak_nav"), prefix + ".peak_nav")
         if peak < current or peak <= 0:
@@ -181,7 +195,8 @@ def validate_drawdown_control(
             if not isinstance(ref, Mapping) or set(ref) != {"head_run_id", "length", "sha256"} or ref.get("length") != length:
                 errors.append("%s.history_ref 必須含 head_run_id、length（等於 history_length）、sha256" % prefix)
             elif nav_history is not None:
-                verify_history_reference(control, current, nav_history, errors)
+                verify_history_reference(control, current, nav_history, errors,
+                                         parse_aware_time(bundle.get("decision_cutoff"), "decision_cutoff", error=DecisionToolError))
         elif nav_history is not None and history_reference(nav_history) is not None:
             # 呼叫端提供帳本歷史即要求嚴格驗證：新 policy 不得靠省略 history_ref 躲過重算。
             errors.append("%s 有帳本歷史可驗證時必須含 history_ref" % prefix)

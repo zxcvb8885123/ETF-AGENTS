@@ -267,6 +267,27 @@ class DrawdownPolicyTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertTrue(any("history_ref 與帳本" in error for error in result["errors"]), result["errors"])
 
+    def test_unavailable_status_cannot_hide_a_verifiable_ledger_history(self):
+        policy = self.bound_final_policy()
+        _, provider = self.ledger(policy)
+        forged = copy.deepcopy(policy)
+        forged["drawdown_control"].update(status="unavailable", drawdown=None, stance_floor=None)
+        forged["content_sha256"] = decision_policy_sha256(forged)
+        result, _ = self.finalize_with(forged, provider)
+        self.assertEqual(result["status"], "rejected")
+        self.assertTrue(any("status 不得為 unavailable" in error for error in result["errors"]), result["errors"])
+
+    def test_ledger_history_rows_after_cutoff_are_rejected(self):
+        from etf_agent.decision.drawdown import history_reference, verify_history_reference
+        from datetime import datetime, timezone
+        rows = [{"run_id": "a", "as_of": "2026-09-01T00:00:00+08:00", "nav": "100"},
+                {"run_id": "b", "as_of": "2099-01-01T00:00:00+08:00", "nav": "99"}]
+        control = {"history_ref": history_reference(rows), "peak_nav": "100", "peak_as_of": "2026-09-01T00:00:00+08:00",
+                   "history_length": 2}
+        errors = []
+        verify_history_reference(control, Decimal("99"), rows, errors, datetime(2026, 9, 20, tzinfo=timezone.utc))
+        self.assertTrue(any("晚於 decision_cutoff" in error for error in errors), errors)
+
     def test_policy_without_history_ref_never_reads_ledger(self):
         policy = apply_trade_decision(self.bound("1.06"), self.trade, STANCE, self.bundle, self.debate)
         del policy["drawdown_control"]["history_ref"]
