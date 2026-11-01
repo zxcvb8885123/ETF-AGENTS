@@ -331,6 +331,9 @@ def apply_reflection(
                 return {"applied": False, "reason": "策略樣板在回放期間已被改動，反思已過期"}
             if _applied_today(history, today):
                 return {"applied": False, "reason": "今天已套用過一次，明天再調"}
+            # 回放期間另一程序可能剛套用教訓（不改 policy、不是 action="apply"），鎖內重查試用狀態避免兩件變更重疊。
+            if open_trial(history) is not None:
+                return {"applied": False, "reason": "回放期間已有另一件變更進入試用觀察期，改天再套用"}
             live = dict(candidate)
             live["policy_id"] = "strategy-%s-r%d" % (today.date().isoformat(), 1)
             live["available_at"] = moment.astimezone(TAIPEI).isoformat()  # 實際寫入時間，不是回放開始前的 now
