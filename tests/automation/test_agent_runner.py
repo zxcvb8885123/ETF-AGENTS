@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from etf_agent.automation.agent_runner import (
     SENSITIVE_READ_GLOBS, AgentCall, AgentTask, ClaudeAgentRunner, CodexAgentRunner, DailyPipelineError, OpenCodeAgentRunner,
-    TransientAgentError, _claude_usage_tokens, reject_secret_leak,
+    TransientAgentError, _claude_usage_tokens, _opencode_read_permission, claude_read_deny_settings, reject_secret_leak,
 )
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
 
@@ -47,6 +47,57 @@ class CodexAgentRunnerTests(unittest.TestCase):
                 result = CodexAgentRunner(root).run(task, root)
             self.assertEqual(result.output, {"items": []})
 
+    def test_task_with_deny_reads_is_refused_before_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task = AgentTask("bull_b0", "只讀 brief", {"type": "object"}, deny_reads=("bear_*",))
+            with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=AssertionError("不得啟動")):
+                with self.assertRaises(DailyPipelineError) as raised:
+                    CodexAgentRunner(root).run(task, root)
+            self.assertNotIsInstance(raised.exception, TransientAgentError)
+            self.assertIn("拒讀", str(raised.exception))
+
+    def test_stage_isolated_deny_reads_task_runs_ephemeral_outside_run_dir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            task = AgentTask("bull_b0", "只讀 brief", {"type": "object"}, deny_reads=("bear_*",), stage_isolated=True)
+            seen = {}
+
+            def fake_run(command, **kwargs):
+                self.assertIn("--ephemeral", command)
+                for flag in ("--output-schema", "--output-last-message"):
+                    path = Path(command[command.index(flag) + 1])
+                    # 暫存檔不得放在 run 目錄：同儕的 Codex 任務在階段結束前讀不到這次的輸出。
+                    self.assertNotIn(run_dir, path.parents)
+                    seen[flag] = path
+                Path(command[command.index("--output-last-message") + 1]).write_text('{"items": []}', encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
+                result = CodexAgentRunner(root).run(task, run_dir)
+            self.assertEqual(result.output, {"items": []})
+            self.assertEqual(list(run_dir.iterdir()), [])
+            self.assertFalse(seen["--output-last-message"].exists())
+
+    def test_task_without_deny_reads_is_not_ephemeral(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def fake_run(command, **kwargs):
+                self.assertNotIn("--ephemeral", command)
+                Path(command[command.index("--output-last-message") + 1]).write_text("{}", encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
+                CodexAgentRunner(root).run(AgentTask("technical", "x", {"type": "object"}), root)
+
+    def test_runners_declare_whether_they_enforce_deny_reads(self):
+        self.assertFalse(CodexAgentRunner.enforces_deny_reads)
+        self.assertTrue(ClaudeAgentRunner.enforces_deny_reads)
+        self.assertTrue(OpenCodeAgentRunner.enforces_deny_reads)
+
     def test_failed_or_missing_output_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -63,6 +114,15 @@ class SensitiveReadTests(unittest.TestCase):
     def setUp(self):
         self.task = AgentTask("trader_b0", "只讀 brief，回覆 JSON", {"type": "object"})
 
+    def test_env_template_files_are_not_treated_as_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env.example").write_text("FINMIND_TOKEN=your_token_here\n", encoding="utf-8")
+            reject_secret_leak("trader", {"note": "your_token_here"}, root)
+            (root / ".env").write_text("FINMIND_TOKEN=real_secret_value\n", encoding="utf-8")
+            with self.assertRaises(DailyPipelineError):
+                reject_secret_leak("trader", {"note": "real_secret_value"}, root)
+
     def test_claude_command_denies_sensitive_reads(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -78,6 +138,22 @@ class SensitiveReadTests(unittest.TestCase):
             with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
                 call = ClaudeAgentRunner(root).run(self.task, root)
             self.assertEqual(call.output, {"items": []})
+
+    def test_credential_style_files_and_case_variants_are_denied(self):
+        for pattern in (".netrc", "*.p12", "*.pfx", "id_rsa*", "*.token", ".npmrc", ".pypirc", "*.jks"):
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, SENSITIVE_READ_GLOBS)
+        # macOS 檔案系統不分大小寫，樣式比對可能分：大小寫變體都要在清單裡。
+        for pattern in ("*SECRET*", "*Secret*", "*CREDENTIAL*", "*Credential*", ".ENV", "*.PEM", "ID_RSA*"):
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, SENSITIVE_READ_GLOBS)
+        self.assertEqual(len(SENSITIVE_READ_GLOBS), len(set(SENSITIVE_READ_GLOBS)))
+        rules = json.loads(claude_read_deny_settings())["permissions"]["deny"]
+        self.assertIn("Read(**/.netrc)", rules)
+        self.assertIn("Read(**/*SECRET*)", rules)
+        opencode = _opencode_read_permission()
+        self.assertEqual(opencode["*id_rsa*"], "deny")
+        self.assertEqual(opencode["*.JKS"], "deny")
 
     def test_opencode_denies_same_patterns_as_claude(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -104,6 +180,27 @@ class SensitiveReadTests(unittest.TestCase):
             self.assertNotIn("tok-abcdef123456", str(raised.exception))
             reject_secret_leak("trader_b0", {"rationale": "持股 501 張"}, root)
 
+    def test_env_variants_are_scanned_for_leaks(self):
+        from etf_agent.automation.agent_runner import scrub_secrets
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env.local").write_text("TOKEN_A=loc-abcdef123456\n", encoding="utf-8")
+            (root / ".env.production").write_text("TOKEN_P=prod-abcdef123456\n", encoding="utf-8")
+            (root / ".envrc").write_text("export TOKEN_B=rc-abcdef123456\n", encoding="utf-8")
+            (root / ".env.d").mkdir()
+            for leaked in ("loc-abcdef123456", "prod-abcdef123456", "rc-abcdef123456"):
+                with self.assertRaises(DailyPipelineError) as raised:
+                    reject_secret_leak("trader_b0", {"rationale": "洩漏 " + leaked}, root)
+                self.assertNotIn(leaked, str(raised.exception))
+            self.assertNotIn("loc-abcdef123456", scrub_secrets("錯誤 loc-abcdef123456", root))
+
+    def test_short_values_and_comments_in_env_variants_are_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env.local").write_text("# TOKEN=comment-abcdef123456\nPORT=8080\n", encoding="utf-8")
+            reject_secret_leak("trader_b0", {"rationale": "comment-abcdef123456 與 8080"}, root)
+
     def test_output_with_escaped_characters_in_secret_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -129,6 +226,10 @@ class SensitiveReadTests(unittest.TestCase):
         self.assertIn("bear_*", _peer_deny_reads("bull"))
         self.assertIn("brief_bull_*", _peer_deny_reads("bear"))
         self.assertIn("research_debate*", _peer_deny_reads("bull"))
+        for pattern in ("debate*", "intent*", "trade_decision*", "trader_*", "brief_trader_*", "team_inputs*"):
+            self.assertIn(pattern, _peer_deny_reads("bull"))
+            self.assertIn(pattern, _peer_deny_reads("bear"))
+        self.assertNotIn("decision*", _peer_deny_reads("bull"))
 
     def test_codex_output_leak_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -212,6 +313,27 @@ class OpenCodeAgentRunnerTests(unittest.TestCase):
             self.assertEqual(call.output, {"items": []})
             self.assertEqual(call.usage_tokens, {"input_tokens": 30, "cached_input_tokens": 5, "output_tokens": 10, "reasoning_output_tokens": 2})
             self.assertEqual(call.estimated_usage_usd, 0.01)
+
+    def test_tool_event_with_unknown_type_name_is_still_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # 事件型別名稱不是 tool_use，但 part 帶 tool 欄位：非 read 工具仍是安全拒絕（不重試）。
+            for kind, part in (("tool", {"tool": "bash", "state": {"status": "completed"}}),
+                               ("step_tool", {"type": "tool", "tool": "edit", "state": {"status": "completed"}})):
+                with self.subTest(kind=kind):
+                    stdout = self.event(kind, part) + "\n" + self.result()
+                    with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout, "")):
+                        with self.assertRaisesRegex(DailyPipelineError, "未核准工具") as raised:
+                            OpenCodeAgentRunner(root).run(self.task, root)
+                    self.assertNotIsInstance(raised.exception, TransientAgentError)
+            # read 工具但狀態不是 completed、或缺 state，仍視為讀取失敗；正常的 read 事件照常通過。
+            bad = self.event("tool", {"tool": "read"}) + "\n" + self.result()
+            with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=subprocess.CompletedProcess([], 0, bad, "")):
+                with self.assertRaises(TransientAgentError):
+                    OpenCodeAgentRunner(root).run(self.task, root)
+            good = self.event("tool", {"tool": "read", "state": {"status": "completed"}}) + "\n" + self.result()
+            with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=subprocess.CompletedProcess([], 0, good, "")):
+                self.assertEqual(OpenCodeAgentRunner(root).run(self.task, root).output, {"items": []})
 
     def test_denied_tool_malformed_json_or_missing_usage_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:

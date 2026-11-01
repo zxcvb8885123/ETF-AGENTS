@@ -72,7 +72,7 @@ flowchart TD
 | `competition` | D-Plan v4.3 context 整理、候選匯出與本地驗證 | [competition/README.md](../src/etf_agent/competition/README.md) | `cli/dplan.py` |
 | `ledger` | 整張成交模擬與交易日現金帳務 | [ledger/README.md](../src/etf_agent/ledger/README.md) | 由 `virtual_account` 使用 |
 | `virtual_account` | 虛擬帳戶初始化、每日快照、結算與決策套用 | [virtual_account/README.md](../src/etf_agent/virtual_account/README.md) | `cli/virtual_account.py` |
-| `evaluation` | Agent 評測（資料抓齊率、評測集重跑、一致度／穩定度）與零 token 的多日 Policy 回放；不入決策鏈 | [evaluation/README.md](../src/etf_agent/evaluation/README.md) | `cli/agent_eval.py`、`cli/policy_replay.py` |
+| `evaluation` | Agent 評測（資料抓齊率、評測集重跑與斷點續跑、一致度／穩定度）、零 token 的多日 Policy 回放與回測格子（run × symbol，對交易池平均與對 0050.TW 兩種超額報酬並列）、一頁自包含 HTML 報告；不入決策鏈，`decision/`、`automation/`、`strategy_reflection/` 不得匯入 `grid`／`html_report` | [evaluation/README.md](../src/etf_agent/evaluation/README.md) | `cli/agent_eval.py`、`cli/policy_replay.py` |
 | `dashboard` | 唯讀績效儀表板（FastAPI），含 `/api/benchmarks` | [dashboard/README.md](../src/etf_agent/dashboard/README.md) | `cli/dashboard.py`（`./start.sh`） |
 | `benchmark` | 帳戶對 0050／交易池等權買入持有的基準比較：同本金、同費稅、官方成交均價買進、官方收盤價估值、as-of 版本 | [benchmark/README.md](../src/etf_agent/benchmark/README.md) | `cli/benchmark.py`、`cli/dashboard.py` |
 

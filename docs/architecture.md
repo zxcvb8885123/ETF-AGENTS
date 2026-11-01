@@ -246,19 +246,22 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 
 ## 子 Agent 執行器
 
-用 `--agent-cli claude|codex|opencode` 選擇。三者的輸出都進入同一套 Validator，續跑必須沿用原執行器。
+用 `--agent-cli claude|opencode|codex` 選擇，多空研究員另用 `--research-agent-cli claude|opencode|codex` 指定（預設與主執行器相同，`codex` 亦然）。輸出都進入同一套 Validator，續跑必須沿用原執行器與原研究員執行器。
 
 | 執行器 | 驗證狀態 |
 | --- | --- |
-| Codex | 已完成真實 150 檔每日鏈 |
+| Codex | 可跑全部子 Agent；`--agent-cli codex` 時多空研究員預設也用 Codex：唯讀沙箱無法強制互相隔離（`deny_reads`），改由研究階段輸出暫存保證（時序隔離，見下），隔離弱於 Claude／OpenCode；曾完成真實 150 檔每日鏈（當時研究員也用 Codex），**暫存隔離版尚未用真實 Codex 端到端跑過** |
 | OpenCode | 已通過本機唯讀、JSONL、預檢煙霧測試。**尚未**執行真實 150 檔端到端驗收 |
 | Claude | 每日鏈使用中 |
 
 讀檔邊界（三者共通）：
 
-- 拒讀樣式集中在 `agent_runner.SENSITIVE_READ_GLOBS`（`.env`、`.env.*`、`.envrc`、`*.pem`、`*.key`、`*credential*`、`*secret*`）。Claude 以 `--settings` 的 `permissions.deny` 套用（已用本機 `claude -p` 實測擋下根目錄與子目錄的 `.env`、`.key`），OpenCode 以 read 權限套用。
-- Codex 的 `--sandbox read-only` 只禁止寫入，**不能**限制讀檔；這條路徑只靠下一條的輸出檢查。
-- 所有 runner 的輸出若含專案 `.env`／`.envrc` 中長度 8 以上的值，一律拒絕，錯誤訊息不帶出該值。
+- 拒讀樣式集中在 `agent_runner.SENSITIVE_READ_GLOBS`（`.env`、`.env.*`、`.envrc`、`*.pem`、`*.key`、`*credential*`、`*secret*`、`.netrc`、`*.p12`、`*.pfx`、`id_rsa*`、`*.token`、`.npmrc`、`.pypirc`、`*.jks`，每個樣式另含全小寫／全大寫／首字大寫變體，因 macOS 檔案系統不分大小寫而樣式比對可能分）。Claude 以 `--settings` 的 `permissions.deny` 套用（已用本機 `claude -p` 實測擋下根目錄與子目錄的 `.env`、`.key`），OpenCode 以 read 權限套用。
+- Codex 的 `--sandbox read-only` 只禁止寫入，**不能**限制讀檔；因此帶 `deny_reads` 的任務（多頭／空頭互相隔離）在 Codex 上預設拒絕啟動，只在「研究階段輸出暫存」內放行：多頭與空頭的原始輸出只留記憶體，兩方全部完成才一次寫入 run 目錄，任一失敗整批丟棄；Codex 研究任務加 `--ephemeral`，暫存檔放系統暫存區而非 run 目錄。共同輸入 brief（兩方內容相同、不含研究員輸出）仍照常落地。
+- 暫存隔離是**時序隔離、不是權限隔離**，殘留弱點：Codex 仍可讀整個專案，包含舊 run 的 `artifacts/daily/*/bull_stance.json`、`artifacts/decisions/*/debate.json`、`artifacts/reports/` 等前幾日的多空論點，以及 `var/`；`.env*` 只靠輸出外洩掃描；`codex exec` 的 `output.json` 在 Codex 結束到 Python 讀取之間有毫秒級視窗；`--ephemeral` 是否連 `~/.codex` 內的狀態資料庫也不寫入未驗證；任何把研究輸出提早落地的程式改動都會無聲破壞隔離，因此由 `tests/automation/test_research_staging.py` 守住。Claude 的拒讀樣式（`**/…`）連舊 run 也擋；OpenCode 的互讀禁止錨定本次 run 目錄名稱，**不擋舊 run**。
+- Codex 研究員的續跑為全有或全無：每個研究任務都已有輸出才逐一重驗沿用；完全沒有輸出才重跑；只有一部分、後段產物殘留、沿用的輸出驗證失敗，或非續跑卻重用已有研究輸出的目錄，一律拒絕並要求建立新 run（舊檔不搬移）。研究階段失敗等於整段研究重跑，用量較高。
+- 多頭／空頭的互讀禁止清單（`team_stages._peer_deny_reads`）除了對方輸出與 brief，也含 `debate*`、`intent*`、`trade_decision*`、`trader_b*`、`trader_report*`、`brief_trader_*`、`team_inputs*`、`selection_ranking*`，防止續跑時讀到後段產物。
+- 所有 runner 的輸出若含專案 `.env*`（含 `.env.local` 等）／`.envrc` 中長度 8 以上的值，一律拒絕，錯誤訊息不帶出該值。`*.pem`、`*.key` 等非 KEY=VALUE 檔案不在逐行掃描範圍（已知差距）。
 
 OpenCode 的限制：
 

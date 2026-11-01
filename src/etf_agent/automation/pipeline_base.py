@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
-from .agent_runner import AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError
+from .agent_runner import LATER_STAGE_GLOBS, AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError, reject_secret_leak
 
 
 def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dict[str, object]:
@@ -64,6 +64,9 @@ RESEARCH_TASK_PREFIXES = frozenset({"bull", "bear"})
 MAX_PARALLEL_WORKERS = 8
 DEFAULT_TRANSIENT_RETRIES = 1  # 暫時性失敗（逾時、非零結束、輸出不是 JSON）最多再試的次數
 DEFAULT_RETRY_DELAY_SECONDS = 30.0
+# 研究階段暫存啟用時，run 目錄內出現這些檔代表多空研究員（或其後段產物）已落地；
+# 不含每次都會重寫的 brief_bull_*／brief_bear_*（兩方共同輸入，不含任何研究員輸出）。
+RESEARCH_RESIDUE_GLOBS = ("bull_*.json", "bear_*.json") + LATER_STAGE_GLOBS
 _Job = TypeVar("_Job")
 
 
@@ -109,6 +112,11 @@ class PipelineBase:
         self.runner = runner
         self.analyst_runner = analyst_runner or runner
         self.research_runner = research_runner or runner
+        # 研究員的執行器不能強制 deny_reads（Codex；沒有此屬性者一律視為不強制）時，改由研究階段輸出暫存保證隔離：
+        # 多頭與空頭的原始輸出只留記憶體，兩方全部完成才一次寫入 run 目錄（見 ``_staged_research_outputs``）。
+        self.last_result: Optional[PipelineResult] = None  # 預期之外的錯誤往上拋之前，保留已花的呼叫紀錄供呼叫端使用
+        self._research_staging = not getattr(self.research_runner, "enforces_deny_reads", False)
+        self._staged_raw: Optional[List[Tuple[str, Dict[str, object]]]] = None
         self.technical_gate = technical_gate
         self.decision_repository = decision_repository
         self.max_attempts = max_attempts
@@ -154,6 +162,54 @@ class PipelineBase:
                 raise future.exception()
         return [future.result() for future in futures]
 
+    def _research_residue(self) -> List[Path]:
+        """run 目錄中已落地的多空研究員輸出與其後段產物（不含 raw 檔以外的 brief）。"""
+        found = {path for pattern in RESEARCH_RESIDUE_GLOBS for path in self.run_dir.glob(pattern)}
+        return sorted(found)
+
+    @contextmanager
+    def _staged_research_outputs(self, task_names: Sequence[str]) -> Iterator[None]:
+        """研究階段輸出暫存：``_research_staging`` 啟用時，階段內各任務的原始輸出只留記憶體，全部成功才一次寫入。
+
+        這是時序隔離：多頭與空頭執行期間，對方的輸出不存在於磁碟，不強制拒讀的執行器（Codex）也讀不到；
+        任一任務失敗則整批丟棄，run 目錄不留任何一方的輸出。續跑規則是全有或全無：
+        每個任務都有 raw 輸出才沿用（逐一重驗）；完全沒有輸出才重跑；其餘（只有一部分、或後段產物殘留）一律拒絕，
+        因為對方輸出已在磁碟上，再啟動研究員就破壞隔離；不搬移舊檔，請建立新 run。
+        """
+        if not self._research_staging:
+            yield
+            return
+        raw_files = {path for name in task_names for path in self.run_dir.glob("%s_raw_*.json" % name)}
+        present = [name for name in task_names if any(self.run_dir.glob("%s_raw_*.json" % name))]
+        residue = [path for path in self._research_residue() if path not in raw_files]
+        all_present = len(present) == len(task_names) and bool(task_names)
+        if self.resume and all_present:
+            yield  # 全部有 raw：agent_step 逐一重驗沿用，不啟動任何研究員。
+            return
+        if present or residue:
+            names = [path.name for path in (sorted(raw_files) + residue)][:6]
+            raise DailyPipelineError(
+                "研究階段輸出暫存要求多空輸出不得先落地，但 run 目錄已有 %s；%s。請建立新的 run（舊輸出保留供稽核）" % (
+                    "、".join(names), "續跑只能在全部研究任務都已有輸出時沿用" if self.resume else "非續跑不得重用已有研究輸出的目錄"))
+        self._staged_raw = []
+        try:
+            yield
+            staged = self._staged_raw
+        except BaseException:
+            self._staged_raw = None
+            raise
+        self._staged_raw = None
+        for name, payload in sorted(staged, key=lambda item: item[0]):
+            self.save_artifact(name, payload)
+
+    def _save_raw(self, task_name: str, number: int, payload: Mapping[str, object]) -> None:
+        name = "%s_raw_%d" % (task_name, number)
+        if self._staged_raw is not None and task_name.split("_", 1)[0] in RESEARCH_TASK_PREFIXES:
+            with self._calls_lock:
+                self._staged_raw.append((name, dict(payload)))
+            return
+        self.save_artifact(name, payload)
+
     def _path(self, name: str) -> Path:
         return self.run_dir / ("%s.json" % name)
 
@@ -181,10 +237,24 @@ class PipelineBase:
         )
         if self.resume:
             for path in reversed(previous):
-                artifact = build(json.loads(path.read_text(encoding="utf-8")))
-                if not validate(artifact):
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(raw, Mapping):
+                        raise ValueError("輸出不是 JSON 物件")
+                    # 沿用的輸出也要過秘密外洩檢查：檔案可能是人為放進來的；外洩屬安全拒絕，不跳過、直接停止。
+                    reject_secret_leak(task.name, raw, self.root)
+                    artifact = build(raw)
+                    errors = validate(artifact)
+                except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
+                    # 壞掉或缺欄位的舊輸出視為不可沿用，改看更早的嘗試；都不行就照常重跑，不讓整個 run 失敗。
+                    self.log("  [agent] %s 的已存輸出 %s 無法沿用（%s: %s）" % (task.name, path.name, type(error).__name__, str(error)[:100]))
+                    continue
+                if not errors:
                     self.log("  [agent] %s 沿用已驗證輸出 %s" % (task.name, path.name))
                     return artifact
+            if previous and self._staged_raw is None and self._research_staging and task.name.split("_", 1)[0] in RESEARCH_TASK_PREFIXES:
+                # 對方的輸出已在磁碟上，重跑這個研究任務會破壞隔離：拒絕，不啟動。
+                raise DailyPipelineError("%s 已有的輸出全部驗證失敗，研究階段輸出暫存不允許在對方輸出已落地時重跑；請建立新的 run" % task.name)
         prompt = task.prompt
         errors: List[str] = []
         # 原始輸出只新增、不覆寫，保留每次嘗試供稽核。
@@ -199,7 +269,7 @@ class PipelineBase:
                 item["usage_tokens"] = call.usage_tokens
             with self._calls_lock:
                 self.calls.append(item)
-            self.save_artifact("%s_raw_%d" % (task.name, offset + attempt), call.output)
+            self._save_raw(task.name, offset + attempt, call.output)
             artifact = build(call.output)
             errors = validate(artifact)
             if not errors:
@@ -225,8 +295,13 @@ class PipelineBase:
         ``DailyPipelineError`` 直接往上拋。"""
         for retry in range(self.transient_retries + 1):
             started = time.monotonic()
+            if task.deny_reads and not getattr(runner, "enforces_deny_reads", False) and self._staged_raw is None:
+                # 不強制拒讀的執行器只能在研究階段輸出暫存之內執行帶 deny_reads 的任務；其他情形直接拒絕，不重試。
+                raise DailyPipelineError("%s 的執行器無法強制拒讀規則，且不在研究階段輸出暫存內，已拒絕啟動" % task.name)
             try:
-                call = runner.run(AgentTask(task.name, prompt, task.schema, task.deny_reads), self.run_dir)
+                call = runner.run(AgentTask(
+                    task.name, prompt, task.schema, task.deny_reads, stage_isolated=self._staged_raw is not None,
+                ), self.run_dir)
             except TransientAgentError as error:
                 duration = round(time.monotonic() - started, 1)
                 failed = self._call_item(runner, task, attempt, 0.0, duration)

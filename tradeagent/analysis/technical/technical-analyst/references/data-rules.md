@@ -7,7 +7,8 @@
 只讀主控提供的技術資料：正式每日 `trend_history` 仍為封存視窗的完整逐日價格／量能與均線；研究試驗可提供 `1.1-summary` 的確定性抽樣（固定錨點、收盤極值、最大量、最近 5 筆）。摘要的 `observation_count` 是原始資料總筆數，`rows` 不是全部逐日觀測。另讀 `momentum` 特徵與共同 `regime_assessment`。完整序列保留於同 Snapshot 的原始輸入供 Validator 重建。沿時間順序解讀走勢；遇抽樣輸入不把錨點當連續日線，無足夠依據時指出限制，不憑空補算未顯示的轉折。
 
 - 每檔給一個主要判斷：**上升**（`positive`）、**下跌**（`negative`）或**盤整**（`neutral`），必須覆蓋本批每一檔。沿用主控的英文欄位值，findings 用中文說明判斷。
-- `momentum.status` 不是 `available`（例如歷史行情不足）時使用 `unknown`，並在 `data_gaps` 說明。
+- `momentum.status` 不是 `available`（例如歷史行情不足）時使用 `unknown`，並在 `data_gaps` 說明。`unknown` 是第四種結果，只在資料不足時使用，不當成盤整。
+- 某檔的 `trend_history.mode` 為 `momentum_only`（技術閘門判定趨勢一致，未附逐日歷史）時，只依該檔 `momentum` 欄位判斷，不引用未提供的逐日走勢、不憑空描述轉折，`evidence_ids` 仍只引用 `momentum.evidence_ids`。
 - 每項 finding 用文字說明依據（例如趨勢方向、均線位置、波動或量能），`evidence_ids` 只引用該股票 `momentum.evidence_ids` 中的價格證據。
 - 不重算、不改寫、不在文字中發明新的數字；需要提到數值時只引用摘要中已存在的值。
 - 不輸出買賣意圖、目標價、權重、股數或排名；那是研究員、交易與風險 Agent 的工作。

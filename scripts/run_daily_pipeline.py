@@ -40,6 +40,7 @@ from etf_agent.automation.daily_pipeline import (  # noqa: E402
 from etf_agent.automation.preflight import (  # noqa: E402
     DEFAULT_MIN_FREE_BYTES,
     checks_to_dict,
+    effective_research_agent_cli,
     require_preflight,
     run_preflight,
 )
@@ -165,6 +166,58 @@ def notify(title: str, message: str) -> None:
         return
     script = 'display notification %s with title %s' % (json.dumps(message), json.dumps(title))
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+
+
+LOCK_STALE_HOURS = 6
+
+
+def acquire_run_lock(handle) -> bool:
+    """取得每日流程鎖；鎖被別的流程佔用回 False，其他 OSError（權限、磁碟）往上拋。"""
+    if fcntl is not None:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+    import errno
+    import msvcrt
+    handle.seek(0)
+    if not handle.read(1):
+        handle.write(b"0")
+        handle.flush()
+    handle.seek(0)
+    try:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as error:
+        if error.errno in (errno.EACCES, errno.EDEADLK, errno.EAGAIN):
+            return False
+        raise
+    return True
+
+
+def write_lock_holder(handle, started_at: datetime) -> None:
+    """鎖檔寫入持有者的 pid 與開始時間，供鎖被佔用時辨識是否為殭屍流程；Windows 鎖住的是第 0 個位元組，不改內容。"""
+    if fcntl is None:
+        return
+    handle.seek(0)
+    handle.truncate()
+    handle.write(json.dumps({"pid": os.getpid(), "started_at": started_at.isoformat()}).encode("utf-8"))
+    handle.flush()
+
+
+def describe_lock_holder(path: Path, now: datetime) -> str:
+    """讀鎖檔裡的持有者資訊；超過 LOCK_STALE_HOURS 小時仍未結束視為疑似殭屍並明講。讀不到時回空字串，不影響略過流程。"""
+    try:
+        info = json.loads(path.read_text(encoding="utf-8"))
+        started = parse_aware_time(info["started_at"], "started_at")
+        pid = int(info["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    hours = (now - started).total_seconds() / 3600
+    text = "持有者 pid %d，自 %s 起（約 %.1f 小時）。" % (pid, started.astimezone(TAIPEI_TIMEZONE).strftime("%m-%d %H:%M"), hours)
+    if hours >= LOCK_STALE_HOURS:
+        text += "超過 %d 小時仍未結束，疑似卡住的殭屍流程，請人工檢查。" % LOCK_STALE_HOURS
+    return text
 
 
 def record_calibration() -> dict:
@@ -340,6 +393,21 @@ def resumable_agent_cli(run_dir: Path) -> str:
     """續跑必須沿用該 run 已記錄的執行器；舊版摘要預設為 Claude。"""
     previous = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8"))
     return previous.get("agent_cli", "claude")
+
+
+def resumable_research_agent_cli(run_dir: Path) -> str:
+    """續跑時多空研究員使用的執行器；舊版摘要沒有此欄位，視為與主執行器相同。"""
+    previous = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8"))
+    return previous.get("research_agent_cli") or previous.get("agent_cli", "claude")
+
+
+def make_agent_runner(cli: str, model, max_budget_usd=None):
+    """依 CLI 名稱建立子 Agent 執行器。"""
+    if cli == "claude":
+        return ClaudeAgentRunner(ROOT, model=model, max_budget_usd=max_budget_usd or 3.0)
+    if cli == "codex":
+        return CodexAgentRunner(ROOT, model=model)
+    return OpenCodeAgentRunner(ROOT, model=model)
 
 
 def resumed_decision_run_id(run_dir: Path):
@@ -644,7 +712,12 @@ def main() -> int:
         help="沿用先前已通過驗證的 Agent 輸出續跑（例如中途撞到用量上限）；找到可續跑的 run 時隱含 --skip-data。"
              "不帶值時續跑今天最近一個未完成的 run；帶 RUN_ID（如 daily-20260929）則續跑指定 run，用量上限重置或跨午夜後使用",
     )
-    parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude")
+    parser.add_argument("--agent-cli", choices=("claude", "codex", "opencode"), default="claude", help="執行子 Agent 的 CLI；預設 claude。多空研究員預設與它相同（codex 時研究員也用 Codex 模型，隔離改由研究階段輸出暫存保證），可用 --research-agent-cli 另行指定")
+    parser.add_argument(
+        "--research-agent-cli", choices=("claude", "codex", "opencode"),
+        help="多頭／空頭研究員使用的 CLI；預設與 --agent-cli 相同。"
+             "研究員為 codex 時（含 --agent-cli codex 的預設），多空隔離改由研究階段輸出暫存保證（時序隔離）：Codex 仍可讀整個專案，包含舊 run 的多空輸出，隔離弱於 claude／opencode",
+    )
     parser.add_argument("--model", help="交易、現金姿態與風險審查的模型；使用 Claude CLI 時預設 %s，其他 CLI 預設沿用該 CLI 設定" % DEFAULT_CLAUDE_MODEL)
     parser.add_argument(
         "--analyst-model",
@@ -652,7 +725,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--research-model",
-        help="多頭／空頭研究員批次使用的模型；使用 Claude CLI 時預設 %s，傳 inherit 則沿用 --model；其他 CLI 未指定時沿用 --model" % DEFAULT_CLAUDE_RESEARCH_MODEL,
+        help="多頭／空頭研究員批次使用的模型；研究員用 Claude CLI 時預設 %s，傳 inherit 則沿用 --model（研究員與主 CLI 相同時）；其他 CLI 未指定時，與主 CLI 相同者沿用 --model，不同者用該 CLI 的預設設定" % DEFAULT_CLAUDE_RESEARCH_MODEL,
     )
     parser.add_argument(
         "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
@@ -681,6 +754,8 @@ def main() -> int:
         parser.error("--skip-datapack 不能和 --datapack 同時使用")
     if args.rebase_to_datapack and (args.skip_datapack or args.resume is not None):
         parser.error("--rebase-to-datapack 不能和 --skip-datapack 或 --resume 同時使用")
+    # 研究員 CLI 未指定時與主 CLI 相同（codex 亦然，Codex 研究員走研究階段輸出暫存）。
+    args.research_agent_cli = effective_research_agent_cli(args.agent_cli, args.research_agent_cli)
     if args.model is None and args.agent_cli == "claude":
         args.model = DEFAULT_CLAUDE_MODEL
     if args.analyst_model == "inherit":
@@ -689,9 +764,9 @@ def main() -> int:
         args.analyst_model = DEFAULT_CLAUDE_ANALYST_MODEL
     if args.research_model == "inherit":
         args.research_model = None
-    elif args.research_model is None and args.agent_cli == "claude":
+    elif args.research_model is None and args.research_agent_cli == "claude":
         args.research_model = DEFAULT_CLAUDE_RESEARCH_MODEL
-    if args.agent_cli != "claude" and args.max_budget_usd is not None:
+    if "claude" not in (args.agent_cli, args.research_agent_cli) and args.max_budget_usd is not None:
         parser.error("--max-budget-usd 只適用 Claude CLI")
     if args.max_budget_usd is not None and (not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0):
         parser.error("--max-budget-usd 必須是大於 0 的有限數值")
@@ -722,22 +797,22 @@ def _main(args) -> int:
     runs_root.mkdir(parents=True, exist_ok=True)
     lock_handle = (runs_root / ".lock").open("a+b")
     try:
-        if fcntl is not None:
-            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        else:
-            import msvcrt
-            lock_handle.seek(0)
-            if not lock_handle.read(1):
-                lock_handle.write(b"0")
-                lock_handle.flush()
-            lock_handle.seek(0)
-            msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        log("另一個每日流程正在執行，本次略過。")
+        acquired = acquire_run_lock(lock_handle)
+    except OSError as error:
+        # 權限、磁碟等非「鎖被佔用」的錯誤：不能當成別的流程在跑而靜默成功，否則排程漏跑沒人知道。
+        log("無法取得每日流程鎖（artifacts/daily/.lock）：%s" % error)
+        notify("ETF Agent 每日決策", "失敗：無法取得每日流程鎖：%s" % str(error)[:100])
+        return 1
+    if not acquired:
+        holder = describe_lock_holder(runs_root / ".lock", datetime.now(TAIPEI_TIMEZONE))
+        log("另一個每日流程正在執行，本次略過。%s" % holder)
+        notify("ETF Agent 每日決策", "本次略過：另一個每日流程仍在執行。%s" % holder)
         return 0
+    write_lock_holder(lock_handle, datetime.now(TAIPEI_TIMEZONE))
     min_free_bytes = int(args.min_free_gb * 1024 ** 3)
     if args.preflight_only:
-        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes, agent_cli=args.agent_cli)
+        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes,
+                                agent_cli=args.agent_cli, research_agent_cli=args.research_agent_cli)
         for check in checks:
             log("%s %s：%s" % ("通過" if check.ok else "失敗", check.name, check.detail))
         return 0 if all(check.ok for check in checks) else 1
@@ -787,6 +862,10 @@ def _main(args) -> int:
         if previous_cli != args.agent_cli:
             log("無法續跑：原 run 使用 %s，這次選擇 %s" % (previous_cli, args.agent_cli))
             return 1
+        previous_research_cli = resumable_research_agent_cli(resumable)
+        if previous_research_cli != args.research_agent_cli:
+            log("無法續跑：原 run 的多空研究員使用 %s，這次選擇 %s" % (previous_research_cli, args.research_agent_cli))
+            return 1
         # 續跑沿用最近一個未完成且已有 Agent 輸出的 run 目錄，否則新目錄中沒有可沿用的輸出。
         run_id = resumable.name
         run_dir = resumable
@@ -803,7 +882,8 @@ def _main(args) -> int:
     previous_summary = json.loads(summary_path.read_text(encoding="utf-8")) if resumable is not None else {}
     original_start = previous_summary["started_at"] if resumable is not None else now.isoformat()
     summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli,
-               "market_news": "disabled" if args.no_market_news else "enabled"}
+               "research_agent_cli": args.research_agent_cli,
+               "research_isolation": "staged_outputs" if args.research_agent_cli == "codex" else "deny_reads", "market_news": "disabled" if args.no_market_news else "enabled"}
     if resumable is not None:
         summary["resumed_at"] = now.isoformat()
     if not args.skip_data:
@@ -831,8 +911,10 @@ def _main(args) -> int:
         )
         if opened.returncode != 0:
             log("帳戶自動開帳未成功：%s" % (opened.stderr or opened.stdout).strip()[-300:])
-        log("[預檢] Docker、%s 登入、帳戶、必要檔案、磁碟空間" % args.agent_cli)
-        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes, agent_cli=args.agent_cli)
+        log("[預檢] Docker、%s 登入、帳戶、必要檔案、磁碟空間" % (
+            args.agent_cli if args.research_agent_cli == args.agent_cli else "%s／%s（多空研究員）" % (args.agent_cli, args.research_agent_cli)))
+        checks = run_preflight(ROOT, args.account_id, args.skip_data, min_free_bytes=min_free_bytes,
+                                agent_cli=args.agent_cli, research_agent_cli=args.research_agent_cli)
         summary["preflight"] = checks_to_dict(checks)
         require_preflight(checks)
         snapshot_path = ROOT / "artifacts" / "data" / "research_snapshot_latest.json"
@@ -897,16 +979,13 @@ def _main(args) -> int:
         account_run_id = prepared_account_run(args.account_id)
         write_json(summary_path, summary)
 
-        log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s）" % args.agent_cli)
-        def make_runner(model):
-            return (ClaudeAgentRunner(ROOT, model=model, max_budget_usd=args.max_budget_usd or 3.0)
-                    if args.agent_cli == "claude" else
-                    CodexAgentRunner(ROOT, model=model) if args.agent_cli == "codex" else
-                    OpenCodeAgentRunner(ROOT, model=model))
-
-        agent_runner = make_runner(args.model)
-        analyst_runner = make_runner(args.analyst_model) if args.analyst_model else None
-        research_runner = make_runner(args.research_model) if args.research_model else None
+        log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s%s）" % (
+            args.agent_cli, "" if args.research_agent_cli == args.agent_cli else "，多空研究員經 %s" % args.research_agent_cli))
+        agent_runner = make_agent_runner(args.agent_cli, args.model, args.max_budget_usd)
+        analyst_runner = make_agent_runner(args.agent_cli, args.analyst_model, args.max_budget_usd) if args.analyst_model else None
+        # 研究員 CLI 與主 CLI 不同時一律另建（沒指定模型就用該 CLI 的預設）；相同時只在指定模型時另建。
+        research_runner = (make_agent_runner(args.research_agent_cli, args.research_model, args.max_budget_usd)
+                           if args.research_model or args.research_agent_cli != args.agent_cli else None)
         def build_pipeline(resume):
             return DailyDecisionPipeline(
                 ROOT, run_dir,
@@ -923,6 +1002,19 @@ def _main(args) -> int:
             )
 
         def run_pipeline(pipeline):
+            try:
+                return _run_pipeline(pipeline)
+            except Exception:
+                # 預期之外的錯誤照常往上拋（fail-closed），但已花的 Agent 呼叫與階段耗時先寫進執行紀錄。
+                partial = pipeline.last_result
+                if partial is not None:
+                    summary["agent_calls"] = list(partial.agent_calls)
+                    summary["stage_durations"] = partial.stage_durations
+                    summary["agent_estimated_usage_usd"] = round(sum(call["estimated_usage_usd"] for call in partial.agent_calls), 4)
+                    write_json(summary_path, summary)
+                raise
+
+        def _run_pipeline(pipeline):
             return pipeline.run(
                 snapshot_path, account_path, trading_status_path,
                 ROOT / "config" / "decision_rules.json", ROOT / "var" / "etf_agent.db",
@@ -1031,7 +1123,7 @@ def _main(args) -> int:
             summary.get("decision_status"), summary.get("order_count", 0),
             summary.get("cash_stance"), summary.get("position_breadth") or "-", args.agent_cli,
         )
-        if args.agent_cli == "claude":
+        if "claude" in (args.agent_cli, args.research_agent_cli):
             message += "，Agent 估算用量 $%s（訂閱不計費）" % summary.get("agent_estimated_usage_usd")
     else:
         message = "失敗：%s" % str(summary.get("error"))[:120]

@@ -40,7 +40,7 @@ usage() {
   echo "用法：./start.sh [dashboard|auto|run|status|daily|check|data|official|all]"
   echo "  dashboard 看帳戶與績效（預設；首次建立虛擬帳戶）"
   echo "  auto      更新行情與研究資料，不建立快照或推進帳本"
-  echo "  run       完整每日分析與決策，可接 --agent-cli codex 等原有參數"
+  echo "  run       完整每日分析與決策，可接 --agent-cli、--research-agent-cli 等原有參數"
   echo "  status    查看既有資料狀態，可接 --database 路徑"
   echo "  daily     只更新資料、建立快照與準備帳本，不執行決策 Agent"
   echo "  check     檢查 Docker 環境與執行測試"
@@ -69,6 +69,13 @@ case "$MODE" in
     if [ "$#" -gt 0 ]; then
       echo "此模式不接受額外參數：${MODE}；請執行 ./start.sh --help 查看用法。" >&2
       exit 2
+    fi
+    # 會寫資料庫的抓資料模式（20:00 排程、21:00 決策自己的 daily）一律先取得資料抓取鎖，避免同時執行；
+    # 鎖被佔用時最多等 ETF_DATA_LOCK_WAIT_SECONDS（預設 1800）秒，逾時停止。
+    if { [ "$MODE" = "data" ] || [ "$MODE" = "auto" ] || [ "$MODE" = "daily" ] || [ "$MODE" = "official" ] || [ "$MODE" = "all" ]; } \
+        && [ -z "${ETF_DATA_LOCK_HELD:-}" ]; then
+      if [ -x "$PROJECT_DIR/.venv/bin/python" ]; then LOCK_PYTHON="$PROJECT_DIR/.venv/bin/python"; else LOCK_PYTHON=python3; fi
+      ETF_DATA_LOCK_HELD=1 exec "$LOCK_PYTHON" "$PROJECT_DIR/scripts/with_data_lock.py" -- sh "$PROJECT_DIR/start.sh" "$MODE"
     fi
     ;;
   *)

@@ -24,3 +24,15 @@ REPLAY_DAY_STATUSES = ("executed", "pending_execution", "gap")
 
 class ReplayError(EvaluationError):
     """回放輸入不完整、封存驗證失敗、缺日、缺價或出現前視價格時停止，不補假值。"""
+
+
+# 回測格子：每筆決策一列（run × symbol），按評級分組統計兩種超額報酬（交易池平均／基準 ETF），零 token。
+GRID_SCHEMA_VERSION = "1.0"
+DEFAULT_BENCHMARK_SYMBOL = "0050.TW"
+# 本輪只收已封存、manifest 驗證通過的 Decision run；「往更早歷史重建」尚未實作，保留此欄位供日後標示。
+GRID_PROVENANCE_CLASSES = ("archived", "reconstructed")
+GRID_BENCHMARK_STATUSES = ("available", "unavailable", "ex_rights")
+
+
+class GridError(EvaluationError):
+    """格子輸入不合法、封存驗證失敗、as_of 缺時區或重算不一致時停止，不補假值。"""

@@ -13,7 +13,7 @@
 | `tools.py` | 確定性統計（Decimal）：前瞻報酬、平均名次、Rank IC、分組平均、百分位 | `forward_return`、`rank_ic`、`average_ranks`、`group_summary` |
 | `prices.py` | 官方成交均價查詢，只讀 SQLite；沿用帳本的 `OfficialCloseMarket` | `OfficialPriceBook` |
 | `repository.py` | 觀測的不可變保存，獨立根目錄 `artifacts/calibration/` | `CalibrationRepository` |
-| `service.py` | 記錄決策與對答案 | `build_observation`、`record_day`、`record_all`、`evaluate` |
+| `service.py` | 記錄決策與對答案；`latest_per_entry_day`（同成交日取 cutoff 最晚、回報被取代者）與 `day_returns`（單日逐檔報酬與池平均）供 `evaluation.grid` 沿用同一口徑 | `build_observation`、`record_day`、`record_all`、`evaluate`、`latest_per_entry_day`、`day_returns` |
 | `gap_audit.py` | 決策價與成交均價的偏離、開盤漲跌停、缺均價清單 | `execution_gap_report` |
 
 ## 口徑
@@ -24,7 +24,7 @@
 - **除權息**：窗口 (T, T+h] 內有 `ex_rights_marker` 的股票不計入。
 - **超額報酬**：減去同一決策日、同一 horizon 內全池有效報酬的平均，避免只量到大盤。
 - **同日重複決策**：同一個成交日只採用 cutoff 最晚的一份。
-- **樣本門檻（寫在 Python）**：某 horizon 的「完整決策日」少於 10 天，只回報天數與筆數（`status=insufficient_sample`），不給任何平均或 Rank IC。
+- **樣本門檻（寫在 Python）**：某 horizon 的「完整決策日」少於 `MIN_DECISION_DAYS`（5）天，只回報天數與筆數（`status=insufficient_sample`），不給任何平均或 Rank IC。
 - **Rank IC**：只算 buy／add；訊號分別為信心等級（high 3、medium 2、low 1）與多空強度差（強度 strong 3、moderate 2、weak 1、none 0，多頭減空頭）；同分取平均名次；少於 3 筆或任一邊為常數時為 `None`。
 
 ## 限制

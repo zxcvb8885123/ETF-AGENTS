@@ -146,6 +146,11 @@ class PolicyReplayTests(unittest.TestCase):
         self.assertEqual(report["content_sha256"], body["content_sha256"])
         self.assertIn("## 績效", render_replay_report(report))
         self.assertTrue((run_dir.parent / "replay-test.md").exists())
+        # 一頁 HTML 是衍生品：寫在 run 目錄旁、不進 manifest（進了 manifest 的檔案集合檢查就會失敗）。
+        page = (run_dir.parent / "replay-test.html").read_text(encoding="utf-8")
+        self.assertIn("Content-Security-Policy", page)
+        self.assertNotIn("<script", page)
+        self.assertIn(report["content_sha256"], page)
         self.assertTrue((run_dir / "d01_proposal.json").exists())
         result = verify_replay(self.root, replay_id)
         self.assertTrue(result["valid"], result["errors"])

@@ -19,6 +19,7 @@ from etf_agent.virtual_account import VirtualAccountError, VirtualAccountReposit
 
 
 DEFAULT_MIN_FREE_BYTES = 2 * 1024 ** 3
+AGENT_CLIS = ("claude", "codex", "opencode")
 COMMAND_TIMEOUT_SECONDS = 30
 REQUIRED_FILES = (
     "config/decision_rules.json",
@@ -87,7 +88,15 @@ def check_claude(runner: CommandRunner, which: Callable[[str], Optional[str]], e
     return PreflightCheck("claude", True, "已登入（%s）" % status.get("authMethod", "unknown"))
 
 
+def effective_research_agent_cli(agent_cli: str, research_agent_cli: Optional[str] = None) -> str:
+    """多空研究員實際使用的 CLI：未指定時與主 CLI 相同（主 CLI 是 codex 時研究員也用 codex，隔離由研究階段輸出暫存保證）；明示時照指定。"""
+    if research_agent_cli is not None:
+        return research_agent_cli
+    return agent_cli
+
+
 def check_codex(runner: CommandRunner, which: Callable[[str], Optional[str]], executable: str = "codex") -> PreflightCheck:
+    """Codex 登入檢查。"""
     if which(executable) is None:
         return PreflightCheck("codex", False, "找不到 %s 指令" % executable)
     try:
@@ -97,6 +106,23 @@ def check_codex(runner: CommandRunner, which: Callable[[str], Optional[str]], ex
     if completed.returncode != 0:
         return PreflightCheck("codex", False, "Codex CLI 未登入或登入狀態不可用（請執行 codex login）")
     return PreflightCheck("codex", True, "已登入")
+
+
+def check_codex_ephemeral(runner: CommandRunner, which: Callable[[str], Optional[str]], executable: str = "codex") -> PreflightCheck:
+    """Codex 當多空研究員的前置條件：``codex exec`` 須支援 ``--ephemeral``（隔離任務不把 session 紀錄寫到磁碟）。
+
+    隔離本身由研究階段輸出暫存保證（時序隔離），不是權限隔離：Codex 唯讀沙箱只擋寫、不擋讀，仍可讀整個專案，
+    包含舊 run 的多空輸出。"""
+    detail = "多空隔離由研究階段輸出暫存保證（多空輸出在兩方全部完成前不落地到磁碟）；Codex 仍可讀整個專案，包含舊 run 的多空輸出，這是時序隔離、不是權限隔離"
+    if which(executable) is None:
+        return PreflightCheck("research_agent_cli", False, "找不到 %s 指令；%s" % (executable, detail))
+    try:
+        completed = _run(runner, [executable, "exec", "--help"])
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return PreflightCheck("research_agent_cli", False, "無法確認 codex exec 是否支援 --ephemeral：%s" % error)
+    if completed.returncode != 0 or "--ephemeral" not in completed.stdout:
+        return PreflightCheck("research_agent_cli", False, "此版本 codex exec 不支援 --ephemeral，Codex 研究員會把 session 紀錄寫到磁碟而破壞隔離；請升級 Codex 或改用 claude／opencode")
+    return PreflightCheck("research_agent_cli", True, detail)
 
 
 def check_opencode(runner: CommandRunner, which: Callable[[str], Optional[str]], executable: str = "opencode") -> PreflightCheck:
@@ -150,22 +176,36 @@ def run_preflight(
     agent_cli: str = "claude",
     codex_executable: str = "codex",
     opencode_executable: str = "opencode",
+    research_agent_cli: Optional[str] = None,
 ) -> List[PreflightCheck]:
-    """依序執行全部檢查並回傳結果；不在第一個失敗就停，方便一次看到所有問題。"""
+    """依序執行全部檢查並回傳結果；不在第一個失敗就停，方便一次看到所有問題。
+
+    ``research_agent_cli`` 是多頭／空頭研究員使用的 CLI，預設與 ``agent_cli`` 相同（含 codex）。
+    Codex 唯讀沙箱無法強制拒讀，Codex 研究員的多空隔離改由研究階段輸出暫存保證
+    （時序隔離，Codex 仍可讀整個專案含舊 run），並要求 ``codex exec`` 支援 ``--ephemeral``。
+    研究員 CLI 與主 CLI 不同時，兩者的登入都要通過。
+    """
     root = Path(root)
     checks = []
     if not skip_data:
         # 資料階段經 ./start.sh 在 Docker 內執行；--skip-data 時不需要。
         checks.append(check_docker(runner, which))
-    if agent_cli not in ("claude", "codex", "opencode"):
+    if agent_cli not in AGENT_CLIS:
         raise ValueError("不支援的 Agent CLI：%s" % agent_cli)
-    agent_check = {
+    research_cli = effective_research_agent_cli(agent_cli, research_agent_cli)
+    if research_cli not in AGENT_CLIS:
+        raise ValueError("不支援的研究員 Agent CLI：%s" % research_cli)
+    login_checks = {
         "claude": lambda: check_claude(runner, which, claude_executable),
         "codex": lambda: check_codex(runner, which, codex_executable),
         "opencode": lambda: check_opencode(runner, which, opencode_executable),
-    }[agent_cli]()
+    }
+    checks.append(login_checks[agent_cli]())
+    if research_cli != agent_cli:
+        checks.append(login_checks[research_cli]())
+    if research_cli == "codex":
+        checks.append(check_codex_ephemeral(runner, which, codex_executable))
     checks += [
-        agent_check,
         check_account(root, account_id),
         check_files(root, required_files(account_id, skip_data)),
         check_disk(root, min_free_bytes, disk_usage),

@@ -3,8 +3,10 @@ import copy
 import tempfile
 from decimal import Decimal
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
+from etf_agent.automation.agent_runner import ClaudeAgentRunner, CodexAgentRunner, DailyPipelineError, OpenCodeAgentRunner
 from etf_agent.automation.daily_pipeline import (
     AgentCall,
     DailyDecisionPipeline,
@@ -23,6 +25,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class FakeRunner:
     """依 Agent 名稱依序回傳預先準備的結構化輸出，並記錄提示詞。"""
+
+    # 模擬 Claude／OpenCode：能強制 deny_reads，研究階段輸出照常即時落地；Codex 型態見 test_research_staging。
+    enforces_deny_reads = True
 
     def __init__(self, outputs):
         self.outputs = {name: list(items) for name, items in outputs.items()}
@@ -337,6 +342,31 @@ class DailyPipelineTests(unittest.TestCase):
             self.assertEqual(models["trader_b0"], "judge-model")
             self.assertEqual(models["review_r0"], "judge-model")
 
+    def test_codex_research_runner_can_be_built_and_enables_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            repository = Path(directory) / "decisions"
+            # 主 runner 是 Codex 且沒有另設 research_runner：研究階段退回 Codex，改由輸出暫存保證隔離（可建構）。
+            staged = DailyDecisionPipeline(ROOT, run_dir, CodexAgentRunner(ROOT), repository, log=lambda _: None)
+            self.assertTrue(staged._research_staging)
+            # 主 runner 正常、research_runner 是 Codex：同樣啟用暫存。
+            staged = DailyDecisionPipeline(ROOT, run_dir, FakeRunner({}), repository, log=lambda _: None,
+                                           research_runner=CodexAgentRunner(ROOT))
+            self.assertTrue(staged._research_staging)
+            # 研究階段用 OpenCode／Claude（能強制拒讀）：不暫存，行為與過去逐位元相同。
+            for research in (OpenCodeAgentRunner(ROOT), ClaudeAgentRunner(ROOT)):
+                direct = DailyDecisionPipeline(ROOT, run_dir, CodexAgentRunner(ROOT), repository, log=lambda _: None,
+                                               research_runner=research)
+                self.assertFalse(direct._research_staging)
+            # 沒有 enforces_deny_reads 屬性的未知 runner：fail-closed，視為需要暫存。
+            class Unknown:
+                def run(self, task, run_dir):
+                    raise AssertionError("不得呼叫")
+
+            unknown = DailyDecisionPipeline(ROOT, run_dir, FakeRunner({}), repository, log=lambda _: None, research_runner=Unknown())
+            self.assertTrue(unknown._research_staging)
+
     def test_without_analyst_runner_one_runner_handles_everything(self):
         with tempfile.TemporaryDirectory() as directory:
             world = PipelineWorld(Path(directory), approved_status=True)
@@ -469,6 +499,49 @@ class DailyPipelineTests(unittest.TestCase):
         self.assertTrue(any(flag.startswith("GUARD_FAILED") for flag in review["risk_flags"]))
 
 
+class RevisionLimitTests(unittest.TestCase):
+    """修正次數用完後的 revise 由程式確定性降級為 reject，整條鏈不因此失敗。"""
+
+    @staticmethod
+    def revise(buffer):
+        return dict(APPROVE, decision="revise", rationale="現金緩衝再提高。", revision_actions=[
+            {"type": "increase_cash_buffer", "symbol": "", "value": buffer, "reason": "降低風險"}])
+
+    def test_revise_at_the_limit_is_downgraded_to_reject(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            outputs = team_outputs(review_r0=[self.revise("0.20")], review_r1=[self.revise("0.21")],
+                                   review_r2=[self.revise("0.22")], review_r3=[self.revise("0.23")])
+            runner = FakeRunner(outputs)
+            result = world.run(runner)
+
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertEqual(result.decision_status, "rejected")
+            self.assertEqual([name for name, _ in runner.prompts if name.startswith("review_")],
+                             ["review_r0", "review_r1", "review_r2", "review_r3"])
+            self.assertEqual(runner.outputs["review_r3"], [])
+            review = json.loads((world.run_dir / "risk_review_r3.json").read_text(encoding="utf-8"))
+            self.assertEqual(review["decision"], "reject")
+            self.assertEqual(review["revision_actions"], [])
+            self.assertEqual(review["revision_index"], 3)
+            self.assertIn("REVISION_LIMIT_REACHED", review["risk_flags"])
+            self.assertIn("已達修正上限", review["rationale"])
+            # 第 4 次 prompt 明示已達上限，只能 approve／reject。
+            last_prompt = [prompt for name, prompt in runner.prompts if name == "review_r3"][0]
+            self.assertIn("已達上限時不得再 revise", last_prompt)
+
+    def test_revise_below_the_limit_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs(review_r0=[self.revise("0.20")], review_r1=[APPROVE]))
+            result = world.run(runner)
+
+            self.assertEqual(result.status, "completed", result.errors)
+            review = json.loads((world.run_dir / "risk_review_r0.json").read_text(encoding="utf-8"))
+            self.assertEqual(review["decision"], "revise")
+            self.assertNotIn("REVISION_LIMIT_REACHED", review["risk_flags"])
+
+
 class LiquidityExposureTests(unittest.TestCase):
     def test_review_sees_order_share_of_average_volume(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -574,6 +647,83 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result.status, "completed", result.errors)
         self.assertEqual([name for name, _ in runner.prompts][0], "technical_b0")
         self.assertEqual(saved, ["technical_b0_raw_1.json", "technical_b0_raw_2.json"])
+
+
+class ResumeRobustnessTests(unittest.TestCase):
+    def run_resumed(self, world, runner):
+        pipeline = DailyDecisionPipeline(ROOT, world.run_dir, runner, world.repository, log=lambda _: None, resume=True)
+        return pipeline, lambda: pipeline.run(
+            world.paths["snapshot"], world.paths["account"], world.paths["trading_status"],
+            world.paths["rules"], world.paths["database"], world.paths["template"], world.paths["sectors"],
+            "decision-fixture",
+        )
+
+    def test_malformed_saved_outputs_are_skipped_instead_of_failing_the_run(self):
+        for bad in ("[\"不是物件\"]", "{}", "{\"items\": 5}", "not json"):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as directory:
+                world = PipelineWorld(Path(directory), approved_status=True)
+                (world.run_dir / "decision_chain.json").write_text(
+                    json.dumps({"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}), encoding="utf-8")
+                (world.run_dir / "technical_b0_raw_1.json").write_text(bad, encoding="utf-8")
+                runner = FakeRunner(team_outputs())
+                _pipeline, run = self.run_resumed(world, runner)
+                result = run()
+                self.assertEqual(result.status, "completed", result.errors)
+                self.assertEqual([name for name, _ in runner.prompts][0], "technical_b0")
+
+    def test_saved_output_containing_a_secret_is_rejected_not_reused(self):
+        from etf_agent.automation import agent_runner
+
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            (world.run_dir / "decision_chain.json").write_text(
+                json.dumps({"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}), encoding="utf-8")
+            leaked = json.loads(json.dumps(TECHNICAL))
+            leaked["items"][0]["findings"][0]["text"] = "含有 leak-secret-value-123 的文字"
+            (world.run_dir / "technical_b0_raw_1.json").write_text(json.dumps(leaked), encoding="utf-8")
+            runner = FakeRunner(team_outputs())
+            _pipeline, run = self.run_resumed(world, runner)
+            with patch.object(agent_runner, "_secret_values", lambda _root: ["leak-secret-value-123"]):
+                result = run()
+        self.assertEqual(result.status, "failed")
+        self.assertIn("秘密", result.errors[0])
+        self.assertNotIn("leak-secret-value-123", result.errors[0])
+        self.assertEqual(runner.prompts, [])
+
+    def test_unexpected_error_keeps_agent_calls_and_is_reraised(self):
+        class BrokenRunner(FakeRunner):
+            def run(self, task, run_dir):
+                if task.name == "bull_b0":
+                    raise TypeError("意外的型別錯誤")
+                return super().run(task, run_dir)
+
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            pipeline, run = self.run_resumed(world, BrokenRunner(team_outputs()))
+            with self.assertRaises(TypeError):
+                run()
+        partial = pipeline.last_result
+        self.assertIsNotNone(partial)
+        self.assertEqual(partial.status, "failed")
+        self.assertIn("TypeError", partial.errors[0])
+        self.assertIn("technical_b0", [call["name"] for call in partial.agent_calls])
+        self.assertIsInstance(partial.stage_durations, dict)
+
+    def test_expected_errors_still_return_a_failed_result(self):
+        from etf_agent.automation.agent_runner import DailyPipelineError
+
+        class LimitRunner(FakeRunner):
+            def run(self, task, run_dir):
+                if task.name == "bull_b0":
+                    raise DailyPipelineError("bull_b0 失敗")
+                return super().run(task, run_dir)
+
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            pipeline, run = self.run_resumed(world, LimitRunner(team_outputs()))
+            result = run()
+        self.assertEqual(result.status, "failed")
+        self.assertIsNone(pipeline.last_result)
 
 
 class DailyPipelineHelperTests(unittest.TestCase):

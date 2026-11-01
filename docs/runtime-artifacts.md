@@ -122,7 +122,8 @@ flowchart LR
 
 | 路徑 | 內容 | 誰寫入 | 備註 |
 | --- | --- | --- | --- |
-| `daily/.lock` | 防止兩個每日流程同時跑的檔案鎖 | `scripts/run_daily_pipeline.py` | 實際目錄已存在，可忽略 |
+| `daily/.lock` | 防止兩個每日流程同時跑的檔案鎖；持有者會寫入 pid 與開始時間，鎖被佔用時略過並通知，超過 6 小時未結束會標示疑似殭屍；取鎖遇到權限或磁碟錯誤則失敗並通知 | `scripts/run_daily_pipeline.py` | 實際目錄已存在，可忽略 |
+| `daily/.data.lock` | 資料抓取互斥鎖：`./start.sh data／auto／daily／official／all` 與 `scripts/run_finmind_news.sh` 先取得它才執行（20:00 資料、20:40 新聞與 21:00 決策自己的 `start.sh daily` 不會同時寫資料庫）；被佔用時最多等 `ETF_DATA_LOCK_WAIT_SECONDS`（預設 1800）秒，逾時以結束碼 75 停止並通知 | `scripts/with_data_lock.py` | 可忽略 |
 | `daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json` | 每日執行狀態、決策 run ID、交付結果、D-Plan 結果、阻擋原因；取代又還原時記 `superseded_pending` 與 `rolled_back`；決策跑完已過交件期限且沒有備案時記 `late_decision_archived_to`（舊版第一次 run 沒有時間後綴） | `run_daily_pipeline.py`（`write_json`） | D-Plan 匯出時作為 `daily_run` 輸入；`export_latest` 也掃它 |
 | `.../trading_status.json` | 當次交易狀態 bundle 與 assessment | `run_daily_pipeline.py` | 讓重建不依賴舊的 `data/trading_status` 封存 |
 | `.../decision_input.json` | 決策輸入 bundle（Snapshot、帳戶快照等） | `DailyDecisionPipeline` | 決策封存也會保存一份 |
@@ -175,8 +176,9 @@ flowchart LR
 | `artifacts/event_research_validated.json` | `cli/research_report.py` 預設讀取（事件研究驗證結果） |
 | `artifacts/market_context_probes/` | `cli/market_context_probe.py` |
 | `artifacts/fundamental_repairs/` | `cli/fundamental_repair.py` |
-| `artifacts/evaluation/coverage_latest.json`、`suites/<名稱>.json`、`runs/eval-<UTC時間>/`（`manifest.json`、`report.json`、`report.md`、每份考卷每次重跑的 run 目錄與自己的 `decisions/`） | `cli/agent_eval.py` |
-| `artifacts/evaluation/replays/<replay_id>/`（不可變 run：`report.json`、每日 `dNN_policy`／`proposal`／`scenario`／`guard`／`decision`／`execution_market`／`close_market`／`execution`／`close`、`manifest.json`）、旁邊的 `<replay_id>.md` 與 `compare-<A>-vs-<B>.json/.md` | `cli/policy_replay.py` |
+| `artifacts/evaluation/coverage_latest.json`、`suites/<名稱>.json`、`runs/eval-<UTC時間>/`（`manifest.json`（續跑時多 `resumes`）、`report.json`、`report.md`、`report.html`（衍生品，不進 manifest）、每份考卷每次重跑的 run 目錄（含 `eval_result.json`，續跑時多 `resumed_from_attempts`／`resumed_at`）與自己的 `decisions/`） | `cli/agent_eval.py` |
+| `artifacts/evaluation/grids/<grid_id>/`（不可變 run：`grid.json`、`manifest.json`）與旁邊的 `<grid_id>.html`（衍生品，不進 manifest） | `cli/agent_eval.py grid` |
+| `artifacts/evaluation/replays/<replay_id>/`（不可變 run：`report.json`、每日 `dNN_policy`／`proposal`／`scenario`／`guard`／`decision`／`execution_market`／`close_market`／`execution`／`close`、`manifest.json`）、旁邊的 `<replay_id>.md`、`<replay_id>.html`（衍生品，不進 manifest）與 `compare-<A>-vs-<B>.json/.md` | `cli/policy_replay.py` |
 
 ## 3. `var/` 逐項說明
 

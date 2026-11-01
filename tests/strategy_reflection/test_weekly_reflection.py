@@ -151,6 +151,20 @@ class WeeklyRunTests(Fixture):
         self.assertIn("只觀察、不提案", text)
         self.assertEqual(Path(result["report"]).name, "weekly-2026-11-20.md")
 
+    def test_closed_gate_never_proposes_lessons(self):
+        from test_lessons import row
+
+        rows = [dict(row(symbol, conviction, ret), entry_day="2026-11-16", entry_price="100", tolerance="0.1",
+                     intents_since={}, alerts_since={}, text={})
+                for symbol, conviction, ret in (("2330.TW", "high", "0.1"), ("2317.TW", "medium", "-0.02"), ("2454.TW", "low", "0.03"))]
+        runner = self.Runner({"lessons": []})
+        with mock.patch.object(service, "thesis_inputs", return_value=(rows, {})), \
+                mock.patch.object(service, "review_thesis", return_value={}):
+            result = self.run_week(FRIDAY, runner=runner)
+        self.assertEqual((result["status"], runner.calls), ("observe_only", 0))
+        self.assertFalse((self.tmp / "var" / "strategy_reflection" / "lessons" / "pending.json").exists())
+        self.assertIn("本週不整理教訓", Path(result["report"]).read_text(encoding="utf-8"))
+
     def test_second_run_within_six_days_is_skipped_unless_forced(self):
         self.run_week(FRIDAY)
         again = self.run_week(FRIDAY + timedelta(days=2))

@@ -16,7 +16,7 @@
 | `batching.py` | 逐檔輸出的子 Agent 分批與確定性合併 | `BatchMergeError`、`universe_batches`、`merge_batch_items` |
 | `perception_stage.py` | 每日情緒標註階段：授權與時間先驗證、全量標註、程式聚合 | `build_daily_perception` |
 | `market_news_stage.py` | 每日全市場新聞：取截止前最後一次 RSS 抓取，子 Agent 逐則標註與綜合，程式依核准、樣本與媒體數重建結果；失敗時降級為恐懼貪婪指標 | `build_daily_market_news` |
-| `preflight.py` | 抓資料或呼叫子 Agent 前檢查 Docker、各 Agent CLI 登入、帳戶、必要檔案、磁碟 | `PreflightCheck`、`PreflightError`、`run_preflight`、`require_preflight`、`checks_to_dict`、`check_docker`、`check_claude`、`check_codex`、`check_opencode`、`check_account`、`check_files`、`check_disk`、`required_files` |
+| `preflight.py` | 抓資料或呼叫子 Agent 前檢查 Docker、各 Agent CLI 登入、帳戶、必要檔案、磁碟 | `PreflightCheck`、`PreflightError`、`run_preflight`、`require_preflight`、`checks_to_dict`、`check_docker`、`effective_research_agent_cli`、`check_codex_ephemeral`、`check_claude`、`check_codex`、`check_opencode`、`check_account`、`check_files`、`check_disk`、`required_files` |
 
 ## 對外介面
 
@@ -63,4 +63,6 @@ flowchart TD
 - 事件分析師標為 high 的事件直接交給多空研究員。
 - 每日鏈不另跑 Fact／Bull／Bear／Adjudicator；`research` 在此只用於驗證 `ResearchResult`。
 - 每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。
-- OpenCode 的 read 權限拒絕 `.env`、`.envrc`、`.pem`、`.key` 與含 `credential`／`secret` 的檔案（見 AGENTS.md）。
+- OpenCode 的 read 權限拒絕 `.env`、`.env.*`、`.envrc`、`.pem`、`.key`、`.netrc`、`.p12`、`.pfx`、`id_rsa*`、`.token`、`.npmrc`、`.pypirc`、`.jks` 與含 `credential`／`secret` 的檔案及大小寫變體（見 AGENTS.md）。OpenCode 輸出事件只要 `part` 帶 `tool` 欄位就當工具呼叫檢查（不只認 `tool_use` 型別名稱），非 read 工具一律安全拒絕。
+- 續跑沿用既有輸出時，先過秘密外洩檢查（外洩直接停止、不跳過），`build`／`validate` 丟 KeyError、TypeError、ValueError 的壞輸出視為不可沿用而不是讓整個 run 失敗；決策鏈遇到預期之外的例外仍往上拋，但已花的 Agent 呼叫與階段耗時會先保存在 `pipeline.last_result` 並寫入 `pipeline.json`。
+- Codex 無法強制 `deny_reads`（runner 以 `enforces_deny_reads` 宣告，未宣告者視為不強制）：帶此欄位的任務在 `CodexAgentRunner` 預設拒絕啟動，只在 `PipelineBase._staged_research_outputs`（研究階段輸出暫存）內以 `AgentTask.stage_isolated` 放行；暫存時多空原始輸出只留記憶體、全部完成才寫入 run 目錄，續跑全有或全無，Codex 研究任務加 `--ephemeral` 且暫存檔不放 run 目錄。這是時序隔離、不是權限隔離，Codex 仍可讀整個專案含舊 run（詳見 [docs/architecture.md](../../../docs/architecture.md)）。`run_preflight` 對研究員 CLI 為 codex 要求登入與 `codex exec --ephemeral` 支援（`research_agent_cli` 檢查）；主 CLI 為 codex 時照常檢查 `codex login status`，研究員 CLI 預設與主 CLI 相同（由 `effective_research_agent_cli` 決定，codex 亦然）。外洩掃描涵蓋 `.env*` 與 `.envrc`。風險審查的修正次數用完仍回 `revise` 時，由程式降級為 `reject` 並加 `REVISION_LIMIT_REACHED` 旗標。

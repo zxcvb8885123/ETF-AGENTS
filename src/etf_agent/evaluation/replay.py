@@ -484,7 +484,8 @@ def _build_replay(
 def save_replay(
     root: Path, body: Mapping[str, object], artifacts: Mapping[str, Mapping[str, object]], replay_id: Optional[str] = None,
 ) -> Tuple[str, Path]:
-    """封存報告與每日 artifacts（不可變 run），並在旁邊寫同源 Markdown。"""
+    """封存報告與每日 artifacts（不可變 run），並在旁邊寫同源 Markdown 與一頁 HTML（衍生品，不進 manifest）。"""
+    from .html_report import render_replay_html
     from .replay_report import render_replay_report
 
     replay_id = replay_id or "replay-%s" % datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -494,8 +495,11 @@ def save_replay(
     repository = ReplayRepository(Path(root) / REPLAY_ROOT)
     if repository.run_dir(replay_id) is not None:
         raise ReplayError("回放 %s 已存在，不覆寫" % replay_id)
+    # 先渲染再封存：渲染失敗時不留下封存好的 run，同一個 ID 才能重跑。
+    markdown, page = render_replay_report(report), render_replay_html(report)
     run_dir = repository.save(replay_id, {"report": report, **artifacts})
-    (run_dir.parent / ("%s.md" % replay_id)).write_text(render_replay_report(report), encoding="utf-8")
+    (run_dir.parent / ("%s.md" % replay_id)).write_text(markdown, encoding="utf-8")
+    (run_dir.parent / ("%s.html" % replay_id)).write_text(page, encoding="utf-8")
     return replay_id, run_dir
 
 

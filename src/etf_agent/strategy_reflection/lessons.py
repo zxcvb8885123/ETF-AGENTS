@@ -7,6 +7,9 @@
 教訓存成 ``config/strategy_lessons.json``（格式與讀取見 ``decision.strategy_lessons``），週六與旋鈕提案一樣經
 ``apply_pending`` 套用，並進入同一套試用觀察期：5 個新交易日後，相對等權基準明確變差就還原成套用前的內容。
 教訓只是交易 Agent 的背景參考，不是證據，也不改硬性規則；一次只有一件變更在試用，不同時改旋鈕與教訓。
+
+樣本門檻：只在校準樣本門檻通過（``gate_open``）且持股不少於 ``MIN_GROUP`` 檔時才整理教訓；
+``pending.json`` 另帶 ``sample``（門檻、持股數、決策日數），週六套用前再核對，缺少或不合格一律視為沒有待套用的教訓。
 """
 
 from __future__ import annotations
@@ -117,24 +120,45 @@ def lessons_from_output(
     return seal_lessons("lessons-%s" % now.strftime("%Y%m%dT%H%M%SZ"), now.isoformat(), items)
 
 
+def holdings_count(thesis: Sequence[Mapping[str, object]]) -> int:
+    """可歸納的持股檔數，與 ``thesis_aggregates`` 同口徑（有買進後報酬的列）。"""
+    return sum(1 for row in thesis if "return_since_entry" in row)
+
+
 def pending_path(base: Path) -> Path:
     return Path(base) / "lessons" / PENDING_NAME
 
 
-def save_pending(base: Path, lessons: Mapping[str, object]) -> Path:
+def save_pending(base: Path, lessons: Mapping[str, object], sample: Mapping[str, object]) -> Path:
+    """封存待套用的教訓與提案當時的樣本（gate_open、holdings、decision_days）。"""
     path = pending_path(base)
-    atomic_write_json(path, dict(lessons))
+    atomic_write_json(path, {"lessons": dict(lessons), "sample": dict(sample)})
     return path
 
 
+def _valid_sample(sample: object) -> bool:
+    if not isinstance(sample, Mapping) or set(sample) != {"gate_open", "holdings", "decision_days"}:
+        return False
+    holdings, days = sample["holdings"], sample["decision_days"]
+    return (sample["gate_open"] is True
+            and isinstance(holdings, int) and not isinstance(holdings, bool) and holdings >= MIN_GROUP
+            and isinstance(days, int) and not isinstance(days, bool) and days >= 0)
+
+
 def load_pending(base: Path) -> Optional[Dict[str, object]]:
+    """讀待套用的教訓（含 ``lessons`` 與 ``sample``）。舊格式、欄位不符、教訓檔不合格、
+    樣本門檻未通過或持股不足 ``MIN_GROUP`` 檔一律回 None（fail-closed）。"""
     import json
 
     try:
         data = json.loads(pending_path(base).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return data if not validate_lessons_file(data) else None
+    if not isinstance(data, Mapping) or set(data) != {"lessons", "sample"}:
+        return None
+    if validate_lessons_file(data["lessons"]) or not _valid_sample(data["sample"]):
+        return None
+    return dict(data)
 
 
 def apply_lessons(root: Path, base: Path, lessons: Mapping[str, object], history_append, decision_days: int, now: datetime) -> Dict[str, object]:

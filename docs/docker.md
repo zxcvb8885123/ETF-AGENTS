@@ -30,7 +30,6 @@ docker compose version
 ./start.sh auto                  # 更新行情與研究資料，不建快照、不推進帳本
 ./start.sh daily                 # 更新資料、建立 Snapshot、準備虛擬帳本，不跑 Agent
 ./start.sh run                   # 完整每日決策（本機 .venv，資料階段用 Docker）
-./start.sh run --agent-cli codex # 改用已登入的 Codex CLI
 ./start.sh run --agent-cli opencode # 改用已設定憑證的 OpenCode CLI
 ./start.sh status                # 查看既有資料狀態（本機 .venv，不需 Docker）
 ./start.sh check                 # 建置映像並執行設定檢查與測試
@@ -89,16 +88,16 @@ docker compose version
 
 - 使用主機 `.venv/bin/python` 執行 `scripts/run_daily_pipeline.py`，參數原樣傳遞。資料階段仍走 Docker 的 `daily`。
 - 缺少 `.venv` 時會停止，並提示安裝方式。
-- 用 `--agent-cli claude|codex|opencode` 選擇子 Agent CLI。三種執行器都交給同一套 Python Validator。
+- 用 `--agent-cli claude|opencode|codex` 選擇子 Agent CLI；多空研究員預設與主 CLI 相同（`codex` 亦然），可用 `--research-agent-cli claude|opencode|codex` 另行指定；`codex` 無法強制多空隔離，研究員為 codex 時隔離改由研究階段輸出暫存保證，較弱。執行器都交給同一套 Python Validator。
 - 不會自動產生或送出訂單。
 
 **各執行器的注意事項**
 
 | 執行器 | 說明 |
 | --- | --- |
-| Codex | 已完成真實資料端到端執行。ChatGPT.app 內附 Codex CLI 的 macOS 路徑，`start.sh` 會在非互動 shell 自動加入 PATH（互動 zsh 亦已設定） |
+| Codex | 可跑全部子 Agent；`--agent-cli codex` 時多空研究員預設也用 Codex：唯讀沙箱無法限制讀檔，隔離改由研究階段輸出暫存保證（時序隔離，Codex 仍可讀整個專案含舊 run），預檢另要求 `codex exec` 支援 `--ephemeral`。研究員 CLI 與主 CLI 不同時，預檢兩個 CLI 的登入都要通過 |
 | OpenCode | 目前只有小型唯讀煙霧測試與模擬 CLI 測試。執行時禁用插件，唯讀，不允許 `.env` 與外部目錄。預檢只回報是否有憑證，不保存帳號 |
-| 共通 | 重試與續跑仍檢查 Snapshot、cutoff、執行器與來源。Claude／OpenCode 拒讀 `.env` 等敏感檔；Codex 無法拒讀，只靠輸出不得含 `.env` 值的檢查。CLI 回報的用量不是訂閱帳單 |
+| 共通 | 重試與續跑仍檢查 Snapshot、cutoff、執行器與來源。Claude／OpenCode 拒讀 `.env` 等敏感檔；所有執行器的輸出都不得含 `.env*`／`.envrc` 的值。CLI 回報的用量不是訂閱帳單 |
 
 **`run` 的其他參數**
 

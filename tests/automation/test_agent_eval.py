@@ -13,9 +13,10 @@ from etf_agent.data.corporate import CorporateRecord, SourceDocument
 from etf_agent.data.universe import Instrument
 from etf_agent.evaluation.answers import answer_key, pool_scores, score_day
 from etf_agent.evaluation import (
-    EvaluationError, build_suite, compare_maps, document_recall, evaluate, price_coverage, run_suite, universe_coverage,
+    EvaluationError, build_suite, compare_maps, document_recall, evaluate, price_coverage, run_suite, unfinished_runs,
+    universe_coverage,
 )
-from test_daily_pipeline import TECHNICAL, TRADE, FakeRunner, PipelineWorld, team_outputs
+from test_daily_pipeline import APPROVE, STANCE, TECHNICAL, TRADE, FakeRunner, PipelineWorld, team_outputs
 
 
 class AgentEvaluationTests(unittest.TestCase):
@@ -42,11 +43,13 @@ class AgentEvaluationTests(unittest.TestCase):
         self.temp.cleanup()
 
     def pipelines(self, outputs):
-        """每次重跑各給一個假 Agent；outputs 依重跑次序取用。"""
+        """每次重跑各給一個假 Agent；outputs 依重跑次序取用。``make.calls`` 記錄每次建 pipeline 的 (run_dir 名稱, resume)。"""
         queue = list(outputs)
 
-        def make(run_dir, repository):
-            return DailyDecisionPipeline(self.root, run_dir, FakeRunner(queue.pop(0)), repository, log=lambda _: None)
+        def make(run_dir, repository, resume=False):
+            make.calls.append((run_dir.name, resume))
+            return DailyDecisionPipeline(self.root, run_dir, FakeRunner(queue.pop(0)), repository, log=lambda _: None, resume=resume)
+        make.calls = []
         return make
 
     def test_identical_reruns_agree_with_reference_and_each_other(self):
@@ -63,6 +66,61 @@ class AgentEvaluationTests(unittest.TestCase):
         self.assertTrue((self.root / "artifacts" / "evaluation" / "runs" / manifest["eval_id"] / "report.md").exists())
         # 沒有重大訊息時事件分析師不呼叫 Agent，其餘七個步驟各一次。
         self.assertEqual(report["cases"][0]["process"][0]["calls"], 7)
+        # 一頁 HTML 是衍生品：自包含、無 script、有 CSP；manifest.json 不登錄它。
+        html_path = self.root / "artifacts" / "evaluation" / "runs" / manifest["eval_id"] / "report.html"
+        page = html_path.read_text(encoding="utf-8")
+        self.assertIn("Content-Security-Policy", page)
+        for forbidden in ("<script", "http://", "https://", "url(", "<link", "<iframe"):
+            self.assertNotIn(forbidden, page)
+        self.assertIn(manifest["eval_id"], page)
+
+    def test_resume_reruns_only_unfinished_repeats_and_reuses_validated_outputs(self):
+        suite = build_suite(self.root, "fixture")
+        # 第 1 次交易 Agent 兩次都交出空輸出而失敗；第 2 次正常完成。
+        broken = team_outputs(trader_b0=[{"items": []}, {"items": []}])
+        first = self.pipelines([broken, team_outputs()])
+        manifest = run_suite(self.root, suite, first, repeats=2, log=lambda _: None)
+        self.assertEqual([run["status"] for run in manifest["cases"][0]["runs"]], ["failed", "completed"])
+        self.assertEqual(unfinished_runs(self.root, manifest["eval_id"]), ["daily-20260920/r1"])
+        self.assertEqual(manifest["cases"][0]["bundle_sha256"], suite["cases"][0]["bundle_sha256"])
+        # 續跑：只給交易以後的輸出；分析師與多空研究員的原始輸出已通過驗證、直接沿用，若再呼叫會因 FakeRunner 缺輸出而中斷。
+        resume = self.pipelines([{"trader_b0": [TRADE], "cash_stance": [STANCE], "review_r0": [APPROVE]}])
+        resumed = run_suite(self.root, suite, resume, repeats=2, resume_eval_id=manifest["eval_id"], log=lambda _: None)
+        self.assertEqual(resume.calls, [("r1", True)])
+        runs = resumed["cases"][0]["runs"]
+        self.assertEqual([run["status"] for run in runs], ["completed", "completed"])
+        self.assertGreater(runs[0]["resumed_from_attempts"], 0)
+        self.assertIn("resumed_at", runs[0])
+        self.assertNotIn("resumed_from_attempts", runs[1])
+        self.assertEqual(resumed["resumes"][0]["reran"], ["daily-20260920/r1"])
+        self.assertEqual(unfinished_runs(self.root, manifest["eval_id"]), [])
+        report = evaluate(self.root, manifest["eval_id"])
+        self.assertEqual(report["overall"]["failed_runs"], 0)
+        self.assertEqual(report["cases"][0]["process"][0]["resumed_from_attempts"], runs[0]["resumed_from_attempts"])
+        self.assertIn("續跑", (self.root / "artifacts" / "evaluation" / "runs" / manifest["eval_id"] / "report.html").read_text(encoding="utf-8"))
+
+    def test_resume_refuses_mismatched_options_or_changed_policy(self):
+        suite = build_suite(self.root, "fixture")
+        manifest = run_suite(self.root, suite, self.pipelines([team_outputs(trader_b0=[{"items": []}, {"items": []}])]), repeats=1, log=lambda _: None)
+        with self.assertRaisesRegex(EvaluationError, "repeats"):
+            run_suite(self.root, suite, self.pipelines([]), repeats=2, resume_eval_id=manifest["eval_id"], log=lambda _: None)
+        with self.assertRaisesRegex(EvaluationError, "stop_after"):
+            run_suite(self.root, suite, self.pipelines([]), repeats=1, stop_after="analysts", resume_eval_id=manifest["eval_id"], log=lambda _: None)
+        with self.assertRaisesRegex(EvaluationError, "評測集不同"):
+            run_suite(self.root, dict(suite, name="other"), self.pipelines([]), repeats=1, resume_eval_id=manifest["eval_id"], log=lambda _: None)
+        with self.assertRaisesRegex(EvaluationError, "找不到"):
+            run_suite(self.root, suite, self.pipelines([]), repeats=1, resume_eval_id="eval-missing", log=lambda _: None)
+        with self.assertRaisesRegex(EvaluationError, "eval_id"):
+            run_suite(self.root, suite, self.pipelines([]), repeats=1, eval_id="other", resume_eval_id=manifest["eval_id"], log=lambda _: None)
+        # 策略樣板在兩次之間被改動：評測用樣板雜湊不同，不能續跑。
+        policy_path = self.root / "config" / "decision_policy.json"
+        template = json.loads(policy_path.read_text(encoding="utf-8"))
+        template["policy_id"] = "changed"
+        policy_path.write_text(json.dumps(template), encoding="utf-8")
+        with self.assertRaisesRegex(EvaluationError, "策略樣板"):
+            run_suite(self.root, suite, self.pipelines([team_outputs()]), repeats=1, resume_eval_id=manifest["eval_id"], log=lambda _: None)
+        # 續跑前就停止：沒有任何 pipeline 被建立。
+        self.assertFalse((self.root / "artifacts" / "evaluation" / "runs" / manifest["eval_id"] / "daily-20260920" / "r1" / "intent.json").exists())
 
     def test_unstable_rerun_is_measured_with_opposite_views(self):
         flipped_tech = copy.deepcopy(TECHNICAL)

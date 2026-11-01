@@ -11,7 +11,7 @@ description: 讀程式整理的校準簡報（信心等級與多空強度事後�
 
 - `evidence`：`evidence_id` → 數值。`cal.h<horizon>.…` 是校準統計（只含樣本足夠、`status=ok` 的 horizon）；`diag.…` 是每週診斷統計（只含 `status=ok` 的指標）；`policy.<旋鈕>` 是目前策略樣板的值。
 - `knobs`：目前可調旋鈕的路徑與值。
-- `decision_days`、`ok_horizons`：樣本量。簡報沒有任何 ok 的 horizon 時，程式不會呼叫你。
+- `decision_days`、`ok_horizons`：樣本量。簡報沒有任何 ok 的 horizon 時，程式不會呼叫你。（教訓整理另需校準樣本門檻通過且持股不少於 3 檔，否則同樣不會呼叫你。）
 
 ## 輸出
 

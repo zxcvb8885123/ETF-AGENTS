@@ -29,6 +29,7 @@ from etf_agent.decision import (
     revision_effects,
 )
 
+from etf_agent.decision.contracts import DecisionToolError
 from test_analysts import bundle_with_event
 from test_portfolio_decision_agent import refresh_artifact_hash
 
@@ -868,6 +869,55 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
                 "--run-id", "cli-run", "--repository", str(root / "runs"),
             )
             self.assertEqual(len(list((root / "runs").glob("*/cli-run/manifest.json"))), 1)
+
+
+class GuardTradingStatusPairTests(unittest.TestCase):
+    """交易狀態包與可交易性評估必須成對；只缺其一或 Snapshot 只有計數時，Guard 建構階段（DecisionInputBundle 驗證）就拒絕，
+    不會走到 fixture 清單分支而在迭代計數時丟 TypeError。"""
+
+    def guard_inputs(self):
+        bundle, momentum, debate, intent = valid_inputs()
+        _, _, _, intent, *_ = chain_inputs(bundle)
+        settings = policy()
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        return bundle, settings, proposal, scenario
+
+    @staticmethod
+    def rehash(bundle):
+        from etf_agent.decision import canonical_sha256
+
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+
+    def test_fixture_lists_without_either_artifact_still_work(self):
+        bundle, settings, proposal, scenario = self.guard_inputs()
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        self.assertIn("TRADABILITY_AVAILABLE", {item["rule_id"] for item in guard["checks"]})
+
+    def test_only_one_of_the_pair_fails_closed(self):
+        for present in ("trading_status_bundle", "tradability_assessment"):
+            with self.subTest(present=present):
+                bundle, settings, proposal, scenario = self.guard_inputs()
+                bundle[present] = {"symbols": []}
+                self.rehash(bundle)
+                with self.assertRaisesRegex(DecisionToolError, "必須成對存在"):
+                    CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+
+    def test_non_mapping_pair_fails_closed(self):
+        bundle, settings, proposal, scenario = self.guard_inputs()
+        bundle["trading_status_bundle"] = ["不是物件"]
+        bundle["tradability_assessment"] = {"symbols": []}
+        self.rehash(bundle)
+        with self.assertRaisesRegex(DecisionToolError, "必須成對存在"):
+            CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+
+    def test_count_instead_of_list_fails_closed_without_the_pair(self):
+        bundle, settings, proposal, scenario = self.guard_inputs()
+        bundle["snapshot"]["tradable_symbols"] = 2
+        self.rehash(bundle)
+        with self.assertRaisesRegex(DecisionToolError, "是計數"):
+            CompetitionGuardV2(bundle, settings).run(proposal, scenario)
 
 
 class RevisionActionFieldTests(unittest.TestCase):

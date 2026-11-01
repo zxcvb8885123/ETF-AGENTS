@@ -11,10 +11,10 @@ from etf_agent.automation.agent_runner import AgentCall, DailyPipelineError
 from etf_agent.decision.strategy_lessons import (
     LESSONS_PATH, lesson_text_errors, lessons_brief, load_strategy_lessons, seal_lessons, validate_lessons_file,
 )
-from etf_agent.strategy_reflection import ReflectionError, ReflectionRepository, service
+from etf_agent.strategy_reflection import ReflectionError, ReflectionRepository, observe_only, service
 from etf_agent.strategy_reflection.lessons import (
-    LESSONS_ACTION, apply_lessons, lessons_brief_for_agent, lessons_from_output, load_pending, revert_lessons, save_pending,
-    thesis_aggregates,
+    LESSONS_ACTION, apply_lessons, lessons_brief_for_agent, lessons_from_output, load_pending, pending_path, revert_lessons,
+    save_pending, thesis_aggregates,
 )
 from etf_agent.strategy_reflection.trial import open_trial
 
@@ -26,6 +26,9 @@ GOOD = "高信心買進後多半回吐，買進前先確認回檔再進場"
 
 def lessons(text=GOOD, evidence=("thesis.mean_return",), lessons_id="lessons-1"):
     return seal_lessons(lessons_id, NOW.isoformat(), [{"text": text, "evidence_ids": list(evidence)}])
+
+
+OPEN_SAMPLE = {"gate_open": True, "holdings": 3, "decision_days": 5}
 
 
 def row(symbol, conviction, ret, days=5, status="within_tolerance"):
@@ -140,7 +143,7 @@ class OutputTests(unittest.TestCase):
 
 
 class ReflectLessonsTests(Fixture):
-    ROWS = [row("2330.TW", "high", "0.1")]
+    ROWS = [row("2330.TW", "high", "0.1"), row("2317.TW", "medium", "-0.02"), row("2454.TW", "low", "0.03")]
 
     class Runner:
         def __init__(self, output=None, error=None):
@@ -152,17 +155,39 @@ class ReflectLessonsTests(Fixture):
                 raise self.error
             return AgentCall(task.name, 0, self.output, 0.1)
 
-    def reflect(self, runner, rows=None):
+    def reflect(self, runner, rows=None, brief=None):
         run_dir = self.tmp / "run"
         run_dir.mkdir(exist_ok=True)
-        return service.reflect_lessons(runner, run_dir, self.tmp / "var" / "strategy_reflection", self.ROWS if rows is None else rows, {}, {}, NOW, self.tmp)
+        brief = {"gate_open": True, "decision_days": 5, "evidence": {}} if brief is None else brief
+        return service.reflect_lessons(runner, run_dir, self.tmp / "var" / "strategy_reflection", self.ROWS if rows is None else rows, {}, brief, NOW, self.tmp)
 
     def test_valid_output_is_saved_as_pending_not_applied(self):
         runner = self.Runner({"lessons": [{"text": GOOD, "evidence_ids": ["thesis.mean_return"]}]})
         result = self.reflect(runner)
         self.assertEqual(result["status"], "proposed")
-        self.assertIsNotNone(load_pending(self.tmp / "var" / "strategy_reflection"))
+        self.assertEqual(load_pending(self.tmp / "var" / "strategy_reflection")["sample"], OPEN_SAMPLE)
         self.assertFalse((self.tmp / LESSONS_PATH).exists())
+
+    def test_closed_gate_skips_without_calling_agent(self):
+        runner = self.Runner({"lessons": [{"text": GOOD, "evidence_ids": ["thesis.mean_return"]}]})
+        result = self.reflect(runner, brief={"gate_open": False, "decision_days": 2, "evidence": {}})
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("門檻", result["reason"])
+        self.assertEqual(runner.calls, 0)
+        self.assertIsNone(load_pending(self.tmp / "var" / "strategy_reflection"))
+
+    def test_missing_gate_field_fails_closed(self):
+        runner = self.Runner({"lessons": []})
+        self.assertEqual(self.reflect(runner, brief={"decision_days": 5, "evidence": {}})["status"], "skipped")
+        self.assertEqual(runner.calls, 0)
+
+    def test_fewer_holdings_than_min_group_skips(self):
+        runner = self.Runner({"lessons": [{"text": GOOD, "evidence_ids": ["thesis.mean_return"]}]})
+        result = self.reflect(runner, rows=self.ROWS[:2])
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("少於", result["reason"])
+        self.assertEqual(runner.calls, 0)
+        self.assertIsNone(load_pending(self.tmp / "var" / "strategy_reflection"))
 
     def test_failures_never_raise_and_skip_without_data(self):
         self.assertEqual(self.reflect(self.Runner(error=DailyPipelineError("逾時")))["status"], "failed")
@@ -178,12 +203,14 @@ class ApplyAndRevertTests(Fixture):
         super().setUp()
         self.repository = ReflectionRepository(self.tmp)
         self.base = self.repository.base
+        # 最近一份反思的校準樣本門檻已通過（套用前會再核對）。
+        service.save_reflection(self.repository, self.reflection(), self.brief)
 
     def pending(self, now=SATURDAY, **options):
         return service._apply_pending_lessons(self.tmp, now, self.repository, None, lambda: now)
 
     def test_saturday_applies_pending_and_opens_a_trial(self):
-        save_pending(self.base, lessons(lessons_id="lessons-20261120T123000Z"))
+        save_pending(self.base, lessons(lessons_id="lessons-20261120T123000Z"), OPEN_SAMPLE)
         # created_at 用 NOW（週五）→ 週六在 8 天內
         result = self.pending()
         self.assertTrue(result["applied"], result)
@@ -195,10 +222,37 @@ class ApplyAndRevertTests(Fixture):
 
     def test_stale_late_evening_and_empty_cases_do_not_apply(self):
         self.assertFalse(self.pending()["applied"])
-        save_pending(self.base, lessons())
-        self.assertIn("過期", self.pending(NOW + timedelta(days=9))["reason"])
+        save_pending(self.base, lessons(), OPEN_SAMPLE)
+        self.assertIn("過期", self.pending(NOW + timedelta(days=10))["reason"])
         self.assertIn("20:50", self.pending(SATURDAY_LATE)["reason"])
         self.assertFalse((self.tmp / LESSONS_PATH).exists())
+
+    def test_pending_without_sample_or_closed_gate_is_ignored(self):
+        path = pending_path(self.base)
+        for label, sample in (("gate 關閉", {**OPEN_SAMPLE, "gate_open": False}), ("持股不足", {**OPEN_SAMPLE, "holdings": 2}),
+                              ("持股是布林值", {**OPEN_SAMPLE, "holdings": True}), ("缺欄位", {"gate_open": True, "holdings": 3})):
+            save_pending(self.base, lessons(), sample)
+            self.assertIsNone(load_pending(self.base), label)
+            self.assertIn("沒有待套用", self.pending()["reason"], label)
+        # 舊格式：純教訓檔、沒有 sample。
+        path.write_text(json.dumps(lessons()), encoding="utf-8")
+        self.assertIsNone(load_pending(self.base))
+        self.assertIn("沒有待套用", self.pending()["reason"])
+        self.assertFalse((self.tmp / LESSONS_PATH).exists())
+
+    def test_apply_refuses_when_latest_reflection_gate_is_closed(self):
+        save_pending(self.base, lessons(), OPEN_SAMPLE)
+        closed = {**self.brief, "gate_open": False}
+        service.save_reflection(self.repository, observe_only(closed, NOW + timedelta(hours=1)), closed)
+        result = self.pending()
+        self.assertFalse(result["applied"])
+        self.assertIn("門檻", result["reason"])
+        self.assertFalse((self.tmp / LESSONS_PATH).exists())
+
+    def test_trial_decision_days_come_from_pending_sample(self):
+        save_pending(self.base, lessons(), {**OPEN_SAMPLE, "decision_days": 7})
+        self.assertTrue(self.pending()["applied"])
+        self.assertEqual(open_trial(self.repository.history())["decision_days"], 7)
 
     def test_applied_lessons_take_effect_at_apply_time_not_proposal_time(self):
         history = []
