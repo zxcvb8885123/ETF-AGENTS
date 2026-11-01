@@ -121,8 +121,17 @@ class RiskStagesMixin:
         validator = RiskReviewValidator(bundle, policy)
         revision = int(proposal["revision_count"])
 
+        max_revisions = int(policy["max_revisions"])
+
         def build(output: Mapping[str, object]) -> Dict[str, object]:
             decision = output["decision"]
+            rationale = output["rationale"]
+            risk_flags = list(output["risk_flags"])
+            if decision == "revise" and revision >= max_revisions:
+                # 已用完修正次數：確定性降級為 reject，不靠下一次被 Validator 拒絕後整條鏈失敗。
+                decision = "reject"
+                rationale = "已達修正上限（%d 次）仍要求修正，依契約降級為拒絕：%s" % (max_revisions, rationale)
+                risk_flags.append("REVISION_LIMIT_REACHED")
             review: Dict[str, object] = {
                 "schema_version": "1.0",
                 "review_id": "risk-review:%s:r%d" % (run_id, revision),
@@ -135,9 +144,9 @@ class RiskStagesMixin:
                 "guard_id": guard["guard_id"],
                 "revision_index": revision + 1 if decision == "revise" else revision,
                 "decision": decision,
-                "rationale": output["rationale"],
+                "rationale": rationale,
                 "evidence_ids": output["evidence_ids"],
-                "risk_flags": output["risk_flags"],
+                "risk_flags": risk_flags,
                 "revision_actions": output["revision_actions"] if decision == "revise" else [],
                 "unresolved_questions": output["unresolved_questions"],
                 "status": "completed",
@@ -188,7 +197,7 @@ class RiskStagesMixin:
             "輸出 approve、revise 或 reject。revision_actions 每一項都必須含 type、symbol、value、reason 四個字串欄位；"
             "remove_candidate 的 symbol 為本提案買進股票且 value 為空字串；其他類型的 symbol 為空字串。revise 只能使用 remove_candidate、"
             "increase_cash_buffer（value 不得低於目前現金緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
-            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
+            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
             % (
                 self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
                 names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], names["liquidity_exposure"], citable_path,

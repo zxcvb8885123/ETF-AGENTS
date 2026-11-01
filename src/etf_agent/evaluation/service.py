@@ -12,9 +12,9 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from etf_agent.core import parse_aware_time
+from etf_agent.core import canonical_sha256, parse_aware_time
 from etf_agent.core.run_layout import find_run_dir, list_run_dirs
 
 from .answers import score_runs
@@ -89,68 +89,145 @@ def build_suite(root: Path, name: str, run_ids: Optional[Sequence[str]] = None) 
     return suite
 
 
-def eval_policy_template(policy_template_path: Path, decision_cutoff: str, output: Path) -> Dict[str, object]:
-    """評測用策略樣板：設定版本晚於考卷 cutoff 時，把 available_at 提前到 cutoff 才能重建 Policy，並記錄這個改動。"""
+def _eval_template(policy_template_path: Path, decision_cutoff: str) -> Tuple[Dict[str, object], Dict[str, object]]:
     template = _read(policy_template_path, "策略樣板")
     original = str(template.get("available_at"))
     overridden = parse_aware_time(original, "available_at", error=EvaluationError) > parse_aware_time(
         decision_cutoff, "decision_cutoff", error=EvaluationError)
     if overridden:
         template["available_at"] = decision_cutoff
+    return template, {"policy_id": template.get("policy_id"), "original_available_at": original, "available_at_overridden": overridden,
+                      "template_sha256": canonical_sha256(template)}
+
+
+def eval_policy_template(policy_template_path: Path, decision_cutoff: str, output: Path) -> Dict[str, object]:
+    """評測用策略樣板：設定版本晚於考卷 cutoff 時，把 available_at 提前到 cutoff 才能重建 Policy，並記錄這個改動。"""
+    template, notes = _eval_template(policy_template_path, decision_cutoff)
     _write(output, template)
-    return {"policy_id": template.get("policy_id"), "original_available_at": original, "available_at_overridden": overridden}
+    return notes
+
+
+def _completed_result(run_dir: Path) -> Optional[Dict[str, object]]:
+    """卷次已完成（``eval_result.json`` 存在且 status=completed）時回傳其紀錄；否則 None。"""
+    path = run_dir / "eval_result.json"
+    if not path.is_file():
+        return None
+    result = _read(path, "卷次結果")
+    return result if result.get("status") == "completed" else None
+
+
+def _check_resumable(eval_dir: Path, suite: Mapping[str, object], repeats: int, stop_after: str) -> Dict[str, object]:
+    """續跑前核對既有 manifest：評測集、重跑次數、範圍必須相同，已記錄的考卷輸入雜湊也不得改變。"""
+    manifest = _read(eval_dir / "manifest.json", "評測 manifest")
+    if manifest.get("suite") != suite.get("name"):
+        raise EvaluationError("續跑的評測集不同：manifest 為 %s，指定 %s" % (manifest.get("suite"), suite.get("name")))
+    if int(manifest.get("repeats", 0)) != int(repeats) or manifest.get("stop_after") != stop_after:
+        raise EvaluationError("續跑的 repeats／stop_after 與原評測不同（原 %s／%s）" % (manifest.get("repeats"), manifest.get("stop_after")))
+    recorded = {case["case_id"]: case for case in manifest.get("cases", [])}
+    for case in suite["cases"]:
+        previous = recorded.get(case["case_id"])
+        if previous and previous.get("bundle_sha256") not in (None, case["bundle_sha256"]):
+            raise EvaluationError("考卷 %s 的輸入雜湊與原評測不同，不能續跑" % case["case_id"])
+    return manifest
 
 
 def run_suite(
     root: Path,
     suite: Mapping[str, object],
-    make_pipeline: Callable[[Path, Path], object],
+    make_pipeline: Callable[..., object],
     *,
     repeats: int = 2,
     stop_after: str = "full",
     eval_id: Optional[str] = None,
+    resume_eval_id: Optional[str] = None,
     log: Callable[[str], None] = print,
 ) -> Dict[str, object]:
-    """每份考卷重跑 ``repeats`` 次；``make_pipeline(run_dir, decision_repository)`` 回傳 DailyDecisionPipeline。"""
+    """每份考卷重跑 ``repeats`` 次；``make_pipeline(run_dir, decision_repository, resume=False)`` 回傳 DailyDecisionPipeline。
+
+    ``resume_eval_id`` 續跑既有評測：只重跑沒有 ``eval_result.json`` 或狀態不是 completed 的卷次，已完成的沿用原紀錄；
+    重跑的卷次以 ``resume=True`` 建 pipeline，目錄內先前通過目前 Validator 的原始 Agent 輸出會沿用、不再呼叫 Agent。
+    續跑前核對評測集名稱、repeats、stop_after、每卷輸入雜湊與評測用策略樣板雜湊，任一不符即停止。
+    """
     if stop_after not in STOP_STAGES:
         raise EvaluationError("stop_after 必須是 %s" % "／".join(STOP_STAGES))
     if not 1 <= int(repeats) <= 5:
         raise EvaluationError("repeats 必須介於 1 與 5")
     root = Path(root)
+    resuming = resume_eval_id is not None
+    if resuming:
+        if eval_id is not None and eval_id != resume_eval_id:
+            raise EvaluationError("續跑時不能另外指定 eval_id")
+        eval_id = resume_eval_id
     eval_id = eval_id or "eval-%s" % datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     eval_dir = root / EVALUATION_ROOT / "runs" / eval_id
-    if eval_dir.exists():
-        raise EvaluationError("評測 run 已存在，不覆寫：%s" % eval_dir)
-    manifest = {"schema_version": EVALUATION_SCHEMA_VERSION, "eval_id": eval_id, "suite": suite.get("name"),
-                "repeats": int(repeats), "stop_after": stop_after,
-                "started_at": datetime.now(timezone.utc).isoformat(), "cases": []}
+    now = datetime.now(timezone.utc).isoformat()
+    if resuming:
+        if not eval_dir.is_dir():
+            raise EvaluationError("找不到要續跑的評測 run：%s" % eval_dir)
+        manifest = _check_resumable(eval_dir, suite, int(repeats), stop_after)
+        manifest["cases"] = []
+        manifest.setdefault("resumes", []).append({"resumed_at": now, "reran": []})
+        manifest.pop("finished_at", None)
+    else:
+        if eval_dir.exists():
+            raise EvaluationError("評測 run 已存在，不覆寫：%s" % eval_dir)
+        manifest = {"schema_version": EVALUATION_SCHEMA_VERSION, "eval_id": eval_id, "suite": suite.get("name"),
+                    "repeats": int(repeats), "stop_after": stop_after, "started_at": now, "cases": []}
     for case in suite["cases"]:
         bundle_path = Path(case["bundle_path"])
         if hashlib.sha256(bundle_path.read_bytes()).hexdigest() != case["bundle_sha256"]:
             raise EvaluationError("考卷 %s 的輸入檔已改變，請重建評測集" % case["case_id"])
         case_dir = eval_dir / case["case_id"]
-        policy = eval_policy_template(root / "config" / "decision_policy.json", str(case["decision_cutoff"]),
-                                      case_dir / "policy_template.json")
+        template_path = case_dir / "policy_template.json"
+        template, policy = _eval_template(root / "config" / "decision_policy.json", str(case["decision_cutoff"]))
+        if template_path.is_file():
+            if canonical_sha256(_read(template_path, "評測用策略樣板")) != policy["template_sha256"]:
+                raise EvaluationError("考卷 %s 的評測用策略樣板與目前設定不同，不能續跑；請建立新的評測 run" % case["case_id"])
+        else:
+            _write(template_path, template)
         runs = []
         for repeat in range(1, int(repeats) + 1):
             run_dir = case_dir / ("r%d" % repeat)
-            run_dir.mkdir(parents=True)
-            log("[評測] %s 第 %d 次" % (case["case_id"], repeat))
-            pipeline = make_pipeline(run_dir, case_dir / "decisions")
+            previous = _completed_result(run_dir) if resuming else None
+            if previous is not None:
+                log("[評測] %s 第 %d 次已完成，沿用" % (case["case_id"], repeat))
+                runs.append(previous)
+                continue
+            run_dir.mkdir(parents=True, exist_ok=resuming)
+            raw_attempts = len(list(run_dir.glob("*_raw_*.json")))
+            log("[評測] %s 第 %d 次%s" % (case["case_id"], repeat, "（續跑，已有 %d 份原始輸出）" % raw_attempts if resuming else ""))
+            pipeline = make_pipeline(run_dir, case_dir / "decisions", resume=resuming)
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             result = pipeline.run_from_bundle(
-                bundle_path, root / "var" / "etf_agent.db", case_dir / "policy_template.json",
+                bundle_path, root / "var" / "etf_agent.db", template_path,
                 root / "data" / "sector_classification.json", "decision-%s-r%d" % (stamp, repeat),
                 stop_after=None if stop_after == "full" else stop_after,
             )
-            runs.append({"repeat": repeat, "run_dir": str(run_dir), "status": result.status, "errors": result.errors,
-                         "agent_calls": result.agent_calls, "stage_durations": result.stage_durations})
-            _write(run_dir / "eval_result.json", runs[-1])
-        manifest["cases"].append({"case_id": case["case_id"], "policy": policy, "runs": runs})
+            record: Dict[str, object] = {"repeat": repeat, "run_dir": str(run_dir), "status": result.status, "errors": result.errors,
+                                         "agent_calls": result.agent_calls, "stage_durations": result.stage_durations}
+            if resuming:
+                record.update(resumed_from_attempts=raw_attempts, resumed_at=now)
+                manifest["resumes"][-1]["reran"].append("%s/r%d" % (case["case_id"], repeat))
+            runs.append(record)
+            _write(run_dir / "eval_result.json", record)
+        manifest["cases"].append({"case_id": case["case_id"], "bundle_sha256": case["bundle_sha256"], "policy": policy, "runs": runs})
         _write(eval_dir / "manifest.json", manifest)
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
     _write(eval_dir / "manifest.json", manifest)
     return manifest
+
+
+def unfinished_runs(root: Path, eval_id: str) -> List[str]:
+    """既有評測中尚未完成的卷次（``考卷/rN``）；供續跑前估算用量。"""
+    eval_dir = Path(root) / EVALUATION_ROOT / "runs" / eval_id
+    manifest = _read(eval_dir / "manifest.json", "評測 manifest")
+    suite = _read(Path(root) / EVALUATION_ROOT / "suites" / ("%s.json" % manifest["suite"]), "評測集")
+    pending = []
+    for case in suite["cases"]:
+        for repeat in range(1, int(manifest["repeats"]) + 1):
+            if _completed_result(eval_dir / case["case_id"] / ("r%d" % repeat)) is None:
+                pending.append("%s/r%d" % (case["case_id"], repeat))
+    return pending
 
 
 def evaluate(root: Path, eval_id: str, as_of: Optional[str] = None) -> Dict[str, object]:
@@ -181,8 +258,9 @@ def evaluate(root: Path, eval_id: str, as_of: Optional[str] = None) -> Dict[str,
                 {"repeat": run["repeat"], "errors": run["errors"][:3]} for run in case["runs"] if run["status"] != "completed"],
             "versus_reference": summarize(versus_reference), "stability": summarize(stability),
             "versus_reference_detail": versus_reference, "stability_detail": stability,
-            "process": [{"repeat": run["repeat"], **process_stats(run["agent_calls"]),
-                         "stage_durations": run["stage_durations"]} for run in case["runs"]],
+            "process": [{"repeat": run["repeat"], **process_stats(run["agent_calls"]), "stage_durations": run["stage_durations"],
+                         **({"resumed_from_attempts": run["resumed_from_attempts"]} if "resumed_from_attempts" in run else {})}
+                        for run in case["runs"]],
         })
     report = {
         "schema_version": EVALUATION_SCHEMA_VERSION, "eval_id": eval_id, "suite": manifest["suite"],
@@ -196,8 +274,15 @@ def evaluate(root: Path, eval_id: str, as_of: Optional[str] = None) -> Dict[str,
         "answers": score_runs(Path(root) / "var" / "etf_agent.db",
                               as_of or datetime.now(timezone.utc).isoformat(), answer_inputs),
     }
+    if manifest.get("resumes"):
+        report["resumed_at"] = manifest["resumes"][-1].get("resumed_at")
+        report["resumes"] = manifest["resumes"]
     _write(eval_dir / "report.json", report)
     (eval_dir / "report.md").write_text(render_report(report), encoding="utf-8")
+    # 一頁 HTML 是衍生品：只排版 report.json，不重算；不進 manifest。
+    from .html_report import render_eval_html
+
+    (eval_dir / "report.html").write_text(render_eval_html(report), encoding="utf-8")
     return report
 
 

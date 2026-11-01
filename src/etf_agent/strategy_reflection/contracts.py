@@ -17,6 +17,8 @@ COOLDOWN_DECISION_DAYS = 10
 # 套用後的試用觀察期（以新決策日計）。比賽初賽只到 11/27，窗口刻意短：一輪「提案→套用→觀察」約兩週。
 TRIAL_DAYS = 5
 TRIAL_EXTENSION_DAYS = 3
+# 試用期最長日曆天：基準資料不可用等原因讓結算一直 pending 時，超過就以 timeout 結案（保留變更、標需人工），不永久凍結反思迴圈。
+TRIAL_MAX_CALENDAR_DAYS = 15
 # 試用前後比較的基準窗口：套用前最近幾個交易日的「帳戶日報酬 − 等權基準日報酬」；少於下限不下結論。
 BASELINE_DAYS = 10
 MIN_BASELINE_DAYS = 4

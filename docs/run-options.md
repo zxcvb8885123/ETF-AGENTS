@@ -6,7 +6,8 @@
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--agent-cli claude\|codex\|opencode` | `claude` | 子 Agent 使用的 CLI。換執行器時不可續用其他執行器的 run。 |
+| `--agent-cli claude\|opencode\|codex` | `claude` | 子 Agent 使用的 CLI。換執行器時不可續用其他執行器的 run。`codex` 無法強制多空隔離：多空研究員預設改用 `claude`，可由 `--research-agent-cli` 另指定。 |
+| `--research-agent-cli claude\|opencode\|codex` | 與 `--agent-cli` 相同（`codex` 亦然） | 多頭／空頭研究員使用的 CLI。研究員為 `codex` 時（含 `--agent-cli codex` 的預設），多空隔離改由研究階段輸出暫存保證（時序隔離：多空輸出在兩方完成前不落地），Codex 仍可讀整個專案含舊 run，隔離弱於 claude／opencode；續跑為全有或全無，研究階段失敗等於整段研究重跑。與主 CLI 不同時，預檢兩者的登入都要通過；續跑須兩者都與原 run 相同（舊 run 視為與主 CLI 相同）。`--research-model` 套用在這個 CLI 上。 |
 | `--model 模型` | Claude CLI 為 `opus`；其他 CLI 沿用該 CLI 設定 | 交易、現金姿態與風險審查使用的模型（最後拍板的階段）。 |
 | `--research-model 模型` | Claude CLI 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於多頭／空頭研究員批次。傳 `inherit` 則沿用 `--model`。 |
 | `--analyst-model 模型` | Claude CLI 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於技術／基本面／事件三位分析師的批次，量最大。傳 `inherit` 則沿用 `--model`。 |

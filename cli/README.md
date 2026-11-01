@@ -12,7 +12,7 @@
 | `run` | 完整每日決策，呼叫 `scripts/run_daily_pipeline.py` |
 | `status` | 查資料狀態 |
 | 無參數 | 開儀表板 |
-| 子 Agent CLI | `run --agent-cli claude\|codex\|opencode` |
+| 子 Agent CLI | `run --agent-cli claude\|opencode\|codex`、`--research-agent-cli claude\|opencode\|codex`（預設與 `--agent-cli` 相同；研究員為 `codex` 時隔離改由輸出暫存保證、較弱） |
 | 驗證 OpenCode | `./start.sh run --agent-cli opencode --preflight-only --skip-data` |
 
 下表的單步入口供進階操作使用。

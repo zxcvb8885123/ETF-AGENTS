@@ -84,7 +84,9 @@ _REVIEW_RULES = (
 
 def _peer_deny_reads(role: str) -> Tuple[str, ...]:
     peer = "bear" if role == "bull" else "bull"
-    return ("%s_*" % peer, "brief_%s_*" % peer, "research_debate*")
+    # 續跑時 run 目錄可能已有後段產物（含對方論點的 debate、交易與 team_inputs），一併擋掉；不用 ``decision*``，會擋到共同輸入。
+    return ("%s_*" % peer, "brief_%s_*" % peer, "research_debate*", "debate*", "intent*", "trade_decision*",
+            "trader_b*", "trader_report*", "brief_trader_*", "team_inputs*", "selection_ranking*")
 
 
 class TeamStagesMixin:
@@ -215,7 +217,9 @@ class TeamStagesMixin:
         jobs: List[Tuple[str, Callable[[], Dict[str, object]]]] = []
         for role in STANCE_ROLES:
             jobs.extend(self._stance_batch_jobs(bundle, momentum, analyst_reports, research_result, role, briefs[role], batches))
-        partials = self._run_jobs(jobs)
+        # 執行器不能強制拒讀（Codex）時，多空原始輸出暫存到兩方全部完成才落地（時序隔離）；Claude／OpenCode 行為不變。
+        with self._staged_research_outputs([name for name, _ in jobs]):
+            partials = self._run_jobs(jobs)
         packets: Dict[str, Dict[str, object]] = {}
         for index, role in enumerate(STANCE_ROLES):
             outputs = [partial["items"] for partial in partials[index * len(batches):(index + 1) * len(batches)]]

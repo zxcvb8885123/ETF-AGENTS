@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence
 
 from .contracts import (
@@ -52,14 +52,72 @@ def extensions(history: Sequence[Mapping[str, object]], reflection_id: str) -> i
 
 
 def consecutive_reverts(history: Sequence[Mapping[str, object]]) -> int:
-    """最近連續幾次試用結案都是還原（中間遇到保留就歸零）。"""
+    """最近連續幾次試用結案都是還原（中間遇到保留就歸零）。
+
+    只計最近一次 ``auto_disabled`` 之後的結案：人工重新打開自動套用後，之前已經觸發過關閉的還原不再累計，
+    否則下一次單一還原就會立刻再關閉。"""
     count = 0
     for entry in reversed(history):
+        if entry.get("action") == "auto_disabled":
+            break
         if entry.get("action") == "trial_result" and entry.get("final"):
             if entry.get("result") != "reverted":
                 break
             count += 1
     return count
+
+
+def change_direction(path: str, before: object, after: object) -> int:
+    """旋鈕這次變更的方向：+1 調高、-1 調低、0 無法判斷（列舉旋鈕看選項順序）。"""
+    knob = KNOBS.get(path)
+    if knob is None:
+        return 0
+    try:
+        if knob.kind == "enum":
+            low, high = knob.choices.index(str(before)), knob.choices.index(str(after))
+        else:
+            low, high = Decimal(str(before)), Decimal(str(after))
+    except (ValueError, InvalidOperation):
+        return 0
+    return (high > low) - (high < low)
+
+
+def knob_outcomes(history: Sequence[Mapping[str, object]]) -> Dict[str, Dict[str, object]]:
+    """每個旋鈕最近一次套用的試用結果與被還原的累計次數（給簡報證據與提案驗證用）。
+
+    ``last_result`` 是該旋鈕最近一次套用的最終結案（kept／reverted／timeout…）；還在試用是 ``in_trial``，
+    被人工 rollback 且沒有結案紀錄是 ``rolled_back``。``reverted_entry`` 是最近一次被試用還原的套用紀錄
+    （``last_result == "reverted"`` 時才有，驗證器用它判斷方向與冷卻）。"""
+    final: Dict[str, Mapping[str, object]] = {}
+    stack: List[Mapping[str, object]] = []
+    rolled_back = set()
+    applies: List[Mapping[str, object]] = []
+    for entry in history:
+        action = entry.get("action")
+        if action == "apply":
+            stack.append(entry)
+            applies.append(entry)
+        elif action == "rollback" and stack:
+            rolled_back.add(str(stack.pop().get("reflection_id")))
+        elif action == "trial_result" and entry.get("final"):
+            final[str(entry.get("of"))] = entry
+    outcomes: Dict[str, Dict[str, object]] = {}
+    for entry in applies:
+        rid = str(entry.get("reflection_id"))
+        result = final.get(rid)
+        last = str(result.get("result")) if result is not None else ("rolled_back" if rid in rolled_back else "in_trial")
+        for knob in entry.get("knobs") or []:  # type: ignore[union-attr]
+            if str(knob) not in KNOBS:
+                continue
+            item = outcomes.setdefault(str(knob), {"last_result": last, "reverted_count": 0, "reverted_entry": None})
+            item["last_result"] = last
+            if last == "reverted":
+                item["reverted_count"] = int(item["reverted_count"]) + 1  # type: ignore[call-overload]
+                item["reverted_entry"] = entry
+    for item in outcomes.values():
+        if item["last_result"] != "reverted":
+            item["reverted_entry"] = None
+    return outcomes
 
 
 def excess_series(comparison: Mapping[str, object], benchmark_id: str = EQUAL_WEIGHT_ID) -> Dict[str, Decimal]:

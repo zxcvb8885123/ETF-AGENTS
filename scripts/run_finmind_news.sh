@@ -4,6 +4,12 @@ set -eu
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$PROJECT_DIR"
 
+# 與其他資料抓取共用 artifacts/daily/.data.lock：被佔用時最多等 ETF_DATA_LOCK_WAIT_SECONDS（預設 1800）秒，逾時停止。
+if [ -z "${ETF_DATA_LOCK_HELD:-}" ]; then
+  if [ -x .venv/bin/python ]; then LOCK_PYTHON=.venv/bin/python; else LOCK_PYTHON=python3; fi
+  ETF_DATA_LOCK_HELD=1 exec "$LOCK_PYTHON" scripts/with_data_lock.py -- sh "$PROJECT_DIR/scripts/run_finmind_news.sh" "$@"
+fi
+
 if [ -z "${FINMIND_TOKEN:-}" ] && [ -r .env ]; then
   FINMIND_TOKEN=$(sed -n 's/^FINMIND_TOKEN=//p' .env | sed -n '1p')
   export FINMIND_TOKEN

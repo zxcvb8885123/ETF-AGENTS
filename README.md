@@ -33,20 +33,22 @@ uv python install 3.12
 | 完整每日決策 | `./start.sh run` | 更新資料、建立快照、準備帳本，執行分析與決策 Agent，封存中文報告；符合條件時另產生 D-Plan 候選。沿用 Snapshot、重做與還原的規則見[日常操作](docs/operations.md#每日排程晚上備案早上重做) |
 | 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題、驗證結果與最後更新時間（台北時間）；不重新抓取、不需 Docker |
 
-首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
+首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 OpenCode；`--agent-cli codex` 時全部子 Agent（含多空研究員）預設都用 Codex 模型，未另指定模型就用 Codex 預設；研究員可用 `--research-agent-cli` 另行指定，Codex 研究員的多空隔離較弱（見[隔離說明](docs/architecture.md)）：
 
 ```bash
-./start.sh run --agent-cli codex
 ./start.sh run --agent-cli opencode
+./start.sh run --agent-cli codex                                 # 全部用 Codex 模型（研究員隔離較弱）
+./start.sh run --agent-cli codex --research-agent-cli claude     # 研究員改用 Claude：隔離較強
 ```
 
 環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。
 
-首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 Codex 或 OpenCode：
+首次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設使用已登入的 Claude CLI；可改用 OpenCode；`--agent-cli codex` 時全部子 Agent（含多空研究員）預設都用 Codex 模型，未另指定模型就用 Codex 預設；研究員可用 `--research-agent-cli` 另行指定，Codex 研究員的多空隔離較弱（見[隔離說明](docs/architecture.md)）：
 
 ```bash
-./start.sh run --agent-cli codex
 ./start.sh run --agent-cli opencode
+./start.sh run --agent-cli codex                                 # 全部用 Codex 模型（研究員隔離較弱）
+./start.sh run --agent-cli codex --research-agent-cli claude     # 研究員改用 Claude：隔離較強
 ```
 
 可調整的參數（用量、模型、續跑、資料包）見[參數說明](docs/run-options.md)，環境設定見 [Docker 使用說明](docs/docker.md)，單步操作見 [CLI 說明](cli/README.md)。

@@ -122,7 +122,8 @@ flowchart LR
 
 | 路徑 | 內容 | 誰寫入 | 備註 |
 | --- | --- | --- | --- |
-| `daily/.lock` | 防止兩個每日流程同時跑的檔案鎖 | `scripts/run_daily_pipeline.py` | 實際目錄已存在，可忽略 |
+| `daily/.lock` | 防止兩個每日流程同時跑的檔案鎖；持有者會寫入 pid 與開始時間，鎖被佔用時略過並通知，超過 6 小時未結束會標示疑似殭屍；取鎖遇到權限或磁碟錯誤則失敗並通知 | `scripts/run_daily_pipeline.py` | 實際目錄已存在，可忽略 |
+| `daily/.data.lock` | 資料抓取互斥鎖：`./start.sh data／auto／daily／official／all` 與 `scripts/run_finmind_news.sh` 先取得它才執行（20:00 資料、20:40 新聞與 21:00 決策自己的 `start.sh daily` 不會同時寫資料庫）；被佔用時最多等 `ETF_DATA_LOCK_WAIT_SECONDS`（預設 1800）秒，逾時以結束碼 75 停止並通知 | `scripts/with_data_lock.py` | 可忽略 |
 | `daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json` | 每日執行狀態、決策 run ID、交付結果、D-Plan 結果、阻擋原因；取代又還原時記 `superseded_pending` 與 `rolled_back`；決策跑完已過交件期限且沒有備案時記 `late_decision_archived_to`（舊版第一次 run 沒有時間後綴） | `run_daily_pipeline.py`（`write_json`） | D-Plan 匯出時作為 `daily_run` 輸入；`export_latest` 也掃它 |
 | `.../trading_status.json` | 當次交易狀態 bundle 與 assessment | `run_daily_pipeline.py` | 讓重建不依賴舊的 `data/trading_status` 封存 |
 | `.../decision_input.json` | 決策輸入 bundle（Snapshot、帳戶快照等） | `DailyDecisionPipeline` | 決策封存也會保存一份 |

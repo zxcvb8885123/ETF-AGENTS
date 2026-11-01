@@ -11,7 +11,7 @@ from .contracts import (
     VERIFICATION_OBSERVE, ReflectionError, require_mapping,
 )
 from .tools import check_proposal, knob_origins
-from .trial import open_trial
+from .trial import change_direction, knob_outcomes, open_trial
 
 REFLECTION_FIELDS = {
     "schema_version", "reflection_id", "as_of", "brief_sha256", "base_policy_id", "base_policy_sha256", "decision_days",
@@ -80,6 +80,7 @@ def validate_reflection(
            and KNOBS[str(item["knob"])].verification == VERIFICATION_OBSERVE) > 1:
         raise ReflectionError("影子回放驗不了的旋鈕（停損／停利門檻）每週最多提一個")
     origins = knob_origins(history)
+    outcomes = knob_outcomes(history)
     seen: List[str] = []
     for index, proposal in enumerate(proposals):
         label = "proposals[%d]" % index
@@ -102,3 +103,14 @@ def validate_reflection(
                 if waited < COOLDOWN_DECISION_DAYS:
                     raise ReflectionError("%s 旋鈕 %s 在冷卻期（再等 %d 個決策日）" % (label, path, COOLDOWN_DECISION_DAYS - waited))
                 break
+        # 最近一次試用被還原的旋鈕：冷卻加倍，且不得再往同一個方向調（結果已證明那個方向明確變差）；
+        # 之後有別的結案（保留等）才解除。舊紀錄沒有 changes 方向時只套用加倍的冷卻。
+        reverted = outcomes.get(path, {}).get("reverted_entry")
+        if reverted is not None:
+            waited = int(brief["decision_days"]) - int(reverted["decision_days"])  # type: ignore[index]
+            if waited < 2 * COOLDOWN_DECISION_DAYS:
+                raise ReflectionError("%s 旋鈕 %s 上次調整被試用還原，冷卻加倍（再等 %d 個決策日）" % (label, path, 2 * COOLDOWN_DECISION_DAYS - waited))
+            change = (reverted.get("changes") or {}).get(path)  # type: ignore[union-attr]
+            direction = change_direction(path, change["from"], change["to"]) if isinstance(change, Mapping) else 0
+            if direction != 0 and direction == change_direction(path, checked["current"], checked["proposed"]):
+                raise ReflectionError("%s 旋鈕 %s 上次往同一個方向調整被試用還原，不得再往同方向提案" % (label, path))

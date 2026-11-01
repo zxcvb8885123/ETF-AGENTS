@@ -9,7 +9,7 @@ import json
 import shutil
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional
@@ -26,15 +26,15 @@ from .diagnostics import build_diagnostics, load_runs
 from etf_agent.decision.strategy_lessons import MAX_LESSONS, load_strategy_lessons
 
 from .lessons import (
-    LESSONS_ACTION, LESSONS_SCHEMA, REVERT_ACTION, apply_lessons, lessons_brief_for_agent, lessons_from_output, load_pending,
-    revert_lessons, save_pending,
+    LESSONS_ACTION, LESSONS_SCHEMA, MIN_GROUP, REVERT_ACTION, apply_lessons, holdings_count, lessons_brief_for_agent,
+    lessons_from_output, load_pending, revert_lessons, save_pending,
 )
 from .thesis import DEFAULT_TOLERANCE, build_thesis_tracking
 from .thesis_review import REVIEW_SCHEMA, batches, current_context, review_briefs, unknown_items, validate_review
 from .report import render_weekly_report, write_weekly_report
 from .contracts import (
     AUTO_DISABLE_REVERTS, KNOBS, MAX_PROPOSALS, POLICY_PATH, SCHEMA_VERSION, STATUS_OBSERVE_ONLY, STATUS_PROPOSED, SWITCH_PATH,
-    TRIAL_DAYS, VERIFICATION_OBSERVE, ReflectionError,
+    TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS, VERIFICATION_OBSERVE, ReflectionError,
 )
 from .repository import ReflectionRepository, atomic_write_json
 from .tools import apply_proposals, check_proposal, validate_template
@@ -96,7 +96,7 @@ def make_brief(root: Path, database: Path, as_of: str, decisions: Optional[Path]
     report = evaluate(CalibrationRepository(root / "artifacts" / "calibration"), database, as_of)
     diagnostics = build_diagnostics(decisions or root / "artifacts" / "decisions", database, as_of, loss_tolerance(template))
     diagnostics["benchmark"] = benchmark_diagnostics(root, database, as_of)
-    return build_brief(report, template, as_of, diagnostics)
+    return build_brief(report, template, as_of, diagnostics, ReflectionRepository(root).history())
 
 
 def loss_tolerance(template: Mapping[str, object]) -> Decimal:
@@ -162,14 +162,21 @@ def review_thesis(
 
 def reflect_lessons(
     runner: Optional[AgentRunner], run_dir: Path, base: Path, thesis: List[Dict[str, object]],
-    review: Mapping[str, Mapping[str, object]], evidence: Mapping[str, str], now: datetime, root: Path,
+    review: Mapping[str, Mapping[str, object]], reflection_brief: Mapping[str, object], now: datetime, root: Path,
 ) -> Dict[str, object]:
     """反思 Agent 回頭看過去買進的股票，歸納最多 3 條做法建議（教訓）。只封存提案，週六由 ``apply_pending`` 套用。
 
+    校準樣本門檻未通過（``gate_open`` 不是 True，缺欄位也算）或持股少於 ``MIN_GROUP`` 檔時不呼叫 Agent。
     失敗（沒有 Agent、逾時、輸出不合格）只回原因，不中斷反思；與目前教訓相同或沒有教訓時本週不變更。"""
     if runner is None:
         return {"status": "skipped", "reason": "沒有提供 Agent"}
-    brief = lessons_brief_for_agent(thesis, review, evidence, load_strategy_lessons(root))
+    if reflection_brief.get("gate_open") is not True:
+        return {"status": "skipped", "reason": "校準樣本門檻未達（gate 關閉），本週不整理教訓"}
+    holdings = holdings_count(thesis)
+    if holdings < MIN_GROUP:
+        return {"status": "skipped", "reason": "持股 %d 檔少於 %d 檔，樣本太少，本週不整理教訓" % (holdings, MIN_GROUP)}
+    evidence = reflection_brief["evidence"]
+    brief = lessons_brief_for_agent(thesis, review, evidence, load_strategy_lessons(root))  # type: ignore[arg-type]
     if not any(key.startswith("thesis.") for key in brief["evidence"]):  # type: ignore[union-attr]
         return {"status": "skipped", "reason": "沒有可歸納的持股統計"}
     path = run_dir / "lessons_brief.json"
@@ -187,8 +194,10 @@ def reflect_lessons(
         return {"status": "failed", "reason": str(error)}
     if sealed is None:
         return {"status": "unchanged", "reason": "沒有新的教訓，或與目前相同"}
-    save_pending(base, sealed)
-    return {"status": "proposed", "lessons_id": sealed["lessons_id"], "texts": [item["text"] for item in sealed["lessons"]]}  # type: ignore[union-attr]
+    sample = {"gate_open": True, "holdings": holdings, "decision_days": int(reflection_brief["decision_days"])}  # type: ignore[call-overload]
+    save_pending(base, sealed, sample)
+    return {"status": "proposed", "lessons_id": sealed["lessons_id"], "holdings": holdings,
+            "texts": [item["text"] for item in sealed["lessons"]]}  # type: ignore[union-attr]
 
 
 def _current_lesson_texts(root: Path) -> List[str]:
@@ -352,6 +361,8 @@ def apply_reflection(
                 "policy_sha256_after": canonical_sha256(live),
                 # 人設定的起點（累積偏移上限的基準）與試用觀察期：套用後要看新決策日的表現，明確變差才還原。
                 "origins": {item["knob"]: item["current"] for item in reflection["proposals"]},  # type: ignore[union-attr]
+                # 每顆旋鈕這次的方向（from→to）：試用被還原後，提案驗證用它禁止再往同方向調。
+                "changes": {item["knob"]: {"from": item["current"], "to": item["proposed"]} for item in reflection["proposals"]},  # type: ignore[union-attr]
                 "trial": {"verification": trial_verification([item["knob"] for item in reflection["proposals"]])},  # type: ignore[union-attr]
             })
             try:
@@ -433,12 +444,44 @@ def benchmark_diagnostics(root: Path, database: Path, as_of: str) -> Dict[str, o
     return {"status": "ok", "benchmarks": entries}
 
 
-def trial_note(history, decision_days: int) -> Optional[str]:
+def trial_note(history, decision_days: int, excess: Optional[Mapping[str, Decimal]] = None) -> Optional[str]:
+    """試用進行中的週報／略過說明。有基準超額序列時用與結算（``evaluate_trial``）相同的交易日計數，
+    沒有（基準資料不可用）就退回決策日差並寫明結算會等待、超過 ``TRIAL_MAX_CALENDAR_DAYS`` 天逾時結案。"""
     entry = open_trial(history)
     if entry is None:
         return None
-    return "試用觀察期進行中：%s 套用 %s，新決策日 %d／%d；結案前不提新案。" % (
-        str(entry["applied_at"])[:10], "、".join(entry["knobs"]), max(0, decision_days - int(entry["decision_days"])), TRIAL_DAYS)  # type: ignore[arg-type]
+    head = "試用觀察期進行中：%s 套用 %s，" % (str(entry["applied_at"])[:10], "、".join(entry["knobs"]))  # type: ignore[arg-type]
+    if excess:
+        evaluation = evaluate_trial(entry, excess, extensions(history, str(entry["reflection_id"])) > 0)
+        progress = "新交易日 %d／%d" % (evaluation["after_days"], evaluation["needed_after_days"])  # type: ignore[index]
+    else:
+        progress = "新決策日 %d／%d（基準資料不可用，無法計交易日；超過 %d 天逾時結案）" % (
+            max(0, decision_days - int(entry["decision_days"])), TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS)  # type: ignore[arg-type]
+    return head + progress + "；結案前不提新案。"
+
+
+def _applied_mismatch(root: Path, entry: Mapping[str, object]) -> Optional[Dict[str, object]]:
+    """套用紀錄與目前 live 檔是否一致。一致或舊紀錄沒有雜湊（無從核對）回 None；
+    不一致回 {"reason", "never_landed"}：never_landed 表示 live 檔仍是套用前的版本（歷史先寫、換檔前就被中止）。"""
+    if entry.get("action") == LESSONS_ACTION:
+        expected = entry.get("sha256_after")
+        if not expected:
+            return None
+        current = load_strategy_lessons(root)
+        if current is not None and current["sha256"] == expected:
+            return None
+        return {"reason": "目前的教訓檔不是該次套用的結果（或已被改動、刪除）", "never_landed": False}
+    expected = entry.get("policy_sha256_after")
+    if not expected:
+        return None
+    try:
+        live = _read_json(Path(root) / POLICY_PATH, "目前策略樣板")
+    except ReflectionError as error:
+        return {"reason": str(error), "never_landed": False}
+    if canonical_sha256(live) == expected:
+        return None
+    return {"reason": "目前策略樣板 %s 不是該次套用的結果 %s（或內容已被手動修改）" % (live.get("policy_id"), entry.get("policy_id_after")),
+            "never_landed": live.get("policy_id") == entry.get("policy_id_before")}
 
 
 def settle_open_trial(
@@ -447,6 +490,9 @@ def settle_open_trial(
 ) -> Optional[Dict[str, object]]:
     """結算尚未結案的試用：沒有就回 None；觀察日不夠回 pending；明確變差才還原。
 
+    不會永遠卡住的結案：套用紀錄與 live 檔不一致 → ``orphaned``；觀察日一直湊不齊超過 ``TRIAL_MAX_CALENDAR_DAYS`` 天 → ``timeout``
+    （變更保留）；判定要還原卻還原失敗 → ``revert_failed``。這三種都是 final 並標 ``needs_manual``。
+
     還原走 ``rollback``（要取每日鎖、避開 20:50～09:00，且設定檔被人改過就不動），所以放在週六由 ``apply_pending`` 執行。
     連續 ``AUTO_DISABLE_REVERTS`` 次還原會自動關掉自動套用，改回人工。"""
     history = repository.history()
@@ -454,29 +500,46 @@ def settle_open_trial(
     if entry is None:
         return None
     reflection_id = str(entry["reflection_id"])
+    moment = now.astimezone(TAIPEI).isoformat()
+
+    def record(result: str, final: bool, evaluation: Mapping[str, object], **extra: object) -> Dict[str, object]:
+        repository.append_history({"action": "trial_result", "of": reflection_id, "result": result, "final": final,
+                                   "settled_at": moment, "evaluation": evaluation, **extra})
+        return {"trial": result, "reflection_id": reflection_id, "evaluation": evaluation, **extra}
+
+    # 套用到一半被中止（歷史已寫、live 檔沒換）或 live 檔事後被人改過：試用評的不是這次變更，繼續等或還原都沒有意義，
+    # 直接以 orphaned 結案並要求人工處理（不改 live 檔）。live 檔仍是套用前版本時順手補上 rollback，讓堆疊與冷卻回到真實狀態。
+    mismatch = _applied_mismatch(root, entry)
+    if mismatch is not None:
+        if mismatch["never_landed"]:
+            repository.append_history({"action": "rollback", "rolled_back_at": moment, "of": reflection_id,
+                                       "policy_id_restored": entry.get("policy_id_before"), "reason": "套用中途中止，live 檔未更換"})
+        reason = str(mismatch["reason"])
+        return record("orphaned", True, {"verdict": "orphaned", "reason": reason}, needs_manual=True,
+                      alert="試用 %s 的套用紀錄與目前設定不一致，已結案、需人工檢查：%s" % (reflection_id, reason))
     extended = extensions(history, reflection_id) > 0
     evaluation = evaluate_trial(entry, excess, extended)
     verdict = str(evaluation["verdict"])
-    moment = now.astimezone(TAIPEI).isoformat()
     verification = str(entry["trial"]["verification"])  # type: ignore[index]
 
-    def record(result: str, final: bool) -> Dict[str, object]:
-        repository.append_history({"action": "trial_result", "of": reflection_id, "result": result, "final": final,
-                                   "settled_at": moment, "evaluation": evaluation})
-        return {"trial": result, "reflection_id": reflection_id, "evaluation": evaluation}
-
     if verdict == "pending":
+        waited = _calendar_days_since(entry, now)
+        if waited is not None and waited >= TRIAL_MAX_CALENDAR_DAYS:
+            # 基準資料一直不可用或交易日一直湊不齊：不能讓試用永遠不結案而凍結整個反思迴圈。變更保留、不還原，標需人工。
+            return record("timeout", True, {**evaluation, "reason": "套用已 %d 天仍湊不齊觀察交易日，逾時結案" % waited}, needs_manual=True,
+                          alert="試用 %s 逾時結案（套用已 %d 天，觀察交易日 %s／%s）；變更保留，請人工確認" % (
+                              reflection_id, waited, evaluation.get("after_days"), evaluation.get("needed_after_days")))
         return {"trial": "pending", "reflection_id": reflection_id, "evaluation": evaluation}
     if verdict == "not_worse":
-        return record("kept", True)
+        return record("kept", True, evaluation)
     revert = verdict == "worse"
     if verdict == "inconclusive":
         if not extended:
-            return record("extended", False)
+            return record("extended", False, evaluation)
         # 回放驗得了的旋鈕已過影子回放，看不出差別就保留；驗不了的（停損／停利門檻）看不出差別就還原。
         revert = verification == VERIFICATION_OBSERVE
         if not revert:
-            return record("kept_unverified", True)
+            return record("kept_unverified", True, evaluation)
     try:
         with (write_lock or _no_lock)():
             if apply_window_blocked((clock or (lambda: now))()):
@@ -488,14 +551,26 @@ def settle_open_trial(
     except BlockingIOError:
         return {"trial": "revert_deferred", "reason": "每日決策進行中，還原改天執行", "reflection_id": reflection_id}
     except ReflectionError as error:
-        return {"trial": "revert_failed", "reason": str(error), "reflection_id": reflection_id}
-    result = record("reverted", True)
+        # 還原不了（備份讀不到等）：結案並標需人工，否則每週都卡在同一個失敗上。
+        return {**record("revert_failed", True, evaluation, needs_manual=True, reason=str(error),
+                         alert="試用 %s 判定要還原但還原失敗，已結案、需人工處理：%s" % (reflection_id, error)),
+                "reason": str(error)}
+    result = record("reverted", True, evaluation)
     if consecutive_reverts(repository.history()) >= AUTO_DISABLE_REVERTS:
         disable_auto_apply(root)
         repository.append_history({"action": "auto_disabled", "at": moment,
                                    "reason": "連續 %d 次試用被還原，自動關閉自動套用，改回人工" % AUTO_DISABLE_REVERTS})
         result["auto_apply_disabled"] = True
     return result
+
+
+def _calendar_days_since(entry: Mapping[str, object], now: datetime) -> Optional[int]:
+    """套用日到今天的日曆天；套用時間讀不出來回 None（不逾時，維持等待）。"""
+    try:
+        applied = date.fromisoformat(str(entry["applied_at"])[:10])
+    except (KeyError, ValueError):
+        return None
+    return (now.astimezone(TAIPEI).date() - applied).days
 
 
 def disable_auto_apply(root: Path) -> None:
@@ -507,7 +582,8 @@ def disable_auto_apply(root: Path) -> None:
 # 每週一次：距上一份反思不到這麼多天就略過（手動補跑用 force）。比週間隔略短，避免排程晚幾分鐘就跳過一週。
 MIN_INTERVAL_DAYS = 6
 # 待套用的反思最多等這麼久；超過就視為過期，等下一週的新反思。
-PENDING_MAX_AGE_DAYS = 8
+# 週五 19:30 封存、下週六 10:00 套用相隔 8 天又 14.5 小時（本週反思沒有產生時才會遇到），所以上限要大於 8 天。
+PENDING_MAX_AGE_DAYS = 9
 
 
 def reflection_ids(repository: ReflectionRepository) -> List[str]:
@@ -578,16 +654,25 @@ def _apply_pending_lessons(root, now, repository, write_lock, clock) -> Dict[str
     pending = load_pending(repository.base)
     if pending is None:
         return {"applied": False, "reason": "沒有待套用的教訓"}
+    lessons = pending["lessons"]
+    sample = pending["sample"]
     applied = {str(entry.get("reflection_id")) for entry in repository.history() if entry.get("action") == LESSONS_ACTION}
-    if pending["lessons_id"] in applied:
+    if lessons["lessons_id"] in applied:
         return {"applied": False, "reason": "這份教訓已套用過"}
     try:
-        created = parse_aware_time(pending["created_at"], "created_at", error=ReflectionError)
+        created = parse_aware_time(lessons["created_at"], "created_at", error=ReflectionError)
     except ReflectionError:
         return {"applied": False, "reason": "待套用教訓的時間格式錯誤"}
     if now - created > timedelta(days=PENDING_MAX_AGE_DAYS):
         return {"applied": False, "reason": "待套用的教訓超過 %d 天，已過期，等下一週" % PENDING_MAX_AGE_DAYS}
-    decision_days = int(pending.get("decision_days", 0)) if isinstance(pending.get("decision_days"), int) else 0
+    # 套用時再核對最近一份反思的樣本門檻，擋手植或殘留的 pending.json。
+    ids = reflection_ids(repository)
+    try:
+        latest_brief = load_reflection(repository, ids[-1])[1] if ids else None
+    except ReflectionError:
+        latest_brief = None
+    if latest_brief is None or latest_brief.get("gate_open") is not True:
+        return {"applied": False, "reason": "最近一份反思的校準樣本門檻未達，教訓不套用"}
     try:
         with (write_lock or _no_lock)():
             if apply_window_blocked((clock or (lambda: datetime.now(timezone.utc)))()):
@@ -595,28 +680,17 @@ def _apply_pending_lessons(root, now, repository, write_lock, clock) -> Dict[str
             # 取鎖前的檢查可能已過期（別的程序剛套用、或另一件變更剛開始試用）：鎖內重讀歷史與待套用檔再判斷。
             history = repository.history()
             reloaded = load_pending(repository.base)
-            if reloaded is None or reloaded["lessons_id"] != pending["lessons_id"]:
+            if reloaded is None or reloaded["lessons"]["lessons_id"] != lessons["lessons_id"]:
                 return {"applied": False, "reason": "待套用的教訓在等待期間已改變，改天再套用"}
-            if any(entry.get("action") == LESSONS_ACTION and str(entry.get("reflection_id")) == pending["lessons_id"] for entry in history):
+            if any(entry.get("action") == LESSONS_ACTION and str(entry.get("reflection_id")) == lessons["lessons_id"] for entry in history):
                 return {"applied": False, "reason": "這份教訓已套用過"}
             if open_trial(history) is not None:
                 return {"applied": False, "reason": "已有另一件變更在試用觀察期，教訓改天再套用"}
-            return apply_lessons(root, repository.base, pending, repository.append_history, _decision_days_of(repository, decision_days), now.astimezone(TAIPEI))
+            return apply_lessons(root, repository.base, lessons, repository.append_history, int(sample["decision_days"]), now.astimezone(TAIPEI))
     except BlockingIOError:
         return {"applied": False, "reason": "每日決策進行中，教訓改天再套用"}
     except ReflectionError as error:
         return {"applied": False, "reason": str(error)}
-
-
-def _decision_days_of(repository: ReflectionRepository, fallback: int) -> int:
-    """試用期以「套用時的決策日數」為起點；取最近一份反思簡報的 decision_days。"""
-    ids = reflection_ids(repository)
-    if not ids:
-        return fallback
-    try:
-        return int(load_reflection(repository, ids[-1])[1]["decision_days"])  # type: ignore[arg-type]
-    except (ReflectionError, KeyError, ValueError, TypeError):
-        return fallback
 
 
 def _applied_today(history, today: datetime) -> bool:
@@ -680,15 +754,22 @@ def run_auto(
     thesis, context = thesis_inputs(root, database, as_of, decisions)
     review_dir = repository.base / "agent_inputs" / now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     review = review_thesis(runner if switch["enabled"] else None, review_dir, thesis, context) if thesis else {}
-    trial = trial_note(history, int(brief["decision_days"]))
-    lessons = (reflect_lessons(runner, review_dir, repository.base, thesis, review, brief["evidence"], now, root)  # type: ignore[arg-type]
-               if thesis and switch["enabled"] and switch["auto_apply"] and trial is None
-               else {"status": "skipped", "reason": "試用觀察期進行中、自動套用已關閉或沒有持股，本週不整理教訓"})
+    excess = benchmark_excess(root, database, now) if open_trial(history) is not None else {}
+    trial = trial_note(history, int(brief["decision_days"]), excess)
     skip_reason = (
         "config/strategy_reflection.json 的 enabled 為 false，反思停用，只產生報告。" if not switch["enabled"]
         else trial if trial is not None else None
     )
-    if not brief["gate_open"] or skip_reason is not None:
+    # 教訓與旋鈕共用校準樣本門檻：gate 沒開（或缺欄位）時完全不呼叫教訓 Agent。
+    if brief.get("gate_open") is not True or skip_reason is not None:
+        lessons = {"status": "skipped", "reason": (
+            "校準樣本門檻未達（gate 關閉），本週不整理教訓" if brief.get("gate_open") is not True
+            else "試用觀察期進行中或反思停用，本週不整理教訓")}
+    elif not thesis or not switch["auto_apply"]:
+        lessons = {"status": "skipped", "reason": "自動套用已關閉或沒有持股，本週不整理教訓"}
+    else:
+        lessons = reflect_lessons(runner, review_dir, repository.base, thesis, review, brief, now, root)  # type: ignore[arg-type]
+    if brief.get("gate_open") is not True or skip_reason is not None:
         reflection = observe_only(brief, now, skip_reason)
         save_reflection(repository, reflection, brief)
         notes = [note for note in (trial, None if switch["auto_apply"] else "自動套用已關閉（人工模式）：提案只封存，不會自動套用。") if note]
@@ -699,7 +780,15 @@ def run_auto(
         raise ReflectionError("樣本足夠但沒有提供 Agent runner")
     run_dir = repository.base / "agent_inputs" / now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     atomic_write_json(run_dir / "brief.json", brief)
-    call = runner.run(agent_task(run_dir / "brief.json"), run_dir)
+    try:
+        call = runner.run(agent_task(run_dir / "brief.json"), run_dir)
+    except DailyPipelineError as error:
+        # Agent 逾時或沒有結構化輸出：本週仍封存 observe_only 反思並寫週報（含失敗原因），之後再往外丟，讓排程看得到失敗。
+        reflection = observe_only(brief, now, "反思 Agent 失敗，本週沒有提案：%s" % error)
+        save_reflection(repository, reflection, brief)
+        write_weekly_report(root, now, render_weekly_report(
+            now, brief, reflection, None, ["反思 Agent 失敗：%s" % error], history, thesis, review, lessons, _current_lesson_texts(root)))
+        raise
     atomic_write_json(run_dir / "agent_output_raw.json", call.output)  # 先留底，之後被拒絕也查得到 Agent 原話
     try:
         reflection = from_agent_output(call.output, brief, template, rules, now)

@@ -188,7 +188,9 @@ def render_weekly_report(
     results = [entry for entry in (history or []) if entry.get("action") == "trial_result"]
     lines.extend(["", "## 八、套用後的試用觀察結果", ""])
     if results:
-        label = {"kept": "保留（沒有明確變差）", "reverted": "已還原（明確變差）", "extended": "延長觀察", "kept_unverified": "保留（看不出差別，且已過影子回放）"}
+        label = {"kept": "保留（沒有明確變差）", "reverted": "已還原（明確變差）", "extended": "延長觀察", "kept_unverified": "保留（看不出差別，且已過影子回放）",
+                 "timeout": "逾時結案（觀察交易日湊不齊，變更保留，需人工確認）", "orphaned": "套用紀錄與目前設定不一致（已結案，需人工處理）",
+                 "revert_failed": "判定要還原但還原失敗（已結案，需人工處理）"}
         for entry in results[-5:]:
             evaluation = entry.get("evaluation") or {}
             lines.append("- %s：%s｜套用前 %s 日、後 %s 日%s" % (

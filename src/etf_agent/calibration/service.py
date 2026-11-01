@@ -100,34 +100,59 @@ def record_all(decisions_root: Path, repository: CalibrationRepository) -> Dict[
     return {"recorded": recorded, "skipped": skipped}
 
 
-def _latest_per_entry_day(observations, book: OfficialPriceBook):
-    """同一個成交日只留 cutoff 最晚的一份，避免被取代的舊決策重複計算。"""
+def latest_per_entry_day(observations, book: OfficialPriceBook):
+    """同一個成交日只留 cutoff 最晚的一份，避免被取代的舊決策重複計算。
+
+    回傳 ``(chosen, unresolved, superseded)``：``chosen`` 為成交日 → 觀測；``unresolved`` 是 cutoff 後還沒有
+    官方交易日的 run；``superseded`` 是成交日 → 被較晚 cutoff 取代的 run_id 清單（依 cutoff 排序）。
+    """
     chosen: Dict[str, Mapping[str, object]] = {}
     unresolved: List[str] = []
+    grouped: Dict[str, List[Mapping[str, object]]] = {}
     for observation in observations:
         entry_day = book.execution_date(str(observation["decision_cutoff"]))
         if entry_day is None:
             unresolved.append(str(observation["decision_run_id"]))
             continue
-        current = chosen.get(entry_day)
-        if current is None or parse_aware_time(observation["decision_cutoff"], "decision_cutoff", error=CalibrationError) > parse_aware_time(
-            current["decision_cutoff"], "decision_cutoff", error=CalibrationError
-        ):
-            chosen[entry_day] = observation
+        grouped.setdefault(entry_day, []).append(observation)
+    superseded: Dict[str, List[str]] = {}
+
+    def cutoff_of(item: Mapping[str, object]):
+        return parse_aware_time(item["decision_cutoff"], "decision_cutoff", error=CalibrationError)
+
+    for entry_day, group in grouped.items():
+        latest = group[0]
+        for item in group[1:]:
+            if cutoff_of(item) > cutoff_of(latest):  # 同時刻的保留先讀到的那份
+                latest = item
+        chosen[entry_day] = latest
+        superseded[entry_day] = [str(item["decision_run_id"]) for item in sorted(group, key=cutoff_of) if item is not latest]
+    return chosen, unresolved, superseded
+
+
+def _latest_per_entry_day(observations, book: OfficialPriceBook):
+    """舊名；只回傳 (chosen, unresolved)。"""
+    chosen, unresolved, _ = latest_per_entry_day(observations, book)
     return chosen, unresolved
 
 
-def _day_rows(observation, entry_day: str, horizon: int, book: OfficialPriceBook):
-    """單一決策日在某個 horizon 的逐檔報酬。價格未到齊即回傳 (None, 原因)。"""
+def day_returns(observation, entry_day: str, horizon: int, book: OfficialPriceBook) -> Dict[str, object]:
+    """單一決策日在某個 horizon 的逐檔報酬與交易池平均。
+
+    回傳 ``{"status", "rows", "counts", "exit_day", "pool_mean"}``：價格未到齊、互相衝突或覆蓋不足時 ``rows`` 為 None、
+    ``status`` 說明原因；完整時每列含 ``return`` 與對交易池平均的 ``excess``。
+    """
+    result: Dict[str, object] = {"status": None, "rows": None, "counts": {}, "exit_day": None, "pool_mean": None}
     days = book.trading_days(entry_day)
     if not days or days[0] != entry_day:
-        return None, "entry_price_pending", {}
+        return dict(result, status="entry_price_pending")
     if len(days) <= horizon:
-        return None, "exit_price_pending", {}
+        return dict(result, status="exit_price_pending")
     exit_day = days[horizon]
+    result["exit_day"] = exit_day
     entry, exit_ = book.vwap(entry_day), book.vwap(exit_day)
     if entry is None or exit_ is None:
-        return None, "price_conflict", {}
+        return dict(result, status="price_conflict")
     skipped = book.ex_rights_symbols(entry_day, exit_day)
     rows, counts = [], {"no_price": 0, "ex_rights": 0}
     for item in observation["items"]:
@@ -138,12 +163,19 @@ def _day_rows(observation, entry_day: str, horizon: int, book: OfficialPriceBook
             counts["no_price"] += 1
         else:
             rows.append({**item, "return": forward_return(entry[symbol], exit_[symbol])})
+    result["counts"] = counts
     if Decimal(len(rows)) / Decimal(len(observation["items"])) < MIN_DAY_COVERAGE:
-        return None, "coverage_too_low", counts
+        return dict(result, status="coverage_too_low")
     pool = mean([row["return"] for row in rows])
     for row in rows:
         row["excess"] = row["return"] - pool
-    return rows, "complete", counts
+    return dict(result, status="complete", rows=rows, pool_mean=pool)
+
+
+def _day_rows(observation, entry_day: str, horizon: int, book: OfficialPriceBook):
+    """舊名；回傳 (rows 或 None, 狀態, 排除計數)。"""
+    result = day_returns(observation, entry_day, horizon, book)
+    return result["rows"], result["status"], result["counts"]
 
 
 def _daily_ic(rows) -> Dict[str, Optional[object]]:

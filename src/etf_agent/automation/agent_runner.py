@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Protocol, Sequence
+from typing import Dict, Mapping, Optional, Protocol, Sequence, Tuple
 
 
 class DailyPipelineError(RuntimeError):
@@ -40,8 +40,26 @@ def _object(properties: Mapping[str, object], required: Sequence[str]) -> Dict[s
 _TEXT = {"type": "string", "minLength": 1}
 
 # 子 Agent 一律不得讀取的檔案樣式；Claude 與 OpenCode 的拒讀規則都由此產生，避免兩邊不一致。
-SENSITIVE_READ_GLOBS = (".env", ".env.*", ".envrc", "*.pem", "*.key", "*credential*", "*secret*")
-_SECRET_FILES = (".env", ".envrc")
+_SENSITIVE_BASE_GLOBS = (
+    ".env", ".env.*", ".envrc", "*.pem", "*.key", "*credential*", "*secret*",
+    ".netrc", "*.p12", "*.pfx", "id_rsa*", "*.token", ".npmrc", ".pypirc", "*.jks",
+)
+
+
+def _with_case_variants(patterns: Sequence[str]) -> Tuple[str, ...]:
+    """每個樣式另加全小寫、全大寫與首字大寫變體：Claude／OpenCode 的樣式比對可能分大小寫，
+    而 macOS 檔案系統不分，``Secrets.json``、``CREDENTIALS`` 否則會漏擋。"""
+    found = []
+    for pattern in patterns:
+        for variant in (pattern, pattern.lower(), pattern.upper(), pattern.title()):
+            if variant not in found:
+                found.append(variant)
+    return tuple(found)
+
+
+SENSITIVE_READ_GLOBS = _with_case_variants(_SENSITIVE_BASE_GLOBS)
+# 外洩掃描的檔案樣式，與 SENSITIVE_READ_GLOBS 的 .env 類一致（含 .env.local、.env.production 等）。
+_SECRET_FILE_GLOBS = (".env*", ".envrc")
 _MIN_SECRET_LENGTH = 8
 
 
@@ -64,11 +82,16 @@ def _opencode_read_permission(extra: Sequence[str] = (), run_dir: Optional[Path]
     return permission
 
 
+def _secret_files(project_root: Path) -> list[Path]:
+    found = {path for pattern in _SECRET_FILE_GLOBS for path in project_root.glob(pattern) if path.is_file()}
+    return sorted(found)
+
+
 def _secret_values(project_root: Path) -> list[str]:
     values = []
-    for name in _SECRET_FILES:
+    for path in _secret_files(project_root):
         try:
-            lines = (project_root / name).read_text(encoding="utf-8").splitlines()
+            lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
         for line in lines:
@@ -82,7 +105,7 @@ def _secret_values(project_root: Path) -> list[str]:
 
 
 def scrub_secrets(text: str, project_root: Path) -> str:
-    """把專案 ``.env``／``.envrc`` 的值從 CLI 錯誤文字遮蔽掉，錯誤才能安全進日誌與執行紀錄。"""
+    """把專案 ``.env*``／``.envrc`` 的值從 CLI 錯誤文字遮蔽掉，錯誤才能安全進日誌與執行紀錄。"""
     for value in _secret_values(project_root):
         text = text.replace(value, "[已遮蔽]")
     return text
@@ -102,7 +125,7 @@ def _string_values(value: object):
 
 
 def reject_secret_leak(name: str, output: Mapping[str, object], project_root: Path) -> None:
-    """Agent 輸出含專案 ``.env``／``.envrc`` 的值時拒絕；錯誤訊息不帶出該值。
+    """Agent 輸出含專案 ``.env*``／``.envrc`` 的值時拒絕；錯誤訊息不帶出該值。
 
     Codex 的唯讀沙箱不限制讀檔，這是所有 runner 共用的最後一道檢查。
     """
@@ -119,6 +142,9 @@ class AgentTask:
     schema: Mapping[str, object]
     # 任務專屬的拒讀檔名樣式（Claude／OpenCode 的 read 權限強制；Codex 沙箱無法限制讀檔）。
     deny_reads: Sequence[str] = ()
+    # 只有 PipelineBase 在研究階段輸出暫存啟用（同儕輸出在階段結束前不落地到磁碟）時才設 True；
+    # 帶 deny_reads 卻沒有此旗標的任務，不強制拒讀的執行器（Codex）一律拒絕啟動。
+    stage_isolated: bool = False
 
 
 @dataclass
@@ -132,6 +158,10 @@ class AgentCall:
 
 
 class AgentRunner(Protocol):
+    # 執行器是否能以自身權限設定強制 ``AgentTask.deny_reads``（Claude、OpenCode 為 True；Codex 為 False）。
+    # 沒有此屬性的執行器視為不強制（fail-closed），研究階段改用輸出暫存。
+    enforces_deny_reads: bool
+
     def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
         ...
 
@@ -142,6 +172,8 @@ class ClaudeAgentRunner:
     ``max_budget_usd`` 對應 ``--max-budget-usd``，依估算用量限制單次 Agent 防止失控；
     claude.ai 訂閱登入時用量計入訂閱額度，不是實際扣款上限。
     """
+
+    enforces_deny_reads = True
 
     def __init__(
         self,
@@ -210,7 +242,13 @@ def _claude_usage_tokens(payload: Dict[str, object]) -> Optional[Dict[str, int]]
 
 
 class CodexAgentRunner:
-    """以唯讀 ``codex exec`` 取得符合 JSON Schema 的單次研究輸出。"""
+    """以唯讀 ``codex exec`` 取得符合 JSON Schema 的單次研究輸出。
+
+    Codex 沙箱只擋寫、不擋讀，無法強制 ``deny_reads``。任務帶 ``deny_reads``（例如多空研究員互相隔離）時，
+    只有呼叫端宣告 ``stage_isolated``（研究階段輸出暫存：同儕輸出在階段結束前不存在於磁碟）才啟動，否則拒絕、不重試。
+    這是時序隔離、不是權限隔離：Codex 仍可讀整個專案（含舊 run 的多空輸出）。"""
+
+    enforces_deny_reads = False
 
     def __init__(
         self,
@@ -225,8 +263,12 @@ class CodexAgentRunner:
         self.timeout_seconds = timeout_seconds
 
     def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
-        # 每次呼叫使用獨立暫存目錄，避免續跑或重試讀到前一次的輸出。
-        with tempfile.TemporaryDirectory(prefix="codex-agent-", dir=run_dir) as temporary:
+        if task.deny_reads and not task.stage_isolated:
+            raise DailyPipelineError("%s Codex Agent 無法強制任務拒讀規則（%s），且未由研究階段輸出暫存保證隔離，已拒絕啟動；請改用 claude 或 opencode" % (
+                task.name, "、".join(task.deny_reads)))
+        # 每次呼叫使用獨立暫存目錄，避免續跑或重試讀到前一次的輸出；放在系統暫存區而非 run 目錄，
+        # 免得同儕的 Codex 任務在 run 目錄裡讀到這次的輸出。
+        with tempfile.TemporaryDirectory(prefix="codex-agent-") as temporary:
             schema_path = Path(temporary) / "schema.json"
             output_path = Path(temporary) / "output.json"
             schema_path.write_text(json.dumps(task.schema, ensure_ascii=False), encoding="utf-8")
@@ -235,6 +277,9 @@ class CodexAgentRunner:
                 "--output-schema", str(schema_path),
                 "--output-last-message", str(output_path),
             ]
+            if task.deny_reads:
+                # 隔離任務不把 session 紀錄寫到磁碟，避免同儕的 Codex 讀到這次的完整輸出。
+                command.append("--ephemeral")
             if self.model:
                 command += ["--model", self.model]
             command += ["-"]
@@ -262,6 +307,8 @@ class CodexAgentRunner:
 
 class OpenCodeAgentRunner:
     """隔離的 OpenCode 非互動工作階段；只准讀檔，JSONL 最後一則訊息須是 JSON。"""
+
+    enforces_deny_reads = True
 
     def __init__(
         self,
@@ -321,10 +368,13 @@ class OpenCodeAgentRunner:
                     raise ValueError("事件 part 格式錯誤")
                 if kind == "error":
                     raise ValueError("Agent 回報錯誤")
-                if kind == "tool_use" and part.get("tool") != "read":
+                # 事件型別名稱沒有實際錄製的 fixture 可核對，所以不只認 ``tool_use``：任何帶 ``tool`` 欄位（或 part 型別為 tool）
+                # 的事件都當作工具呼叫檢查，換了型別名稱也不會讓非 read 工具漏網。
+                is_tool_event = kind == "tool_use" or part.get("tool") is not None or part.get("type") == "tool"
+                if is_tool_event and part.get("tool") != "read":
                     # 安全拒絕：不是暫時性失敗，不重試。
                     raise DailyPipelineError("%s OpenCode Agent 使用未核准工具：%s" % (task.name, part.get("tool")))
-                if kind == "tool_use" and part.get("state", {}).get("status") != "completed":
+                if is_tool_event and (not isinstance(part.get("state"), dict) or part["state"].get("status") != "completed"):
                     raise ValueError("Agent 讀取失敗")
                 if kind == "text":
                     message_id = part.get("messageID")

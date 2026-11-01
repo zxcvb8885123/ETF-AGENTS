@@ -5,7 +5,9 @@ import unittest
 from collections import namedtuple
 from pathlib import Path
 
-from etf_agent.automation.preflight import PreflightError, required_files, require_preflight, run_preflight
+from etf_agent.automation.preflight import (
+    PreflightError, effective_research_agent_cli, required_files, require_preflight, run_preflight,
+)
 from etf_agent.virtual_account import VirtualAccountRepository, VirtualAccountService
 
 
@@ -15,7 +17,8 @@ LOGGED_IN = json.dumps({"loggedIn": True, "authMethod": "claude.ai", "email": "s
 
 
 class FakeRunner:
-    def __init__(self, docker_exit=0, auth_stdout=LOGGED_IN, raise_for=None):
+    def __init__(self, docker_exit=0, auth_stdout=LOGGED_IN, raise_for=None, exec_help="  --ephemeral  不保存 session\n"):
+        self.exec_help = exec_help
         self.docker_exit = docker_exit
         self.auth_stdout = auth_stdout
         self.raise_for = raise_for
@@ -28,6 +31,8 @@ class FakeRunner:
             raise subprocess.TimeoutExpired(command, kwargs["timeout"])
         if command[0] == "docker":
             return subprocess.CompletedProcess(command, self.docker_exit, "29.7.2\n", "")
+        if command[:3] == ["codex", "exec", "--help"]:
+            return subprocess.CompletedProcess(command, 0, self.exec_help, "")
         return subprocess.CompletedProcess(command, 0, self.auth_stdout, "")
 
     @staticmethod
@@ -56,10 +61,11 @@ class PreflightTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_checks(self, runner=None, which=which_all, free=50 * GIB, skip_data=False, account_id="cup-test", agent_cli="claude"):
+    def run_checks(self, runner=None, which=which_all, free=50 * GIB, skip_data=False, account_id="cup-test", agent_cli="claude", research_agent_cli=None):
         checks = run_preflight(
             self.root, account_id, skip_data, runner=runner or FakeRunner(), which=which,
             disk_usage=lambda _: Usage(0, 0, free), min_free_bytes=2 * GIB, agent_cli=agent_cli,
+            research_agent_cli=research_agent_cli,
         )
         return {check.name: check for check in checks}
 
@@ -102,16 +108,97 @@ class PreflightTests(unittest.TestCase):
         checks = self.run_checks(which=lambda name: None if name == "claude" else which_all(name))
         self.assertIn("PATH", checks["claude"].detail)
 
-    def test_codex_selected_and_login_failure_is_closed(self):
+    def test_codex_main_defaults_researchers_to_codex(self):
         runner = FakeRunner()
         checks = self.run_checks(runner=runner, agent_cli="codex")
-        self.assertIn("codex", checks)
-        self.assertNotIn("claude", checks)
+        self.assertEqual(list(checks), ["docker", "codex", "research_agent_cli", "account", "files", "disk"])
+        self.assertTrue(all(check.ok for check in checks.values()))
         self.assertIn(["codex", "login", "status"], runner.commands)
-        checks = self.run_checks(agent_cli="codex", which=lambda name: None if name == "codex" else which_all(name))
+        require_preflight(list(checks.values()))
+
+    def test_codex_main_with_explicit_claude_researchers_checks_both_logins(self):
+        runner = FakeRunner()
+        checks = self.run_checks(runner=runner, agent_cli="codex", research_agent_cli="claude")
+        self.assertEqual(list(checks), ["docker", "codex", "claude", "account", "files", "disk"])
+        self.assertTrue(all(check.ok for check in checks.values()))
+
+    def test_codex_main_with_opencode_researchers_checks_opencode_login(self):
+        runner = FakeRunner(auth_stdout="1 credentials")
+        checks = self.run_checks(runner=runner, agent_cli="codex", research_agent_cli="opencode")
+        self.assertEqual(list(checks), ["docker", "codex", "opencode", "account", "files", "disk"])
+        self.assertTrue(all(check.ok for check in checks.values()))
+
+    def test_codex_main_fails_closed_when_researcher_login_is_missing(self):
+        unauthenticated = FakeRunner(auth_stdout=json.dumps({"loggedIn": False}))
+        checks = self.run_checks(runner=unauthenticated, agent_cli="codex", research_agent_cli="claude")
+        self.assertFalse(checks["claude"].ok)
+        with self.assertRaises(PreflightError):
+            require_preflight(list(checks.values()))
+        checks = self.run_checks(agent_cli="codex", research_agent_cli="claude", which=lambda name: None if name == "codex" else which_all(name))
         self.assertFalse(checks["codex"].ok)
-        checks = self.run_checks(agent_cli="codex", runner=FakeRunner(raise_for="codex"))
-        self.assertFalse(checks["codex"].ok)
+        self.assertTrue(checks["claude"].ok)
+
+    def test_codex_researchers_need_ephemeral_and_state_staged_isolation(self):
+        for agent_cli, expected in (("claude", ["docker", "claude", "codex", "research_agent_cli"]),
+                                    ("opencode", ["docker", "opencode", "codex", "research_agent_cli"])):
+            runner = FakeRunner(auth_stdout="1 credentials")
+            checks = self.run_checks(runner=runner, agent_cli=agent_cli, research_agent_cli="codex")
+            self.assertEqual(list(checks)[:4], expected)
+            self.assertTrue(checks["research_agent_cli"].ok)
+            self.assertIn("輸出暫存", checks["research_agent_cli"].detail)
+            self.assertIn("舊 run", checks["research_agent_cli"].detail)
+            self.assertIn(["codex", "login", "status"], runner.commands)
+            self.assertIn(["codex", "exec", "--help"], runner.commands)
+
+    def test_codex_main_and_codex_researchers_check_codex_login_once(self):
+        runner = FakeRunner()
+        checks = self.run_checks(runner=runner, agent_cli="codex", research_agent_cli="codex")
+        self.assertEqual(list(checks), ["docker", "codex", "research_agent_cli", "account", "files", "disk"])
+        self.assertEqual(sum(1 for command in runner.commands if command[:2] == ["codex", "login"]), 1)
+        self.assertTrue(all(check.ok for check in checks.values()))
+
+    def test_codex_researchers_fail_closed_without_ephemeral_or_login(self):
+        old_version = self.run_checks(runner=FakeRunner(exec_help="  --sandbox  沙箱\n"), agent_cli="codex", research_agent_cli="codex")
+        self.assertFalse(old_version["research_agent_cli"].ok)
+        self.assertIn("--ephemeral", old_version["research_agent_cli"].detail)
+        with self.assertRaises(PreflightError):
+            require_preflight(list(old_version.values()))
+        timeout = self.run_checks(runner=FakeRunner(raise_for="codex"), agent_cli="codex", research_agent_cli="codex")
+        self.assertFalse(timeout["codex"].ok)
+        self.assertFalse(timeout["research_agent_cli"].ok)
+        missing = self.run_checks(agent_cli="codex", research_agent_cli="codex",
+                                  which=lambda name: None if name == "codex" else which_all(name))
+        self.assertFalse(missing["codex"].ok)
+        self.assertFalse(missing["research_agent_cli"].ok)
+
+    def test_non_codex_researchers_never_run_codex_commands(self):
+        runner = FakeRunner()
+        self.run_checks(runner=runner, agent_cli="claude", research_agent_cli="claude")
+        self.assertFalse([command for command in runner.commands if command[0] == "codex"])
+
+    def test_same_researcher_cli_is_checked_once(self):
+        runner = FakeRunner()
+        checks = self.run_checks(runner=runner, agent_cli="claude", research_agent_cli="claude")
+        self.assertEqual(list(checks), ["docker", "claude", "account", "files", "disk"])
+        self.assertEqual(sum(1 for command in runner.commands if command[0] == "claude"), 1)
+
+    def test_different_researcher_cli_is_checked_in_addition(self):
+        runner = FakeRunner(auth_stdout=json.dumps({"loggedIn": True, "authMethod": "x"}))
+        checks = self.run_checks(runner=runner, agent_cli="opencode", research_agent_cli="claude")
+        self.assertIn("claude", checks)
+        self.assertIn("opencode", checks)
+
+    def test_effective_research_agent_cli_defaults(self):
+        self.assertEqual(effective_research_agent_cli("claude"), "claude")
+        self.assertEqual(effective_research_agent_cli("opencode"), "opencode")
+        self.assertEqual(effective_research_agent_cli("codex"), "codex")
+        self.assertEqual(effective_research_agent_cli("codex", "claude"), "claude")
+        self.assertEqual(effective_research_agent_cli("codex", "opencode"), "opencode")
+        self.assertEqual(effective_research_agent_cli("claude", "opencode"), "opencode")
+
+    def test_unknown_researcher_cli_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.run_checks(research_agent_cli="gemini")
 
     def test_opencode_selected_and_credential_failure_is_closed(self):
         runner = FakeRunner(auth_stdout="1 credentials")

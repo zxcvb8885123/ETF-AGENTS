@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Sequence
 
 from etf_agent.calibration.contracts import MIN_DECISION_DAYS
 from etf_agent.core import canonical_sha256
 
 from .contracts import GATE_HORIZONS, SCHEMA_VERSION
 from .tools import current_knobs
+from .trial import knob_outcomes
 
 _SKIP_KEYS = {"pending_days", "excluded_obs"}
 
@@ -36,12 +37,16 @@ def _flatten_ok(prefix: str, value: object, out: Dict[str, str]) -> None:
 
 def build_brief(
     report: Mapping[str, object], template: Mapping[str, object], as_of: str,
-    diagnostics: Optional[Mapping[str, object]] = None,
+    diagnostics: Optional[Mapping[str, object]] = None, history: Optional[Sequence[Mapping[str, object]]] = None,
 ) -> Dict[str, object]:
     """``report`` 是 ``calibration.evaluate`` 的輸出。只收 status=ok 的 horizon，樣本不足的 horizon 不給任何統計。
 
     ``diagnostics`` 是 ``diagnostics.build_diagnostics`` 的結果（每週診斷包，只含數值與列舉）：完整內容放在簡報供閱讀，
-    只有 status=ok 的指標才成為 ``diag.*`` 證據。沒有診斷包的舊簡報與舊測試不受影響。"""
+    只有 status=ok 的指標才成為 ``diag.*`` 證據。沒有診斷包的舊簡報與舊測試不受影響。
+
+    ``history`` 是套用歷史：套用過的旋鈕會多出 ``hist.<旋鈕>.last_result``（最近一次試用結果）與
+    ``hist.<旋鈕>.reverted_count``（被試用還原的累計次數）兩則證據，讓反思員看得到「這顆旋鈕上次被還原」。
+    沒有歷史的簡報不多任何欄位。"""
     evidence: Dict[str, str] = {}
     ok_horizons = []
     for horizon, entry in sorted(report["horizons"].items()):
@@ -54,6 +59,9 @@ def build_brief(
     evidence["cal.decision_days"] = str(report["decision_days"])
     if diagnostics is not None:
         _flatten_ok("diag", diagnostics, evidence)
+    for path, outcome in sorted(knob_outcomes(history or []).items()):
+        evidence["hist.%s.last_result" % path] = str(outcome["last_result"])
+        evidence["hist.%s.reverted_count" % path] = str(outcome["reverted_count"])
     brief: Dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "as_of": as_of,

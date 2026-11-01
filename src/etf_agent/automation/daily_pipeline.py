@@ -124,9 +124,21 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
             result.errors.append(str(error))
+        except Exception as error:
+            # 預期之外的錯誤（TypeError、AttributeError…）仍 fail-closed 往上拋，但先把已花的 Agent 呼叫與階段耗時留在
+            # last_result，呼叫端才能寫進執行紀錄，稽核不會因此遺失。
+            self._record_unexpected(result, error)
+            raise
         result.agent_calls = self.calls
         result.stage_durations = dict(self.stage_durations)
         return result
+
+    def _record_unexpected(self, result: PipelineResult, error: Exception) -> None:
+        result.errors.append("未預期的 %s：%s" % (type(error).__name__, error))
+        result.agent_calls = self.calls
+        result.stage_durations = dict(self.stage_durations)
+        self.last_result = result
+        self.log("[錯誤] 決策鏈發生未預期的 %s：%s（Agent 呼叫紀錄已保留）" % (type(error).__name__, error))
 
     def _run(
         self, result: PipelineResult, snapshot_path: Path, account_snapshot_path: Path,
@@ -218,6 +230,11 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             result.status = "completed"
         except (DailyPipelineError, DecisionToolError, OSError, ValueError, KeyError) as error:
             result.errors.append(str(error))
+        except Exception as error:
+            # 預期之外的錯誤（TypeError、AttributeError…）仍 fail-closed 往上拋，但先把已花的 Agent 呼叫與階段耗時留在
+            # last_result，呼叫端才能寫進執行紀錄，稽核不會因此遺失。
+            self._record_unexpected(result, error)
+            raise
         result.agent_calls = self.calls
         result.stage_durations = dict(self.stage_durations)
         return result

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Mapping
+from typing import Dict, Iterator, List, Mapping
 
 from etf_agent.core.artifact_store import ImmutableRunStore
 
@@ -51,5 +53,22 @@ class ReflectionRepository(ImmutableRunStore):
             raise ReflectionError("套用歷史格式錯誤")
         return data
 
+    @property
+    def history_lock_path(self) -> Path:
+        return self.base / ".history.lock"
+
+    @contextmanager
+    def _history_lock(self) -> Iterator[None]:
+        """歷史檔的讀改寫鎖（跨程序、阻塞等待）。與每日決策鎖 ``artifacts/daily/.lock`` 是不同的鎖：
+        這裡只保護「讀整份 → 加一筆 → 原子換檔」這一小段，手動 apply／rollback 與排程 auto／apply-pending 同時寫歷史時不會互相覆蓋。"""
+        self.base.mkdir(parents=True, exist_ok=True)
+        with open(self.history_lock_path, "a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
     def append_history(self, entry: Mapping[str, object]) -> None:
-        atomic_write_json(self.history_path, self.history() + [dict(entry)])
+        with self._history_lock():
+            atomic_write_json(self.history_path, self.history() + [dict(entry)])

@@ -14,6 +14,9 @@ class StartDataModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shutil.copyfile(ROOT / "start.sh", root / "start.sh")
+            # 抓資料模式會先經 scripts/with_data_lock.py 取得資料抓取鎖。
+            (root / "scripts").mkdir()
+            shutil.copyfile(ROOT / "scripts" / "with_data_lock.py", root / "scripts" / "with_data_lock.py")
             for name in ("Dockerfile", "requirements.txt"):
                 (root / name).touch()
             (root / "data").mkdir()
@@ -46,6 +49,32 @@ class StartDataModeTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=30,
             )
             return result, log.read_text(encoding="utf-8")
+
+    def test_busy_data_lock_stops_collection_without_touching_docker(self):
+        import fcntl
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copyfile(ROOT / "start.sh", root / "start.sh")
+            (root / "scripts").mkdir()
+            shutil.copyfile(ROOT / "scripts" / "with_data_lock.py", root / "scripts" / "with_data_lock.py")
+            (root / "artifacts" / "daily").mkdir(parents=True)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            docker = bin_dir / "docker"
+            docker.write_text('#!/bin/sh\necho "$*" >> "$CALL_LOG"\nexit 0\n', encoding="utf-8")
+            docker.chmod(0o755)
+            log = root / "calls.txt"
+            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", CALL_LOG=str(log), ETF_DATA_LOCK_WAIT_SECONDS="0")
+            with (root / "artifacts" / "daily" / ".data.lock").open("a+b") as holder:
+                fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                for mode in ("data", "auto", "daily"):
+                    with self.subTest(mode=mode):
+                        result = subprocess.run(["sh", str(root / "start.sh"), mode], env=env,
+                                                capture_output=True, text=True, timeout=30)
+                        self.assertEqual(result.returncode, 75, result.stderr)
+                        self.assertIn("等待", result.stderr)
+                        self.assertFalse(log.exists())
 
     def test_auto_and_data_run_same_complete_collection_without_account(self):
         calls = []

@@ -1,10 +1,13 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+
+from etf_agent.automation.preflight import PreflightCheck
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +20,7 @@ class NamedResumeTests(unittest.TestCase):
         cls.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.module)
 
-    def make_run(self, root, name, status, raw=True, decision_status=None, agent_cli=None):
+    def make_run(self, root, name, status, raw=True, decision_status=None, agent_cli=None, research_agent_cli=None):
         run_dir = root / ("%s-%s-%s" % (name[6:10], name[10:12], name[12:14])) / name
         run_dir.mkdir(parents=True)
         summary = {"run_id": name, "status": status}
@@ -25,6 +28,8 @@ class NamedResumeTests(unittest.TestCase):
             summary["decision_status"] = decision_status
         if agent_cli:
             summary["agent_cli"] = agent_cli
+        if research_agent_cli:
+            summary["research_agent_cli"] = research_agent_cli
         (run_dir / "pipeline.json").write_text(json.dumps(summary), encoding="utf-8")
         if raw:
             (run_dir / "bull_b0_raw_1.json").write_text("{}", encoding="utf-8")
@@ -75,6 +80,22 @@ class NamedResumeTests(unittest.TestCase):
             self.assertEqual(self.module.resumable_agent_cli(codex), "codex")
             self.assertEqual(self.module.resumable_agent_cli(opencode), "opencode")
 
+    def test_resumable_research_cli_defaults_to_main_cli_for_old_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = self.make_run(root, "daily-20260928", "failed")
+            codex_old = self.make_run(root, "daily-20260929", "failed", agent_cli="codex")
+            split = self.make_run(root, "daily-20260930", "failed", agent_cli="codex", research_agent_cli="claude")
+            self.assertEqual(self.module.resumable_research_agent_cli(legacy), "claude")
+            # 舊版 codex run 的研究員也是 codex；新預設是 claude，核對不符就不能續跑。
+            self.assertEqual(self.module.resumable_research_agent_cli(codex_old), "codex")
+            self.assertEqual(self.module.resumable_research_agent_cli(split), "claude")
+
+    def test_make_agent_runner_selects_cli(self):
+        self.assertIsInstance(self.module.make_agent_runner("claude", "m", 2.0), self.module.ClaudeAgentRunner)
+        self.assertIsInstance(self.module.make_agent_runner("codex", None), self.module.CodexAgentRunner)
+        self.assertIsInstance(self.module.make_agent_runner("opencode", None), self.module.OpenCodeAgentRunner)
+
 
 class ArgumentTests(unittest.TestCase):
     @classmethod
@@ -86,10 +107,12 @@ class ArgumentTests(unittest.TestCase):
     def run_main(self, *argv, root=None):
         """以假預檢攔截 main：回傳（結束碼, 預檢收到的 skip_data）；預檢一律失敗，不會呼叫任何 Agent。"""
         seen = []
+        self.preflight_kwargs = []
 
-        def fake_preflight(_root, _account_id, skip_data, **_kwargs):
+        def fake_preflight(_root, _account_id, skip_data, **kwargs):
             seen.append(skip_data)
-            return [self.module.PreflightCheck("fake", False, "測試用預檢失敗")]
+            self.preflight_kwargs.append(kwargs)
+            return [PreflightCheck("fake", False, "測試用預檢失敗")]
 
         with patch.object(self.module, "run_preflight", fake_preflight), \
                 patch.object(self.module, "notify", lambda *_args, **_kwargs: None), \
@@ -135,6 +158,154 @@ class ArgumentTests(unittest.TestCase):
             code, seen = self.run_main("--resume", "daily-20200101", "--force", root=root)
         self.assertEqual(code, 1)
         self.assertEqual(seen, [])
+
+    def test_research_cli_defaults_follow_main_cli(self):
+        for argv, expected in (([], "claude"), (["--agent-cli", "opencode"], "opencode"), (["--agent-cli", "codex"], "codex")):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "artifacts" / "daily").mkdir(parents=True)
+                code, _seen = self.run_main(*argv, "--preflight-only", root=root)
+            self.assertEqual(code, 1)
+            self.assertEqual(self.preflight_kwargs[0]["research_agent_cli"], expected)
+
+    def test_explicit_research_cli_is_passed_to_preflight(self):
+        code, _seen = self.run_main("--agent-cli", "codex", "--research-agent-cli", "opencode", "--preflight-only")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.preflight_kwargs[0]["agent_cli"], "codex")
+        self.assertEqual(self.preflight_kwargs[0]["research_agent_cli"], "opencode")
+
+    def test_codex_research_cli_defaults_to_codex_and_explicit_choice_wins(self):
+        code, _seen = self.run_main("--agent-cli", "codex", "--research-agent-cli", "codex", "--preflight-only")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.preflight_kwargs[-1]["agent_cli"], "codex")
+        self.assertEqual(self.preflight_kwargs[-1]["research_agent_cli"], "codex")
+        # 沒有明示時，codex 主 CLI 的研究員也用 codex（走研究階段輸出暫存）。
+        self.run_main("--agent-cli", "codex", "--preflight-only")
+        self.assertEqual(self.preflight_kwargs[-1]["research_agent_cli"], "codex")
+        self.run_main("--agent-cli", "codex", "--research-agent-cli", "claude", "--preflight-only")
+        self.assertEqual(self.preflight_kwargs[-1]["research_agent_cli"], "claude")
+        self.run_main("--agent-cli", "claude", "--preflight-only")
+        self.assertEqual(self.preflight_kwargs[-1]["research_agent_cli"], "claude")
+
+    def test_max_budget_needs_a_claude_cli(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.run_main("--agent-cli", "opencode", "--max-budget-usd", "2", "--preflight-only")
+        self.assertEqual(caught.exception.code, 2)
+        # codex 主 CLI 搭配 claude 研究員時，預算上限套用在研究員，可接受；兩者都不是 claude 則拒絕。
+        with self.assertRaises(SystemExit):
+            self.run_main("--agent-cli", "codex", "--max-budget-usd", "2", "--preflight-only")
+        code, _seen = self.run_main("--agent-cli", "codex", "--research-agent-cli", "claude", "--max-budget-usd", "2", "--preflight-only")
+        self.assertEqual(code, 1)
+
+    def test_resume_requires_same_research_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "artifacts" / "daily" / "2026-09-29" / "daily-20260929"
+            run_dir.mkdir(parents=True)
+            (run_dir / "pipeline.json").write_text(json.dumps({
+                "run_id": "daily-20260929", "status": "failed", "started_at": "2026-09-29T18:00:00+08:00",
+                "agent_cli": "codex", "research_agent_cli": "claude"}), encoding="utf-8")
+            (run_dir / "bull_b0_raw_1.json").write_text("{}", encoding="utf-8")
+            # 研究員 CLI 不同：停在預檢之前，不呼叫預檢。
+            code, seen = self.run_main("--agent-cli", "codex", "--research-agent-cli", "opencode", "--resume", "daily-20260929", "--force", root=root)
+            self.assertEqual((code, seen), (1, []))
+            # 預設研究員現在是 codex，與原 run 的 claude 不同：同樣停在預檢之前。
+            code, seen = self.run_main("--agent-cli", "codex", "--resume", "daily-20260929", "--force", root=root)
+            self.assertEqual((code, seen), (1, []))
+            # 相同：通過核對，進到（假的）預檢。
+            code, seen = self.run_main("--agent-cli", "codex", "--research-agent-cli", "claude", "--resume", "daily-20260929", "--force", root=root)
+            self.assertEqual((code, seen), (1, [True]))
+
+    def test_old_run_without_research_field_counts_as_main_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "artifacts" / "daily" / "2026-09-29" / "daily-20260929"
+            run_dir.mkdir(parents=True)
+            (run_dir / "pipeline.json").write_text(json.dumps({
+                "run_id": "daily-20260929", "status": "failed", "started_at": "2026-09-29T18:00:00+08:00",
+                "agent_cli": "codex"}), encoding="utf-8")
+            (run_dir / "bull_b0_raw_1.json").write_text("{}", encoding="utf-8")
+            # 舊 run 沒有研究員欄位，視為與主 CLI（codex）相同，所以預設 codex 研究員可續跑。
+            code, seen = self.run_main("--agent-cli", "codex", "--resume", "daily-20260929", "--force", root=root)
+            self.assertEqual((code, seen), (1, [True]))
+            code, seen = self.run_main("--agent-cli", "codex", "--research-agent-cli", "claude", "--resume", "daily-20260929", "--force", root=root)
+            self.assertEqual((code, seen), (1, []))
+
+
+class RunLockTests(unittest.TestCase):
+    """每日流程鎖：被佔用才算略過，其他 OSError 要失敗並通知；鎖檔記錄持有者。"""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_daily_pipeline_lock", ROOT / "scripts" / "run_daily_pipeline.py")
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def run_main(self, root, notices):
+        def fake_preflight(*_args, **_kwargs):
+            return [PreflightCheck("fake", False, "測試用預檢失敗")]
+
+        with patch.object(self.module, "run_preflight", fake_preflight), \
+                patch.object(self.module, "notify", lambda title, message: notices.append(message)), \
+                patch.object(self.module, "ROOT", root), \
+                patch("sys.argv", ["run_daily_pipeline.py", "--preflight-only"]):
+            return self.module.main()
+
+    def test_busy_lock_is_skipped_with_notice_and_holder_info(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "artifacts" / "daily"
+            runs.mkdir(parents=True)
+            holder = (runs / ".lock").open("a+b")
+            self.assertTrue(self.module.acquire_run_lock(holder))
+            started = datetime.now(timezone.utc) - timedelta(hours=8)
+            self.module.write_lock_holder(holder, started)
+            notices = []
+            try:
+                code = self.run_main(root, notices)
+            finally:
+                holder.close()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(notices), 1)
+        self.assertIn("另一個每日流程仍在執行", notices[0])
+        self.assertIn("pid", notices[0])
+        self.assertIn("殭屍", notices[0])
+
+    def test_non_busy_os_error_fails_with_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "artifacts" / "daily").mkdir(parents=True)
+            notices = []
+            with patch.object(self.module.fcntl, "flock", side_effect=PermissionError("拒絕存取")):
+                code = self.run_main(root, notices)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(notices), 1)
+        self.assertIn("無法取得每日流程鎖", notices[0])
+
+    def test_free_lock_proceeds_and_records_holder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "artifacts" / "daily").mkdir(parents=True)
+            notices = []
+            code = self.run_main(root, notices)
+            # 預檢（假的）失敗才回 1，代表已越過鎖；鎖檔寫了本程序的 pid 與開始時間。
+            self.assertEqual(code, 1)
+            self.assertEqual(notices, [])
+            info = json.loads((root / "artifacts" / "daily" / ".lock").read_text(encoding="utf-8"))
+        self.assertEqual(info["pid"], os.getpid())
+        self.assertIn("started_at", info)
+
+    def test_holder_description_handles_missing_and_fresh_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".lock"
+            now = datetime.now(timezone.utc)
+            self.assertEqual(self.module.describe_lock_holder(path, now), "")
+            path.write_text("0", encoding="utf-8")
+            self.assertEqual(self.module.describe_lock_holder(path, now), "")
+            path.write_text(json.dumps({"pid": 7, "started_at": (now - timedelta(minutes=30)).isoformat()}), encoding="utf-8")
+            text = self.module.describe_lock_holder(path, now)
+        self.assertIn("pid 7", text)
+        self.assertNotIn("殭屍", text)
 
 
 class FakeCalendar:
@@ -298,7 +469,7 @@ class DataReuseTests(unittest.TestCase):
 
         def fake_preflight(_root, _account_id, skip_data, **_kwargs):
             seen.append(skip_data)
-            return [self.module.PreflightCheck("fake", False, "測試用預檢失敗")]
+            return [PreflightCheck("fake", False, "測試用預檢失敗")]
 
         with patch.object(self.module, "run_preflight", fake_preflight), \
                 patch.object(self.module, "notify", lambda *_a, **_k: None), \
@@ -545,7 +716,7 @@ class DataReuseTests(unittest.TestCase):
 
         def fake_preflight(_root, _account_id, skip_data, **_kwargs):
             seen.append(skip_data)
-            return [self.module.PreflightCheck("fake", False, "測試用預檢失敗")]
+            return [PreflightCheck("fake", False, "測試用預檢失敗")]
 
         with patch.object(self.module, "datetime", FixedDatetime), \
                 patch.object(self.module, "run_preflight", fake_preflight), \
