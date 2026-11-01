@@ -186,7 +186,17 @@ CREATE TABLE IF NOT EXISTS source_documents (%s);
 CREATE INDEX IF NOT EXISTS idx_source_documents_content
 ON source_documents(source, external_id, content_sha256);
 
-""" % SOURCE_DOCUMENTS_COLUMNS_SQL + """CREATE INDEX IF NOT EXISTS idx_source_documents_cutoff
+""" % SOURCE_DOCUMENTS_COLUMNS_SQL + """CREATE TABLE IF NOT EXISTS source_document_observations (
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_document_observations
+ON source_document_observations(source, external_id);
+
+CREATE INDEX IF NOT EXISTS idx_source_documents_cutoff
 ON source_documents(published_at, available_at);
 
 CREATE TABLE IF NOT EXISTS document_instruments (
@@ -418,11 +428,20 @@ class MarketDataDatabase:
         backup_path = self.path.with_name(self.path.name + ".pre-source-documents-migration.bak")
         if backup_path.exists():
             return
-        target = sqlite3.connect(str(backup_path))
+        # 先寫暫存檔、完整性檢查通過才改名：中斷時不會留下看似有效的殘缺備份擋住下次重做。
+        partial = backup_path.with_name(backup_path.name + ".partial")
+        partial.unlink(missing_ok=True)
+        target = sqlite3.connect(str(partial))
         try:
             connection.backup(target)
-        finally:
+            if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("source_documents 遷移前備份完整性檢查失敗")
+        except BaseException:
             target.close()
+            partial.unlink(missing_ok=True)
+            raise
+        target.close()
+        partial.replace(backup_path)
 
     @staticmethod
     def source_documents_has_content_unique(connection: sqlite3.Connection) -> bool:

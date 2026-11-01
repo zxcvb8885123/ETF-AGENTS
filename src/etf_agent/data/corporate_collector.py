@@ -226,11 +226,26 @@ def _store_record(
         """,
         (document.source, document.external_id),
     ).fetchone()
+    # 每次觀測（含內容未變的重抓）都記下時間：同內容重抓不新增版本，但「系統已在何時看過最新內容」要保留，
+    # 之後亂序送達的較早抓取才擋得住。
+    observations = connection.execute(
+        "SELECT content_sha256, observed_at FROM source_document_observations WHERE source = ? AND external_id = ?",
+        (document.source, document.external_id),
+    ).fetchall()
+    connection.execute(
+        "INSERT INTO source_document_observations(source, external_id, content_sha256, observed_at) VALUES (?, ?, ?, ?)",
+        (document.source, document.external_id, content_sha256, document.fetched_at),
+    )
     # 只與最新版本比較：內容 A→B→A 時，回到 A 是新的一版，Snapshot 才會選到最新狀態。
     if previous and previous["content_sha256"] == content_sha256:
         return int(previous["id"]), False
-    # 抓取時間比現有最新版更早的舊內容不得蓋過新版（亂序或快取的舊列會把更正倒轉回去）。
+    # 抓取時間比現有最新版（或更晚的觀測）更早的舊內容不得蓋過新版（亂序或快取的舊列會把更正倒轉回去）。
     if previous and _fetched_before(document.fetched_at, previous["fetched_at"]):
+        return int(previous["id"]), False
+    if previous and any(
+        row["content_sha256"] == previous["content_sha256"] and _fetched_before(document.fetched_at, row["observed_at"])
+        for row in observations
+    ):
         return int(previous["id"]), False
     version = int(previous["version"]) + 1 if previous else 1
     supersedes_id = int(previous["id"]) if previous else None

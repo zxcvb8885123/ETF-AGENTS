@@ -1,6 +1,8 @@
 import json
+import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from etf_agent.data import (
@@ -229,6 +231,40 @@ class DataAgentTests(unittest.TestCase):
             self.assertEqual(between.documents[0].monthly_revenue.current_revenue, "120")
             self.assertEqual(latest.documents[0].version, 3)
             self.assertEqual(latest.documents[0].monthly_revenue.current_revenue, "100")
+
+    def test_late_arriving_older_content_after_same_content_recapture_does_not_rewind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            for revenue, fetched_at in (
+                ("100", "2026-09-15T04:00:00+00:00"),
+                ("120", "2026-09-17T04:00:00+00:00"),
+                ("120", "2026-09-20T04:00:00+00:00"),  # 同內容重抓：不新增版本，但已觀測到 120
+                ("100", "2026-09-19T04:00:00+00:00"),  # 亂序送達的較早抓取
+            ):
+                provider = FixtureProvider([monthly_row(revenue=revenue)], fetched_at)
+                CorporateDataCollector(database, [provider]).collect(self.universe)
+            with database.connect() as connection:
+                versions = [row["version"] for row in connection.execute(
+                    "SELECT version FROM source_documents ORDER BY version").fetchall()]
+            self.assertEqual(versions, [1, 2])
+
+    def test_failed_backup_leaves_no_file_that_blocks_the_next_attempt(self):
+        class FakeConnection:
+            def execute(self, sql, *args):
+                class Row:
+                    def fetchone(self_inner):
+                        return (1,)
+                return Row()
+
+            def backup(self, target):
+                raise sqlite3.OperationalError("磁碟中斷")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            with mock.patch.object(MarketDataDatabase, "source_documents_has_content_unique", return_value=True):
+                with self.assertRaises(sqlite3.OperationalError):
+                    database.backup_before_source_document_migration(FakeConnection())
+            self.assertEqual(list(Path(directory).glob("*.bak*")), [])
 
     def test_legacy_content_unique_constraint_is_migrated_keeping_rows_and_links(self):
         with tempfile.TemporaryDirectory() as directory:
