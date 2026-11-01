@@ -27,6 +27,7 @@ from etf_agent.decision import (  # noqa: E402
     DecisionToolError,
     PortfolioDecisionApplicationService,
 )
+from etf_agent.virtual_account import ledger_nav_history_provider  # noqa: E402
 
 
 class PortfolioDecisionApplication:
@@ -54,6 +55,8 @@ class PortfolioDecisionApplication:
                 self.emit(result)
                 return 0 if result["valid"] else 2
             service = PortfolioDecisionApplicationService.from_path(args.bundle, args.position_review)
+            # policy 帶 history_ref 時，finalize／validate-decision／save-run 以帳本歷史獨立重算峰值。
+            service.nav_history_provider = ledger_nav_history_provider(args.ledger_repository, service.bundle)
             if args.command == "validate-input":
                 result = service.validate_input()
                 self.emit(result)
@@ -183,6 +186,10 @@ class PortfolioDecisionApplication:
         parser.add_argument(
             "--position-review", type=Path, default=None,
             help="team_inputs 2.4 的持股檢視 JSON；有它的 run 必須附上，否則 review:… 引用會被當成未知 claim",
+        )
+        parser.add_argument(
+            "--ledger-repository", type=Path, default=self.root / "artifacts" / "ledger",
+            help="虛擬帳戶帳本根目錄；policy 的 drawdown_control 含 history_ref 時，重建驗證由此讀 NAV 歷史（缺帳本即拒絕）",
         )
         commands = parser.add_subparsers(dest="command", required=True)
         build_input = commands.add_parser(

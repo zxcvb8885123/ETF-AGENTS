@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | `VirtualAccountError`、`VirtualAccountRepository`、`VirtualAccountService`、`DEFAULT_ACCOUNT_ID`、`active_account_id`、`write_active_account` |
 | `active.py` | 讀寫 `config/active_account.json`（使用中的帳戶 ID）；檔案不存在時用 `ai-cup-2026` | `DEFAULT_ACCOUNT_ID`、`active_account_id`、`write_active_account` |
-| `service.py` | 帳本保存／驗證（hash 鏈）與狀態轉移：初始化、`prepare_day`、`apply_decision` | `VirtualAccountError`、`parse_time`、`VirtualAccountRepository`（`save`、`verify`、`latest`）、`VirtualAccountService`（`ensure_initialized`、`initialize`、`prepare_day`、`rebase`、`apply_decision`、`read_snapshot`） |
+| `service.py` | 帳本保存／驗證（hash 鏈）與狀態轉移：初始化、`prepare_day`、`apply_decision` | `VirtualAccountError`、`parse_time`、`VirtualAccountRepository`（`save`、`verify`、`latest`、`nav_history(head_run_id=None)`：由指定狀態沿雜湊鏈往回讀 NAV 歷史，供回撤 `history_ref` 重算；預設從 latest）、`VirtualAccountService`（`ensure_initialized`、`initialize`、`prepare_day`、`rebase`、`apply_decision`、`read_snapshot`） |
 | `daily.py` | 每日帳本推進：從資料庫取官方成交價建立執行市場，結算前一份決策，建立下一次決策前狀態 | `OfficialCloseMarket`（`execution_date`、`quotes`、`build`）、`DailyAccountRunner`（`settlement_date`、`settle`、`supersede_unstarted_decision`、`void_closed_session_decision`、`run`）、`pending_decision`、`restore_superseded_decision`、`add_business_days`、`average_price`、`find_decision_run`、`supersede_decision_runs` |
 
 ## 對外介面

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
 from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.research import ResearchResultValidator
@@ -17,10 +17,12 @@ from .contracts import (
     canonical_sha256,
     intent_artifact_id,
 )
-from .risk import GuardValidator, RiskReviewValidator, ScenarioValidator
+from .momentum import MomentumResultValidator
+from .risk import GuardValidator,RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS
 from .prior_decision import PriorDecisionContextValidator
+from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
 from .rotation import validate_portfolio_slots
@@ -112,6 +114,10 @@ def build_team_inputs(
     return team
 
 
+# 以 ``history_ref.head_run_id`` 讀回帳本 NAV 歷史（舊到新，止於該 head）；讀不到須拋例外，Finalizer 視為驗證失敗。
+NavHistoryProvider = Callable[[str], Sequence[Mapping[str, object]]]
+
+
 class DecisionFinalizer:
     """Create a final status only from fully validated deterministic artifacts."""
 
@@ -124,8 +130,10 @@ class DecisionFinalizer:
         intent_result: Mapping[str, object],
         team_inputs: Optional[Mapping[str, object]] = None,
         decision_repository: Optional[Path] = None,
+        nav_history_provider: Optional[NavHistoryProvider] = None,
     ):
         self.decision_repository = decision_repository
+        self.nav_history_provider = nav_history_provider
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.policy = dict(policy)
@@ -178,6 +186,28 @@ class DecisionFinalizer:
         body["content_sha256"] = artifact_content_sha256(body)
         return body
 
+    def _validate_drawdown_history(self) -> List[str]:
+        """policy 的 drawdown_control 帶 ``history_ref`` 時，以 head_run_id 讀帳本歷史重算峰值；fail-closed。
+
+        沒有 ``history_ref`` 的舊 policy 不需要帳本，行為與舊版相同。"""
+        control = self.policy.get("drawdown_control")
+        ref = control.get("history_ref") if isinstance(control, Mapping) else None
+        if ref is None:
+            return []
+        prefix = "DecisionPolicy.drawdown_control.history_ref"
+        head = ref.get("head_run_id") if isinstance(ref, Mapping) else None
+        if not isinstance(head, str) or not head:
+            return ["%s.head_run_id 必須是非空字串" % prefix]
+        if self.nav_history_provider is None:
+            return ["%s 需要帳本 NAV 歷史才能重算峰值，但呼叫端未提供帳本來源" % prefix]
+        try:
+            history = list(self.nav_history_provider(head))
+        except Exception as error:  # 帳本缺 head、雜湊鏈損毀或讀取失敗一律拒絕
+            return ["%s 無法由帳本讀回歷史（head_run_id=%s）：%s" % (prefix, head, error)]
+        errors: List[str] = []
+        validate_drawdown_control(self.policy, self.bundle, errors, history)
+        return errors
+
     def validate_inputs(
         self,
         proposal: Mapping[str, object],
@@ -187,6 +217,7 @@ class DecisionFinalizer:
         history: Mapping[str, object],
     ) -> List[str]:
         errors: List[str] = []
+        errors.extend(self._validate_drawdown_history())
         errors.extend(self._validate_team_chain())
         errors.extend(ProposalValidator(self.bundle, self.policy, self.intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, self.policy).validate(proposal, scenario))
@@ -216,7 +247,8 @@ class DecisionFinalizer:
                         break
             if not matches:
                 errors.append("最終 artifacts 必須等於 RevisionHistory 最後一版")
-        return errors
+        # 回撤的結構檢查與帳本檢查可能指出同一個問題：去除完全相同的訊息，保留原順序。
+        return list(dict.fromkeys(errors))
 
 
     def _validate_team_chain(self) -> List[str]:
@@ -226,7 +258,10 @@ class DecisionFinalizer:
         team = self.team_inputs
         if team is None:
             return ["決策鏈需要 team_inputs（分析報告與現金姿態；舊封存另含事件研究）才能重建驗證"]
-        errors: List[str] = []
+        # 動能結果由程式重算；共同輸入只綁 result_id，不重算會讓改寫的數值通過。
+        errors: List[str] = [
+            "momentum：%s" % error for error in MomentumResultValidator(self.bundle).validate(self.momentum)
+        ]
         version = team.get("schema_version")
         fields = TEAM_FIELDS_BY_VERSION.get(str(version))
         if fields is None:
@@ -335,9 +370,11 @@ class DecisionResultValidator:
         intent_result: Mapping[str, object],
         team_inputs: Optional[Mapping[str, object]] = None,
         decision_repository: Optional[Path] = None,
+        nav_history_provider: Optional[NavHistoryProvider] = None,
     ):
         self.finalizer = DecisionFinalizer(
-            bundle, policy, momentum_result, debate, intent_result, team_inputs, decision_repository
+            bundle, policy, momentum_result, debate, intent_result, team_inputs, decision_repository,
+            nav_history_provider,
         )
 
     def validate(

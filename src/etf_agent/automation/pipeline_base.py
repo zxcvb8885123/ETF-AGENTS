@@ -226,7 +226,7 @@ class PipelineBase:
         for retry in range(self.transient_retries + 1):
             started = time.monotonic()
             try:
-                call = runner.run(AgentTask(task.name, prompt, task.schema), self.run_dir)
+                call = runner.run(AgentTask(task.name, prompt, task.schema, task.deny_reads), self.run_dir)
             except TransientAgentError as error:
                 duration = round(time.monotonic() - started, 1)
                 failed = self._call_item(runner, task, attempt, 0.0, duration)

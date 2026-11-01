@@ -148,13 +148,20 @@ def apply_lessons(root: Path, base: Path, lessons: Mapping[str, object], history
         backup = Path(base) / "lessons" / "backups" / ("%s.json" % lessons["lessons_id"])
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(live, backup)
-    atomic_write_json(live, dict(lessons))
+    # 交易 Agent 以 created_at 判斷教訓何時可用：重新封存為實際套用時間，週五提案的時間不能讓週六才生效的教訓倒灌回週五的 Snapshot。
+    effective = seal_lessons(str(lessons["lessons_id"]), now.isoformat(), lessons["lessons"])  # type: ignore[arg-type]
+    # 先記歷史再換 live 檔：中途中止時留下「有紀錄」的狀態（試用與冷卻仍生效），而不是沒有紀錄的 live 變更。
     history_append({
-        "action": LESSONS_ACTION, "applied_at": now.isoformat(), "reflection_id": lessons["lessons_id"], "knobs": ["strategy_lessons"],
+        "action": LESSONS_ACTION, "applied_at": now.isoformat(), "reflection_id": effective["lessons_id"], "knobs": ["strategy_lessons"],
         "decision_days": decision_days, "backup": str(backup) if backup else None, "had_previous": backup is not None,
-        "sha256_after": lessons["content_sha256"], "trial": {"verification": "observe"},
+        "sha256_after": effective["content_sha256"], "trial": {"verification": "observe"},
     })
-    return {"applied": True, "lessons_id": lessons["lessons_id"], "count": len(lessons["lessons"])}  # type: ignore[arg-type]
+    try:
+        atomic_write_json(live, effective)
+    except BaseException:
+        history_append({"action": REVERT_ACTION, "reverted_at": now.isoformat(), "of": effective["lessons_id"]})
+        raise
+    return {"applied": True, "lessons_id": lessons["lessons_id"], "count": len(effective["lessons"])}  # type: ignore[arg-type]
 
 
 def revert_lessons(root: Path, entry: Mapping[str, object], history_append, now: datetime) -> Dict[str, object]:

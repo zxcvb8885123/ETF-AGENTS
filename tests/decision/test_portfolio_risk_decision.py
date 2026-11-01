@@ -340,6 +340,26 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             [],
         )
 
+    def test_finalizer_rejects_tampered_momentum_values(self):
+        import copy
+        bundle, momentum, debate, intent, settings, team, _, _ = chain_inputs()
+        proposal = AllocationOrderEngine(bundle, settings).run(intent)
+        scenario = ScenarioEngine(bundle, settings).run(proposal)
+        guard = CompetitionGuardV2(bundle, settings).run(proposal, scenario)
+        review = risk_review(bundle, proposal, scenario, guard)
+        history = RevisionHistoryBuilder(bundle, settings, intent).create(proposal, scenario, guard, review)
+        tampered = copy.deepcopy(momentum)
+        first = tampered["symbols"][0] if "symbols" in tampered else None
+        if first is not None:
+            first["return_20d"] = "0.999999"
+        else:
+            tampered["market_regime"] = "tampered"
+        result = DecisionFinalizer(bundle, settings, tampered, debate, intent, team).run(
+            proposal, scenario, guard, review, history
+        )
+        self.assertNotEqual(result["status"], "approved")
+        self.assertTrue(any(error.startswith("momentum：") for error in result["errors"]))
+
     def test_policy_requires_one_lot_of_one_thousand_shares(self):
         bundle, momentum, debate, intent = valid_inputs()
         settings = policy()

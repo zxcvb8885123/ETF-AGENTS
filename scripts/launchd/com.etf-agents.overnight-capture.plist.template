@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 每天 05:05（主機時區 Asia/Taipei）正式抓取隔夜市場背景（美股、日韓、VIX 與台指期夜盤；夜盤台北 05:00 結束）。沒抓齊（exit 非 0）等 30 秒重抓，最多 3 次；每次都是新的不可變抓取，07:00 的 run 用截止前最後一次。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etf-agents.overnight-capture</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>for i in 1 2 3; do __PROJECT_ROOT__/.venv/bin/python __PROJECT_ROOT__/cli/overnight_market.py capture &amp;&amp; exit 0; sleep 30; done; exit 2</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>Asia/Taipei</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>5</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/var/logs/overnight-capture-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/var/logs/overnight-capture-launchd.log</string>
+</dict>
+</plist>

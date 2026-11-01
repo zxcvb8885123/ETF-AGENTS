@@ -45,15 +45,22 @@ _SECRET_FILES = (".env", ".envrc")
 _MIN_SECRET_LENGTH = 8
 
 
-def claude_read_deny_settings() -> str:
-    """``claude --settings`` 用的拒讀規則；``**/`` 前綴同時涵蓋專案根目錄與子目錄。"""
-    rules = ["Read(**/%s)" % pattern for pattern in SENSITIVE_READ_GLOBS]
+def claude_read_deny_settings(extra: Sequence[str] = ()) -> str:
+    """``claude --settings`` 用的拒讀規則；``**/`` 前綴同時涵蓋專案根目錄與子目錄。
+
+    ``extra`` 是任務專屬的拒讀檔名樣式（例如多頭任務不得讀空頭輸出）。"""
+    rules = ["Read(**/%s)" % pattern for pattern in (*SENSITIVE_READ_GLOBS, *extra)]
     return json.dumps({"permissions": {"deny": rules}}, ensure_ascii=False)
 
 
-def _opencode_read_permission() -> Dict[str, str]:
+def _opencode_read_permission(extra: Sequence[str] = (), run_dir: Optional[Path] = None) -> Dict[str, str]:
     permission = {"*": "allow"}
     permission.update({pattern if pattern.startswith("*") else "*" + pattern: "deny" for pattern in SENSITIVE_READ_GLOBS})
+    # 任務專屬樣式（多空互相隔離）：OpenCode 的 ``*`` 會跨越 ``/``，所以不能只靠 "*/bear_*"
+    # （路徑中任何名為 bear_… 的目錄都會被誤擋）。有 run_dir 時錨定在該任務目錄名稱之後，
+    # 只擋直接放在任務目錄下的同儕檔案；絕對或相對路徑都能比對到，不會因路徑形式而放行。
+    anchor = "*/" + Path(run_dir).resolve().name + "/" if run_dir is not None else "*/"
+    permission.update({pattern if pattern.startswith("*") else anchor + pattern: "deny" for pattern in extra})
     return permission
 
 
@@ -81,13 +88,28 @@ def scrub_secrets(text: str, project_root: Path) -> str:
     return text
 
 
+def _string_values(value: object):
+    """遞迴取出輸出中所有字串（含字典鍵）。"""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            yield from _string_values(key)
+            yield from _string_values(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _string_values(item)
+
+
 def reject_secret_leak(name: str, output: Mapping[str, object], project_root: Path) -> None:
     """Agent 輸出含專案 ``.env``／``.envrc`` 的值時拒絕；錯誤訊息不帶出該值。
 
     Codex 的唯讀沙箱不限制讀檔，這是所有 runner 共用的最後一道檢查。
     """
-    text = json.dumps(output, ensure_ascii=False)
-    if any(value in text for value in _secret_values(project_root)):
+    # 比對原始字串值，不比對 json.dumps 後的文字：反斜線、雙引號會被跳脫而讓秘密比對失敗。
+    texts = list(_string_values(output))
+    texts.append(json.dumps(output, ensure_ascii=False))
+    if any(value in text for value in _secret_values(project_root) for text in texts):
         raise DailyPipelineError("%s Agent 輸出包含本機秘密設定的值，已拒絕" % name)
 
 @dataclass(frozen=True)
@@ -95,6 +117,8 @@ class AgentTask:
     name: str
     prompt: str
     schema: Mapping[str, object]
+    # 任務專屬的拒讀檔名樣式（Claude／OpenCode 的 read 權限強制；Codex 沙箱無法限制讀檔）。
+    deny_reads: Sequence[str] = ()
 
 
 @dataclass
@@ -140,7 +164,7 @@ class ClaudeAgentRunner:
             "--json-schema", json.dumps(task.schema, ensure_ascii=False),
             "--tools", "Read",
             "--strict-mcp-config",  # 不載入使用者的 MCP 外掛；每次呼叫約少 4 萬 token 的固定開銷
-            "--settings", claude_read_deny_settings(),
+            "--settings", claude_read_deny_settings(task.deny_reads),
             "--add-dir", str(run_dir),
             "--max-budget-usd", str(self.max_budget_usd),
         ]
@@ -259,7 +283,7 @@ class OpenCodeAgentRunner:
                     "mode": "primary",
                     "permission": {
                         "*": "deny",
-                        "read": _opencode_read_permission(),
+                        "read": _opencode_read_permission(task.deny_reads, run_dir),
                         "external_directory": "deny",
                     },
                 }

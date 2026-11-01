@@ -26,6 +26,7 @@ from etf_agent.competition import (  # noqa: E402
     verify_account_binding,
 )
 from etf_agent.competition.service import read_object, write_new_json  # noqa: E402
+from etf_agent.virtual_account import ledger_nav_history_provider  # noqa: E402
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -99,7 +100,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 args.virtual_account_account_id,
                 args.virtual_account_run_id,
             )
-            plan = DPlanExporter().build(args.team_id, args.trade_date, read_object(args.context, "D-Plan context"), artifacts)
+            plan = DPlanExporter().build(
+                args.team_id, args.trade_date, read_object(args.context, "D-Plan context"), artifacts,
+                nav_history_provider=ledger_nav_history_provider(args.virtual_account_repository, artifacts["decision_input"]),
+            )
             output = args.output or ROOT / "artifacts" / "competition_d_plan" / ("D-Plan_%s_%s.json" % (args.team_id, args.trade_date))
             write_new_json(output, plan)
             print(json.dumps({"status": "ready", "output": str(output), "local_validation": "passed", "organizer_server_validation": "not_run", "requires_human_review": True}, ensure_ascii=False, indent=2))

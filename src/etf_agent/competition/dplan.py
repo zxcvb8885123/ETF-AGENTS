@@ -380,11 +380,15 @@ class DPlanExporter:
         artifacts: Mapping[str, Mapping[str, object]],
         official_nav: object = None,
         official_prices: Mapping[str, object] = None,
+        nav_history_provider=None,
     ) -> Dict[str, object]:
         """official_nav／official_prices 來自已對帳的 DataPack（nav_tradable 與持股前日收盤價）。
 
         主辦方以 floor(target_weight × nav_tradable ÷ 前日收盤價) 換算目標股數；有 DataPack 時 target_weight
         以它的 nav_tradable 反推，避免帳本淨值的小差異讓邊界上的股數差一張而整份作廢。
+
+        nav_history_provider：policy 的 drawdown_control 含 history_ref 時，重建驗證以它讀帳本歷史重算峰值；
+        未提供即拒絕（沒有 history_ref 的舊 run 不受影響）。
         """
         required = {"decision_input", "momentum", "debate", "intent", "policy", "proposal", "scenario", "guard", "risk_review", "revision_history", "decision", "team_inputs"}
         missing = sorted(required - set(artifacts))
@@ -395,7 +399,7 @@ class DPlanExporter:
         if input_errors:
             raise DPlanError("DecisionInputBundle 驗證失敗：" + "; ".join(input_errors))
         result = artifacts["decision"]
-        result_errors = DecisionResultValidator(bundle, artifacts["policy"], artifacts["momentum"], artifacts["debate"], artifacts["intent"], artifacts["team_inputs"]).validate(
+        result_errors = DecisionResultValidator(bundle, artifacts["policy"], artifacts["momentum"], artifacts["debate"], artifacts["intent"], artifacts["team_inputs"], nav_history_provider=nav_history_provider).validate(
             artifacts["proposal"], artifacts["scenario"], artifacts["guard"], artifacts["risk_review"], artifacts["revision_history"], result
         )
         if result_errors:

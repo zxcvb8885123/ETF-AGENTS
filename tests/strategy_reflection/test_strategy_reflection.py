@@ -223,6 +223,23 @@ class ApplyTests(Fixture):
         self.assertEqual(self.repository.history()[0]["policy_id_before"], self.template["policy_id"])
         self.assertEqual(list((self.tmp / "config").glob("*.tmp")), [])
 
+    def test_lessons_trial_started_during_replay_blocks_the_knob_apply(self):
+        reflection_id = self.save()
+        inner = self.replayer()
+
+        def replay_then_lessons_land(path, replay_id):
+            result = inner(path, replay_id)
+            if replay_id.endswith("-candidate"):
+                self.repository.append_history({
+                    "action": "lessons_apply", "applied_at": NOW.isoformat(), "reflection_id": "lessons-x",
+                    "knobs": ["strategy_lessons"], "decision_days": 0, "trial": {"verification": "observe"}})
+            return result
+
+        before = (self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")
+        result = apply_reflection(self.tmp, reflection_id, replay_then_lessons_land, NOW, self.repository)
+        self.assertFalse(result["applied"])
+        self.assertEqual((self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8"), before)
+
     def test_failed_gate_leaves_config_untouched(self):
         reflection_id = self.save()
         before = (self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")
