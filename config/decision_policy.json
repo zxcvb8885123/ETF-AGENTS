@@ -18,7 +18,7 @@
   },
   "position_review": {
     "version": "v1",
-    "loss_alert": null,
+    "loss_alert": "0.15",
     "retrace_alert_20d": null,
     "gain_alert": null,
     "context": "v1"
