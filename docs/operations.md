@@ -68,7 +68,10 @@ docker compose run --rm agent python3 cli/dplan.py build-latest
 - **一致度與穩定度**（會花用量）：`run --suite 名稱 --repeats 2 --yes` 重跑，比較和當時結論、以及兩次重跑之間有多少相同、有幾檔正負相反。`--stop-after analysts` 只跑分析師，較省。
 - **過程**：報告列出每次呼叫的重試、驗證失敗與用量。
 
-- **準不準**：考卷的答案是之後真正的官方成交均價。看好的有沒有贏交易池平均、看壞的有沒有輸；價格還沒出來標「待答案」，累積到 10 個決策日才給命中率。之後再跑 `report --eval-id 編號` 就會更新。
+- **準不準**：考卷的答案是之後真正的官方成交均價。看好的有沒有贏交易池平均、看壞的有沒有輸；價格還沒出來標「待答案」，累積到 5 個完整決策日（`calibration.MIN_DECISION_DAYS`）才給命中率。之後再跑 `report --eval-id 編號` 就會更新。
+- **斷點續跑**：`run` 中途失敗（逾時、Agent 錯誤）後用 `run --suite 名稱 --repeats 同原值 --resume eval-編號 --yes` 續跑：只重跑沒有完成的卷次，卷次目錄內先前通過目前 Validator 的原始 Agent 輸出直接沿用、不再呼叫 Agent；評測集、repeats、stop_after、每卷輸入雜湊或評測用策略樣板任一不同就停止。不加 `--yes` 只列出未完成卷次與估算上限。
+- **回測格子（不花用量）**：`cli/agent_eval.py grid --start 起日 --end 迄日 [--benchmark 0050.TW]` 讀已封存 Decision run，每筆決策（run × symbol）一列，按信心等級、交易意圖與多空強度分組，**並列**兩種超額報酬：贏過交易池平均（主）與贏過基準 ETF 0050.TW（附），不合成單一分數。基準在 T 或 T+h 缺官方列（含抓取時間晚於 `--as-of`）時該日基準欄 `unavailable`、窗口內除權息時 `ex_rights`，池 alpha 照算、不補值；完整決策日少於 5 天只給天數與筆數；超額剛好 0 不算贏也不算輸。結果在 `artifacts/evaluation/grids/<grid_id>/grid.json`，`grid-verify --grid-id 編號` 重算驗證。只收已封存 run（`provenance_class=archived`），不往更早歷史重建。
+- **一頁 HTML**：回放、格子與評測報告旁各有一份自包含 HTML（inline SVG、無 script、無外連、有 CSP），只排版 JSON、不重算，不進 manifest，可隨時由 JSON 重新產生；頁尾印 JSON 的 content_sha256 與驗證指令。
 - **換 Policy 會怎樣（便宜版回測，不花用量）**：`cli/policy_replay.py run --policy config/decision_policy.json --start 起日 --end 迄日 [--compare-policy 另一份樣板]` 逐日讀封存 run 的 Agent 輸出，用指定樣板重算權重、張數與訂單，依帳本口徑以下一交易日官方均價成交並結轉到下一天（回放自己的模擬帳本）。報告在 `artifacts/evaluation/replays/`，記錄樣板雜湊、`tradeagent/` 雜湊、git commit 與使用的 run；`verify --replay-id 編號` 整段重算驗證。缺日、缺價、前視價格與封存驗證失敗一律停止或標示；成交日少於 20 天的結果沒有統計意義。
 
 ## 資料與報告位置

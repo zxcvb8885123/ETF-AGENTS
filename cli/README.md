@@ -39,8 +39,9 @@
 | `company_news.py` | FinMind 個股新聞來源核對（`review --database --status approved\|unverified\|restricted --evidence`）：抓規範頁原文與 SHA-256，寫入 `company_news_source_reviews`；只對保存之後的決策截止時間生效 |
 | `market_context_probe.py` | 補抓公開大盤成交、指數與法人資料（交易背景），不產生情緒結論 |
 | `strategy_reflection.py` | 策略反思：`brief` 看簡報、`auto` 每日自動反思並套用（樣本不足不呼叫 Agent）、`apply` 套用指定反思、`rollback` 還原最近一次套用、`history` 看歷史；在主機執行 |
-| `calibration.py` | 校準旁觀者：`snapshot` 記錄封存決策、`report` 以官方成交均價對答案（少於 10 個決策日不給結論）、`gap-audit` 審計決策價與成交均價的偏離；不影響決策 |
-| `policy_replay.py` | 便宜版回測：`run` 用封存 Decision run 的 Agent 輸出換策略樣板多日滾動回放（零 token，資料庫唯讀）、`verify` 整段重算驗證、`compare` 比較兩個回放 |
+| `calibration.py` | 校準旁觀者：`snapshot` 記錄封存決策、`report` 以官方成交均價對答案（完整決策日少於 5 天不給結論）、`gap-audit` 審計決策價與成交均價的偏離；不影響決策 |
+| `policy_replay.py` | 便宜版回測：`run` 用封存 Decision run 的 Agent 輸出換策略樣板多日滾動回放（零 token，資料庫唯讀）、`verify` 整段重算驗證、`compare` 比較兩個回放；回放旁另寫一頁自包含 HTML |
+| `agent_eval.py` | Agent 評測：`coverage` 資料抓齊率、`suite` 建評測集、`run` 重跑（會呼叫 Agent；`--resume eval-編號` 只重跑未完成卷次並沿用已驗證的原始輸出）、`report` 寫 report.json／.md／.html、`grid` 回測格子（run × symbol，對交易池平均與對 0050.TW 兩種超額報酬並列，零 token）、`grid-verify` 重算驗證 |
 | `dashboard.py` | 啟動唯讀虛擬帳戶績效儀表板（FastAPI），`./start.sh` 預設模式使用；`--database`／`--rules`／`--benchmarks` 供 `/api/benchmarks` 基準比較讀取（唯讀） |
 | `benchmark.py` | `collect` 以官方個股月行情補抓 `config/benchmarks.json` 已核准的基準標的（如 0050），只存行情、不進交易池，會執行資料庫 `initialize()`（含遷移）；`compare` 唯讀計算帳戶對基準的 NAV、累積報酬、超額報酬、最大回撤、相對回撤，`--as-of` 可重放舊時點，`--output`／`--json` 輸出完整 JSON |
 

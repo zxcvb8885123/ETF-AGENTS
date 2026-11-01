@@ -176,8 +176,9 @@ flowchart LR
 | `artifacts/event_research_validated.json` | `cli/research_report.py` 預設讀取（事件研究驗證結果） |
 | `artifacts/market_context_probes/` | `cli/market_context_probe.py` |
 | `artifacts/fundamental_repairs/` | `cli/fundamental_repair.py` |
-| `artifacts/evaluation/coverage_latest.json`、`suites/<名稱>.json`、`runs/eval-<UTC時間>/`（`manifest.json`、`report.json`、`report.md`、每份考卷每次重跑的 run 目錄與自己的 `decisions/`） | `cli/agent_eval.py` |
-| `artifacts/evaluation/replays/<replay_id>/`（不可變 run：`report.json`、每日 `dNN_policy`／`proposal`／`scenario`／`guard`／`decision`／`execution_market`／`close_market`／`execution`／`close`、`manifest.json`）、旁邊的 `<replay_id>.md` 與 `compare-<A>-vs-<B>.json/.md` | `cli/policy_replay.py` |
+| `artifacts/evaluation/coverage_latest.json`、`suites/<名稱>.json`、`runs/eval-<UTC時間>/`（`manifest.json`（續跑時多 `resumes`）、`report.json`、`report.md`、`report.html`（衍生品，不進 manifest）、每份考卷每次重跑的 run 目錄（含 `eval_result.json`，續跑時多 `resumed_from_attempts`／`resumed_at`）與自己的 `decisions/`） | `cli/agent_eval.py` |
+| `artifacts/evaluation/grids/<grid_id>/`（不可變 run：`grid.json`、`manifest.json`）與旁邊的 `<grid_id>.html`（衍生品，不進 manifest） | `cli/agent_eval.py grid` |
+| `artifacts/evaluation/replays/<replay_id>/`（不可變 run：`report.json`、每日 `dNN_policy`／`proposal`／`scenario`／`guard`／`decision`／`execution_market`／`close_market`／`execution`／`close`、`manifest.json`）、旁邊的 `<replay_id>.md`、`<replay_id>.html`（衍生品，不進 manifest）與 `compare-<A>-vs-<B>.json/.md` | `cli/policy_replay.py` |
 
 ## 3. `var/` 逐項說明
 

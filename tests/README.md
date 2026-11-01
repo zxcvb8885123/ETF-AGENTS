@@ -42,7 +42,7 @@ flowchart LR
 | `decision/` | 決策鏈：輸入包、分批、多空與交易 Agent 契約、現金姿態與持股廣度、部位計算、風控與 Guard、交付報告、個股新聞走完全鏈 | `test_batching`、`test_company_news_chain`、`test_decision_delivery`、`test_decision_input_builder`、`test_portfolio_decision_agent`、`test_portfolio_risk_decision`、`test_position_breadth`、`test_position_sizing`、`test_prior_decision`、`test_stance`、`test_team_chain`、`test_trader`、`test_trader_report` |
 | `account/` | 虛擬帳戶開帳、結算與每日推進；D-Plan 候選的匯出與檢查 | `test_virtual_account`、`test_virtual_account_daily`、`test_competition_dplan` |
 | `benchmark/` | 基準比較：買入持有與費稅、as-of 版本（前視拒絕）、缺價／無成交／未核准 unavailable、基準收集不污染交易池、儀表板端點與 CLI | `test_benchmark_comparison`、`test_benchmark_collection` |
-| `automation/` | 每日流程編排、子 Agent 執行器、預檢、run 目錄配置、儀表板、`start.sh` 各入口與資料模式 | `test_agent_runner`、`test_daily_log`、`test_daily_pipeline`、`test_daily_script`、`test_dashboard`、`test_policy_replay`（多日 Policy 回放）、`test_preflight`、`test_run_layout`、`test_start_data_modes`、`test_start_entrypoints` |
+| `automation/` | 每日流程編排、子 Agent 執行器、預檢、run 目錄配置、儀表板、`start.sh` 各入口與資料模式 | `test_agent_eval`（評測集重跑、斷點續跑、準度答案）、`test_agent_runner`、`test_daily_log`、`test_daily_pipeline`、`test_daily_script`、`test_dashboard`、`test_decision_grid`（回測格子兩種超額報酬、重算驗證、一頁 HTML 自包含與跳脫、隔離）、`test_policy_replay`（多日 Policy 回放）、`test_preflight`、`test_run_layout`、`test_start_data_modes`、`test_start_entrypoints` |
 | `fixtures/` | 測試用的靜態官方回應 | 見下 |
 
 ## fixtures/
