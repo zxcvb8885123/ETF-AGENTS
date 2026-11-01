@@ -119,6 +119,9 @@ class SensitiveReadTests(unittest.TestCase):
         self.assertIn("Read(**/bear_*)", rules)
         self.assertIn("Read(**/.env)", rules)
         self.assertEqual(_opencode_read_permission(("bear_*",))["*/bear_*"], "deny")
+        anchored = _opencode_read_permission(("bear_*",), Path("artifacts/daily/run1"))
+        self.assertEqual(anchored["*/run1/bear_*"], "deny")
+        self.assertNotIn("*/bear_*", anchored)
 
     def test_bull_and_bear_tasks_cannot_read_each_others_output(self):
         from etf_agent.automation.team_stages import _peer_deny_reads

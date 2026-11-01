@@ -53,12 +53,14 @@ def claude_read_deny_settings(extra: Sequence[str] = ()) -> str:
     return json.dumps({"permissions": {"deny": rules}}, ensure_ascii=False)
 
 
-def _opencode_read_permission(extra: Sequence[str] = ()) -> Dict[str, str]:
+def _opencode_read_permission(extra: Sequence[str] = (), run_dir: Optional[Path] = None) -> Dict[str, str]:
     permission = {"*": "allow"}
     permission.update({pattern if pattern.startswith("*") else "*" + pattern: "deny" for pattern in SENSITIVE_READ_GLOBS})
-    # 任務專屬樣式（多空互相隔離）必須從檔名開頭比對：用 "*/" 錨定路徑區段，
-    # 避免 "*bear_*" 誤擋路徑中任何位置剛好含 bear_ 的檔案（Claude 的 "**/" 前綴本來就是區段錨定）。
-    permission.update({pattern if pattern.startswith("*") else "*/" + pattern: "deny" for pattern in extra})
+    # 任務專屬樣式（多空互相隔離）：OpenCode 的 ``*`` 會跨越 ``/``，所以不能只靠 "*/bear_*"
+    # （路徑中任何名為 bear_… 的目錄都會被誤擋）。有 run_dir 時錨定在該任務目錄名稱之後，
+    # 只擋直接放在任務目錄下的同儕檔案；絕對或相對路徑都能比對到，不會因路徑形式而放行。
+    anchor = "*/" + Path(run_dir).resolve().name + "/" if run_dir is not None else "*/"
+    permission.update({pattern if pattern.startswith("*") else anchor + pattern: "deny" for pattern in extra})
     return permission
 
 
@@ -281,7 +283,7 @@ class OpenCodeAgentRunner:
                     "mode": "primary",
                     "permission": {
                         "*": "deny",
-                        "read": _opencode_read_permission(task.deny_reads),
+                        "read": _opencode_read_permission(task.deny_reads, run_dir),
                         "external_directory": "deny",
                     },
                 }
