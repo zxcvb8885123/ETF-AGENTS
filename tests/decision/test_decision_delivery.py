@@ -10,7 +10,7 @@ from etf_agent.decision_delivery import build_delivery, validate_delivery, save_
 from etf_agent.core import canonical_sha256
 from etf_agent.decision_delivery.repository import DeliveryRepository
 from etf_agent.decision_delivery.builder import build_report
-from etf_agent.decision_delivery.renderer import render_report, render_report_v2, render_report_v3, renderer_for
+from etf_agent.decision_delivery.renderer import render_report, render_report_v2, render_report_v3, render_report_v4, renderer_for
 from etf_agent.decision_delivery.renderer_v1 import render_report_v1
 from etf_agent.decision_delivery.validator import validate_report
 from test_team_chain import team_world, finalize
@@ -222,6 +222,9 @@ class DeliveryTests(unittest.TestCase):
         legacy = render_report_v1(report)
         self.assertIs(renderer_for(legacy), render_report_v1)
         self.assertNotEqual(legacy, render_report(report))
+        v4 = render_report_v4(report)
+        self.assertIs(renderer_for(v4), render_report_v4)
+        self.assertNotIn("## 本日摘要（投組層級）", v4)
         v3 = render_report_v3(report)
         self.assertIs(renderer_for(v3), render_report_v3)
         self.assertNotIn("說明：本次風險 Agent 的現金姿態是防守", v3)
@@ -229,6 +232,21 @@ class DeliveryTests(unittest.TestCase):
         self.assertIs(renderer_for(v2), render_report_v2)
         self.assertIn("金額單位：未提供", v2)
         self.assertIn("估值時間：2026-09-20T00:55:00+00:00。", v2)
+
+    def test_summary_section_comes_first_and_quiet_holds_become_a_table(self):
+        report = build_report(world(), "summary")
+        text = render_report(report)
+        self.assertLess(text.index("## 本日摘要（投組層級）"), text.index("## 帳戶與預計配置"))
+        self.assertIn("買進／加碼候選", text)
+        self.assertIn("現金姿態：", text)
+        quiet = [row for row in report["decision_rows"]
+                 if row["intent"] and row["intent"]["intent"] == "hold" and row["final_action"] == "no_order" and row["after"]]
+        if quiet:
+            self.assertIn("### 續抱（無委託、無配置限制）", text)
+            self.assertNotIn("### %s\n" % quiet[0]["symbol"], text)
+        # 摘要只重新統計封存欄位：竄改委託後重建比對必須失敗。
+        with self.assertRaises(DeliveryError):
+            validate_report(world(), "summary", report, text + "被改寫")
 
     def test_account_currency_and_valuation_time_are_shown_in_taipei(self):
         report = build_report(world(), "display")
