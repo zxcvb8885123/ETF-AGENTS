@@ -5,7 +5,8 @@ from .tools import cell as _cell, percent, TAIPEI
 from etf_agent.core import parse_aware_time
 from etf_agent.decision.trader_report import INTENT_LABELS, CONVICTION_LABELS
 
-TEMPLATE_MARKER = "<!-- report_template: 3 -->"
+TEMPLATE_MARKER = "<!-- report_template: 4 -->"
+TEMPLATE_MARKER_V3 = "<!-- report_template: 3 -->"
 TEMPLATE_MARKER_V2 = "<!-- report_template: 2 -->"
 # AccountSnapshot 沒有幣別欄位；DecisionPolicy 驗證只接受 TWD，競賽金額亦以新台幣元計。
 DEFAULT_CURRENCY = "TWD（新台幣元）"
@@ -18,6 +19,12 @@ def cell(value):
 
 
 def render_report(report):
+    """第 4 版樣板：第 3 版再加「現金姿態為防守時，買進／加碼無委託」的原因說明。"""
+    return _render(report, 4)
+
+
+def render_report_v3(report):
+    """第 3 版樣板，只用來驗證舊交付。"""
     return _render(report, 3)
 
 
@@ -40,7 +47,7 @@ def _account_lines(account, template):
 
 def _render(report, template):
     p, risk = report["provenance"], report["risk_summary"]
-    marker = TEMPLATE_MARKER if template == 3 else TEMPLATE_MARKER_V2
+    marker = {4: TEMPLATE_MARKER, 3: TEMPLATE_MARKER_V3}.get(template, TEMPLATE_MARKER_V2)
     lines = [marker, "", "# 最終決策報告", "", "**%s**" % STATUS[report["decision_status"]], "",
         "交易日：%s｜資料截止：%s（台北時間）" % (cell(p["trade_date"]), cell(parse_aware_time(p["decision_cutoff"], "decision_cutoff").astimezone(TAIPEI).isoformat())), "",
         "決策 run：%s" % cell(p["decision_run_id"]), "",
@@ -66,6 +73,9 @@ def _render(report, template):
                 "不適用（決策拒絕）" if report["decision_status"] == "rejected" else cell((position or {}).get("shares", 0)), percent(position["weight"]) if position else "不適用"), ""]
         lines += _intent(item)
         lines += ["最終結果：%s。" % {"buy": "買進", "sell": "賣出", "no_order": "無委託（不等同原意圖為不交易，請對照風控修正及配置限制）", "rejected": "拒絕"}[row["final_action"]], ""]
+        if template >= 4 and row["final_action"] == "no_order" and item.get("intent") in ("buy", "add") and risk["cash_stance"]["level"] == "defensive":
+            lines += ["說明：本次風險 Agent 的現金姿態是防守，程式依姿態保留較高的現金比例，可分配給買進與加碼的額度被壓低，"
+                      "目標金額沒有高於現有持股時不會建立委託。這是規則的結果，不是交易 Agent 改了意圖；配置限制清單不一定逐檔列出這個原因。", ""]
     stance = risk["cash_stance"]
     # 持股廣度是 2026-10-26 後新增的欄位；舊封存沒有它，輸出維持原樣。
     breadth = "；持股廣度：%s" % cell({"concentrated": "集中", "balanced": "平衡", "diversified": "分散"}.get(stance["breadth"])) if "breadth" in stance else ""
@@ -166,4 +176,6 @@ def renderer_for(markdown):
     from .renderer_v1 import render_report_v1
     if markdown.startswith(TEMPLATE_MARKER):
         return render_report
+    if markdown.startswith(TEMPLATE_MARKER_V3):
+        return render_report_v3
     return render_report_v2 if markdown.startswith(TEMPLATE_MARKER_V2) else render_report_v1

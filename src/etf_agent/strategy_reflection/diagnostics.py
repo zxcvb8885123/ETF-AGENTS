@@ -151,6 +151,9 @@ def _turnover(runs: List[Mapping[str, object]], book: OfficialPriceBook) -> Dict
         status="ok", mean_turnover_rate=format_decimal(mean(ratios)), mean_fee_drag=format_decimal(mean(fees)),
         sell_orders=swaps,
     )
+    if len(ratios) >= 2:
+        # 開帳建倉那天的成交金額遠大於日常調整，平均會被它主導；另列首日與其後的平均。
+        result.update(first_day_turnover_rate=format_decimal(ratios[0]), mean_turnover_rate_after_first=format_decimal(mean(ratios[1:])))
     return result
 
 

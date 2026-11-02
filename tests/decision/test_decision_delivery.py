@@ -10,7 +10,7 @@ from etf_agent.decision_delivery import build_delivery, validate_delivery, save_
 from etf_agent.core import canonical_sha256
 from etf_agent.decision_delivery.repository import DeliveryRepository
 from etf_agent.decision_delivery.builder import build_report
-from etf_agent.decision_delivery.renderer import render_report, render_report_v2, renderer_for
+from etf_agent.decision_delivery.renderer import render_report, render_report_v2, render_report_v3, renderer_for
 from etf_agent.decision_delivery.renderer_v1 import render_report_v1
 from etf_agent.decision_delivery.validator import validate_report
 from test_team_chain import team_world, finalize
@@ -222,6 +222,9 @@ class DeliveryTests(unittest.TestCase):
         legacy = render_report_v1(report)
         self.assertIs(renderer_for(legacy), render_report_v1)
         self.assertNotEqual(legacy, render_report(report))
+        v3 = render_report_v3(report)
+        self.assertIs(renderer_for(v3), render_report_v3)
+        self.assertNotIn("說明：本次風險 Agent 的現金姿態是防守", v3)
         v2 = render_report_v2(report)
         self.assertIs(renderer_for(v2), render_report_v2)
         self.assertIn("金額單位：未提供", v2)

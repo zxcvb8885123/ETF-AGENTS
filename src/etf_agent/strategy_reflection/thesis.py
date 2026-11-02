@@ -26,9 +26,24 @@ BUY_INTENTS = {"buy", "add"}
 LOSS_FLAG = "loss_alert"
 
 
+def _holds(symbol: str, run: Mapping[str, object]) -> Optional[bool]:
+    """該決策日結束時是否持有；rejected 等沒有 portfolio 的決策回 None（不中斷持有區間）。"""
+    portfolio = run["decision"].get("portfolio")  # type: ignore[index]
+    if not isinstance(portfolio, Mapping):
+        return None
+    return any(str(p["symbol"]).upper() == symbol for p in portfolio.get("positions", []))
+
+
 def _entry_for(symbol: str, ordered: Sequence[tuple]) -> Optional[tuple]:
-    """最近一次「有委託買進」的 buy／add：回傳 (成交日, run, intent 項目, 委託)。"""
-    for entry_day, run in reversed(ordered):
+    """目前這段連續持有期間「第一次有委託買進」的 buy／add：回傳 (成交日, run, intent 項目, 委託)。
+
+    加碼只是在原部位上再買，不能覆蓋原始買進理由與成本；持有中斷（某日沒持有）後再買才算新的一段。"""
+    start = len(ordered)
+    for index in range(len(ordered) - 1, -1, -1):
+        if _holds(symbol, ordered[index][1]) is False:
+            break
+        start = index
+    for entry_day, run in ordered[start:]:
         item = next((i for i in run["intent"]["items"] if str(i["symbol"]).upper() == symbol and i.get("intent") in BUY_INTENTS), None)
         order = next((o for o in run["decision"].get("orders", []) if str(o["symbol"]).upper() == symbol and o.get("side") == "buy"), None)
         if item is not None and order is not None:
@@ -84,11 +99,13 @@ def build_thesis_tracking(
         if found is None:
             continue
         entry_day, _, item, order = found
-        entry_price = Decimal(str(order["estimated_price"]))
+        # 成本用成交日官方均價（與帳本成交價同源）；缺值才退回決策時的預估價，並在 note 標明。
+        official = (book.vwap(entry_day) or {}).get(symbol)
+        entry_price = official if official is not None else Decimal(str(order["estimated_price"]))
         later = _later(symbol, entry_day, ordered)
         row: Dict[str, object] = {
             "symbol": symbol, "entry_day": entry_day, "entry_intent": item["intent"], "entry_conviction": item.get("conviction"),
-            "entry_price": format_decimal(entry_price), **later,
+            "entry_price": format_decimal(entry_price), "entry_price_source": "official_vwap" if official is not None else "estimated", **later,
             "text": {"rationale": item.get("rationale"), "invalidation_conditions": item.get("invalidation_conditions", []),
                      "unresolved_questions": item.get("unresolved_questions", [])},
         }
