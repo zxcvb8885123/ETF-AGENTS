@@ -35,10 +35,16 @@
     "stock_weight_fit": "v1",
     "selection_ranking": "v1",
     "held_add_priority": "v1",
+    "cash_buffer_floor": "v1",
     "rotation": {
       "version": "v1",
       "max_swaps_per_run": 10,
-      "min_new_conviction": "low"
+      "min_new_conviction": "low",
+      "forced_swap": {
+        "version": "v1",
+        "min_new_conviction": "high",
+        "max_swaps_per_run": 2
+      }
     },
     "cash_buffer_by_stance": {
       "aggressive": "0.03",

@@ -33,10 +33,20 @@ STOCK_WEIGHT_FIT = "v1"
 # 省略此欄位的舊 Decision run 維持新股可佔滿檔名額的原重建行為。
 HELD_ADD_PRIORITY = "v1"
 SELECTION_RANKING = "v1"
+# 2026-11-02 後新增：現金已低於姿態緩衝時，買單可動用本次賣出收入（現金不再往下掉），
+# 不被緩衝整筆砍掉。省略此欄位的舊 Decision run 維持緩衝一律生效的原重建行為。
+CASH_BUFFER_FLOOR = "v1"
 # 2026-10-28 後新增：滿檔時本次出場釋出的名額可以給未持有的新股（換股）。省略 rotation 的
 # Decision run 維持「滿檔完全不進新股」的原重建行為；名額配對全部由程式計算，Agent 不參與。
 ROTATION_VERSION = "v1"
-ROTATION_FIELDS = {"version", "max_swaps_per_run", "min_new_conviction"}
+ROTATION_FIELDS = {"version", "max_swaps_per_run", "min_new_conviction", "forced_swap"}
+# 2026-11-02 後新增：滿檔又沒人出場時，信心夠高的未持有新股可由程式換掉「每週論點檢視判定理由被推翻（broken）」
+# 且交易 Agent 標 hold 的續抱持股（forced_swap）。名單由每日 pipeline 綁進 Policy（broken_symbols＋verdicts_ref），
+# 事後重建只讀 Policy，不讀會變動的 var/ 檔；沒有名單就不換。
+# 省略此欄位的 Policy／舊 Decision run 維持「只有交易 Agent 標 exit 才釋出名額」的原重建行為。
+FORCED_SWAP_VERSION = "v1"
+FORCED_SWAP_FIELDS = {"version", "min_new_conviction", "max_swaps_per_run", "broken_symbols", "verdicts_ref"}
+VERDICTS_REF_FIELDS = {"verdicts_id", "as_of", "sha256"}
 CONVICTION_LEVELS = ("high", "medium", "low")
 # 現金姿態由積極到防守；對應的現金緩衝由 Policy 設定，必須低於競賽現金上限。
 CASH_STANCES = ("aggressive", "neutral", "defensive")
@@ -111,6 +121,31 @@ def _validate_rotation(sizing: Mapping[str, object], errors: List[str]) -> None:
         errors.append("position_sizing.rotation.max_swaps_per_run 必須是非負整數")
     if rotation.get("min_new_conviction") not in CONVICTION_LEVELS:
         errors.append("position_sizing.rotation.min_new_conviction 必須是 high／medium／low 之一")
+    if "forced_swap" in rotation:
+        forced = rotation["forced_swap"]
+        if not isinstance(forced, Mapping):
+            errors.append("position_sizing.rotation.forced_swap 必須是物件")
+        else:
+            reject_unknown_fields(forced, FORCED_SWAP_FIELDS, "position_sizing.rotation.forced_swap", errors)
+            if forced.get("version") != FORCED_SWAP_VERSION:
+                errors.append("position_sizing.rotation.forced_swap.version 只允許 %s" % FORCED_SWAP_VERSION)
+            if forced.get("min_new_conviction") not in CONVICTION_LEVELS:
+                errors.append("position_sizing.rotation.forced_swap.min_new_conviction 必須是 high／medium／low 之一")
+            count = forced.get("max_swaps_per_run")
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                errors.append("position_sizing.rotation.forced_swap.max_swaps_per_run 必須是正整數")
+            broken, ref = forced.get("broken_symbols"), forced.get("verdicts_ref")
+            if broken is not None:
+                if (not isinstance(broken, list) or not all(isinstance(s, str) and s == s.upper() and s for s in broken)
+                        or broken != sorted(set(broken))):
+                    errors.append("position_sizing.rotation.forced_swap.broken_symbols 必須是排序且不重複的大寫代號清單")
+                if not isinstance(ref, Mapping):
+                    errors.append("position_sizing.rotation.forced_swap.broken_symbols 必須附 verdicts_ref")
+            if ref is not None:
+                if not isinstance(ref, Mapping) or set(ref) != VERDICTS_REF_FIELDS or not all(isinstance(v, str) and v for v in ref.values()):
+                    errors.append("position_sizing.rotation.forced_swap.verdicts_ref 欄位必須是 verdicts_id、as_of、sha256 的非空字串")
+                elif broken is None:
+                    errors.append("position_sizing.rotation.forced_swap.verdicts_ref 必須附 broken_symbols")
     # 換股名額的前提是「新股不佔滿檔名額」，否則釋出名額的計算沒有意義。
     if "held_add_priority" not in sizing:
         errors.append("position_sizing.rotation 必須與 held_add_priority 同時存在")
@@ -131,6 +166,7 @@ def validate_position_sizing(
             "support_by_symbol", "stock_weight_fit", "positions_by_breadth", "position_breadth",
             "held_add_priority", "rotation", "volatility_exponent", "selection_tiebreak",
             "selection_ranking", "rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256",
+            "cash_buffer_floor",
         },
         "DecisionPolicy.position_sizing",
         errors,
@@ -146,6 +182,8 @@ def validate_position_sizing(
         errors.append("position_sizing.selection_ranking 只允許 %s；舊 Decision run 省略此欄位" % SELECTION_RANKING)
     if "stock_weight_fit" in sizing and sizing["stock_weight_fit"] != STOCK_WEIGHT_FIT:
         errors.append("position_sizing.stock_weight_fit 只允許 %s；舊 Decision run 省略此欄位" % STOCK_WEIGHT_FIT)
+    if "cash_buffer_floor" in sizing and sizing["cash_buffer_floor"] != CASH_BUFFER_FLOOR:
+        errors.append("position_sizing.cash_buffer_floor 只允許 %s；舊 Decision run 省略此欄位" % CASH_BUFFER_FLOOR)
     if "held_add_priority" in sizing and sizing["held_add_priority"] != HELD_ADD_PRIORITY:
         errors.append("position_sizing.held_add_priority 只允許 %s；舊 Decision run 省略此欄位" % HELD_ADD_PRIORITY)
     _validate_rotation(sizing, errors)
