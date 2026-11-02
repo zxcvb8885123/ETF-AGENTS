@@ -332,7 +332,7 @@ class ThesisReviewTests(unittest.TestCase):
                                     "intents_since": {}, "alerts_since": {}}], review)
         self.assertIn("理由轉弱", text)
         self.assertIn("毛利率低於指引（未觸發）", text)
-        self.assertIn("只供參考，不影響交易", text)
+        self.assertIn("交易 Agent 只當背景參考，不影響 policy", text)
 
 
 class BenchmarkDiagnosticsTests(Fixture):

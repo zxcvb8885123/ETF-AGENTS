@@ -75,7 +75,7 @@ def _thesis_section(thesis: Optional[List[Mapping[str, object]]], week: object, 
         counts: Dict[str, int] = {}
         for item in review.values():
             counts[str(item["verdict"])] = counts.get(str(item["verdict"]), 0) + 1
-        lines.append("- Agent 論點檢視（只供參考，不影響交易）：" + "、".join("%s %d 檔" % (_VERDICT[k], counts[k]) for k in _VERDICT if k in counts))
+        lines.append("- Agent 論點檢視（交易 Agent 只當背景參考，不影響 policy）：" + "、".join("%s %d 檔" % (_VERDICT[k], counts[k]) for k in _VERDICT if k in counts))
     rank = {"broken": 0, "weakened": 1, "unknown": 2, "intact": 3}
     for row in sorted(thesis, key=lambda r: (rank.get(str(review.get(str(r["symbol"]).upper(), {}).get("verdict", "unknown")), 2),
                                              str(r["status"]) != "needs_review", str(r["symbol"]))):

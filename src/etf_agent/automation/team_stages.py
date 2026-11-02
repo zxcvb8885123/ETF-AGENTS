@@ -37,6 +37,7 @@ from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.stance import STANCE_ROLES
 from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
+from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_brief
 
 from .agent_runner import LATER_STAGE_GLOBS, AgentTask, DailyPipelineError
 from .agent_schemas import (
@@ -344,9 +345,11 @@ class TeamStagesMixin:
         }
         review_brief = position_review_brief(position_review) if position_review is not None else {}
         lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
+        thesis_verdicts = load_thesis_verdicts(self.root, bundle["decision_cutoff"])  # 每週論點檢視；只是背景，沒有可引用的 ID
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]
+            thesis_background = verdicts_brief(thesis_verdicts, set(held) & set(batch["symbols"]))
             brief_path = self.save_brief(
                 "brief_%s" % name,
                 {
@@ -363,6 +366,7 @@ class TeamStagesMixin:
                        if position_review is not None else {}),
                     **({"prior_decision_background": background} if background is not None else {}),
                     **({"strategy_lessons": lessons_background} if lessons_background is not None else {}),
+                    **({"thesis_review_background": thesis_background} if thesis_background is not None else {}),
                     "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                     "symbols": [
                         {

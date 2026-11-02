@@ -24,6 +24,7 @@ from etf_agent.core import canonical_sha256, parse_aware_time
 from .brief import build_brief
 from .diagnostics import build_diagnostics, load_runs
 from etf_agent.decision.strategy_lessons import MAX_LESSONS, load_strategy_lessons
+from etf_agent.decision.thesis_verdicts import VERDICTS_PATH, seal_verdicts
 
 from .lessons import (
     LESSONS_ACTION, LESSONS_SCHEMA, MIN_GROUP, REVERT_ACTION, apply_lessons, holdings_count, lessons_brief_for_agent,
@@ -134,7 +135,7 @@ def review_thesis(
     runner: Optional[AgentRunner], run_dir: Path, thesis: List[Dict[str, object]], context: Mapping[str, Mapping[str, object]],
 ) -> Dict[str, Dict[str, object]]:
     """逐檔論點檢視（只出報告）。沒有 runner、Agent 失敗或輸出沒過驗證的批次一律標 unknown 並寫明原因，
-    不中斷反思流程；結果存成 ``thesis_review.json``，不進簡報也不進 policy。"""
+    不中斷反思流程；結果存成 ``thesis_review.json``，不進簡報也不進 policy；可用結論另寫 ``thesis_verdicts.json`` 給交易 Agent 當背景。"""
     briefs = review_briefs(thesis, context)
     results: List[Dict[str, object]] = []
     for index, batch in enumerate(batches(briefs)):
@@ -754,6 +755,11 @@ def run_auto(
     thesis, context = thesis_inputs(root, database, as_of, decisions)
     review_dir = repository.base / "agent_inputs" / now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     review = review_thesis(runner if switch["enabled"] else None, review_dir, thesis, context) if thesis else {}
+    if switch["enabled"] and review:
+        # 論點結論給交易 Agent 當背景（決策鏈只讀這個檔，不匯入反思套件）；全部 unknown 時不覆蓋上一份。
+        sealed = seal_verdicts("thesis-verdicts-" + now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ"), now.astimezone(timezone.utc).isoformat(), review)
+        if sealed["items"]:
+            atomic_write_json(root / VERDICTS_PATH, sealed)
     excess = benchmark_excess(root, database, now) if open_trial(history) is not None else {}
     trial = trial_note(history, int(brief["decision_days"]), excess)
     skip_reason = (

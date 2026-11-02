@@ -20,7 +20,7 @@
 
 ## 開關、試用觀察期與累積偏移
 
-- `config/strategy_reflection.json`：`enabled`＝false 整體停用（只產報告）；`auto_apply`＝false 為人工模式（提案只封存，用 `apply` 手動套用）。缺檔視為全開，格式錯誤 fail-closed 全關。連續 2 次試用被還原會自動把 `auto_apply` 改為 false。
+- `config/strategy_reflection.json`：`enabled`＝false 整體停用（只產報告）；`auto_apply`＝false 為人工模式（提案只封存，用 `apply` 手動套用）。缺檔視為全開，格式錯誤 fail-closed。2026-11-02 起設為 `auto_apply: false`：比賽只有約 24 個交易日，樣本門檻（每個 horizon 至少 5 個完整決策日）與冷卻（10 個決策日）湊不出可靠證據，自動套用等於憑雜訊改策略；反思降為診斷與週報，旋鈕提案只封存，由人看過再 `apply` 全關。連續 2 次試用被還原會自動把 `auto_apply` 改為 false。
 - 套用後的**試用觀察期**（`trial.py`）：比較套用前最近 10 個交易日與套用後新交易日的「帳戶日報酬 − 等權基準日報酬」平均；套用日之後 5 個交易日起算，變差超過 max(基準期標準差的一半, 0.002) 才還原、變好超過同一門檻才保留；落在門檻之內（看不出差別）或基準期少於 4 日時延長 3 日一次，仍看不出差別：回放驗得了的旋鈕保留，停損／停利門檻（`position_review.*`）還原。還原走 `rollback`（取每日鎖、避開 20:50～09:00、設定檔被人改過就不動），由週六 `apply-pending` 執行。觀察期未結案時禁止新提案。這是護欄不是獲利證明，比賽只有 24 個交易日。
 - 試用**不會永久卡住**：套用日起超過 15 個日曆天仍湊不齊觀察交易日（例如基準資料不可用）→ `timeout` 結案，變更保留、標 `needs_manual`；歷史已寫但 live 檔沒換（套用中途被中止）或 live 檔事後被人改過（雜湊對不上 `policy_sha256_after`／`sha256_after`）→ `orphaned` 結案、不碰 live 檔，live 檔仍是套用前版本時順手補一筆 `rollback` 讓冷卻與累積偏移回到真實狀態；判定要還原卻還原失敗 → `revert_failed` 結案。三者都是 final、標 `needs_manual` 並在週六結果的 `alert` 欄位告警。這是刻意取捨：先記歷史再換檔，中途中止留下「有紀錄」的狀態，由結算時偵測並收尾。
 - 週報的試用進度用與結算相同的交易日計數；基準資料不可用時退回決策日差並註明。
@@ -29,7 +29,7 @@
 
 **買進論點追蹤**（`thesis.py`，報告首節）：每檔持股列買進日、預估成交價、至今報酬、期間最大回落、買進後的交易意圖與警示次數，依容忍度（policy 的 `position_review.loss_alert`）分成「照理由走／短期回檔在容忍範圍內／請回頭檢查」；報酬用官方成交均價，買進後有除權息的不算報酬。交易 Agent 當時寫的理由與重估條件只放在週報給人讀，不進診斷包與反思 Agent 的簡報。
 
-**論點檢視**（`thesis_review.py`，Skill `strategy-reflection` 的 `references/thesis-review.md`）：每週由同一個反思 Agent 另做一件事，逐檔（10 檔一批）對照「當初的重估條件」與最新決策日同一檔的分析師發現／多空 claim，逐條判斷 triggered／not_triggered／unknown，整體 intact／weakened／broken／unknown。只能引用該檔最新的 finding／claim ID；觸發必須引用 ID、broken 至少要有一個觸發條件；價格事實只是背景，短期波動不算理由失效。Agent 失敗或輸出沒過驗證的批次標 unknown，不中斷反思；結果存 `agent_inputs/<時間>/thesis_review.json`，只進週報，不進簡報、policy 或交易。
+**論點檢視**（`thesis_review.py`，Skill `strategy-reflection` 的 `references/thesis-review.md`）：每週由同一個反思 Agent 另做一件事，逐檔（10 檔一批）對照「當初的重估條件」與最新決策日同一檔的分析師發現／多空 claim，逐條判斷 triggered／not_triggered／unknown，整體 intact／weakened／broken／unknown。只能引用該檔最新的 finding／claim ID；觸發必須引用 ID、broken 至少要有一個觸發條件；價格事實只是背景，短期波動不算理由失效。Agent 失敗或輸出沒過驗證的批次標 unknown，不中斷反思；結果存 `agent_inputs/<時間>/thesis_review.json`，進週報，不進簡報或 policy；可用結論（intact／weakened／broken）另寫 `var/strategy_reflection/thesis_verdicts.json`（全部 unknown 時不覆蓋），交易 Agent 以不可引用的背景 `thesis_review_background` 讀到（`decision/thesis_verdicts.py`，早於決策截止時間且不超過 8 天）。
 
 診斷包只含數值與列舉（分析師與交易判斷的命中率、賣出之後的走勢、換手與費稅拖累、警示與回應次數、現金姿態與廣度分布），**不含新聞、claims、findings 等自由文字**，簡報因此不會被不受信任的內容誘導；只有 `status=ok` 的指標成為 `diag.*` 證據。與 0050／等權基準的比較尚未接入。
 

@@ -104,8 +104,8 @@ FORBIDDEN_PREFIXES = (
     "cash_buffer_rate", "default_target_weight", "policy_id", "available_at", "content_sha256", "method", "stock_weight_fit",
     # 版本閘門只由人設定：這些不是調整幅度，而是切換程式路徑（與 method、stock_weight_fit 同性質）。
     # 低波動偏好強度 volatility_exponent 與換股上限 rotation.max_swaps_per_run 是正式旋鈕，見 KNOBS。
-    "held_add_priority", "rotation.version", "position_review.version", "position_review.gain_alert",
-    "selection_ranking", "selection_tiebreak", "rank_by_symbol",
+    "held_add_priority", "rotation.version", "rotation.forced_swap", "position_review.version", "position_review.gain_alert",
+    "selection_ranking", "selection_tiebreak", "rank_by_symbol", "cash_buffer_floor",
 )
 
 
