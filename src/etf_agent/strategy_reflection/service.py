@@ -35,7 +35,7 @@ from .thesis_review import REVIEW_SCHEMA, batches, current_context, review_brief
 from .report import render_weekly_report, write_weekly_report
 from .contracts import (
     AUTO_DISABLE_REVERTS, KNOBS, MAX_PROPOSALS, POLICY_PATH, SCHEMA_VERSION, STATUS_OBSERVE_ONLY, STATUS_PROPOSED, SWITCH_PATH,
-    TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS, VERIFICATION_OBSERVE, ReflectionError,
+    REPLAY_MIN_GAIN, TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS, VERIFICATION_OBSERVE, ReflectionError,
 )
 from .repository import ReflectionRepository, atomic_write_json
 from .tools import apply_proposals, check_proposal, validate_template
@@ -274,7 +274,8 @@ def load_reflection(repository: ReflectionRepository, reflection_id: str):
 
 
 def replay_gate(base: Mapping[str, object], candidate: Mapping[str, object]) -> Dict[str, object]:
-    """候選策略回放不得比目前策略差：兩邊都完成、期末 NAV 不降、Guard 拒絕日不增加。回放只是必要條件，不是獲利證明。"""
+    """候選策略回放要有改善：兩邊都完成、期末 NAV 高出目前策略至少 ``REPLAY_MIN_GAIN``、Guard 拒絕日不增加。
+    回放與提案用同一段歷史（樣本內），NAV 持平不算通過。回放只是必要條件，不是獲利證明。"""
     reasons: List[str] = []
     for label, body in (("目前策略", base), ("候選策略", candidate)):
         if body.get("status") != "completed":
@@ -282,8 +283,9 @@ def replay_gate(base: Mapping[str, object], candidate: Mapping[str, object]) -> 
     if not reasons:
         if int(candidate["metrics"].get("trading_days") or 0) < 1:
             reasons.append("回放沒有完成任何成交日")
-        if Decimal(str(candidate["metrics"]["end_nav"])) < Decimal(str(base["metrics"]["end_nav"])):
-            reasons.append("候選策略期末 NAV 低於目前策略")
+        base_nav = Decimal(str(base["metrics"]["end_nav"]))
+        if Decimal(str(candidate["metrics"]["end_nav"])) < base_nav * (1 + REPLAY_MIN_GAIN):
+            reasons.append("候選策略期末 NAV 沒有比目前策略高出 %s（持平或更低）" % REPLAY_MIN_GAIN)
         rejected = lambda body: sum(1 for day in body["days"] if day.get("decision_status") == "rejected")  # noqa: E731
         if rejected(candidate) > rejected(base):
             reasons.append("候選策略 Guard 拒絕日增加")

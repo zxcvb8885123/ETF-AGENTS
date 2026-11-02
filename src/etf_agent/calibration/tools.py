@@ -20,6 +20,19 @@ def mean(values: Sequence[Decimal]) -> Optional[Decimal]:
     return sum(values, Decimal(0)) / len(values) if values else None
 
 
+def t_statistic(values: Sequence[Decimal]) -> Optional[Decimal]:
+    """單一樣本 t 統計量（平均 ÷ 標準誤，樣本標準差用 n-1）。少於 2 個樣本或完全沒有變異時回 None。
+
+    只供判斷「平均 Rank IC 跟 0 分得開嗎」；絕對值小於約 2 就是雜訊，不能當成有訊號。"""
+    if len(values) < 2:
+        return None
+    center = sum(values, Decimal(0)) / len(values)
+    variance = sum(((value - center) ** 2 for value in values), Decimal(0)) / (len(values) - 1)
+    if variance < Decimal("1e-24"):  # 每天的 IC 幾乎一模一樣（含浮點殘差）：t 值無意義，不輸出
+        return None
+    return center / (variance / len(values)).sqrt()
+
+
 def format_decimal(value: Optional[Decimal]) -> Optional[str]:
     return None if value is None else str(value.quantize(QUANT))
 

@@ -26,7 +26,7 @@ from .contracts import (
 )
 from .prices import OfficialPriceBook
 from .repository import CalibrationRepository
-from .tools import forward_return, format_decimal, group_summary, mean, rank_ic
+from .tools import forward_return, format_decimal, group_summary, mean, rank_ic, t_statistic
 
 
 def _read(path: Path) -> Mapping[str, object]:
@@ -229,6 +229,7 @@ def evaluate(repository: CalibrationRepository, database: Path, as_of: str) -> D
                 name: {
                     "mean": format_decimal(mean([item[name] for item in daily_ic if item[name] is not None])),
                     "n_days": sum(item[name] is not None for item in daily_ic),
+                    "t_stat": format_decimal(t_statistic([item[name] for item in daily_ic if item[name] is not None])),
                 }
                 for name in ("conviction", "net_strength")
             }

@@ -22,12 +22,18 @@ TRIAL_MAX_CALENDAR_DAYS = 15
 # 試用前後比較的基準窗口：套用前最近幾個交易日的「帳戶日報酬 − 等權基準日報酬」；少於下限不下結論。
 BASELINE_DAYS = 10
 MIN_BASELINE_DAYS = 4
-# 只有「變差」超過 max(0.5 倍基準期標準差, 此下限) 才算明確變差，避免用雜訊來回震盪。
+# 只有「變差」超過 max(TRIAL_Z 倍的前後平均差標準誤, 此下限) 才算明確變差，避免用雜訊來回震盪。
+# 標準誤 = 基準期樣本標準差 × sqrt(1/試用天數 + 1/基準天數)；舊門檻（0.5 倍標準差）只約 0.9 個標準誤，
+# 無真實差異時仍有近兩成機率誤判變差而還原。
+TRIAL_Z = Decimal("2")
 TRIAL_FLOOR = Decimal("0.002")
 # 任一旋鈕離「人設定的起點」最多偏離幾個 step，比賽全程累積。
 MAX_DRIFT_STEPS = 2
 # 連續幾次試用被還原，就自動關掉自動套用（改回人工）。
 AUTO_DISABLE_REVERTS = 2
+# 影子回放：候選策略期末 NAV 至少要比目前策略高出這個比例，才算「有改善」。
+# 提案與回放用同一段歷史（樣本內），NAV 持平不是證據；這個下限只擋「看不出差別」，不是獲利證明。
+REPLAY_MIN_GAIN = Decimal("0.0001")
 SWITCH_PATH = "config/strategy_reflection.json"
 VERIFICATION_REPLAY = "replay"  # 影子回放能重算（只改確定性配置路徑）
 VERIFICATION_OBSERVE = "observe"  # 只影響 LLM 判斷，回放驗不了；必須走試用觀察期，且每週最多一個
