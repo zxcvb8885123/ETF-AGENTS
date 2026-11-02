@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence
 
 from etf_agent.decision import (
@@ -23,6 +24,15 @@ OVERNIGHT_PROMPT = (
 )
 
 
+def _cash_ratio(account: Mapping[str, object]) -> Optional[str]:
+    """帳戶現金占 NAV 的比例（字串）；缺值或無法解析時回 None，不猜。"""
+    try:
+        cash, nav = Decimal(str(account["cash"])), Decimal(str(account["nav"]))
+    except (KeyError, InvalidOperation):
+        return None
+    return str((cash / nav).quantize(Decimal("0.0001"))) if nav > 0 else None
+
+
 class RiskStagesMixin:
     """由 ``DailyDecisionPipeline`` 組合；依賴 ``PipelineBase`` 的 save_*、agent_step 與 ``root``。"""
 
@@ -34,6 +44,7 @@ class RiskStagesMixin:
         trade_decision: Mapping[str, object],
         drawdown_control: Optional[Mapping[str, object]] = None,
         breadth_targets: Optional[Mapping[str, object]] = None,
+        cash_buffers: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。"""
 
@@ -76,6 +87,9 @@ class RiskStagesMixin:
                 "drawdown_control": dict(drawdown_control) if drawdown_control else None,
                 # 持股廣度對應的目標檔數由 Policy 決定；風險 Agent 只選等級，程式依信心順序挑到該檔數。
                 "positions_by_breadth": dict(breadth_targets) if breadth_targets else None,
+                # 姿態的代價：各姿態對應的現金緩衝與目前現金比例，讓風險 Agent 知道選哪個姿態會不會讓買單被緩衝擋掉。
+                "cash_buffer_by_stance": dict(cash_buffers) if cash_buffers else None,
+                "cash_ratio_now": _cash_ratio(bundle["account_snapshot"]),
                 "citable_evidence_ids": price_evidence,
                 **({"overnight_market": overnight, "citable_evidence_ids": sorted(
                     set(price_evidence) | {row["evidence_id"] for row in overnight["components"] if row["evidence_id"]})}
