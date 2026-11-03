@@ -11,6 +11,7 @@ from .universe import Instrument
 from .corporate_contracts import CorporateCollectionResult, CorporateRecord, CorporateResponse
 from .corporate_provider import OfficialCorporateProvider
 from .corporate_parsing import _decimal_text
+from .monthly_revenue_identity import monthly_revenue_content_sha256
 
 
 class CorporateDataCollector:
@@ -171,11 +172,8 @@ def _fetched_before(candidate: object, existing: object) -> bool:
         return False
 
 
-def _store_record(
-    connection: sqlite3.Connection,
-    record: CorporateRecord,
-    raw_payload_id: int,
-) -> Tuple[int, bool]:
+def _legacy_content_sha256(record: CorporateRecord) -> str:
+    """重大訊息與財報沿用的內容雜湊：含整列 body 與 published_at。"""
     document = record.document
     content = json.dumps(
         {
@@ -217,15 +215,54 @@ def _store_record(
         sort_keys=True,
         separators=(",", ":"),
     )
-    content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _store_record(
+    connection: sqlite3.Connection,
+    record: CorporateRecord,
+    raw_payload_id: int,
+) -> Tuple[int, bool]:
+    document = record.document
     previous = connection.execute(
         """
-        SELECT id, version, content_sha256, fetched_at FROM source_documents
+        SELECT id, version, document_type, title, body, content_sha256, fetched_at
+        FROM source_documents
         WHERE source = ? AND external_id = ?
         ORDER BY version DESC LIMIT 1
         """,
         (document.source, document.external_id),
     ).fetchone()
+    published_at = document.published_at
+    if document.document_type == "monthly_revenue":
+        # 月營收：來源每日重新產製，列內「出表日期」是資料產製日、不是公告時間。雜湊排除
+        # 產製欄位與 published_at，相同數字不再因出表日期變動而成為新版本。既有舊列的
+        # content_sha256 是舊公式（含整列），比較時對舊列以同一新公式重算，不改寫舊列。
+        content_sha256 = monthly_revenue_content_sha256(
+            document.document_type, document.title, document.body
+        )
+        previous_sha256 = (
+            monthly_revenue_content_sha256(
+                str(previous["document_type"]), str(previous["title"]), str(previous["body"])
+            )
+            if previous
+            else None
+        )
+        if previous:
+            # published_at 於首次觀測時固定，之後的版本（數字真的更正時）沿用首版值；更正
+            # 何時被系統取得由 available_at／fetched_at 表達，不回填也不漂移。
+            first = connection.execute(
+                """
+                SELECT published_at FROM source_documents
+                WHERE source = ? AND external_id = ?
+                ORDER BY version ASC LIMIT 1
+                """,
+                (document.source, document.external_id),
+            ).fetchone()
+            published_at = str(first["published_at"])
+    else:
+        content_sha256 = _legacy_content_sha256(record)
+        previous_sha256 = str(previous["content_sha256"]) if previous else None
     # 每次觀測（含內容未變的重抓）都記下時間：同內容重抓不新增版本，但「系統已在何時看過最新內容」要保留，
     # 之後亂序送達的較早抓取才擋得住。
     observations = connection.execute(
@@ -237,13 +274,15 @@ def _store_record(
         (document.source, document.external_id, content_sha256, document.fetched_at),
     )
     # 只與最新版本比較：內容 A→B→A 時，回到 A 是新的一版，Snapshot 才會選到最新狀態。
-    if previous and previous["content_sha256"] == content_sha256:
+    if previous and previous_sha256 == content_sha256:
         return int(previous["id"]), False
     # 抓取時間比現有最新版（或更晚的觀測）更早的舊內容不得蓋過新版（亂序或快取的舊列會把更正倒轉回去）。
     if previous and _fetched_before(document.fetched_at, previous["fetched_at"]):
         return int(previous["id"]), False
+    # 舊列的觀測可能以舊公式記錄雜湊，所以同時接受舊列原雜湊與以新公式重算的雜湊。
+    previous_hashes = {str(previous["content_sha256"]), previous_sha256} if previous else set()
     if previous and any(
-        row["content_sha256"] == previous["content_sha256"] and _fetched_before(document.fetched_at, row["observed_at"])
+        row["content_sha256"] in previous_hashes and _fetched_before(document.fetched_at, row["observed_at"])
         for row in observations
     ):
         return int(previous["id"]), False
@@ -265,7 +304,7 @@ def _store_record(
             document.title,
             document.body,
             document.source_url,
-            document.published_at,
+            published_at,
             document.available_at,
             document.fetched_at,
             content_sha256,

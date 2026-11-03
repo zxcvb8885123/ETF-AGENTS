@@ -125,11 +125,17 @@ class OfficialCorporateProvider:
         report_date = _parse_roc_date(_required_text(row, "出表日期", "Date"))
         revenue_period = _parse_roc_month(_required_text(row, "資料年月"))
         symbol = normalize_symbol(code, self.market)
+        # 「出表日期」（TPEx 為 Date）是 OpenAPI 的資料產製日，不是公司公告時間，而且每天
+        # 重新產製都會變。這裡算出的 published_at 只在該月營收首次被觀測時寫入；之後同一
+        # external_id 的版本由收集器沿用首版值，不隨出表日期漂移。時間隔離仍以 available_at
+        # （＝抓取時間）為準。
         published_at = _utc_iso(
             datetime.combine(
                 report_date, datetime.min.time(), tzinfo=TAIPEI_TIMEZONE
             )
         )
+        # body 保留整列（含出表日期）作原始內容；版本比較用的雜湊由
+        # monthly_revenue_identity 排除產製欄位後計算。
         canonical_body = canonical_json(row)
         document = SourceDocument(
             source=self.source,
