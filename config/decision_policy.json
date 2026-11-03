@@ -7,14 +7,16 @@
   "default_target_weight": "0.04",
   "trim_fraction": "0.5",
   "slippage_bps": "10",
-  "max_turnover_rate": "1",
+  "max_turnover_rate": "0.3",
   "stress_price_decline_rate": "0.10",
   "stress_slippage_multiplier": "2",
   "liquidity_fill_rate": "1",
   "max_revisions": 3,
   "drawdown_control": {
     "neutral_at": "0.05",
-    "defensive_at": "0.10"
+    "defensive_at": "0.10",
+    "release_neutral_below": "0.03",
+    "release_defensive_below": "0.07"
   },
   "position_review": {
     "version": "v1",
@@ -36,6 +38,23 @@
     "selection_ranking": "v1",
     "held_add_priority": "v1",
     "cash_buffer_floor": "v1",
+    "cash_fit_order": "v1",
+    "cash_fit_min_fill_ratio": "0.5",
+    "cash_ceiling_fix": "v1",
+    "stock_limit_headroom": "v1",
+    "buy_gap_reserve": "v1",
+    "buy_gap_reserve_rate": "0.03",
+    "insufficient_funds_policy": "void_batch",
+    "sector_fit": "v1",
+    "turnover_fit": "v1",
+    "reentry_cooldown": {
+      "version": "v1",
+      "days": 3
+    },
+    "drawdown_derisk": {
+      "version": "v1",
+      "max_derisk_fraction": "0.25"
+    },
     "rotation": {
       "version": "v1",
       "max_swaps_per_run": 5,
@@ -43,7 +62,8 @@
       "forced_swap": {
         "version": "v1",
         "min_new_conviction": "high",
-        "max_swaps_per_run": 2
+        "max_swaps_per_run": 2,
+        "confirmation": "v1"
       }
     },
     "cash_buffer_by_stance": {

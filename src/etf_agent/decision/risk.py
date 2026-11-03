@@ -7,6 +7,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
+from .sizing import SECTOR_FIT
 from .contracts import (
     DECISION_SCHEMA_VERSION,
     DecisionContext,
@@ -380,12 +381,29 @@ class CompetitionGuardV2:
                 sector = sector_by_symbol[symbol]
                 sector_weights[sector] = sector_weights.get(sector, Decimal("0")) + weight
         sector_limit = decimal_value(self.policy["max_sector_weight"], "max_sector_weight")
+        # position_sizing.sector_fit（版本閘門）：配置階段只減增量、不賣既有持股，所以「既有已超限且本次沒有買進該產業」
+        # 的產業由 Guard 容忍（記為 carried），避免價格漂移就整份拒絕；有買進的產業仍是硬性違規。舊 run 沒有閘門，照舊。
+        sector_fit = (self.policy.get("position_sizing") or {}).get("sector_fit") == SECTOR_FIT
+        bought_sectors = {sector_by_symbol[symbol] for symbol in bought_symbols if symbol in sector_by_symbol}
+        carried_sectors = {
+            sector for sector, weight in sector_weights.items()
+            if sector_fit and weight > sector_limit and sector not in bought_sectors
+        }
         sector_violations = [
             {"sector": sector, "actual": _rate(weight), "limit": _rate(sector_limit)}
             for sector, weight in sorted(sector_weights.items())
-            if weight > sector_limit
+            if weight > sector_limit and sector not in carried_sectors
         ]
-        self._check(checks, "SECTOR_WEIGHT", not sector_violations, sector_violations)
+        if sector_fit:
+            self._check(checks, "SECTOR_WEIGHT", not sector_violations, {
+                "violations": sector_violations,
+                "carried": [
+                    {"sector": sector, "actual": _rate(sector_weights[sector]), "limit": _rate(sector_limit)}
+                    for sector in sorted(carried_sectors)
+                ],
+            })
+        else:
+            self._check(checks, "SECTOR_WEIGHT", not sector_violations, sector_violations)
         turnover = decimal_value(proposal["order_proposal"]["turnover_rate"], "turnover_rate")
         turnover_limit = decimal_value(self.policy["max_turnover_rate"], "max_turnover_rate")
         self._check(checks, "TURNOVER", turnover <= turnover_limit, {"actual": _rate(turnover), "limit": _rate(turnover_limit)})
@@ -447,7 +465,9 @@ class CompetitionGuardV2:
                 "buying_power_ok": decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0,
                 "position_count_ok": minimum <= position_count <= maximum,
                 "stock_weight_ok": not stock_violations,
-                "sector_weight_ok": all(value <= sector_limit for value in scenario_sector.values()),
+                "sector_weight_ok": all(
+                    value <= sector_limit or sector in carried_sectors for sector, value in scenario_sector.items()
+                ),
                 "tradability_ok": not blocked_new,
                 "active_share_results": active_results,
                 **({"held_not_tradable": blocked_carried} if blocked_carried else {}),
@@ -455,7 +475,7 @@ class CompetitionGuardV2:
                 and decimal_value(scenario["buying_power_shortfall"], "buying_power_shortfall") == 0
                 and minimum <= position_count <= maximum
                 and not stock_violations
-                and all(value <= sector_limit for value in scenario_sector.values())
+                and all(value <= sector_limit or sector in carried_sectors for sector, value in scenario_sector.items())
                 and not blocked_new
                 and all(item["passed"] for item in active_results),
             })

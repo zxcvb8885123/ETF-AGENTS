@@ -96,7 +96,9 @@ class PolicyReplayTests(unittest.TestCase):
         self.database = self.root / "market.db"
         create_prices(self.database, PRICES)
         template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
-        template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
+        # fixture 帳戶只有 66 萬 NAV，2 張 2317 就是 34% 換手；正式樣板的 0.3 上限（turnover_fit）會把它縮成 1 張，
+        # 這裡測的是回放與重建，不是換手上限，所以放寬到 1。
+        template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00", max_turnover_rate="1")
         self.policy_a = self.root / "policy_a.json"
         self.policy_a.write_text(json.dumps(template), encoding="utf-8")
         other = copy.deepcopy(template)
@@ -145,6 +147,10 @@ class PolicyReplayTests(unittest.TestCase):
         report, _ = read_replay(self.root, replay_id)
         self.assertEqual(report["content_sha256"], body["content_sha256"])
         self.assertIn("## 績效", render_replay_report(report))
+        # 回放只固定已封存的 Agent 意圖重算，不是前瞻驗證：JSON 標證據等級、Markdown 首段固定提醒。
+        self.assertEqual(report["evidence_grade"], "replay_reference_only")
+        self.assertIn("不構成對 LLM 判斷的前瞻驗證", render_replay_report(report).split("\n")[2])
+        self.assertIn("replay_reference_only", (run_dir.parent / "replay-test.md").read_text(encoding="utf-8"))
         self.assertTrue((run_dir.parent / "replay-test.md").exists())
         # 一頁 HTML 是衍生品：寫在 run 目錄旁、不進 manifest（進了 manifest 的檔案集合檢查就會失敗）。
         page = (run_dir.parent / "replay-test.html").read_text(encoding="utf-8")

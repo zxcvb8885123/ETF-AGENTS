@@ -16,6 +16,11 @@ from .contracts import DecisionToolError, reject_unknown_fields
 
 CASH_STANCE_RANK = {"aggressive": 0, "neutral": 1, "defensive": 2}
 THRESHOLD_FIELDS = ("neutral_at", "defensive_at")
+# 2026-11-03 後新增（與 position_sizing.drawdown_derisk 閘門成對）：解除門檻（hysteresis）。
+# 進入 neutral 後回撤要回到 release_neutral_below 以下才解除、defensive 要回到 release_defensive_below 以下才降回 neutral，
+# 避免回撤在門檻附近來回時姿態日日切換。姿態下限改為沿帳本 NAV 歷史逐筆推進的狀態機（stance_floor_path），
+# Validator 有帳本歷史時整段重算；沒有這兩個欄位的舊 Policy 維持無記憶的 stance_floor。
+RELEASE_FIELDS = ("release_neutral_below", "release_defensive_below")
 OBSERVED_FIELDS = ("status", "peak_nav", "peak_as_of", "current_nav", "drawdown", "history_length", "stance_floor",
                    "history_ref")
 DRAWDOWN_STATUSES = ("available", "unavailable")
@@ -33,6 +38,39 @@ def stance_floor(control: Mapping[str, object], drawdown: Decimal) -> str:
     if drawdown >= _decimal(control["neutral_at"], "drawdown_control.neutral_at"):
         return "neutral"
     return "aggressive"
+
+
+def hysteresis_enabled(control: Mapping[str, object]) -> bool:
+    return all(field in control for field in RELEASE_FIELDS)
+
+
+def stance_floor_path(control: Mapping[str, object], navs: Sequence[Decimal]) -> str:
+    """沿 NAV 序列（帳本歷史＋目前 NAV）逐筆推進的姿態下限狀態機；序列為空時為 aggressive。
+
+    每一筆以「截至該筆的峰值」算回撤：達 defensive_at 進 defensive；達 neutral_at 至少 neutral；
+    在 defensive 時回撤低於 release_defensive_below 才降回 neutral；在 neutral 時低於 release_neutral_below 才解除。
+    """
+    neutral_at = _decimal(control["neutral_at"], "drawdown_control.neutral_at")
+    defensive_at = _decimal(control["defensive_at"], "drawdown_control.defensive_at")
+    release_neutral = _decimal(control["release_neutral_below"], "drawdown_control.release_neutral_below")
+    release_defensive = _decimal(control["release_defensive_below"], "drawdown_control.release_defensive_below")
+    state = "aggressive"
+    peak = Decimal(0)
+    for index, nav in enumerate(navs):
+        if nav <= 0:
+            raise DecisionToolError("NAV 序列第 %d 筆必須大於 0" % index)
+        peak = max(peak, nav)
+        drawdown = ((peak - nav) / peak).quantize(_PRECISION, rounding=ROUND_HALF_UP)
+        if drawdown >= defensive_at:
+            state = "defensive"
+        elif state == "defensive":
+            if drawdown < release_defensive:
+                state = "neutral" if drawdown >= release_neutral else "aggressive"
+        elif drawdown >= neutral_at:
+            state = "neutral"
+        elif state == "neutral" and drawdown < release_neutral:
+            state = "aggressive"
+    return state
 
 
 def stance_meets_floor(level: object, floor: object) -> bool:
@@ -115,7 +153,7 @@ def bind_drawdown(
     control = policy.get("drawdown_control")
     if not isinstance(control, Mapping):
         return result
-    thresholds = {field: control[field] for field in THRESHOLD_FIELDS}
+    thresholds = {field: control[field] for field in THRESHOLD_FIELDS + RELEASE_FIELDS if field in control}
     current = _decimal(bundle["account_snapshot"]["nav"], "account_snapshot.nav")
     if nav_history is None:
         observed: Dict[str, object] = {"status": "unavailable", "peak_nav": None, "peak_as_of": None,
@@ -123,7 +161,11 @@ def bind_drawdown(
                                        "stance_floor": None}
     else:
         observed = {"status": "available", **measure_drawdown(current, nav_history)}
-        observed["stance_floor"] = stance_floor(thresholds, Decimal(observed["drawdown"]))
+        if hysteresis_enabled(thresholds):
+            navs = [_decimal(row.get("nav"), "nav_history[%d].nav" % index) for index, row in enumerate(nav_history)]
+            observed["stance_floor"] = stance_floor_path(thresholds, navs + [current])
+        else:
+            observed["stance_floor"] = stance_floor(thresholds, Decimal(observed["drawdown"]))
         reference = history_reference(nav_history)
         if reference is not None:
             observed["history_ref"] = reference
@@ -145,7 +187,7 @@ def validate_drawdown_control(
     if not isinstance(control, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    reject_unknown_fields(control, set(THRESHOLD_FIELDS) | set(OBSERVED_FIELDS), prefix, errors)
+    reject_unknown_fields(control, set(THRESHOLD_FIELDS) | set(RELEASE_FIELDS) | set(OBSERVED_FIELDS), prefix, errors)
     try:
         neutral = _decimal(control.get("neutral_at"), prefix + ".neutral_at")
         defensive = _decimal(control.get("defensive_at"), prefix + ".defensive_at")
@@ -157,6 +199,25 @@ def validate_drawdown_control(
         return
     sizing = policy.get("position_sizing")
     bound_stance = sizing.get("cash_stance") if isinstance(sizing, Mapping) else None
+    # 解除門檻（hysteresis）與 position_sizing.drawdown_derisk 閘門成對：只有一邊即拒絕，舊 Policy 兩邊都沒有。
+    derisk_gate = isinstance(sizing, Mapping) and "drawdown_derisk" in sizing
+    hysteresis = hysteresis_enabled(control)
+    if any(field in control for field in RELEASE_FIELDS) and not hysteresis:
+        errors.append("%s 的 release_neutral_below 與 release_defensive_below 必須同時出現" % prefix)
+        return
+    if hysteresis != derisk_gate:
+        errors.append("%s 的解除門檻必須與 position_sizing.drawdown_derisk 閘門同時存在" % prefix)
+        return
+    if hysteresis:
+        try:
+            release_neutral = _decimal(control.get("release_neutral_below"), prefix + ".release_neutral_below")
+            release_defensive = _decimal(control.get("release_defensive_below"), prefix + ".release_defensive_below")
+        except DecisionToolError as error:
+            errors.append(str(error))
+            return
+        if not (Decimal(0) < release_neutral < neutral and release_neutral < release_defensive < defensive):
+            errors.append("%s 解除門檻必須滿足 0 < release_neutral_below < neutral_at 且 release_neutral_below < release_defensive_below < defensive_at" % prefix)
+            return
     if "status" not in control:
         if bound_stance is not None:
             errors.append("%s 綁定現金姿態前必須先記錄本次回撤" % prefix)
@@ -204,8 +265,18 @@ def validate_drawdown_control(
         if control.get("drawdown") != expected:
             errors.append("%s.drawdown 與峰值／目前 NAV 重算不一致" % prefix)
         floor = stance_floor(control, Decimal(expected))
-        if control.get("stance_floor") != floor:
-            errors.append("%s.stance_floor 應為 %s" % (prefix, floor))
+        if not hysteresis:
+            if control.get("stance_floor") != floor:
+                errors.append("%s.stance_floor 應為 %s" % (prefix, floor))
+        elif nav_history is not None:
+            # 有帳本歷史時整段重算狀態機（歷史本身已由 history_ref 核對）。
+            navs = [_decimal(row.get("nav"), "nav_history[%d].nav" % index) for index, row in enumerate(nav_history)]
+            path_floor = stance_floor_path(control, navs + [current])
+            if control.get("stance_floor") != path_floor:
+                errors.append("%s.stance_floor 依帳本歷史重算應為 %s" % (prefix, path_floor))
+        elif not stance_meets_floor(control.get("stance_floor"), floor) or control.get("stance_floor") not in CASH_STANCE_RANK:
+            # 沒有歷史可讀時只能確認：解除門檻只會讓下限更保守，不得低於無記憶的下限。
+            errors.append("%s.stance_floor 不得低於無記憶門檻 %s" % (prefix, floor))
     except DecisionToolError as error:
         errors.append(str(error))
         return

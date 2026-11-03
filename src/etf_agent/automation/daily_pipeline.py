@@ -31,9 +31,11 @@ from etf_agent.decision import (
     build_position_review,
     build_team_inputs,
     decision_policy_sha256,
+    fundamental_period_policy,
     revision_effects,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
+from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
 
@@ -58,14 +60,12 @@ from .agent_schemas import (  # noqa: F401 — 對外仍由本模組匯出
     REVIEW_SCHEMA,
     STANCE_SCHEMA,
     TRADE_SCHEMA,
-    _ANALYST_ITEM,
-    _EVENT_ITEM,
     _EVENT_RULES,
-    _FINDING,
     _SHARED_RULES,
-    _STANCE_CLAIM,
-    _STANCE_ITEM,
     _TRADE_ITEM,
+    analyst_schema,
+    event_analyst_schema,
+    stance_schema,
 )
 from .batching import merge_batch_items, universe_batches  # noqa: F401 — 對外仍由本模組匯出
 from .pipeline_base import (  # noqa: F401 — 對外仍由本模組匯出
@@ -279,6 +279,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         base_policy = bind_drawdown(base_policy, bundle, nav_history)
         # 強制換股只認「論點被推翻」名單；名單綁進 policy，重建驗證不讀結論檔。
         base_policy = bind_forced_swap(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
+        # 出場冷卻名單由決策庫確定性取得並綁進 policy；重建驗證只讀 policy，不重掃決策庫。
+        base_policy = bind_reentry_cooldown(base_policy, self.decision_repository, bundle)
         base_policy["content_sha256"] = decision_policy_sha256(base_policy)
         # 沒有 rotation 的樣板一律不建名額脈絡，team_inputs 維持 2.2、brief 與舊版逐位相同。
         slots = (
@@ -313,7 +315,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         self.save_artifact("policy_base", base_policy)
         with self._timed("cash_stance"):
-            stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"),
+            stance = self.run_cash_stance(bundle, momentum, analysts, base_policy.get("drawdown_control"),
                                           (base_policy.get("position_sizing") or {}).get("positions_by_breadth"),
                                           (base_policy.get("position_sizing") or {}).get("cash_buffer_by_stance"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
@@ -358,7 +360,12 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.stage_durations["allocation_review"] = round(time.monotonic() - review_started, 1)
 
         self.log("[decision 8] finalize、完整重建驗證與封存")
-        team = build_team_inputs(analysts, None, stance, prior_context, slots, position_review, ranking)
+        # bundle 有 fundamental_period_policy 時 team_inputs 升為 2.6，封存分析師看到的基本面指標供 Finalizer 重算比對；
+        # 沒有該閘門的舊 bundle（評測重跑）維持 2.5 以前。
+        team = build_team_inputs(
+            analysts, None, stance, prior_context, slots, position_review, ranking,
+            **({"fundamental_metrics": self.fundamental_metrics} if fundamental_period_policy(bundle) is not None else {}),
+        )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history
         )
