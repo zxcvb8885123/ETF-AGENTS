@@ -11,7 +11,7 @@ from etf_agent.perception.market_fear_greed import FearGreedError, build_fear_gr
 
 
 def main():
-    parser = argparse.ArgumentParser(description="補抓期交所 VIX、Put/Call 比與 FinMind 融資，或檢視截止前的恐懼貪婪分數")
+    parser = argparse.ArgumentParser(description="補抓期交所 VIX、Put/Call 比、證交所加權指數與 FinMind 融資，或檢視截止前的恐懼貪婪分數")
     sub = parser.add_subparsers(dest="action", required=True)
     capture = sub.add_parser("capture", help="抓取並保存不可變原始回應")
     capture.add_argument("--output-root", type=Path, default=ROOT / "artifacts" / "data" / "market_fear_greed")

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from etf_agent.core import canonical_sha256, parse_aware_time
 from etf_agent.core.artifact_store import ImmutableRunStore
-from .contracts import PACK_VERSION, FearGreedError, seal
+from .contracts import PACK_VERSION, PACK_VERSION_V11, PACK_VERSION_V12, FearGreedError, seal, sources_for
 from .provider import FearGreedProvider
 from .tools import evaluate
 from .validator import validate_pair
@@ -22,13 +22,24 @@ def capture_fear_greed(output_root, provider=None, now=None):
     """抓取全部來源並保存不可變原始回應；個別來源失敗只記錄，不中止。"""
     provider = provider or FearGreedProvider()
     now = now or datetime.now(timezone.utc)
-    captures = provider.capture_all(now.astimezone(ZoneInfo("Asia/Taipei")).date())
+    captures = provider.capture_all(now.astimezone(ZoneInfo("Asia/Taipei")).date(), reuse=_index_cache(output_root))
     run_id = "fear-greed-%s-%s" % (now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ"), canonical_sha256(captures)[:12])
     store = _store(output_root)
     path = store.save(run_id, {"captures": {"items": captures}})
     store.verify(run_id)
     return {"run_path": str(path), "captured": len(captures),
             "failures": [{"source": c["source"], "url": c["url"], "reason": c["error"]} for c in captures if c["status"] != "fetched"]}
+
+
+def _index_cache(output_root):
+    """先前保存、成功的證交所加權指數月檔（網址 → 抓取），供已收盤月份沿用，不重抓。"""
+    store, cache = _store(output_root), {}
+    for manifest in sorted(Path(output_root).glob("*/fear-greed-*/manifest.json")):
+        store.verify(manifest.parent.name)
+        for item in json.loads((manifest.parent / "captures.json").read_text(encoding="utf-8"))["items"]:
+            if item["source"] == "TWSE_TAIEX" and item["status"] == "fetched":
+                cache[item["url"]] = item
+    return cache
 
 
 def load_approvals(path):
@@ -60,8 +71,15 @@ def build_fear_greed_input(output_root, approvals_path, snapshot_id, decision_cu
     captures = latest_captures(output_root, decision_cutoff)
     if captures is None:
         return None
-    pack = seal({"schema_version": PACK_VERSION, "snapshot_id": snapshot_id, "decision_cutoff": decision_cutoff,
-                 "captures": captures, "source_approvals": load_approvals(approvals_path)})
+    # 含加權指數（TWSE_TAIEX）：有 Put/Call 抓取用 1.1，沒有用 1.2；都沒有的舊抓取維持 1.0。
+    # 只帶該版本認得的來源核准。
+    has_index = any(c["source"] == "TWSE_TAIEX" for c in captures)
+    has_pcr = any(c["source"] == "TAIFEX_PCR" for c in captures)
+    version = (PACK_VERSION_V11 if has_pcr else PACK_VERSION_V12) if has_index else PACK_VERSION
+    known = sources_for(version)
+    approvals = [row for row in load_approvals(approvals_path) if not isinstance(row, dict) or row.get("source") in known]
+    pack = seal({"schema_version": version, "snapshot_id": snapshot_id,
+                 "decision_cutoff": decision_cutoff, "captures": captures, "source_approvals": approvals})
     return {"bundle": pack, "result": evaluate(pack)}
 
 

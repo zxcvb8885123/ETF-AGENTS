@@ -10,11 +10,15 @@ from zoneinfo import ZoneInfo
 
 from etf_agent.core import canonical_sha256, decimal_string, parse_aware_time
 from .contracts import (
-    APPROVAL_FIELDS, BAND_LABELS, BANDS, CAPTURE_FIELDS, MARGIN_CHANGE_DAYS, MAX_STALE_DAYS, MIN_COMPONENTS,
-    PACK_FIELDS, PACK_VERSION, RESULT_VERSION, SCORE_VERSION, SOURCES, WINDOW, FearGreedError, check_fields, seal,
+    APPROVAL_FIELDS, BAND_LABELS, BANDS, CAPTURE_FIELDS, LEVEL_INPUTS, LEVEL_NAME, LEVEL_SOURCE, LEVEL_WINDOW,
+    MARGIN_CHANGE_DAYS, MAX_STALE_DAYS, MIN_COMPONENTS, PACK_FIELDS, PACK_VERSION_V11, PACK_VERSIONS, RESULT_VERSION,
+    RESULT_VERSION_V11, RESULT_VERSION_V12, PACK_VERSION_V12, SCORE_VERSION, SCORE_VERSION_V2, SCORE_VERSION_V3, SOURCES, WINDOW, FearGreedError, check_fields, seal, sources_for,
 )
 
 PCR_HEADER = ["日期", "賣權成交量", "買權成交量", "買賣權成交量比率%", "賣權未平倉量", "買權未平倉量", "買賣權未平倉量比率%"]
+LIMITATIONS_V2_EXTRA = [
+    "融資水位用「融資金額 ÷ 加權指數」近 %d 個交易日百分位；加權指數只是市值的代理，不含新上市與增資，一年窗口內偏差小。" % LEVEL_WINDOW,
+]
 LIMITATIONS = [
     "本指標為專案自建，不是 CNN Fear & Greed Index；只反映選擇權與融資部位的相對變化。",
     "每項以最近 %d 個交易日的百分位計分，只代表近期相對位置，不代表長期高低。" % WINDOW,
@@ -74,11 +78,26 @@ def parse_margin(raw):
     return rows
 
 
-PARSERS = {"TAIFEX_VIX": parse_vix, "TAIFEX_PCR": parse_pcr, "FINMIND_MARGIN": parse_margin}
+def parse_twse_index(raw):
+    """證交所市場成交資訊月檔：日期為民國年（115/11/03），欄位固定，收盤為第 5 欄。"""
+    payload = json.loads(raw)
+    if not isinstance(payload, dict) or payload.get("stat") != "OK" or not isinstance(payload.get("data"), list):
+        raise FearGreedError("證交所加權指數回應狀態異常")
+    if payload.get("fields", [])[:5] != ["日期", "成交股數", "成交金額", "成交筆數", "發行量加權股價指數"]:
+        raise FearGreedError("證交所加權指數欄位變更，需核對")
+    rows = {}
+    for row in payload["data"]:
+        year, month, day = (int(part) for part in row[0].split("/"))
+        rows[date(year + 1911, month, day).isoformat()] = _decimal(row[4], "加權指數")
+    return rows
 
 
-def _check_url(source, url, cutoff_day):
-    spec = SOURCES[source]
+PARSERS = {"TAIFEX_VIX": parse_vix, "TAIFEX_PCR": parse_pcr, "FINMIND_MARGIN": parse_margin,
+           "TWSE_TAIEX": parse_twse_index}
+
+
+def _check_url(source, url, cutoff_day, sources=SOURCES):
+    spec = sources[source]
     if urlsplit(url).hostname not in spec["hosts"]:
         raise FearGreedError("來源主機不符")
     if "url" in spec:
@@ -90,6 +109,8 @@ def _check_url(source, url, cutoff_day):
         raise FearGreedError("來源網址不符")
     if source == "TAIFEX_VIX" and match.group(1) > cutoff_day[:7].replace("-", ""):
         raise FearGreedError("VIX 月檔晚於截止月份")
+    if source == "TWSE_TAIEX" and (not match.group(1).endswith("01") or match.group(1)[:6] > cutoff_day[:7].replace("-", "")):
+        raise FearGreedError("加權指數月檔晚於截止月份")
     if source == "FINMIND_MARGIN" and (match.group(1) > match.group(2) or match.group(2) > cutoff_day):
         raise FearGreedError("融資查詢區間晚於截止日")
 
@@ -126,6 +147,22 @@ def _score(source, series, cutoff_day):
             "score": decimal_string(score.quantize(Decimal("0.1"))), "sample_size": len(values)}, None
 
 
+def _level_score(margin, index, cutoff_day):
+    """融資金額 ÷ 加權指數（百萬元／點）在最近 LEVEL_WINDOW 個共同交易日的百分位。"""
+    days = sorted(day for day in margin if day in index and day <= cutoff_day)
+    if len(days) < LEVEL_WINDOW:
+        return None, "%s 只有 %d 個共同交易日，需要 %d 個" % (LEVEL_NAME, len(days), LEVEL_WINDOW)
+    days = days[-LEVEL_WINDOW:]
+    if any(index[day] <= 0 or margin[day] <= 0 for day in days):
+        raise FearGreedError("融資金額與加權指數必須為正數")
+    values = [margin[day] / index[day] / 1_000_000 for day in days]
+    if (date.fromisoformat(cutoff_day) - date.fromisoformat(days[-1])).days > MAX_STALE_DAYS:
+        return None, "%s 最新資料 %s 距截止日超過 %d 天" % (LEVEL_NAME, days[-1], MAX_STALE_DAYS)
+    score = percentile(values, values[-1])
+    return {"as_of": days[-1], "latest_value": decimal_string(values[-1].quantize(Decimal("0.01"))),
+            "score": decimal_string(score.quantize(Decimal("0.1"))), "sample_size": len(values)}, None
+
+
 def _band(score):
     for upper, band, outlook in BANDS:
         if score <= upper:
@@ -133,14 +170,14 @@ def _band(score):
     raise FearGreedError("分數超出 0～100")
 
 
-def _approvals(rows, cutoff):
+def _approvals(rows, cutoff, sources=SOURCES):
     if not isinstance(rows, list):
         raise FearGreedError("來源核准必須是陣列")
     approvals = {}
     for row in rows:
         check_fields(row, APPROVAL_FIELDS, "來源核准")
         source = row["source"]
-        if source not in SOURCES or source in approvals or row["terms_url"] != SOURCES[source]["terms_url"]:
+        if source not in sources or source in approvals or row["terms_url"] != sources[source]["terms_url"]:
             raise FearGreedError("來源核准身分無效")
         if row["license_status"] not in {"approved", "unverified", "restricted"}:
             raise FearGreedError("來源使用狀態無效")
@@ -156,24 +193,28 @@ def _approvals(rows, cutoff):
 
 def evaluate(pack):
     check_fields(pack, PACK_FIELDS, "恐懼貪婪資料包")
-    if pack["schema_version"] != PACK_VERSION or not isinstance(pack["snapshot_id"], str) or not pack["snapshot_id"]:
+    if pack["schema_version"] not in PACK_VERSIONS or not isinstance(pack["snapshot_id"], str) or not pack["snapshot_id"]:
         raise FearGreedError("恐懼貪婪資料包身分無效")
     if seal(pack) != pack:
         raise FearGreedError("恐懼貪婪資料包雜湊不符")
     cutoff = parse_aware_time(pack["decision_cutoff"], "decision_cutoff", error=FearGreedError)
     cutoff_day = cutoff.astimezone(ZoneInfo("Asia/Taipei")).date().isoformat()
-    approvals = _approvals(pack["source_approvals"], cutoff)
+    v3 = pack["schema_version"] == PACK_VERSION_V12
+    v2 = v3 or pack["schema_version"] == PACK_VERSION_V11
+    score_version = SCORE_VERSION_V3 if v3 else SCORE_VERSION_V2 if v2 else SCORE_VERSION
+    sources = sources_for(pack["schema_version"])
+    approvals = _approvals(pack["source_approvals"], cutoff, sources)
     if not isinstance(pack["captures"], list):
         raise FearGreedError("原始回應必須是陣列")
-    series = {source: {} for source in SOURCES}
-    raws = {source: [] for source in SOURCES}
+    series = {source: {} for source in sources}
+    raws = {source: [] for source in sources}
     gaps, seen = [], set()
     for capture in pack["captures"]:
         check_fields(capture, CAPTURE_FIELDS, "原始回應")
         source = capture["source"]
-        if source not in SOURCES:
+        if source not in sources:
             raise FearGreedError("不支援的來源")
-        _check_url(source, capture["url"], cutoff_day)
+        _check_url(source, capture["url"], cutoff_day, sources)
         if (source, capture["url"]) in seen:
             raise FearGreedError("原始回應重複")
         seen.add((source, capture["url"]))
@@ -182,32 +223,42 @@ def evaluate(pack):
         if not isinstance(capture["raw_text"], str) or capture["raw_sha256"] != canonical_sha256(capture["raw_text"]):
             raise FearGreedError("原始回應遭修改")
         if capture["status"] == "failed":
-            gaps.append("%s 擷取失敗：%s" % (SOURCES[source]["name"], capture["error"] or "未知原因"))
+            gaps.append("%s 擷取失敗：%s" % (sources[source]["name"], capture["error"] or "未知原因"))
             continue
         if capture["status"] != "fetched":
             raise FearGreedError("原始回應狀態無效")
         try:
             rows = PARSERS[source](capture["raw_text"])
         except (KeyError, TypeError, ValueError) as exc:
-            gaps.append("%s 格式無法解析：%s" % (SOURCES[source]["name"], exc))
+            gaps.append("%s 格式無法解析：%s" % (sources[source]["name"], exc))
             continue
         for day, value in rows.items():
             if series[source].get(day, value) != value:
-                raise FearGreedError("%s 同日數值不一致：%s" % (SOURCES[source]["name"], day))
+                raise FearGreedError("%s 同日數值不一致：%s" % (sources[source]["name"], day))
             series[source][day] = value
         raws[source].append(capture["raw_sha256"])
     components = []
-    for source in SOURCES:
-        computed, reason = _score(source, series[source], cutoff_day) if raws[source] else (None, "%s 沒有可用原始回應" % SOURCES[source]["name"])
-        row = {"source": source, "name": SOURCES[source]["name"], "approved": approvals.get(source, False)}
+    scored = [(source, SOURCES[source]["name"], approvals.get(source, False)) for source in sources if source in SOURCES]
+    if v2:
+        scored.append((LEVEL_SOURCE, LEVEL_NAME, all(approvals.get(source, False) for source in LEVEL_INPUTS)))
+    for source, name, approved in scored:
+        if source == LEVEL_SOURCE:
+            have = all(raws[item] for item in LEVEL_INPUTS)
+            computed, reason = _level_score(series["FINMIND_MARGIN"], series["TWSE_TAIEX"], cutoff_day) if have else (
+                None, "%s 缺少融資金額或加權指數的原始回應" % name)
+            source_raws = sorted(raws["FINMIND_MARGIN"] + raws["TWSE_TAIEX"])
+        else:
+            computed, reason = _score(source, series[source], cutoff_day) if raws[source] else (None, "%s 沒有可用原始回應" % name)
+            source_raws = sorted(raws[source])
+        row = {"source": source, "name": name, "approved": approved}
         if computed is None:
             gaps.append(reason)
             row.update(status="unavailable", as_of=None, latest_value=None, score=None, sample_size=0, evidence_id=None)
         else:
-            evidence = "fear-greed:%s:%s" % (source, canonical_sha256({"raws": sorted(raws[source]), "as_of": computed["as_of"]})[:20])
+            evidence = "fear-greed:%s:%s" % (source, canonical_sha256({"raws": source_raws, "as_of": computed["as_of"]})[:20])
             row.update(status="available", evidence_id=evidence, **computed)
         if not row["approved"]:
-            gaps.append("%s 尚未核准使用，只作診斷，不計入正式分數。" % SOURCES[source]["name"])
+            gaps.append("%s 尚未核准使用，只作診斷，不計入正式分數。" % name)
         components.append(row)
     available = [row for row in components if row["status"] == "available"]
     formal = [row for row in available if row["approved"]]
@@ -223,15 +274,16 @@ def evaluate(pack):
     if score is not None:
         parts = ["%s %s（%s，%s 分）" % (row["name"], row["latest_value"], row["as_of"], row["score"]) for row in formal]
         findings.append({"text": "台股恐懼貪婪指標（%s）為 %s 分，屬「%s」；依據：%s。0 分最恐懼、100 分最貪婪。" % (
-            SCORE_VERSION, decimal_string(score), BAND_LABELS[band], "、".join(parts)),
+            score_version, decimal_string(score), BAND_LABELS[band], "、".join(parts)),
             "evidence_ids": [row["evidence_id"] for row in formal]})
     diagnostic = mean(available)
     return seal({
-        "schema_version": RESULT_VERSION, "score_version": SCORE_VERSION,
+        "schema_version": RESULT_VERSION_V12 if v3 else RESULT_VERSION_V11 if v2 else RESULT_VERSION,
+        "score_version": score_version,
         "snapshot_id": pack["snapshot_id"], "decision_cutoff": pack["decision_cutoff"],
         "input_sha256": pack["content_sha256"], "status": "available" if score is not None else "unavailable",
         "score": decimal_string(score) if score is not None else None, "band": band, "outlook": outlook,
         "findings": findings, "components": components,
         "diagnostic_score": decimal_string(diagnostic) if diagnostic is not None else None,
-        "data_gaps": gaps, "limitations": list(LIMITATIONS),
+        "data_gaps": gaps, "limitations": list(LIMITATIONS) + (LIMITATIONS_V2_EXTRA if v2 else []),
     })
