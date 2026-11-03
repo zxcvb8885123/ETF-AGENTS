@@ -11,7 +11,7 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 交易 Agent 決定完每檔意圖與 buy／add 信心等級後，本 Skill 只對整體給市場層級的 `cash_stance`：`aggressive`、`neutral` 或 `defensive`，附 `rationale` 與共同輸入中存在的 `evidence_ids`（例如 regime、市場廣度、事件集中）。依 regime、分析師看法分布、交易決策、交易狀態、重大事件風險與整體市場情緒（`market_sentiment`，全市場新聞或恐懼貪婪指標，`status` 非 available 時不能當成情緒結論）判斷。程式另從帳本 NAV 歷史計算峰值回撤（`drawdown_control`），回撤達 Policy 門檻時給出姿態下限 `stance_floor`，姿態不得比下限更積極，否則由程式退回重答。簡報的 `cash_buffer_by_stance` 與 `cash_ratio_now` 是姿態的代價：目前現金比例低於某姿態的緩衝時，選該姿態會使買單被緩衝擋掉（出場賣股收入買的替補除外），請把這個後果納入判斷與理由。它決定要保留多少現金；實際比例由 Policy 的 `cash_buffer_by_stance` 對應，競賽現金上限仍由 Guard 強制檢查，Agent 不得輸出百分比，也不對個股給等級或權重。權重由 Python 依 Policy 的規則確定性分配，Agent 不輸出任何數字。
 
-同一次輸出另給持股廣度 `breadth`：`concentrated`（集中）、`balanced`（平衡）或 `diversified`（分散）。對應檔數由 Policy 的 `positions_by_breadth` 決定，入選的挑選與排序也由程式依 Policy 完成，你不需要推論是哪幾檔，也不要寫死任何檔數。高信心候選明確且集中時偏集中；高信心少、看法分歧或事件風險高時偏分散。Agent 不得輸出檔數，`rationale` 要同時說明現金姿態與持股廣度的理由。
+同一次輸出另給持股廣度 `breadth`：`concentrated`（集中）、`balanced`（平衡）或 `diversified`（分散）。對應檔數由 Policy 的 `positions_by_breadth` 決定，入選的挑選與排序也由程式依 Policy 完成，你不需要推論是哪幾檔，也不要寫死任何檔數。高信心候選明確且集中時偏集中；高信心少、看法分歧或事件風險高時偏分散。檔數是上限不是目標：交易 Agent 標為買進的候選少於目標檔數時，程式只買那些，不會硬湊。Agent 不得輸出檔數，`rationale` 要同時說明現金姿態與持股廣度的理由。
 
 若 brief 有 `overnight_market`（隔夜市場背景：美股指數 ^GSPC、^IXIC、^SOX、台股代理 EWT／TSM、日韓指數 ^N225／^KS11、VIX，與夜盤結束後才有的台指期夜盤，由程式依 overnight-v1.1 計算；舊封存為 overnight-v1，只有美股與台股代理），只把它當現金姿態的背景之一：`status` 非 `available` 時不得當成結論；`night_session` 為 null 代表夜盤不可用（例如平日 21:00 夜盤還在進行），不得自行推測；`agreement` 只是各方向訊號的同向程度，不是預測；不得用它推論個股、不得寫成對今日台股指數方向的預測、不得與全市場情緒 `market_sentiment` 混為一談。要引用時只能使用 `overnight_market.components` 的 `evidence_id`（格式 `overnight:<來源>:<代號>:<雜湊>`），這些編號只能用於現金姿態，不能支持任何個股主張。
 
