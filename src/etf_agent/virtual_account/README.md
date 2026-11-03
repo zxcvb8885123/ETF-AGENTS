@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | `VirtualAccountError`、`VirtualAccountRepository`、`VirtualAccountService`、`DEFAULT_ACCOUNT_ID`、`active_account_id`、`write_active_account` |
 | `active.py` | 讀寫 `config/active_account.json`（使用中的帳戶 ID）；檔案不存在時用 `ai-cup-2026` | `DEFAULT_ACCOUNT_ID`、`active_account_id`、`write_active_account` |
-| `service.py` | 帳本保存／驗證（hash 鏈）與狀態轉移：初始化、`prepare_day`、`apply_decision` | `VirtualAccountError`、`parse_time`、`VirtualAccountRepository`（`save`、`verify`、`latest`、`nav_history(head_run_id=None)`：由指定狀態沿雜湊鏈往回讀 NAV 歷史，供回撤 `history_ref` 重算；預設從 latest）、`VirtualAccountService`（`ensure_initialized`、`initialize`、`prepare_day`、`rebase`、`apply_decision`、`read_snapshot`） |
-| `daily.py` | 每日帳本推進：從資料庫取官方成交價建立執行市場，結算前一份決策，建立下一次決策前狀態 | `OfficialCloseMarket`（`execution_date`、`quotes`、`build`）、`DailyAccountRunner`（`settlement_date`、`settle`、`supersede_unstarted_decision`、`void_closed_session_decision`、`run`）、`pending_decision`、`restore_superseded_decision`、`add_business_days`、`average_price`、`find_decision_run`、`supersede_decision_runs` |
+| `service.py` | 帳本保存／驗證（hash 鏈）與狀態轉移：初始化、`prepare_day`、`apply_decision`（選配 `host_outcome`：主辦方 DataPack 的前一日委託結果，`voided` 時結算為無成交；policy 帶 `insufficient_funds_policy` 時傳給成交模擬） | `VirtualAccountError`、`parse_time`、`VirtualAccountRepository`（`save`、`verify`、`latest`、`nav_history(head_run_id=None)`：由指定狀態沿雜湊鏈往回讀 NAV 歷史，供回撤 `history_ref` 重算；預設從 latest）、`VirtualAccountService`（`ensure_initialized`、`initialize`、`prepare_day`、`rebase`、`apply_decision`、`read_snapshot`） |
+| `daily.py` | 每日帳本推進：從資料庫取官方成交價建立執行市場，結算前一份決策，建立下一次決策前狀態；給 `datapack_dir`＋`team_id` 時先找結算日對應的 DataPack 當地面真相 | `OfficialCloseMarket`（`execution_date`、`quotes`、`build`）、`DailyAccountRunner`（`settlement_date`、`settle`、`supersede_unstarted_decision`、`void_closed_session_decision`、`run`）、`find_host_outcome`、`pending_decision`、`restore_superseded_decision`、`add_business_days`、`average_price`、`find_decision_run`、`supersede_decision_runs` |
 
 ## 對外介面
 
@@ -35,7 +35,7 @@ flowchart LR
 
 - CLI：`cli/virtual_account.py`（`init`、`ensure-init`、`prepare-day`、`attach-account`、`apply-decision`、`status`、`verify`，另有每日／結算類子命令）。
 - scripts：`scripts/run_daily_pipeline.py`、`scripts/repair_pending_tpex_close.py`。
-- 測試：`tests/account/test_virtual_account.py`、`tests/account/test_virtual_account_daily.py`。
+- 測試：`tests/account/test_virtual_account.py`、`tests/account/test_virtual_account_daily.py`、`tests/virtual_account/test_host_outcome_settlement.py`（主辦方作廢結果與整批作廢結算）。
 
 ## 規則與邊界
 
@@ -46,4 +46,6 @@ flowchart LR
 - 有待成交決策時預設不建立新的 prepare；只有新 Snapshot 的 cutoff 早於該決策目標時段當天的交件期限（08:55）時，`DailyAccountRunner.run` 才把該決策移到同一封存區並建立新 prepare（`supersede_unstarted_decision`）。缺少目標時段、已過期限或收盤價晚到時維持 `blocked_by_pending_decision`。
 - 取代後該次每日流程沒產生新 D-Plan 時，`restore_superseded_decision` 把被取代的決策搬回決策庫、帳本 latest 指回原 prepare（`VirtualAccountRepository.rollback_latest`），重跑建立的 prepare 移到 `ledger/<account_id>/rolled_back/`，全部只搬移不刪除；帳本已被其他執行推進或原決策不在封存區時拒絕。
 - 決策跑完時已過目標時段的交件期限（08:55）：每日流程不匯出 D-Plan；有被取代的備案時照上面還原，沒有時以 `archive_decision_run` 把新決策移到封存區，帳本結算時視為該時段沒交件。
+- 主辦方結果是地面真相：`find_host_outcome(datapack_dir, team_id, 成交日)` 找「`as_of_date` 等於成交日」的本隊 DataPack（同日多份取 `generated_at` 最新、不合規格的檔略過），`prev_day_orders.outcome` 為 `voided` 時 `apply_decision` 以 `ExecutionSimulator.void_batch` 結算為無成交（`HOST_VOIDED`），其餘值照模擬成交；`host_outcome`（outcome、void_reasons、excluded_codes、DataPack 雜湊與路徑、`trade_date`／`as_of_date`／`generated_at`）寫進 close 狀態的 `provenance` 與 `transition`。`as_of_date` 與成交日不符、欄位不合規格一律拒絕；沒有資料包或沒給參數時維持純模擬成交、狀態形狀不變。**`cli/virtual_account.py daily` 尚未傳入這兩個參數**（需另接 `--datapack-dir var/datapack` 與 `config/competition_profile.json` 的 `team_id`），每日流程目前仍是純模擬。
+- 現金不足：Decision run 的 policy `position_sizing.insufficient_funds_policy` 為 `void_batch` 時，模擬成交任一買單湊不到現金就整批作廢（與主辦方相同）；沒有此欄位的舊 run 維持逐張減少。
 - 只模擬成交，不自動下單。
