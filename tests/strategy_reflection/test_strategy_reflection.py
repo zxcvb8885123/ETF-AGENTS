@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
@@ -30,9 +31,23 @@ def report(days=12, status="ok"):
                                                  "20": {"status": "insufficient_sample", "complete_days": days}}}
 
 
-def replay_body(end_nav="100", rejected=0, status="completed", days=3):
-    return {"status": status, "metrics": {"end_nav": end_nav, "trading_days": days},
-            "days": [{"decision_status": "rejected"}] * rejected + [{"decision_status": "approved"}]}
+def replay_body(end_nav="100", rejected=0, status="completed", days=3, navs=None):
+    """回放報告 fixture：NAV 由 100 線性走到 end_nav（``navs`` 可指定整條路徑）；日期為 2026-11-10 起的連續日。"""
+    points = [Decimal(str(value)) for value in navs] if navs is not None else [
+        Decimal(100) + (Decimal(str(end_nav)) - Decimal(100)) * Decimal(index) / Decimal(days) for index in range(days + 1)] if days else [Decimal(100)]
+    return {"status": status, "metrics": {"end_nav": str(points[-1]), "trading_days": len(points) - 1},
+            "days": [{"decision_status": "rejected"}] * rejected + [{"decision_status": "approved"}],
+            "nav_series": [{"trade_date": "2026-11-%02d" % (10 + index), "nav": str(value)} for index, value in enumerate(points)]}
+
+
+def flat_benchmark(dates):
+    """等權基準持平：回放超額等於絕對報酬，舊測試的直覺不變。"""
+    return {str(day): Decimal(1) for day in dates}
+
+
+def rising_benchmark(dates, step="0.01"):
+    """等權基準每天漲 ``step``。"""
+    return {str(day): (Decimal(1) + Decimal(step)) ** index for index, day in enumerate(dates)}
 
 
 class Fixture(unittest.TestCase):
@@ -46,6 +61,13 @@ class Fixture(unittest.TestCase):
         self.rules = json.loads((self.tmp / "config" / "decision_rules.json").read_text(encoding="utf-8"))
         self.brief = build_brief(report(), self.template, NOW.isoformat())
         self.repository = ReflectionRepository(self.tmp)
+        # 缺檔現在視為人工模式；自動套用路徑的測試明寫開關，人工模式的測試自行覆寫或刪檔。
+        (self.tmp / "config" / "strategy_reflection.json").write_text(json.dumps({"enabled": True, "auto_apply": True}), encoding="utf-8")
+
+    def replayer(self, candidate_nav="101", candidate_rejected=0):
+        def replay(path, replay_id):
+            return replay_body(candidate_nav, candidate_rejected) if replay_id.endswith("candidate") else replay_body()
+        return replay
 
     def output(self, **overrides):
         item = {"knob": "conviction_multipliers.high", "proposed": "1.4", "rationale": "high 信心超額報酬為正，但幅度小", "evidence_ids": ["cal.h1.by_conviction.high.mean_excess_return"]}
@@ -205,18 +227,63 @@ class ApplyTests(Fixture):
             return replay_body(candidate_nav, candidate_rejected) if replay_id.endswith("candidate") else replay_body()
         return replay
 
+    def gate(self, candidate, base=None, benchmark=None):
+        base = base or replay_body()
+        bench = flat_benchmark([row["trade_date"] for row in candidate["nav_series"]]) if benchmark is None else benchmark
+        return replay_gate(base, candidate, bench)
+
     def test_replay_gate(self):
-        self.assertTrue(replay_gate(replay_body(), replay_body("101"))["passed"])
-        self.assertFalse(replay_gate(replay_body(), replay_body("100"))["passed"])  # 持平不算改善
-        self.assertFalse(replay_gate(replay_body(), replay_body("100.005"))["passed"])  # 低於最小改善幅度
-        self.assertFalse(replay_gate(replay_body(), replay_body("99"))["passed"])
-        self.assertFalse(replay_gate(replay_body(), replay_body(rejected=1))["passed"])
-        self.assertFalse(replay_gate(replay_body(), replay_body(status="failed"))["passed"])
-        self.assertFalse(replay_gate(replay_body(), replay_body(days=0))["passed"])
+        passed = self.gate(replay_body("101"))
+        self.assertTrue(passed["passed"], passed)
+        self.assertEqual((passed["evidence_grade"], len(passed["segments"])), ("replay_reference_only", 2))
+        self.assertFalse(self.gate(replay_body("100"))["passed"])  # 持平不算改善
+        self.assertFalse(self.gate(replay_body("100.005"))["passed"])  # 低於最小改善幅度
+        self.assertFalse(self.gate(replay_body("99"))["passed"])
+        self.assertFalse(self.gate(replay_body(rejected=1))["passed"])
+        self.assertFalse(self.gate(replay_body(status="failed"))["passed"])
+        self.assertFalse(self.gate(replay_body(days=0))["passed"])
+
+    def test_replay_gate_compares_excess_over_equal_weight_not_absolute_nav(self):
+        """候選絕對 NAV 上漲但輸給等權基準（市場 beta）：不通過；基準下跌時候選持平也可能通過（超額為正）。"""
+        dates = [row["trade_date"] for row in replay_body()["nav_series"]]
+        result = self.gate(replay_body("101"), benchmark=rising_benchmark(dates, "0.02"))  # 基準每天漲 2%
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("劣於等權基準" in reason for reason in result["reasons"]), result["reasons"])
+        falling = {day: Decimal(1) - Decimal("0.01") * index for index, day in enumerate(dates)}
+        self.assertTrue(self.gate(replay_body("100.5"), replay_body("100"), benchmark=falling)["passed"])
+
+    def test_replay_gate_needs_two_non_overlapping_segments_each_not_worse(self):
+        # 整段贏（100→102）但前半段輸給目前策略與基準（100→99）：不通過。
+        uneven = replay_body(navs=["100", "99", "99.5", "102"])
+        result = self.gate(uneven)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("第 1 段" in reason for reason in result["reasons"]), result["reasons"])
+        # 兩段都不劣於目前策略與基準：通過。
+        self.assertTrue(self.gate(replay_body(navs=["100", "100.5", "101", "102"]))["passed"])
+        # 只有一個成交日切不出兩段：不通過，不以單段放行。
+        single = self.gate(replay_body("101", days=1), replay_body(days=1))
+        self.assertFalse(single["passed"])
+        self.assertTrue(any("切不出" in reason for reason in single["reasons"]), single["reasons"])
+
+    def test_replay_gate_fails_closed_without_benchmark_or_with_misaligned_dates(self):
+        self.assertFalse(replay_gate(replay_body(), replay_body("101"), None)["passed"])
+        partial = flat_benchmark([row["trade_date"] for row in replay_body()["nav_series"]][:2])  # 缺後兩天
+        self.assertFalse(replay_gate(replay_body(), replay_body("101"), partial)["passed"])
+        misaligned = replay_body("101")
+        misaligned["nav_series"][1]["trade_date"] = "x"
+        self.assertFalse(self.gate(misaligned)["passed"])
+
+    def test_apply_without_benchmarker_never_writes_the_policy(self):
+        reflection_id = self.save()
+        before = self.live()
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository)
+        self.assertFalse(result["applied"])
+        self.assertIn("等權基準", result["reason"])
+        self.assertEqual(self.live(), before)
 
     def test_apply_writes_new_policy_atomically_and_records_history(self):
         reflection_id = self.save()
-        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository)
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
         self.assertTrue(result["applied"])
         live = self.live()
         self.assertEqual(live["position_sizing"]["conviction_multipliers"]["high"], "1.4")
@@ -238,14 +305,14 @@ class ApplyTests(Fixture):
             return result
 
         before = (self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")
-        result = apply_reflection(self.tmp, reflection_id, replay_then_lessons_land, NOW, self.repository)
+        result = apply_reflection(self.tmp, reflection_id, replay_then_lessons_land, NOW, self.repository, benchmarker=flat_benchmark)
         self.assertFalse(result["applied"])
         self.assertEqual((self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8"), before)
 
     def test_failed_gate_leaves_config_untouched(self):
         reflection_id = self.save()
         before = (self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")
-        result = apply_reflection(self.tmp, reflection_id, self.replayer(candidate_nav="90"), NOW, self.repository)
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(candidate_nav="90"), NOW, self.repository, benchmarker=flat_benchmark)
         self.assertFalse(result["applied"])
         self.assertEqual((self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8"), before)
         self.assertEqual(self.repository.history(), [])
@@ -258,16 +325,16 @@ class ApplyTests(Fixture):
             raise ReflectionError("回放失敗")
 
         with self.assertRaises(ReflectionError):
-            apply_reflection(self.tmp, reflection_id, broken, NOW, self.repository)
+            apply_reflection(self.tmp, reflection_id, broken, NOW, self.repository, benchmarker=flat_benchmark)
         self.assertEqual((self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8"), before)
 
     def test_window_blocks_late_evening_apply_and_keeps_the_reflection(self):
         reflection_id = self.save()
         late = datetime(2026, 11, 20, 13, 0, tzinfo=timezone.utc)  # 台北 21:00
-        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, clock=lambda: late, enforce_window=True)
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, clock=lambda: late, enforce_window=True, benchmarker=flat_benchmark)
         self.assertFalse(result["applied"])
         self.assertEqual(self.live()["policy_id"], self.template["policy_id"])
-        manual = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, clock=lambda: late)
+        manual = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, clock=lambda: late, benchmarker=flat_benchmark)
         self.assertTrue(manual["applied"])
 
     def test_template_changed_during_replay_is_not_overwritten(self):
@@ -279,7 +346,7 @@ class ApplyTests(Fixture):
             (self.tmp / "config" / "decision_policy.json").write_text(json.dumps(changed), encoding="utf-8")
             return replay_body("101") if replay_id.endswith("candidate") else replay_body()
 
-        result = apply_reflection(self.tmp, reflection_id, replay, NOW, self.repository)
+        result = apply_reflection(self.tmp, reflection_id, replay, NOW, self.repository, benchmarker=flat_benchmark)
         self.assertFalse(result["applied"])
         self.assertEqual(self.live()["trim_fraction"], "0.4")
 
@@ -287,24 +354,24 @@ class ApplyTests(Fixture):
         def busy():
             raise BlockingIOError("locked")
 
-        result = apply_reflection(self.tmp, self.save(), self.replayer(), NOW, self.repository, write_lock=busy)
+        result = apply_reflection(self.tmp, self.save(), self.replayer(), NOW, self.repository, write_lock=busy, benchmarker=flat_benchmark)
         self.assertFalse(result["applied"])
         self.assertEqual(self.live()["policy_id"], self.template["policy_id"])
 
     def test_only_one_apply_per_day(self):
         reflection_id = self.save()
-        apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository)
+        apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
         second_brief = build_brief(report(), self.live(), NOW.isoformat())
         second = from_agent_output(self.output(knob="trim_fraction", proposed="0.45"),
                                    second_brief, self.live(), self.rules, datetime(2026, 11, 20, 12, 31, tzinfo=timezone.utc))
         save_reflection(self.repository, second, second_brief)
         # 試用觀察期沒結案時，驗證器擋下新提案，所以同一天不可能再套用第二次。
         with self.assertRaises(ReflectionError):
-            apply_reflection(self.tmp, str(second["reflection_id"]), self.replayer(), NOW, self.repository)
+            apply_reflection(self.tmp, str(second["reflection_id"]), self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
 
     def test_rollback_restores_the_previous_file_and_refuses_after_manual_edit(self):
         original = (self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")
-        apply_reflection(self.tmp, self.save(), self.replayer(), NOW, self.repository)
+        apply_reflection(self.tmp, self.save(), self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
         result = rollback(self.tmp, NOW, self.repository)
         self.assertEqual(result["policy_id"], self.template["policy_id"])
         self.assertEqual(json.loads((self.tmp / "config" / "decision_policy.json").read_text(encoding="utf-8")), json.loads(original))
@@ -312,7 +379,7 @@ class ApplyTests(Fixture):
             rollback(self.tmp, NOW, self.repository)
 
     def test_rollback_refuses_when_live_file_was_edited_by_hand(self):
-        apply_reflection(self.tmp, self.save(), self.replayer(), NOW, self.repository)
+        apply_reflection(self.tmp, self.save(), self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
         live = self.live()
         live["trim_fraction"] = "0.4"  # 內容被改但 policy_id 沒變
         (self.tmp / "config" / "decision_policy.json").write_text(json.dumps(live), encoding="utf-8")
@@ -322,6 +389,97 @@ class ApplyTests(Fixture):
         (self.tmp / "config" / "decision_policy.json").write_text(json.dumps(live), encoding="utf-8")
         with self.assertRaises(ReflectionError):
             rollback(self.tmp, NOW, self.repository)
+
+
+class RiskDirectionTests(Fixture):
+    """只有降風險方向可自動套用；加風險或方向不明的提案只封存標 needs_human，需人明確放行。"""
+
+    EXPECTED = {
+        "conviction_multipliers.high": "decrease", "conviction_multipliers.medium": "decrease", "conviction_multipliers.low": "decrease",
+        "cash_buffer_by_stance.aggressive": "increase", "cash_buffer_by_stance.neutral": "increase", "cash_buffer_by_stance.defensive": "increase",
+        "positions_by_breadth.concentrated": "increase", "positions_by_breadth.balanced": "increase", "positions_by_breadth.diversified": "increase",
+        "drawdown_control.neutral_at": "decrease", "drawdown_control.defensive_at": "decrease",
+        "volatility_floor": "ambiguous", "trim_fraction": "increase", "volatility_exponent": "increase",
+        "rotation.max_swaps_per_run": "decrease", "rotation.min_new_conviction": "increase",
+        "position_review.loss_alert": "decrease", "position_review.retrace_alert_20d": "decrease",
+    }
+
+    def test_every_knob_has_a_declared_risk_direction(self):
+        from etf_agent.strategy_reflection.contracts import KNOBS
+        from etf_agent.strategy_reflection.tools import knob_risk_directions
+
+        self.assertEqual(knob_risk_directions(), self.EXPECTED)
+        self.assertEqual(set(self.EXPECTED), set(KNOBS))
+        self.assertIn("knob_risk_directions", self.brief)
+        self.assertEqual(self.brief["knob_risk_directions"]["conviction_multipliers.high"], "decrease")
+
+    def test_direction_classification(self):
+        from etf_agent.strategy_reflection.tools import risk_direction
+
+        self.assertEqual(risk_direction("conviction_multipliers.high", "1.5", "1.4"), "risk_reducing")
+        self.assertEqual(risk_direction("conviction_multipliers.high", "1.5", "1.6"), "risk_increasing")
+        self.assertEqual(risk_direction("cash_buffer_by_stance.neutral", "0.10", "0.08"), "risk_increasing")
+        self.assertEqual(risk_direction("rotation.min_new_conviction", "medium", "high"), "risk_reducing")
+        self.assertEqual(risk_direction("volatility_floor", "0.01", "0.005"), "ambiguous")
+        self.assertEqual(risk_direction("nope", "1", "2"), "ambiguous")
+
+    def test_risk_increasing_proposal_is_archived_as_needs_human_and_not_applied(self):
+        reflection = self.reflection(proposed="1.6")  # high 1.5 → 1.6：加風險
+        reflection_id = save_reflection(self.repository, reflection, self.brief)
+        before = self.live()
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
+        self.assertEqual((result["applied"], result["needs_human"]), (False, True))
+        self.assertEqual(result["risk_direction"], {"conviction_multipliers.high": "risk_increasing"})
+        self.assertIn("--allow-risk-increase", result["reason"])
+        self.assertEqual(self.live(), before)
+        history = self.repository.history()
+        self.assertEqual([entry["action"] for entry in history], ["needs_human"])
+        apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
+        self.assertEqual(len(self.repository.history()), 1)  # 同一份只記一次
+
+    def test_human_override_applies_and_leaves_an_audit_trail(self):
+        reflection_id = save_reflection(self.repository, self.reflection(proposed="1.6"), self.brief)
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, benchmarker=flat_benchmark, allow_risk_increase=True)
+        self.assertTrue(result["applied"], result)
+        self.assertEqual(self.live()["position_sizing"]["conviction_multipliers"]["high"], "1.6")
+        entry = [item for item in self.repository.history() if item["action"] == "apply"][0]
+        self.assertEqual(entry["risk_increase_allowed_by_human"], {"conviction_multipliers.high": "risk_increasing"})
+        self.assertEqual(entry["replay_gate"]["evidence_grade"], "replay_reference_only")
+
+    def test_ambiguous_knob_needs_human_too(self):
+        reflection_id = save_reflection(self.repository, self.reflection(knob="volatility_floor", proposed="0.015"), self.brief)
+        result = apply_reflection(self.tmp, reflection_id, self.replayer(), NOW, self.repository, benchmarker=flat_benchmark)
+        self.assertEqual(result["risk_direction"], {"volatility_floor": "ambiguous"})
+        self.assertTrue(result["needs_human"])
+
+    def test_weekly_report_labels_the_direction_and_needs_human(self):
+        from etf_agent.strategy_reflection import render_weekly_report
+
+        reflection = self.reflection(proposed="1.6")
+        text = render_weekly_report(NOW, self.brief, reflection, {"applied": False, "needs_human": True, "reason": "含加風險旋鈕"})
+        self.assertIn("加風險", text)
+        self.assertIn("--allow-risk-increase", text)
+        self.assertIn("replay_reference_only", text)
+        self.assertIn("只放行降風險方向", text)
+
+
+class SwitchTests(Fixture):
+    def test_auto_apply_defaults_to_false_and_missing_field_is_false(self):
+        path = self.tmp / "config" / "strategy_reflection.json"
+        path.unlink(missing_ok=True)  # Fixture 為自動套用路徑預先寫了開關；這裡測缺檔
+        self.assertEqual(service.load_switch(self.tmp), {"enabled": True, "auto_apply": False})  # 缺檔
+        path.write_text(json.dumps({"enabled": True}), encoding="utf-8")
+        self.assertEqual(service.load_switch(self.tmp), {"enabled": True, "auto_apply": False})  # 缺欄位
+        path.write_text(json.dumps({"enabled": True, "auto_apply": True}), encoding="utf-8")
+        self.assertEqual(service.load_switch(self.tmp)["auto_apply"], True)
+        path.write_text(json.dumps({"auto_apply": True}), encoding="utf-8")
+        self.assertEqual(service.load_switch(self.tmp), {"enabled": False, "auto_apply": False})  # 缺 enabled fail-closed
+
+    def test_repository_switch_file_keeps_auto_apply_off(self):
+        """專案設定檔必須維持 auto_apply=false：自動套用等於憑小樣本改策略。"""
+        live = json.loads((ROOT / "config" / "strategy_reflection.json").read_text(encoding="utf-8"))
+        self.assertIs(live.get("auto_apply"), False)
+        self.assertEqual(service.load_switch(ROOT)["auto_apply"], False)
 
 
 class RunAutoTests(Fixture):
@@ -347,7 +505,7 @@ class RunAutoTests(Fixture):
         with mock.patch.object(service, "make_brief", return_value=self.brief):
             result = run_auto(self.tmp, self.tmp / "db", self.tmp / "decisions", runner, NOW,
                               replayer=lambda path, replay_id: replay_body("101") if replay_id.endswith("candidate") else replay_body(),
-                              clock=lambda: NOW)
+                              clock=lambda: NOW, benchmarker=flat_benchmark)
         self.assertEqual(runner.calls, 1)
         self.assertTrue(result["apply"]["applied"])
         run_dir = next((self.tmp / "var" / "strategy_reflection" / "agent_inputs").iterdir())

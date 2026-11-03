@@ -44,7 +44,7 @@ from etf_agent.decision.allocation import ALLOCATION_ENGINE_VERSION
 from etf_agent.decision.finalization import DECISION_ENGINE_VERSION
 from etf_agent.virtual_account.daily import OfficialCloseMarket
 
-from .contracts import REPLAY_SCHEMA_VERSION, ReplayError
+from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, REPLAY_SCHEMA_VERSION, ReplayError
 from .replay_market import TAIPEI, ReplayLedger, ReplayMarket
 from .replay_tools import code_version, nav_metrics, policy_template_sha256, tree_sha256
 from .service import EVALUATION_ROOT
@@ -449,6 +449,9 @@ def _build_replay(
     body: Dict[str, object] = {
         "schema_version": REPLAY_SCHEMA_VERSION,
         "status": status,
+        # 回放只固定已封存的 Agent 意圖重算確定性配置，不是對 LLM 判斷的前瞻驗證（見 contracts）。
+        "evidence_grade": REPLAY_EVIDENCE_GRADE,
+        "notice": REPLAY_NOTICE,
         "inputs": {
             "policy_template_path": str(policy_template_path), "decision_root": str(decision_root), "database": str(database),
             "as_of": market.as_of, "start": start, "end": end, "run_ids": [str(item["run_id"]) for item in selection],

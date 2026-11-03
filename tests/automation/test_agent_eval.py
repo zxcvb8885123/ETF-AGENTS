@@ -63,7 +63,9 @@ class AgentEvaluationTests(unittest.TestCase):
             self.assertEqual(report["overall"]["stability"][name]["mean_agreement"], 1.0, name)
         # 重跑寫在評測目錄自己的決策庫，不碰正式決策庫。
         self.assertFalse((self.root / "artifacts" / "decisions").exists())
-        self.assertTrue((self.root / "artifacts" / "evaluation" / "runs" / manifest["eval_id"] / "report.md").exists())
+        report_md = (self.root / "artifacts" / "evaluation" / "runs" / manifest["eval_id"] / "report.md").read_text(encoding="utf-8")
+        self.assertEqual(report["evidence_grade"], "replay_reference_only")  # 重跑舊考卷不是前瞻驗證
+        self.assertIn("不構成對 LLM 判斷的前瞻驗證", report_md.split("\n")[2])
         # 沒有重大訊息時事件分析師不呼叫 Agent，其餘七個步驟各一次。
         self.assertEqual(report["cases"][0]["process"][0]["calls"], 7)
         # 一頁 HTML 是衍生品：自包含、無 script、有 CSP；manifest.json 不登錄它。

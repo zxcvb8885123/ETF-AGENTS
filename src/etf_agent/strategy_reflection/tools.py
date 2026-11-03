@@ -14,10 +14,37 @@ from .contracts import (
     MAX_DRIFT_STEPS,
     KNOBS,
     POSITION_COUNT_KNOBS,
+    RISK_AMBIGUOUS,
+    RISK_INCREASING,
+    RISK_REDUCING,
     SIZING_GROUPS,
     Knob,
     ReflectionError,
 )
+from .trial import change_direction
+
+
+def risk_direction(path: str, current: object, proposed: object) -> str:
+    """這筆變更是降風險、加風險還是方向不明（依 ``Knob.risk_reducing`` 與變更方向判定）。
+
+    不在白名單、旋鈕語意不明（``risk_reducing=0``）或讀不出方向時一律回 ``ambiguous``（fail-closed：不自動套用）。"""
+    knob = KNOBS.get(path)
+    direction = change_direction(path, current, proposed)
+    if knob is None or knob.risk_reducing == 0 or direction == 0:
+        return RISK_AMBIGUOUS
+    return RISK_REDUCING if direction == knob.risk_reducing else RISK_INCREASING
+
+
+def knob_risk_directions() -> Dict[str, str]:
+    """每個旋鈕「往哪個方向調是降風險」的說明（給簡報與 Skill）：decrease／increase／ambiguous。"""
+    labels = {-1: "decrease", 1: "increase", 0: "ambiguous"}
+    return {path: labels[knob.risk_reducing] for path, knob in sorted(KNOBS.items())}
+
+
+def non_risk_reducing(proposals: Sequence[Mapping[str, object]]) -> Dict[str, str]:
+    """提案中不是降風險方向的旋鈕 → 方向（risk_increasing／ambiguous）；空字典表示全部都是降風險。"""
+    return {str(item["knob"]): risk_direction(str(item["knob"]), item["current"], item["proposed"])
+            for item in proposals if risk_direction(str(item["knob"]), item["current"], item["proposed"]) != RISK_REDUCING}
 
 
 def _container(template: Dict[str, object], path: str):

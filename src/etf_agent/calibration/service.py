@@ -17,6 +17,8 @@ from .contracts import (
     HORIZONS,
     MIN_DAY_COVERAGE,
     MIN_DECISION_DAYS,
+    REPLAY_EVIDENCE_GRADE,
+    REPLAY_NOTICE,
     SCHEMA_VERSION,
     SIGNAL_INTENTS,
     STRENGTH_SCORE,
@@ -196,6 +198,8 @@ def evaluate(repository: CalibrationRepository, database: Path, as_of: str) -> D
     report: Dict[str, object] = {
         "schema_version": SCHEMA_VERSION, "as_of": book.as_of, "calendar_basis": CALENDAR_BASIS,
         "price_basis": "official_vwap", "required_decision_days": MIN_DECISION_DAYS,
+        # 對舊日期的重算只是把已封存的決策拿來對答案，不是前瞻驗證（見 contracts.REPLAY_NOTICE）。
+        "evidence_grade": REPLAY_EVIDENCE_GRADE, "notice": REPLAY_NOTICE,
         "observation_count": len(observations), "decision_days": len(chosen),
         "entry_day_unresolved": sorted(unresolved), "horizons": {},
     }

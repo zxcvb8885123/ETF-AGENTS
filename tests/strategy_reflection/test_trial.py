@@ -154,10 +154,22 @@ class SettleTests(Fixture):
         knobs.assert_not_called()
         taught.assert_not_called()
 
-    def test_enabled_switch_defaults_open_and_malformed_fails_closed(self):
-        self.assertEqual(service.load_switch(self.tmp), {"enabled": True, "auto_apply": True})
+    def test_enabled_switch_defaults_to_manual_mode_and_malformed_fails_closed(self):
+        (self.tmp / "config" / "strategy_reflection.json").unlink(missing_ok=True)  # Fixture 預設寫了全開的開關；這裡測缺檔
+        self.assertEqual(service.load_switch(self.tmp), {"enabled": True, "auto_apply": False})
         (self.tmp / "config" / "strategy_reflection.json").write_text("{bad", encoding="utf-8")
         self.assertEqual(service.load_switch(self.tmp), {"enabled": False, "auto_apply": False})
+
+    def test_trial_floor_lets_five_quiet_days_trigger_worse(self):
+        """基準期平靜（日超額幾乎為 0）時，試用期每天輸基準 10 bp 要在 5 個觀察日就判定明確變差（下限 5 bp）。"""
+        from etf_agent.strategy_reflection.contracts import TRIAL_FLOOR
+
+        self.assertEqual(TRIAL_FLOOR, Decimal("0.0005"))
+        before = days(0, ["0.0001", "-0.0001", "0.0001", "-0.0001", "0.0001", "-0.0001"])  # 11/2～11/7
+        worse = {**before, **days(6, ["-0.001"] * 5)}
+        self.assertEqual(evaluate_trial({**APPLY, "applied_at": "2026-11-07"}, worse)["verdict"], "worse")
+        slight = {**before, **days(6, ["-0.0003"] * 5)}  # 低於下限：看不出差別
+        self.assertEqual(evaluate_trial({**APPLY, "applied_at": "2026-11-07"}, slight)["verdict"], "inconclusive")
 
 
 if __name__ == "__main__":

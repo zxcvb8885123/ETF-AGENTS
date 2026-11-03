@@ -14,6 +14,8 @@
 
 「相同」只表示和當時那次一樣，不代表對錯。答案隨時間自己長出來：價格沒到齊的 horizon 標 pending，之後再跑 `report` 就會更新。回放、格子與評測報告旁各有一頁自包含 HTML（衍生品，不進 manifest）。
 
+**證據等級**：回放、格子與評測重跑都只是對舊日期的重算——回放固定已封存的 Agent 意圖重算確定性配置，重跑讓模型重看它可能已在訓練資料裡看過的日期——不構成對 LLM 判斷的前瞻驗證。所有這類報告的 JSON 帶 `evidence_grade: "replay_reference_only"`，Markdown／HTML 首段固定寫「僅供參考：回放使用已封存的 Agent 意圖，不構成對 LLM 判斷的前瞻驗證；只有比賽期間的即時紀錄才算證據」（常數在 `calibration.contracts.REPLAY_NOTICE`）。舊封存報告沒有這兩個欄位，`verify` 不比對它們。
+
 ## 檔案清單
 
 | 檔案 | 職責 | 主要公開項目 |
@@ -39,7 +41,7 @@
 - 帳本歷史不傳入，回撤控制記為 unavailable。
 - 只跑分析師（`--stop-after analysts`）時，交易、現金姿態與委託不比較。
 - 準度沿用 `calibration`：成交日 T 是 cutoff 後第一個有官方收盤的交易日，報酬 = T+h 日均價 ÷ T 日均價 − 1，減去同日交易池平均；窗口內除權息的股票不計，有價格的股票不到八成時當天不給答案。超額報酬剛好為 0 的不算命中也不算錯。
-- 完整決策日少於 `calibration.MIN_DECISION_DAYS`（5）天時只給天數與筆數，不給命中率；同一天重跑多次只算一天。報告另列單日結果，只供參考。
+- 完整決策日少於 `calibration.MIN_DECISION_DAYS`（10）天時只給天數與筆數，不給命中率；同一天重跑多次只算一天。報告另列單日結果，只供參考。
 
 ## CLI
 
@@ -69,7 +71,7 @@
 
 口徑：
 
-- 輸入只有已封存、manifest 驗證通過的 Decision run（`calibration.build_observation`）與官方成交均價（`OfficialPriceBook`，只用 `fetched_at` ≤ `as_of` 的官方列）。成交日 T、報酬、同日取 cutoff 最晚、除權息排除、單日 80% 覆蓋與 5 個完整決策日的門檻全部沿用 `calibration`，`by_conviction` 與校準報告的數字一致（有測試鎖定）。
+- 輸入只有已封存、manifest 驗證通過的 Decision run（`calibration.build_observation`）與官方成交均價（`OfficialPriceBook`，只用 `fetched_at` ≤ `as_of` 的官方列）。成交日 T、報酬、同日取 cutoff 最晚、除權息排除、單日 80% 覆蓋與 10 個完整決策日的門檻全部沿用 `calibration`，`by_conviction` 與校準報告的數字一致（有測試鎖定）。
 - 每列：`entry_day`、`run_id`、`symbol`、`intent`、`conviction`、`bull_strength`／`bear_strength`／`net_strength`，每個 horizon 一格：`return`、`excess_vs_pool`（減同日交易池平均，主）、`excess_vs_benchmark`（減基準 ETF 同窗口報酬，附）、`benchmark_status`；價格未到齊、除權息、無價、覆蓋不足的格只有 `status`。
 - 分組（`by_conviction` 只算 buy／add 且有信心；`by_intent`、`by_bull_strength`、`by_bear_strength`、`by_net_strength` 含全部股票）：`n_obs`、`mean_return`、`mean_excess_vs_pool`、`beat_pool`（超額 > 0 的筆數 ÷ 超額 ≠ 0 的筆數，剛好 0 另計 `ties`）、`n_obs_benchmark`、`mean_excess_vs_benchmark`、`beat_benchmark`。**兩種 alpha 並列，不合成單一分數。**
 - 基準在 T 或 T+h 缺官方列（含抓取時間晚於 `as_of`、資料庫沒有該 ETF）→ 該日 `benchmark_status=unavailable`；窗口 (T, T+h] 內除權息 → `ex_rights`；兩者都只讓基準欄留空、不計入 `n_obs_benchmark`，池 alpha 照算、不補值。`horizons.<h>.benchmark_days` 統計三種狀態的天數。
