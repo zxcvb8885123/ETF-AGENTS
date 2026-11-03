@@ -401,10 +401,11 @@ class TeamStagesMixin:
                 "rationale 只寫整合後的判斷，不逐條重貼多空報告或論點全文；論點識別碼保留在採納／否決陣列供程式核對。"
                 "理由用簡短繁體中文分段：先寫主導決定的理由，再寫主要風險為何改變或沒有改變行動；"
                 "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
-                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。%s%s%s%s"
+                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。"
+                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
-                    len(batch["symbols"]), "、".join(batch["symbols"]),
+                    len(batch["symbols"]), "、".join(batch["symbols"]), len(batch["symbols"]),
                     _PRIOR_RULES if background is not None else "",
                     _ROTATION_RULES if portfolio_slots is not None else "",
                     _REVIEW_RULES if position_review is not None else "",
