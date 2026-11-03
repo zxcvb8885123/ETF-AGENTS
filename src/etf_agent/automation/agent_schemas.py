@@ -137,6 +137,9 @@ _FINDING_KIND_RULES = (
     "material_event 引用重大訊息的 evidence_id；news 引用 news:finmind: 開頭的新聞。"
     "一項 finding 只宣告一種、只引用該種類的證據（可另附帳戶或市場層級證據作補充，但不能只有補充）；"
     "依據跨兩種時拆成兩項 finding。種類與證據不對映會被程式退回。"
+    "交件前逐項自查：這項 finding 引用的每個屬於該股票的 evidence_id，種類是否都等於你宣告的 finding_kind"
+    "（財報、現金流、profile 是 financial，不是 material_event；重大訊息才是 material_event；news 只用於新聞）；"
+    "不一致就拆項或移除該引用。"
 )
 _CLAIM_KIND_RULES = (
     "每個 claim 必須填 claim_kind（price／financial／revenue／material_event／news），表示主要依據的證據種類；"
@@ -156,6 +159,7 @@ EVENT_BATCH_MAX_EVENTS = 80
 _EVENT_RULES = (
     "finding_id 在整份報告（含所有股票）中必須唯一，請用「股票代號:f序號」，例如 2330.TW:f1，不可每檔都從 f1 起算；"
     "輸入列出的每一則重大訊息都必須在該股票的 events 逐一分級一次，不可漏掉或重複。"
+    "每檔的 event_outlook 必須等於該檔的 outlook（公司事件結果只反映該公司事件，不混入市場情緒）。"
     "每則事件的 summary 寫事件影響；counter_evidence 列出輸入中削弱或反駁這個影響的事實（例如同快照財報或其他公告），"
     "pending_confirmations 列出輸入中還查不到、尚待確認的事項（例如金額未公布、尚待股東會或主管機關核准）；"
     "兩者都只能依輸入內容，沒有就給空陣列，不得推測補充。"
