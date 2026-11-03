@@ -89,7 +89,7 @@ class StancePacketTests(unittest.TestCase):
         cases.append((none_with_claims, "strength=none"))
         strong_empty = bull_items()
         strong_empty[1] = dict(strong_empty[1], strength="strong", claims=[])
-        cases.append((strong_empty, "至少有一個 claim"))
+        cases.append((strong_empty, "至少一個有證據的 claim"))
         prefix = bull_items()
         prefix[0]["claims"][0]["claim_id"] = "bear-2317-1"
         cases.append((prefix, "必須以 bull- 開頭"))

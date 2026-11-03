@@ -91,7 +91,7 @@ class AnalystReportValidatorTests(unittest.TestCase):
         cases.append((unknown, "data_gaps"))
         empty = technical_items()
         empty[0] = dict(empty[0], findings=[])
-        cases.append((empty, "至少有一項 finding"))
+        cases.append((empty, "至少一項有證據的 finding"))
         foreign = technical_items()
         foreign[0]["findings"] = [finding("tech-2317-1", "price-2330")]
         cases.append((foreign, "不屬於"))

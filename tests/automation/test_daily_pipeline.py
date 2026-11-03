@@ -15,7 +15,7 @@ from etf_agent.automation.daily_pipeline import (
 )
 from etf_agent.data import MarketDataDatabase, TradingStatusBundleBuilder, TradingStatusRequest, next_trading_session
 from etf_agent.data.trading_status import DEFAULT_REQUIRED_CATEGORIES
-from etf_agent.decision import DecisionRepository, DecisionFinalizer, liquidity_exposure
+from etf_agent.decision import MARKET_REGIME_EVIDENCE_ID, DecisionRepository, DecisionFinalizer, liquidity_exposure
 
 from test_decision_input_builder import builder_inputs, seed_history
 
@@ -40,12 +40,14 @@ class FakeRunner:
         return AgentCall(task.name, 0, self.outputs[task.name].pop(0), 0.01)
 
 
-def finding(finding_id, evidence):
-    return {"finding_id": finding_id, "text": "依摘要判斷。", "evidence_ids": [evidence]}
+# PipelineWorld 用 DecisionInputBuilder 建 bundle，預設帶 evidence_policy=typed_evidence_v1：
+# finding／claim 必須宣告種類；價格證據為 price、重大訊息為 material_event。
+def finding(finding_id, evidence, kind="price"):
+    return {"finding_id": finding_id, "text": "依摘要判斷。", "evidence_ids": [evidence], "finding_kind": kind}
 
 
-def stance_claim(claim_id, evidence, findings=()):
-    return {"claim_id": claim_id, "text": "依分析報告。", "evidence_ids": [evidence], "finding_ids": list(findings)}
+def stance_claim(claim_id, evidence, findings=(), kind="price"):
+    return {"claim_id": claim_id, "text": "依分析報告。", "evidence_ids": [evidence], "finding_ids": list(findings), "claim_kind": kind}
 
 
 # 分析團隊新鏈各子 Agent 的預備輸出；fixture 帳戶持有 2330、未持有 2317。
@@ -75,7 +77,9 @@ TRADE = {"items": [
     {"symbol": "2330.TW", "intent": "hold", "conviction": None, "rationale": "多空相當，續抱。",
      "adopted_claim_ids": ["bull-2330-1"], "rejected_claim_ids": ["bear-2330-1"], "unresolved_questions": [], "invalidation_conditions": []},
 ]}
-STANCE = {"level": "neutral", "breadth": "balanced", "rationale": "市場中性。", "evidence_ids": ["price-2330"]}
+# typed_evidence_v1：現金姿態至少要引用一個市場層級證據（這裡用程式市場狀態的編號）。
+STANCE = {"level": "neutral", "breadth": "balanced", "rationale": "市場中性。",
+          "evidence_ids": ["price-2330", MARKET_REGIME_EVIDENCE_ID]}
 APPROVE = {
     "decision": "approve", "rationale": "現金、集中與情境均可接受。", "evidence_ids": ["price-2317"],
     "risk_flags": [], "unresolved_questions": [], "revision_actions": [],
@@ -181,8 +185,13 @@ class DailyPipelineTests(unittest.TestCase):
             self.assertEqual(result.position_breadth, "balanced")
             policy = json.loads((run_dir / "policy.json").read_text(encoding="utf-8"))
             self.assertEqual(policy["position_sizing"]["position_breadth"], "balanced")
-            # 正式樣板已啟用 rotation、position_review 與 selection_ranking，所以 team_inputs 是 2.5（2.3 再加持股檢視與入選排序）。
-            self.assertEqual(team["schema_version"], "2.5")
+            # 正式樣板已啟用 rotation、position_review 與 selection_ranking，bundle 又帶 fundamental_period_policy，
+            # 所以 team_inputs 是 2.6（2.5 再加程式計算的基本面指標；fixture 沒有財報，存為 null）。
+            self.assertEqual(team["schema_version"], "2.6")
+            self.assertIn("fundamental_metrics", team)
+            self.assertIsNone(team["fundamental_metrics"])
+            bundle = json.loads((run_dir / "decision_input.json").read_text(encoding="utf-8"))
+            self.assertEqual(bundle["evidence_policy"], "typed_evidence_v1")
             self.assertEqual(team["selection_ranking"]["schema_version"], "1.0")
             self.assertEqual(team["position_review"]["schema_version"], "1.0")
             self.assertNotIn("research_result", team)
@@ -265,7 +274,7 @@ class DailyPipelineTests(unittest.TestCase):
             self.assertNotIn("overnight_market", json.loads((world.run_dir / "brief_cash_stance.json").read_text()))
         with tempfile.TemporaryDirectory() as directory:
             world, overnight = self.overnight_world(directory)
-            runner = FakeRunner(team_outputs(cash_stance=[dict(STANCE, evidence_ids=["price-2330"])]))
+            runner = FakeRunner(team_outputs(cash_stance=[dict(STANCE, evidence_ids=["price-2330", MARKET_REGIME_EVIDENCE_ID])]))
             result = world.run(runner, overnight=overnight)
             self.assertEqual(result.status, "completed", result.errors)
             bundle = json.loads((world.run_dir / "decision_input.json").read_text(encoding="utf-8"))
@@ -386,12 +395,12 @@ class DailyPipelineTests(unittest.TestCase):
             events = copy.deepcopy(EVENT)
             events["items"][1].update(
                 outlook="positive", event_outlook="positive", data_gaps=[],
-                findings=[finding("event-2330-high", EVENT_ID)],
+                findings=[finding("event-2330-high", EVENT_ID, "material_event")],
                 events=[{"evidence_id": EVENT_ID, "materiality": "high", "summary": "董事會核准資本預算。"}],
             )
             events["items"] = [events["items"][1]]  # 2317 無重大訊息，由程式輸出，不在 Agent 批次內
             bull = copy.deepcopy(BULL)
-            bull["items"][1]["claims"] = [stance_claim("bull-2330-1", EVENT_ID, ["event-2330-high"])]
+            bull["items"][1]["claims"] = [stance_claim("bull-2330-1", EVENT_ID, ["event-2330-high"], "material_event")]
             runner = FakeRunner(team_outputs(event_b0=[events], bull_b0=[bull]))
             result = world.run(runner)
             self.assertEqual(result.status, "completed", result.errors)
@@ -415,7 +424,7 @@ class DailyPipelineTests(unittest.TestCase):
             events = copy.deepcopy(EVENT)
             events["items"][1].update(
                 outlook="positive", event_outlook="positive", data_gaps=[],
-                findings=[finding("event-2330-high", EVENT_ID)],
+                findings=[finding("event-2330-high", EVENT_ID, "material_event")],
                 events=[{"evidence_id": EVENT_ID, "materiality": "high", "summary": "董事會核准資本預算。",
                          "counter_evidence": ["公告未說明資金來源。"], "pending_confirmations": ["執行時程尚未公布。"]}],
             )

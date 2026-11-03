@@ -41,16 +41,19 @@ from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_br
 
 from .agent_runner import LATER_STAGE_GLOBS, AgentTask, DailyPipelineError
 from .agent_schemas import (
-    ANALYST_SCHEMA,
-    EVENT_ANALYST_SCHEMA,
     EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
-    STANCE_SCHEMA,
     RANKING_SCHEMA,
     TRADE_SCHEMA,
+    _CLAIM_KIND_RULES,
     _EVENT_RULES,
+    _FINDING_KIND_RULES,
     _SHARED_RULES,
+    analyst_schema,
+    event_analyst_schema,
+    stance_schema,
 )
+from etf_agent.decision import evidence_policy
 from .batching import merge_batch_items, universe_batches, weighted_batches
 
 
@@ -97,6 +100,8 @@ class TeamStagesMixin:
     ) -> Dict[str, Dict[str, object]]:
         """三位分析師逐批執行；事件與市場情緒共用一位 Agent、一份報告。"""
         metrics = compute_fundamental_metrics(bundle)
+        # bundle 有 fundamental_period_policy 時，指標另進 team_inputs 2.6 供 Finalizer 重算比對（沒有財報時為 None）。
+        self.fundamental_metrics = metrics
         if metrics is not None:
             self.save_artifact("fundamental_metrics", metrics)
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
@@ -165,6 +170,7 @@ class TeamStagesMixin:
         analyst_batches: Sequence[Mapping[str, object]],
     ) -> List[Tuple[str, Callable[[], Dict[str, object]]]]:
         """每批一個任務；任務各自綁定本批的 brief、Validator 與提示，可安全同時執行。"""
+        typed = evidence_policy(bundle) is not None
 
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             members = set(batch["symbols"])
@@ -189,9 +195,9 @@ class TeamStagesMixin:
                 % (
                     analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]),
-                    _SHARED_RULES + (_EVENT_RULES if analyst == "event" else ""),
+                    _SHARED_RULES + (_EVENT_RULES if analyst == "event" else "") + (_FINDING_KIND_RULES if typed else ""),
                 ),
-                EVENT_ANALYST_SCHEMA if analyst == "event" else ANALYST_SCHEMA,
+                event_analyst_schema(typed) if analyst == "event" else analyst_schema(typed),
             )
             return name, lambda: self.agent_step(
                 task,
@@ -239,6 +245,7 @@ class TeamStagesMixin:
         role: str, brief: Dict[str, object], batches: Sequence[Mapping[str, object]],
     ) -> List[Tuple[str, Callable[[], Dict[str, object]]]]:
         """多頭或空頭每批一個任務；兩方只讀同一份共同輸入，任務之間不共享輸出。"""
+        typed = evidence_policy(bundle) is not None
 
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             members = set(batch["symbols"])
@@ -262,9 +269,9 @@ class TeamStagesMixin:
                     role, self.root / ("tradeagent/research/stock-research/%s-researcher/SKILL.md" % role), brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]),
                     "最強的做多（值得持有或買進）論點" if role == "bull" else "最強的反對（不宜持有或應避開）論點",
-                    _SHARED_RULES,
+                    _SHARED_RULES + (_CLAIM_KIND_RULES if typed else ""),
                 ),
-                STANCE_SCHEMA,
+                stance_schema(typed),
                 # 多空互相隔離由讀檔權限強制：不得讀另一方的輸出、原始輸出與輸入摘要。
                 deny_reads=_peer_deny_reads(role),
             )

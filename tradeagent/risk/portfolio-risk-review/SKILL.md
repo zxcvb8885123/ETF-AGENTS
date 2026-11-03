@@ -9,7 +9,14 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 ## 配置前現金姿態
 
-交易 Agent 決定完每檔意圖與 buy／add 信心等級後，本 Skill 只對整體給市場層級的 `cash_stance`：`aggressive`、`neutral` 或 `defensive`，附 `rationale` 與共同輸入中存在的 `evidence_ids`（例如 regime、市場廣度、事件集中）。依 regime、分析師看法分布、交易決策、交易狀態、重大事件風險與整體市場情緒（`market_sentiment`，全市場新聞或恐懼貪婪指標，`status` 非 available 時不能當成情緒結論）判斷。程式另從帳本 NAV 歷史計算峰值回撤（`drawdown_control`），回撤達 Policy 門檻時給出姿態下限 `stance_floor`，姿態不得比下限更積極，否則由程式退回重答。簡報的 `cash_buffer_by_stance` 與 `cash_ratio_now` 是姿態的代價：目前現金比例低於某姿態的緩衝時，選該姿態會使買單被緩衝擋掉（出場賣股收入買的替補除外），請把這個後果納入判斷與理由。它決定要保留多少現金；實際比例由 Policy 的 `cash_buffer_by_stance` 對應，競賽現金上限仍由 Guard 強制檢查，Agent 不得輸出百分比，也不對個股給等級或權重。權重由 Python 依 Policy 的規則確定性分配，Agent 不輸出任何數字。
+交易 Agent 決定完每檔意圖與 buy／add 信心等級後，本 Skill 只對整體給市場層級的 `cash_stance`：`aggressive`、`neutral` 或 `defensive`，附 `rationale` 與共同輸入中存在的 `evidence_ids`（例如 regime、市場廣度、事件集中）。依 regime、分析師看法分布、交易狀態、重大事件風險與整體市場情緒（`market_sentiment`，全市場新聞或恐懼貪婪指標，`status` 非 available 時不能當成情緒結論）判斷。簡報**刻意不附**交易 Agent 的意圖與 buy／add 信心統計：現金姿態是獨立的市場風險判斷，不以候選多寡或交易 Agent 的積極程度推論（避免群體思維）。
+
+決策輸入帶 `evidence_policy: typed_evidence_v1`（簡報有 `market_level_evidence_ids`）時，程式另加兩條確定性規則：
+
+- `evidence_ids` 至少要有一個市場層級證據：全市場情緒或恐懼貪婪成分的 `evidence_id`、`overnight_market.components` 的 `evidence_id`，或 `regime_assessment.evidence_id`（`market-regime:pool-breadth`，程式依交易池廣度判定的市場狀態）。個股行情證據只能作補充，單獨引用某幾檔的行情不能成立整體姿態。
+- `market_sentiment.status` 為 `available` 且 `outlook` 為 `negative` 時，程式不接受 `aggressive`（一致性護欄）；請給 `neutral` 或 `defensive`，並在 `rationale` 說明依據。回撤下限 `stance_floor` 另由程式強制，兩者都不是你可以放寬的。
+
+沒有這個欄位的舊決策輸入維持原本的引用規則。程式另從帳本 NAV 歷史計算峰值回撤（`drawdown_control`），回撤達 Policy 門檻時給出姿態下限 `stance_floor`，姿態不得比下限更積極，否則由程式退回重答。簡報的 `cash_buffer_by_stance` 與 `cash_ratio_now` 是姿態的代價：目前現金比例低於某姿態的緩衝時，選該姿態會使買單被緩衝擋掉（出場賣股收入買的替補除外），請把這個後果納入判斷與理由。它決定要保留多少現金；實際比例由 Policy 的 `cash_buffer_by_stance` 對應，競賽現金上限仍由 Guard 強制檢查，Agent 不得輸出百分比，也不對個股給等級或權重。權重由 Python 依 Policy 的規則確定性分配，Agent 不輸出任何數字。
 
 同一次輸出另給持股廣度 `breadth`：`concentrated`（集中）、`balanced`（平衡）或 `diversified`（分散）。對應檔數由 Policy 的 `positions_by_breadth` 決定，入選的挑選與排序也由程式依 Policy 完成，你不需要推論是哪幾檔，也不要寫死任何檔數。高信心候選明確且集中時偏集中；高信心少、看法分歧或事件風險高時偏分散。檔數是上限不是目標：交易 Agent 標為買進的候選少於目標檔數時，程式只買那些，不會硬湊。Agent 不得輸出檔數，`rationale` 要同時說明現金姿態與持股廣度的理由。
 

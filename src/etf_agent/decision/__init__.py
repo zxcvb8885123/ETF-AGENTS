@@ -19,12 +19,15 @@ from .analysts import (
     build_analyst_brief,
     growth_signal_quality,
     compute_fundamental_metrics,
+    fundamental_period_policy,
+    validate_fundamental_metrics,
     high_materiality_events,
     seal_report,
     seal_event_market_report,
     sentiment_unavailable_report,
     sentiment_report,
 )
+from .input_context import CLAIM_KINDS, MARKET_REGIME_EVIDENCE_ID, evidence_policy
 from .stance import (
     STANCE_ROLES,
     ResearchDebateBundleValidator,
@@ -43,7 +46,7 @@ from .trader import (
 from .sizing import SIZING_METHOD
 from .trader_report import render_trader_report
 from .policy_builder import build_decision_policy
-from .drawdown import bind_drawdown, history_reference, measure_drawdown, stance_floor, stance_meets_floor
+from .drawdown import bind_drawdown, history_reference, measure_drawdown, stance_floor, stance_floor_path, stance_meets_floor
 from .allocation import (
     AllocationOrderEngine,
     DecisionPolicyValidator,
@@ -97,6 +100,7 @@ from .prior_decision import (
     prior_decision_brief,
     read_decision_run,
 )
+from .reentry_cooldown import bind_reentry_cooldown, recent_exit_symbols
 from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
 from .service import PortfolioDecisionApplicationService, target_trade_date
 
@@ -120,6 +124,11 @@ __all__ = [
     "build_analyst_brief",
     "growth_signal_quality",
     "compute_fundamental_metrics",
+    "fundamental_period_policy",
+    "validate_fundamental_metrics",
+    "CLAIM_KINDS",
+    "MARKET_REGIME_EVIDENCE_ID",
+    "evidence_policy",
     "high_materiality_events",
     "seal_report",
     "seal_event_market_report",
@@ -143,6 +152,7 @@ __all__ = [
     "history_reference",
     "measure_drawdown",
     "stance_floor",
+    "stance_floor_path",
     "stance_meets_floor",
     "AllocationOrderEngine",
     "DecisionPolicyValidator",
@@ -183,6 +193,8 @@ __all__ = [
     "find_prior_decision_run",
     "prior_decision_brief",
     "read_decision_run",
+    "bind_reentry_cooldown",
+    "recent_exit_symbols",
     "RevisionHistoryBuilder",
     "RevisionHistoryValidator",
     "PortfolioDecisionApplicationService",

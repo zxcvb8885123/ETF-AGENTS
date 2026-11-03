@@ -6,7 +6,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence
 
 from etf_agent.decision import (
-    DecisionToolError, MomentumEngine, RiskReviewValidator, artifact_content_sha256, liquidity_exposure, sector_exposure,
+    MARKET_REGIME_EVIDENCE_ID, DecisionToolError, MomentumEngine, RiskReviewValidator, artifact_content_sha256,
+    liquidity_exposure, sector_exposure,
 )
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
@@ -21,6 +22,13 @@ OVERNIGHT_PROMPT = (
     "agreement 是各方向訊號的同向程度，可能為 null），只作現金姿態背景；"
     "status 非 available 時不得當成結論，不得用它推論個股，也不得寫成對今日台股指數方向的預測；"
     "要引用時只能用 overnight_market.components 的 evidence_id。"
+)
+
+
+TYPED_STANCE_PROMPT = (
+    "evidence_ids 至少要有一個來自 market_level_evidence_ids（全市場情緒或恐懼貪婪成分的 evidence_id、overnight_market.components 的 "
+    "evidence_id，或 regime_assessment.evidence_id），個股行情證據只能作補充；market_sentiment 為 available 且 outlook 為 negative 時，"
+    "程式不接受 aggressive，請給 neutral 或 defensive 並在 rationale 說明依據。"
 )
 
 
@@ -41,12 +49,14 @@ class RiskStagesMixin:
         bundle: Mapping[str, object],
         momentum: Mapping[str, object],
         analyst_reports: Mapping[str, Mapping[str, object]],
-        trade_decision: Mapping[str, object],
         drawdown_control: Optional[Mapping[str, object]] = None,
         breadth_targets: Optional[Mapping[str, object]] = None,
         cash_buffers: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
-        """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。"""
+        """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
+
+        brief 不再附交易 Agent 的意圖與 buy／add 信心統計（避免群體思維）：現金姿態只看市場層級背景、
+        分析師看法分布、交易狀態、公司事件風險、帳戶與回撤。"""
 
         def counts(values: Sequence[object]) -> Dict[str, int]:
             result: Dict[str, int] = {}
@@ -59,18 +69,20 @@ class RiskStagesMixin:
         )
         # 隔夜市場背景只在決策輸入有附時才進 brief 與提示詞，沒有附的舊流程維持原樣。
         overnight = overnight_market_channel(bundle)
+        context = DecisionContext(bundle)
+        typed = context.evidence_policy is not None
+        regime = momentum.get("regime_assessment")
+        if typed and isinstance(regime, Mapping):
+            # typed_evidence_v1：市場狀態有市場層級證據編號，現金姿態可引用它當市場層級依據。
+            regime = {**regime, "evidence_id": MARKET_REGIME_EVIDENCE_ID}
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
-                "regime_assessment": momentum.get("regime_assessment"),
+                "regime_assessment": regime,
                 "analyst_outlooks": {
                     name: counts([item.get("outlook") for item in report.get("items", [])])
                     for name, report in analyst_reports.items()
                 },
-                "trade_intents": counts([item.get("intent") for item in trade_decision.get("items", [])]),
-                "buy_add_convictions": counts(
-                    [item.get("conviction") for item in trade_decision.get("items", []) if item.get("intent") in {"buy", "add"}]
-                ),
                 "tradability": counts(
                     [item.get("state") for item in (bundle.get("tradability_assessment") or {}).get("symbols", [])]
                 ),
@@ -94,10 +106,12 @@ class RiskStagesMixin:
                 **({"overnight_market": overnight, "citable_evidence_ids": sorted(
                     set(price_evidence) | {row["evidence_id"] for row in overnight["components"] if row["evidence_id"]})}
                    if overnight is not None else {}),
+                # typed_evidence_v1：市場層級證據另列一份，至少要引用其中一個；個股行情只能作補充。
+                **({"market_level_evidence_ids": sorted(context.market_evidence_ids),
+                    "citable_evidence_ids": sorted(set(price_evidence) | context.market_evidence_ids)} if typed else {}),
             },
         )
         floor = (drawdown_control or {}).get("stance_floor")
-        context = DecisionContext(bundle)
 
         def validate(stance: Mapping[str, object]) -> List[str]:
             errors: List[str] = []
@@ -111,16 +125,18 @@ class RiskStagesMixin:
         task = AgentTask(
             "cash_stance",
             "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節），再讀市場層級摘要 %s。"
-            "依 regime、分析師看法分布、交易決策、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive。"
+            "依 regime、分析師看法分布、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive；"
+            "摘要刻意不附交易 Agent 的意圖與信心統計，請獨立判斷市場風險，不以候選多寡推論姿態。"
             "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
             "另給持股廣度 breadth：concentrated（集中）／balanced（平衡）／diversified（分散），對應檔數見 positions_by_breadth，"
-            "程式依交易 Agent 的信心等級 high→medium→low 挑到該檔數；高信心少、候選看法分歧或事件風險高時偏分散，"
-            "高信心明確且集中時偏集中；你不得輸出檔數，rationale 要同時說明現金姿態與持股廣度的理由。"
+            "程式依交易 Agent 的信心等級 high→medium→low 挑到該檔數；分析師看法分歧或事件風險高時偏分散，"
+            "市場狀態明確且風險集中度低時偏集中；你不得輸出檔數，rationale 要同時說明現金姿態與持股廣度的理由。"
             "market_sentiment 是整體台股情緒（全市場新聞，不可用時為恐懼貪婪指標），status 非 available 時不得當成情緒結論；"
             "drawdown_control 是程式從帳本計算的峰值回撤；stance_floor 不是 aggressive 時，姿態不得比它更積極。"
-            "%sevidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
+            "%s%sevidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
             % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md", brief_path,
-               OVERNIGHT_PROMPT if overnight is not None else "", _SHARED_RULES),
+               OVERNIGHT_PROMPT if overnight is not None else "",
+               TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES),
             CASH_STANCE_SCHEMA,
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)

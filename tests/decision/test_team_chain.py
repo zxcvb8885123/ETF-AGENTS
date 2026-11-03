@@ -235,13 +235,15 @@ class CashStanceAgentTests(unittest.TestCase):
         runner = FakeRunner({"cash_stance": [dict(STANCE, evidence_ids=["no-such"]), STANCE]})
         with tempfile.TemporaryDirectory() as directory:
             pipeline = DailyDecisionPipeline(ROOT, Path(directory), runner, Path(directory) / "repo", log=lambda _: None)
-            stance = pipeline.run_cash_stance(bundle, momentum, reports, trade)
+            stance = pipeline.run_cash_stance(bundle, momentum, reports)
             brief = json.loads((Path(directory) / "brief_cash_stance.json").read_text(encoding="utf-8"))
 
         self.assertEqual(stance["level"], "neutral")
         self.assertEqual(len(runner.prompts), 2)
-        self.assertEqual(brief["trade_intents"], {"buy": 1, "hold": 1})
-        self.assertNotIn("%", json.dumps(brief["trade_intents"]))
+        # 現金姿態 brief 不附交易 Agent 的意圖與信心統計（避免群體思維）。
+        self.assertNotIn("trade_intents", brief)
+        self.assertNotIn("buy_add_convictions", brief)
+        self.assertNotIn("%", json.dumps(brief["analyst_outlooks"]))
         # 策略文件：風險 Agent 讀整體市場情緒；沒有核准來源時明確 unavailable，不拿個股新聞代替。
         self.assertEqual(brief["market_sentiment"]["scope"], "TW_STOCK_MARKET")
         self.assertEqual(brief["market_sentiment"]["status"], "unavailable")
@@ -254,7 +256,7 @@ class CashStanceAgentTests(unittest.TestCase):
         runner = FakeRunner({"cash_stance": [STANCE, dict(STANCE, level="defensive")]})
         with tempfile.TemporaryDirectory() as directory:
             pipeline = DailyDecisionPipeline(ROOT, Path(directory), runner, Path(directory) / "repo", log=lambda _: None)
-            stance = pipeline.run_cash_stance(bundle, momentum, reports, trade, control)
+            stance = pipeline.run_cash_stance(bundle, momentum, reports, control)
             brief = json.loads((Path(directory) / "brief_cash_stance.json").read_text(encoding="utf-8"))
         self.assertEqual(stance["level"], "defensive")
         self.assertEqual(len(runner.prompts), 2)
