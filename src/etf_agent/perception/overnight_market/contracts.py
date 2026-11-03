@@ -65,6 +65,13 @@ SYMBOLS_V11 = dict(SYMBOLS, **{
     "^KS11": {"name": "韓國 KOSPI 指數", "role": "asia_index"},
     "^VIX": {"name": "CBOE 波動率指數 VIX", "role": "volatility"},
 })
+# overnight-market-1.2：同 1.1 的標的與規則，但日線回看約 420 個日曆日、百分位改看近 250 個單日報酬（約一年）；
+# 樣本不足 250 個時百分位為 null（舊的 50 天抓取不足以算，不硬算）。欄位名稱改為 ``percentile_250d``。
+PACK_VERSION_V12 = "overnight-market-1.2"
+RESULT_VERSION_V12 = "overnight-market-result-1.2"
+SIGNAL_VERSION_V12 = "overnight-v1.2"
+LOOKBACK_CALENDAR_DAYS_V12 = 420
+PERCENTILE_WINDOW_V12 = 250
 NIGHT_SYMBOL = "TXF_NIGHT"
 NIGHT_NAME = "台指期近月盤後（相對前一日日盤結算價）"
 # 方向一致性：|漲跌幅| 低於此值算持平；至少 AGREEMENT_MIN_TOTAL 個方向訊號、且同向比例達 AGREEMENT_RATIO 才算一致。

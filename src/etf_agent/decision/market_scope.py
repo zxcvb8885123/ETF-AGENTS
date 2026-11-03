@@ -54,7 +54,8 @@ def overnight_market_channel(bundle):
                "window": result["window"], "findings": result["findings"], "night_session": result["night_session"],
                **({"agreement": result["agreement"]} if "agreement" in result else {}),  # 1.0 結果沒有此鍵，舊 run 的通道不變
                "components": [{key: row[key] for key in (
-                   "symbol", "role", "as_of", "change_pct", "cumulative_change_pct", "percentile_20d", "evidence_id")}
+                   "symbol", "role", "as_of", "change_pct", "cumulative_change_pct", "percentile_20d", "percentile_250d",
+                   "evidence_id") if key in row}
                    for row in result["components"] if row["status"] == "available"] if available else [],
                "data_gaps": result["data_gaps"], "limitations": result["limitations"]}
     return channel

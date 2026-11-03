@@ -15,7 +15,7 @@ from etf_agent.perception.overnight_market import (
     capture_overnight_market, evaluate, validate_pair,
 )
 from etf_agent.perception.overnight_market.contracts import (
-    NIGHT_SYMBOL, PACK_VERSION, PACK_VERSION_V11, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, seal,
+    NIGHT_SYMBOL, PACK_VERSION, PACK_VERSION_V11, PACK_VERSION_V12, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, seal,
 )
 from etf_agent.perception.overnight_market.provider import chart_url, raw_text
 from etf_agent.perception.overnight_market.tools import session_end, window_start
@@ -409,7 +409,79 @@ class OvernightV11Tests(unittest.TestCase):
         self.assertEqual(len(result["components"]), 5)
 
 
+def v12_rows(early):
+    base = dict(DEFAULT_RETURNS, **{"^N225": ["-0.012"], "^KS11": ["-0.015"], "^VIX": ["0.08"]})
+    rows = [capture_row(symbol, make_bars(date(2026, 9, 18), base[symbol], early=early), FETCHED) for symbol in SYMBOLS_V11]
+    rows.append(night_capture())
+    return rows
+
+
+def pair_v12(early):
+    value = seal({"schema_version": PACK_VERSION_V12, "snapshot_id": SNAPSHOT_ID, "decision_cutoff": MONDAY_CUTOFF,
+                  "latest_trade_date": LATEST_TRADE_DATE, "captures": v12_rows(early), "source_approvals": approvals()})
+    return {"bundle": value, "result": evaluate(value)}
+
+
+class OvernightV12Tests(unittest.TestCase):
+    def test_one_year_history_gives_250_day_percentile(self):
+        result = pair_v12(early=270)["result"]
+        row = by_symbol(result)["^SOX"]
+        self.assertEqual(result["signal_version"], "overnight-v1.2")
+        self.assertIsNotNone(row["percentile_250d"])
+        self.assertNotIn("percentile_20d", row)
+        self.assertEqual(result["status"], "available")
+
+    def test_short_history_leaves_percentile_null_instead_of_guessing(self):
+        result = pair_v12(early=28)["result"]  # 只有約 30 天，舊的 50 天抓取就是這種
+        self.assertEqual(result["status"], "available")
+        self.assertIsNone(by_symbol(result)["^SOX"]["percentile_250d"])
+
+    def test_tampered_v12_result_is_rejected(self):
+        pair = pair_v12(early=270)
+        pair["result"] = dict(pair["result"], outlook="positive")
+        with self.assertRaises(OvernightMarketError):
+            validate_pair(pair, SNAPSHOT_ID, MONDAY_CUTOFF)
+
+    def test_channel_exposes_250d_key_and_v11_keeps_20d(self):
+        decision_input = {"snapshot_id": SNAPSHOT_ID, "decision_cutoff": MONDAY_CUTOFF,
+                          "snapshot": {"latest_trade_date": LATEST_TRADE_DATE}, "overnight_market_input": pair_v12(270)}
+        component = overnight_market_channel(decision_input)["components"][0]
+        self.assertIn("percentile_250d", component)
+        self.assertNotIn("percentile_20d", component)
+        decision_input["overnight_market_input"] = pair_v11()
+        component = overnight_market_channel(decision_input)["components"][0]
+        self.assertIn("percentile_20d", component)
+        self.assertNotIn("percentile_250d", component)
+
+    def test_percentile_window_boundary_is_exactly_250_returns(self):
+        # make_bars(early=n, 一個最後報酬) 共 n+1 個單日報酬；249 筆不夠、250 筆才算。
+        self.assertIsNone(by_symbol(pair_v12(early=248)["result"])["^SOX"]["percentile_250d"])
+        self.assertIsNotNone(by_symbol(pair_v12(early=249)["result"])["^SOX"]["percentile_250d"])
+
+    def test_percentile_ignores_returns_older_than_250(self):
+        # 最新一筆是明顯的最大跌幅：只要窗口內全是小波動，排名就是最低；窗口外的極端值不得影響。
+        base = pair_v12(early=300)["result"]
+        self.assertEqual(by_symbol(base)["^SOX"]["percentile_250d"], by_symbol(pair_v12(early=400)["result"])["^SOX"]["percentile_250d"])
+
+    def test_v11_unavailable_row_keeps_original_key_order(self):
+        row = by_symbol(pair_v11(rows=v11_captures(failed=("TSM",)))["result"])["TSM"]
+        self.assertEqual(list(row), [
+            "source", "symbol", "name", "role", "approved", "status", "evidence_id", "as_of", "sessions", "session_end",
+            "change_pct", "cumulative_change_pct", "percentile_20d", "raw_sha256", "available_at"])
+
+
 class ProviderServiceTests(unittest.TestCase):
+    def test_provider_fetches_420_calendar_days(self):
+        starts = []
+
+        def fetcher(symbol, start, end):
+            starts.append(start)
+            return make_bars(date(2026, 9, 18), ["-0.01"])
+
+        now = datetime(2026, 9, 21, tzinfo=timezone.utc)
+        OvernightProvider(fetcher, lambda: NIGHT_ROWS).capture_all(now)
+        self.assertEqual({(now.date() - start).days for start in starts}, {420})
+
     def test_provider_records_failure_without_raising(self):
         def fetcher(symbol, start, end):
             if symbol == "TSM":
