@@ -10,9 +10,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
-from .contracts import POLICY_ROOT
+from .contracts import POLICY_ROOT, REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE
+from .tools import risk_direction
 
 TAIPEI = timezone(timedelta(hours=8))
+_RISK_LABEL = {"risk_reducing": "降風險，可自動套用", "risk_increasing": "加風險，需人明確放行", "ambiguous": "方向不明，需人決定"}
 REPORT_DIR = "reports"
 _STATUS_LABEL = {"ok": "可參考", "insufficient_sample": "樣本不足，不下結論", "unavailable": "資料不足"}
 
@@ -120,9 +122,12 @@ def render_weekly_report(
         "",
         "產生時間：%s（台北時間）。決策日 %s／%s，%s。" % (
             now.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M"), days, need,
-            "命中率類統計樣本已夠，可提出旋鈕提案" if brief["gate_open"] else "報告照常產生；命中率類統計樣本還不夠（最新一個決策日還沒有隔日價格，可完整評分的決策日比這個數字少，見第三節），所以本週不依它調整旋鈕"),
+            "命中率類統計樣本已夠，可提出旋鈕提案" if brief["gate_open"]
+            else "**決策日不足 %s 天，不下結論**（維持 observe_only）；報告照常產生，命中率類統計只列天數與筆數（最新一個決策日還沒有隔日價格，可完整評分的決策日比這個數字少，見第三節），本週不依它調整旋鈕" % need),
         "",
         "> 本報告的數字由程式依已封存決策與官方成交價計算；Agent 的摘要只是解讀。樣本少時任何比例都可能只是雜訊。",
+        "> %s（evidence_grade：%s）" % (brief.get("notice") or REPLAY_NOTICE, brief.get("evidence_grade") or REPLAY_EVIDENCE_GRADE),
+        "> 自動套用只放行降風險方向的旋鈕提案；加風險或方向不明的提案只封存並標 needs_human，要人用 `apply-pending --allow-risk-increase <reflection_id>` 明確放行。",
         "",
     ]
     for note in notes or []:
@@ -133,7 +138,15 @@ def render_weekly_report(
     lines.append("- 反思狀態：%s。" % ("有提案" if reflection["status"] == "proposed" else "只觀察，沒有提案"))
     lines.append("- 摘要：%s" % reflection["summary"])
     if apply_result is not None:
-        lines.append("- 套用結果：%s" % ("已套用 " + "、".join(apply_result.get("knobs", [])) if apply_result.get("applied") else "未套用（%s）" % apply_result.get("reason")))
+        if apply_result.get("applied"):
+            outcome = "已套用 " + "、".join(apply_result.get("knobs", []))
+        elif apply_result.get("needs_human"):
+            outcome = "未套用，**需人工決定**（needs_human）：%s" % apply_result.get("reason")
+        else:
+            outcome = "未套用（%s）" % apply_result.get("reason")
+        lines.append("- 套用結果：%s" % outcome)
+        if apply_result.get("needs_human"):
+            lines.append("- **需人決定**：提案含加風險或方向不明的旋鈕，程式只封存不套用；要套用請執行 `cli/strategy_reflection.py apply-pending --allow-risk-increase %s`。" % reflection.get("reflection_id"))
     lines.append("")
     lines.extend(_thesis_section(thesis, diagnostics.get("week"), review or {}))  # type: ignore[arg-type]
     lines.extend(["## 二、分析師與交易判斷準不準", ""])
@@ -210,8 +223,9 @@ def render_weekly_report(
         for item in reflection["observations"]:  # type: ignore[union-attr]
             lines.append("- 觀察：%s（依據 %s）" % (item["text"], "、".join(item["evidence_ids"])))
         for item in reflection["proposals"]:  # type: ignore[union-attr]
-            lines.append("- 提案：`%s` %s → %s。%s（依據 %s）" % (
-                item["knob"], item["current"], item["proposed"], item["rationale"], "、".join(item["evidence_ids"])))
+            lines.append("- 提案：`%s` %s → %s【%s】。%s（依據 %s）" % (
+                item["knob"], item["current"], item["proposed"], _RISK_LABEL[risk_direction(str(item["knob"]), item["current"], item["proposed"])],
+                item["rationale"], "、".join(item["evidence_ids"])))
     number = 0
     for index, line in enumerate(lines):  # 章節編號由程式依序重編，新增章節不必改其他標題
         if line.startswith("## "):

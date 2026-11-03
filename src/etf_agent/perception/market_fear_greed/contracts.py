@@ -13,6 +13,23 @@ class FearGreedError(ValueError):
 PACK_VERSION = "market-fear-greed-1.0"
 RESULT_VERSION = "market-fear-greed-result-1.0"
 SCORE_VERSION = "fear-greed-v1"
+# 1.1／v2：加入「融資水位」第 4 項（融資金額 ÷ 加權指數的長窗口百分位）。
+# 資料包是否為 1.1 由抓取是否含 TWSE_TAIEX 決定；沒有的舊抓取與舊封存維持 1.0／v1 逐位元重建。
+PACK_VERSION_V11 = "market-fear-greed-1.1"
+RESULT_VERSION_V11 = "market-fear-greed-result-1.1"
+SCORE_VERSION_V2 = "fear-greed-v2"
+# 1.2／v3：不再抓 Put/Call 比（政府資料只有約 20 個交易日，常因差一天而不可用），其餘同 1.1。
+PACK_VERSION_V12 = "market-fear-greed-1.2"
+RESULT_VERSION_V12 = "market-fear-greed-result-1.2"
+SCORE_VERSION_V3 = "fear-greed-v3"
+PACK_VERSIONS = (PACK_VERSION, PACK_VERSION_V11, PACK_VERSION_V12)
+# 融資水位用最近 LEVEL_WINDOW 個交易日的「融資金額 ÷ 加權指數」百分位。
+LEVEL_WINDOW = 250
+LEVEL_SOURCE = "FINMIND_MARGIN_LEVEL"
+LEVEL_NAME = "集中市場融資金額÷加權指數（百萬元／點）%d 日百分位" % LEVEL_WINDOW
+# 融資水位的輸入：融資金額（沿用 FINMIND_MARGIN）與證交所加權指數。
+LEVEL_INPUTS = ("FINMIND_MARGIN", "TWSE_TAIEX")
+TWSE_ENDPOINT = "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK"
 
 # 每項指標以最近 WINDOW 個交易日的百分位計分（含當日）；資料不足即該項不可用。
 WINDOW = 20
@@ -63,6 +80,28 @@ SOURCES = {
         "direction": "greed",
     },
 }
+
+# 只在 1.1 資料包使用；不放進 SOURCES，舊的 1.0 重建與測試因此完全不受影響。
+EXTRA_SOURCES = {
+    "TWSE_TAIEX": {
+        "name": "證交所發行量加權股價指數（收盤）",
+        "url_pattern": r"https://www\.twse\.com\.tw/rwd/zh/afterTrading/FMTQIK\?date=(\d{8})&response=json",
+        "hosts": {"www.twse.com.tw"},
+        "terms_url": "https://www.twse.com.tw/zh/",
+        "direction": "greed",
+    },
+}
+
+
+def sources_for(pack_version):
+    if pack_version == PACK_VERSION_V12:
+        return dict({k: v for k, v in SOURCES.items() if k != "TAIFEX_PCR"}, **EXTRA_SOURCES)
+    return dict(SOURCES, **EXTRA_SOURCES) if pack_version == PACK_VERSION_V11 else SOURCES
+
+
+def all_sources():
+    return dict(SOURCES, **EXTRA_SOURCES)
+
 
 CAPTURE_FIELDS = {"source", "url", "raw_text", "raw_sha256", "available_at", "status", "error"}
 APPROVAL_FIELDS = {"source", "license_status", "terms_url", "usage_scope", "reviewed_at", "approved_by", "evidence"}

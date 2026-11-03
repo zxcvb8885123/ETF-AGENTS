@@ -12,7 +12,12 @@ from typing import Mapping, Sequence
 SCHEMA_VERSION = "1.0"
 HORIZONS = (1, 5, 20)
 # 每個 horizon 至少要有這麼多個「完整的」決策日，才輸出平均報酬與 Rank IC。
-MIN_DECISION_DAYS = 5
+# 2026-11-03 由 5 提高到 10：5 個決策日的命中率幾乎是雜訊，策略反思與評測都沿用這個門檻，不足時只報天數與筆數、不下結論。
+MIN_DECISION_DAYS = 10
+# 回放、校準對舊日期的重算與評測重跑，都只固定已封存的 Agent 意圖重算確定性程式（或讓模型重看它可能已在訓練資料裡
+# 看過的日期），不是對 LLM 判斷的前瞻檢驗；所有這類報告都標同一個證據等級並在首段寫明。
+REPLAY_EVIDENCE_GRADE = "replay_reference_only"
+REPLAY_NOTICE = "僅供參考：回放使用已封存的 Agent 意圖，不構成對 LLM 判斷的前瞻驗證；只有比賽期間的即時紀錄才算證據。"
 # 一個決策日內，有有效報酬的股票占全池比例至少這麼高，該日才算完整。
 MIN_DAY_COVERAGE = Decimal("0.8")
 CALENDAR_BASIS = "official_price_rows"

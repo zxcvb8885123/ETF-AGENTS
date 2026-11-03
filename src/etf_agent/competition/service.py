@@ -238,7 +238,8 @@ class DPlanExportService:
             account_run_id,
         )
         matched = datapack["status"] == "matched"
-        plan = DPlanExporter().build(
+        exporter = DPlanExporter()
+        plan = exporter.build(
             team_id, effective_trade_date, context, artifacts,
             official_nav=datapack.get("nav_tradable") if matched else None,
             official_prices=datapack.get("close_prices") if matched else None,
@@ -267,6 +268,8 @@ class DPlanExportService:
             "account_binding": account,
             "datapack": {k: datapack.get(k) for k in ("status", "datapack_sha256", "as_of_date", "generated_at", "nav_tradable")},
             "local_validation": "passed",
+            # 非阻擋警告（如 DataPack 與 Snapshot 收盤價不同、改用 DataPack 價換算）；空陣列代表沒有。
+            "warnings": list(getattr(exporter, "warnings", []) or []),
             "organizer_server_validation": "not_run",
             "requires_human_review": True,
         }

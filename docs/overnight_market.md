@@ -6,6 +6,7 @@
 
 - 只作背景。**不併入**全市場情緒（`market_sentiment`），不進分析師、多空研究員或交易 Agent，不產生候選、權重或訂單，也不預測今日台股指數方向。
 - 資料包 `overnight-market-1.1`（結果 `overnight-v1.1`）加入日韓指數、VIX 與台指期夜盤；舊封存的 `overnight-market-1.0`（結果 `overnight-v1`）維持原重建行為，`night_session` 為 `null`。見下方「1.1 擴充」。
+- 資料包 `overnight-market-1.2`（結果 `overnight-v1.2`）：標的與規則同 1.1，但日線回看約 420 個日曆日、百分位改看近 250 個單日報酬（約一年），欄位名稱為 `percentile_250d`（1.0／1.1 仍是 `percentile_20d`，逐位元不變）；歷史不足 250 個單日報酬時為 `null`，不硬算。新的補抓一律抓 420 天，決策輸入建立 1.2；**台指期夜盤目前仍只有當次報價，沒有一年歷史百分位**（需另找合法的歷史來源，尚未接入）。
 - 程式在 `src/etf_agent/perception/overnight_market/`，CLI 為 `cli/overnight_market.py`，來源核准在 `config/overnight_market_sources.json`。
 - `team_inputs` 不升版；沒有任何抓取時決策輸入不附欄位，既有 fixture 與舊 run 重建逐位元不變。
 

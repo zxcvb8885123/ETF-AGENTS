@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from etf_agent.decision.analysts import MATERIALITY, OUTLOOKS
+from etf_agent.decision.input_context import CLAIM_KINDS
 from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS
 from etf_agent.decision.stance import STRENGTHS
 from etf_agent.decision.trader import TRADE_INTENTS
@@ -10,50 +11,64 @@ from etf_agent.decision.trader import TRADE_INTENTS
 from .agent_runner import _TEXT, _object, _strings
 
 
-_FINDING = _object(
-    {"finding_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1)},
-    ("finding_id", "text", "evidence_ids"),
-)
-_ANALYST_ITEM = {
-    "symbol": _TEXT,
-    "outlook": {"enum": list(OUTLOOKS)},
-    "findings": {"type": "array", "items": _FINDING},
-    "data_gaps": _strings(),
-}
-ANALYST_SCHEMA = _object(
-    {"items": {"type": "array", "items": _object(_ANALYST_ITEM, list(_ANALYST_ITEM))}},
-    ("items",),
-)
-_EVENT_ITEM = {
-    **_ANALYST_ITEM,
-    "event_outlook": {"enum": list(OUTLOOKS)},
-    "events": {
-        "type": "array",
-        "items": _object(
-            {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT,
-             "counter_evidence": _strings(), "pending_confirmations": _strings(), "corroborated_by": _strings()},
-            ("evidence_id", "materiality", "summary", "counter_evidence", "pending_confirmations", "corroborated_by"),
-        ),
-    },
-}
-EVENT_ANALYST_SCHEMA = _object(
-    {"items": {"type": "array", "items": _object(_EVENT_ITEM, list(_EVENT_ITEM))}},
-    ("items",),
-)
-_STANCE_CLAIM = _object(
-    {"claim_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1), "finding_ids": _strings()},
-    ("claim_id", "text", "evidence_ids", "finding_ids"),
-)
-_STANCE_ITEM = {
-    "symbol": _TEXT,
-    "strength": {"enum": list(STRENGTHS)},
-    "claims": {"type": "array", "items": _STANCE_CLAIM},
-    "invalidation_conditions": _strings(),
-}
-STANCE_SCHEMA = _object(
-    {"items": {"type": "array", "items": _object(_STANCE_ITEM, list(_STANCE_ITEM))}},
-    ("items",),
-)
+_KIND = {"enum": list(CLAIM_KINDS)}
+
+
+def _finding_schema(typed: bool):
+    """typed_evidence_v1 時 finding 多一個必填的 finding_kind；舊 bundle 的 schema 不變。"""
+    fields = {"finding_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1)}
+    if typed:
+        fields["finding_kind"] = _KIND
+    return _object(fields, tuple(fields))
+
+
+def _analyst_item(typed: bool):
+    return {
+        "symbol": _TEXT,
+        "outlook": {"enum": list(OUTLOOKS)},
+        "findings": {"type": "array", "items": _finding_schema(typed)},
+        "data_gaps": _strings(),
+    }
+
+
+def analyst_schema(typed: bool = False):
+    item = _analyst_item(typed)
+    return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
+
+
+def event_analyst_schema(typed: bool = False):
+    item = {
+        **_analyst_item(typed),
+        "event_outlook": {"enum": list(OUTLOOKS)},
+        "events": {
+            "type": "array",
+            "items": _object(
+                {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT,
+                 "counter_evidence": _strings(), "pending_confirmations": _strings(), "corroborated_by": _strings()},
+                ("evidence_id", "materiality", "summary", "counter_evidence", "pending_confirmations", "corroborated_by"),
+            ),
+        },
+    }
+    return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
+
+
+def stance_schema(typed: bool = False):
+    """typed_evidence_v1 時每個 claim 多一個必填的 claim_kind；舊 bundle 的 schema 不變。"""
+    claim = {"claim_id": _TEXT, "text": _TEXT, "evidence_ids": _strings(1), "finding_ids": _strings()}
+    if typed:
+        claim["claim_kind"] = _KIND
+    item = {
+        "symbol": _TEXT,
+        "strength": {"enum": list(STRENGTHS)},
+        "claims": {"type": "array", "items": _object(claim, tuple(claim))},
+        "invalidation_conditions": _strings(),
+    }
+    return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
+
+
+ANALYST_SCHEMA = analyst_schema(False)
+EVENT_ANALYST_SCHEMA = event_analyst_schema(False)
+STANCE_SCHEMA = stance_schema(False)
 _TRADE_ITEM = {
     "symbol": _TEXT,
     "intent": {"enum": list(TRADE_INTENTS)},
@@ -114,6 +129,25 @@ _SHARED_RULES = (
     "不得使用網路、模型記憶或自行推測補充事實；不得輸出權重、股數、金額、費稅或訂單。"
 )
 
+# typed_evidence_v1（決策輸入有 evidence_policy）時加進分析師與研究員的提示：宣告種類、證據種類必須對映。
+_FINDING_KIND_RULES = (
+    "每項 finding 必須填 finding_kind（price／financial／revenue／material_event／news），"
+    "表示依據的證據種類：price 只能引用該股票的行情證據（momentum.evidence_ids）；financial 引用財報指標、現金流、"
+    "financial_facts、financial_context 或 company_profiles 的證據；revenue 引用 monthly_revenue 的證據；"
+    "material_event 引用重大訊息的 evidence_id；news 引用 news:finmind: 開頭的新聞。"
+    "一項 finding 只宣告一種、只引用該種類的證據（可另附帳戶或市場層級證據作補充，但不能只有補充）；"
+    "依據跨兩種時拆成兩項 finding。種類與證據不對映會被程式退回。"
+    "交件前逐項自查：這項 finding 引用的每個屬於該股票的 evidence_id，種類是否都等於你宣告的 finding_kind"
+    "（財報、現金流、profile 是 financial，不是 material_event；重大訊息才是 material_event；news 只用於新聞）；"
+    "不一致就拆項或移除該引用。"
+)
+_CLAIM_KIND_RULES = (
+    "每個 claim 必須填 claim_kind（price／financial／revenue／material_event／news），表示主要依據的證據種類；"
+    "摘要每檔的 evidence_kinds 列出該股票每個 evidence_id 的種類，請依它選證據：至少一個 evidence_id 必須屬於該股票且種類與 claim_kind 相同"
+    "（financial 可引用 profile），finding_ids 只能引用同種類的分析師發現；市場層級（market）或帳戶證據只能作補充，不能單獨支持個股主張。"
+    "依據跨兩種時拆成兩個 claim；種類與證據不對映會被程式退回。"
+)
+
 # 事件分析師要逐則分級重大訊息；一批 50 檔（約 330 則）時 Agent 只做前 12 檔、其餘交白卷，重試也一樣，
 # 所以事件批次縮小到 15 檔。其他分析師維持預設批次。
 EVENT_BATCH_SIZE = 15
@@ -125,6 +159,7 @@ EVENT_BATCH_MAX_EVENTS = 80
 _EVENT_RULES = (
     "finding_id 在整份報告（含所有股票）中必須唯一，請用「股票代號:f序號」，例如 2330.TW:f1，不可每檔都從 f1 起算；"
     "輸入列出的每一則重大訊息都必須在該股票的 events 逐一分級一次，不可漏掉或重複。"
+    "每檔的 event_outlook 必須等於該檔的 outlook（公司事件結果只反映該公司事件，不混入市場情緒）。"
     "每則事件的 summary 寫事件影響；counter_evidence 列出輸入中削弱或反駁這個影響的事實（例如同快照財報或其他公告），"
     "pending_confirmations 列出輸入中還查不到、尚待確認的事項（例如金額未公布、尚待股東會或主管機關核准）；"
     "兩者都只能依輸入內容，沒有就給空陣列，不得推測補充。"

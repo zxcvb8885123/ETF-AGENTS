@@ -69,6 +69,24 @@ class SnapshotRepository:
         price_date_limit: str,
         cutoff: str,
     ):
+        """全池齊全的最新交易日；任一檔缺行情時退回前一個齊全日。缺檔明細見 latest_trade_date_coverage。"""
+        return SnapshotRepository.latest_trade_date_coverage(connection, price_date_limit, cutoff)["trade_date"]
+
+    @staticmethod
+    def latest_trade_date_coverage(
+        connection: sqlite3.Connection,
+        price_date_limit: str,
+        cutoff: str,
+    ) -> Dict[str, object]:
+        """選定快照交易日並說明覆蓋情況，供品質旗標記錄「退回前一日、缺哪些代號」。
+
+        回傳：
+        - ``trade_date``：全池每檔都有定案行情的最新日（與 find_latest_trade_date 相同的選法）；
+          沒有任何齊全日時退回任一檔有行情的最新日（原行為）。
+        - ``latest_any_date``：任一檔有定案行情的最新日。
+        - ``missing_symbols``：``latest_any_date`` 當日缺行情的交易池代號（已排序）；
+          ``trade_date`` 與 ``latest_any_date`` 相同時為空。
+        """
         row = connection.execute(
             """
             WITH universe AS (
@@ -92,8 +110,7 @@ class SnapshotRepository:
             """ % _FINALIZED_SQL,
             (price_date_limit, cutoff),
         ).fetchone()
-        if row and row["value"]:
-            return str(row["value"])
+        complete_date = str(row["value"]) if row and row["value"] else None
 
         row = connection.execute(
             """
@@ -107,7 +124,34 @@ class SnapshotRepository:
             """ % _FINALIZED_SQL,
             (price_date_limit, cutoff),
         ).fetchone()
-        return str(row["value"]) if row and row["value"] else None
+        latest_any_date = str(row["value"]) if row and row["value"] else None
+        trade_date = complete_date or latest_any_date
+        missing_symbols: List[str] = []
+        if latest_any_date is not None and trade_date != latest_any_date:
+            missing_symbols = [
+                str(item["symbol"])
+                for item in connection.execute(
+                    """
+                    SELECT instruments.symbol
+                    FROM instruments
+                    WHERE instruments.in_competition_universe = 1
+                      AND NOT EXISTS (
+                          SELECT 1 FROM daily_prices
+                          WHERE daily_prices.symbol = instruments.symbol
+                            AND daily_prices.trade_date = ?
+                            AND daily_prices.fetched_at <= ?
+                            AND %s
+                      )
+                    ORDER BY instruments.symbol
+                    """ % _FINALIZED_SQL,
+                    (latest_any_date, cutoff),
+                ).fetchall()
+            ]
+        return {
+            "trade_date": trade_date,
+            "latest_any_date": latest_any_date,
+            "missing_symbols": missing_symbols,
+        }
 
     @staticmethod
     def load_prices(

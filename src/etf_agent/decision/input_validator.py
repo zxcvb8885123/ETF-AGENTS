@@ -30,6 +30,22 @@ from .fields import (
 )
 
 
+# 基本面期別政策（版本閘門）：DecisionInputBundle 有此欄位且值為 per_symbol_latest_available_v1 時，
+# 基本面指標改以「每檔股票在 cutoff 前可得的最新一季」計算；沒有此欄位的舊 bundle 維持
+# 全快照 max(period) 的原重建行為。值只接受已知版本，未知值 fail-closed。
+FUNDAMENTAL_PERIOD_POLICY_FIELD = "fundamental_period_policy"
+FUNDAMENTAL_PERIOD_PER_SYMBOL = "per_symbol_latest_available_v1"
+FUNDAMENTAL_PERIOD_POLICIES = (FUNDAMENTAL_PERIOD_PER_SYMBOL,)
+# 證據種類政策（版本閘門）：DecisionInputBundle 有此欄位且值為 typed_evidence_v1 時，
+# (1) 無 symbol 的市場層級證據只能作個股 claim／finding 的補充，不能單獨成立；
+# (2) claim／finding 必須填 claim_kind／finding_kind，引用的證據種類必須對映；
+# (3) 現金姿態至少要引用一個市場層級證據，且全市場情緒為 negative 時不得回 aggressive。
+# 沒有此欄位的舊 bundle 維持「引用存在且屬該股」的原驗證行為，舊 run 重建逐位元不變。
+EVIDENCE_POLICY_FIELD = "evidence_policy"
+EVIDENCE_POLICY_TYPED = "typed_evidence_v1"
+EVIDENCE_POLICIES = (EVIDENCE_POLICY_TYPED,)
+
+
 class DecisionInputValidator:
     """Validate the immutable input shared by every decision sub-agent."""
 
@@ -66,10 +82,20 @@ class DecisionInputValidator:
                 "company_news_input",
                 "trading_status_bundle",
                 "tradability_assessment",
+                FUNDAMENTAL_PERIOD_POLICY_FIELD,
+                EVIDENCE_POLICY_FIELD,
             },
             "DecisionInputBundle",
             errors,
         )
+        if FUNDAMENTAL_PERIOD_POLICY_FIELD in self.bundle and (
+            self.bundle[FUNDAMENTAL_PERIOD_POLICY_FIELD] not in FUNDAMENTAL_PERIOD_POLICIES
+        ):
+            errors.append(
+                "%s 必須是 %s" % (FUNDAMENTAL_PERIOD_POLICY_FIELD, "／".join(FUNDAMENTAL_PERIOD_POLICIES))
+            )
+        if EVIDENCE_POLICY_FIELD in self.bundle and self.bundle[EVIDENCE_POLICY_FIELD] not in EVIDENCE_POLICIES:
+            errors.append("%s 必須是 %s" % (EVIDENCE_POLICY_FIELD, "／".join(EVIDENCE_POLICIES)))
         for field in (
             "schema_version",
             "bundle_id",

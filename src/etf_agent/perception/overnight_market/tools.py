@@ -11,7 +11,7 @@ from etf_agent.perception.market_fear_greed.tools import percentile
 from .contracts import (
     AGREEMENT_MIN_TOTAL, AGREEMENT_RATIO, APPROVAL_FIELDS, CAPTURE_FIELDS, DIRECTION_DEADBAND, MAIN_SYMBOLS,
     MIXED_MIN_ABS, NEGATIVE_AT_OR_BELOW, NIGHT_NAME, NIGHT_SYMBOL, OUTLOOK_LABELS, PACK_FIELDS, PACK_VERSION,
-    PACK_VERSION_V11, PERCENTILE_WINDOW, POSITIVE_AT_OR_ABOVE, PROXY_SYMBOLS, RESULT_VERSION, RESULT_VERSION_V11,
+    PACK_VERSION_V11, PACK_VERSION_V12, PERCENTILE_WINDOW, PERCENTILE_WINDOW_V12, RESULT_VERSION_V12, SIGNAL_VERSION_V12, POSITIVE_AT_OR_ABOVE, PROXY_SYMBOLS, RESULT_VERSION, RESULT_VERSION_V11,
     SIGNAL_VERSION, SIGNAL_VERSION_V11, SOURCE_ID, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, TAIFEX_SOURCE_ID,
     OvernightMarketError, check_fields, seal,
 )
@@ -107,7 +107,7 @@ def _pct(ratio):
     return (ratio * HUNDRED).quantize(Decimal("0.01"))
 
 
-def _component(symbol, bars, fetched_at, start, cutoff, end=session_end):
+def _component(symbol, bars, fetched_at, start, cutoff, end=session_end, window=PERCENTILE_WINDOW):
     """回傳 (欄位, 缺口原因)；視窗內沒有完成時段或缺基準收盤即不可用。"""
     done = sorted(day for day in bars if end(day) <= fetched_at)
     sessions = [day for day in done if start < end(day) <= cutoff]
@@ -121,8 +121,8 @@ def _component(symbol, bars, fetched_at, start, cutoff, end=session_end):
     for day in sessions:
         cumulative *= 1 + returns[day]
     last = sessions[-1]
-    history = [returns[day] for day in done if day in returns and day <= last][-PERCENTILE_WINDOW:]
-    rank = percentile(history, returns[last]).quantize(Decimal("0.1")) if len(history) == PERCENTILE_WINDOW else None
+    history = [returns[day] for day in done if day in returns and day <= last][-window:]
+    rank = percentile(history, returns[last]).quantize(Decimal("0.1")) if len(history) == window else None
     return {"as_of": last, "sessions": sessions, "session_end": end(last).isoformat(),
             "change_pct": decimal_string(_pct(returns[last])),
             "cumulative_change_pct": decimal_string(_pct(cumulative - 1)),
@@ -236,6 +236,8 @@ def _evaluate_v10(pack):
 def evaluate(pack):
     """依資料包版本重建結果：1.0 維持原行為（舊封存逐位元相同），1.1 加入日韓、VIX 與台指期夜盤。"""
     check_fields(pack, PACK_FIELDS, "隔夜市場資料包")
+    if pack["schema_version"] == PACK_VERSION_V12:
+        return _evaluate_v11(pack, v12=True)
     if pack["schema_version"] == PACK_VERSION_V11:
         return _evaluate_v11(pack)
     return _evaluate_v10(pack)
@@ -340,7 +342,7 @@ def _check_url_v11(source, symbol, url):
         raise OvernightMarketError("不支援的來源或標的")
 
 
-def _evaluate_v11(pack):
+def _evaluate_v11(pack, v12=False):
     if not isinstance(pack["snapshot_id"], str) or not pack["snapshot_id"]:
         raise OvernightMarketError("隔夜市場資料包身分無效")
     if seal(pack) != pack:
@@ -382,7 +384,7 @@ def _evaluate_v11(pack):
                 row, night_detail, reason = _night_component(capture["raw_text"], fetched_at, start, cutoff)
             else:
                 row, reason = _component(symbol, parse_bars(capture["raw_text"], symbol), fetched_at, start, cutoff,
-                                         _yahoo_end(symbol))
+                                         _yahoo_end(symbol), PERCENTILE_WINDOW_V12 if v12 else PERCENTILE_WINDOW)
         except (KeyError, TypeError, ValueError) as exc:
             gaps.append("%s 格式無法解析：%s" % (symbol, exc))
             continue
@@ -390,6 +392,8 @@ def _evaluate_v11(pack):
             gaps.append(reason)
         else:
             row["raw_sha256"], row["available_at"] = capture["raw_sha256"], fetched_at.isoformat()
+            if v12:
+                row["percentile_250d"] = row.pop("percentile_20d")
             computed[symbol] = row
     specs = [(symbol, spec["name"], spec["role"], SOURCE_ID, approved) for symbol, spec in SYMBOLS_V11.items()]
     specs.append((NIGHT_SYMBOL, NIGHT_NAME, "taifex_night", TAIFEX_SOURCE_ID, night_approved))
@@ -407,6 +411,8 @@ def _evaluate_v11(pack):
             row.update(status="unavailable", evidence_id=None, as_of=None, sessions=[], session_end=None,
                        change_pct=None, cumulative_change_pct=None, percentile_20d=None, raw_sha256=None,
                        available_at=None)
+            if v12:  # 1.0／1.1 的鍵順序維持原樣（序列化位元組不變）；1.2 才改名
+                row["percentile_250d"] = row.pop("percentile_20d")
             if symbol not in seen:
                 gaps.append("%s 沒有原始回應" % symbol)
         components.append(row)
@@ -429,11 +435,12 @@ def _evaluate_v11(pack):
                  for row in shown]
         findings.append({
             "text": "隔夜市場背景（%s）：主訊號（^SOX 與 ^GSPC 累計漲跌幅平均）%s%%，判讀「%s」；方向一致性 %s（上 %d、下 %d、持平 %d）；%s。僅為隔夜背景。" % (
-                SIGNAL_VERSION_V11, decimal_string(signal), OUTLOOK_LABELS[outlook], agreement["label"],
+                SIGNAL_VERSION_V12 if v12 else SIGNAL_VERSION_V11, decimal_string(signal), OUTLOOK_LABELS[outlook], agreement["label"],
                 agreement["up"], agreement["down"], agreement["flat"], "、".join(parts)),
             "evidence_ids": [row["evidence_id"] for row in shown]})
     return seal({
-        "schema_version": RESULT_VERSION_V11, "signal_version": SIGNAL_VERSION_V11,
+        "schema_version": RESULT_VERSION_V12 if v12 else RESULT_VERSION_V11,
+        "signal_version": SIGNAL_VERSION_V12 if v12 else SIGNAL_VERSION_V11,
         "snapshot_id": pack["snapshot_id"], "decision_cutoff": pack["decision_cutoff"],
         "input_sha256": pack["content_sha256"], "status": status, "outlook": outlook,
         "signal_pct": decimal_string(signal) if signal is not None else None,

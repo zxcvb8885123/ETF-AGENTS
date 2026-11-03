@@ -365,10 +365,11 @@ class RotationSlotTests(unittest.TestCase):
             engine.policy["position_sizing"].update(
                 positions_by_breadth={"concentrated": breadth}, position_breadth="concentrated"
             )
+        # 第四個回傳值是配置預算，名額配對的測試不看它。
         return engine._conviction_targets(
             list(candidates), set(active), {symbol: 1000 for symbol in active}, Decimal("1000000"),
             int(engine.policy["max_positions"]), self.EFFECTIVE, held_count,
-        )
+        )[:3]
 
     def test_full_without_exit_keeps_new_symbol_out(self):
         # 沒有出場 → 沒有釋出名額，新股不得擠掉已持有的加碼（#107 的前提不變）。
@@ -747,7 +748,7 @@ class SelectionTiebreakTests(unittest.TestCase):
             support_by_symbol={"2317.TW": 0, "2330.TW": 0},
             positions_by_breadth={"concentrated": 2}, position_breadth="concentrated",
         )
-        order, _, _ = engine._conviction_targets(
+        order, _, _, _ = engine._conviction_targets(
             ["2317.TW", "2330.TW"], set(), {}, Decimal("1000000"),
             int(engine.policy["max_positions"]),
             {"cash_buffer_rate": Decimal("0.1"), "max_stock_weight": Decimal("0.5")}, 0,

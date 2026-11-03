@@ -20,7 +20,7 @@ from .contracts import (
 from .momentum import MomentumResultValidator
 from .risk import GuardValidator,RiskReviewValidator, ScenarioValidator
 from .revision import RevisionHistoryValidator
-from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS
+from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS, fundamental_period_policy, validate_fundamental_metrics
 from .prior_decision import PriorDecisionContextValidator
 from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review
@@ -43,6 +43,10 @@ REVIEW_TEAM_VERSION = "2.4"
 REVIEW_TEAM_FIELDS = ROTATION_TEAM_FIELDS | {"position_review"}
 RANKING_TEAM_VERSION = "2.5"
 RANKING_TEAM_FIELDS = REVIEW_TEAM_FIELDS | {"selection_ranking"}
+# 2.6：再加基本面分析師看到的程式計算指標 ``fundamental_metrics``（bundle 有 fundamental_period_policy 時必為 2.6，
+# 沒有財報時為 null），Finalizer 以同一份決策輸入整份重算比對；沒有該閘門的舊 bundle／舊 run 維持 2.5 以前。
+FUNDAMENTAL_TEAM_VERSION = "2.6"
+FUNDAMENTAL_TEAM_FIELDS = RANKING_TEAM_FIELDS | {"fundamental_metrics"}
 TEAM_FIELDS_BY_VERSION = {
     STANCE_SCHEMA_VERSION: TEAM_INPUT_FIELDS,
     INTEGRATED_TEAM_VERSION: INTEGRATED_TEAM_FIELDS,
@@ -50,13 +54,17 @@ TEAM_FIELDS_BY_VERSION = {
     ROTATION_TEAM_VERSION: ROTATION_TEAM_FIELDS,
     REVIEW_TEAM_VERSION: REVIEW_TEAM_FIELDS,
     RANKING_TEAM_VERSION: RANKING_TEAM_FIELDS,
+    FUNDAMENTAL_TEAM_VERSION: FUNDAMENTAL_TEAM_FIELDS,
 }
 # 2.2 起都附前次決策背景；2.3 再加程式算好的名額脈絡。
 # 2.4 再加程式算好的持股檢視（停損／停利警示），是 2.3 的超集。
 # 2.5 再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集。
-MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION)
-SLOTS_TEAM_VERSIONS = (ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION)
-REVIEW_TEAM_VERSIONS = (REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION)
+# 2.6 再加程式計算的基本面指標 ``fundamental_metrics``，是 2.5 的超集。
+MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
+SLOTS_TEAM_VERSIONS = (ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
+REVIEW_TEAM_VERSIONS = (REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
+RANKING_TEAM_VERSIONS = (RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
+_UNSET = object()
 
 
 def build_team_inputs(
@@ -67,6 +75,7 @@ def build_team_inputs(
     portfolio_slots: Optional[Mapping[str, object]] = None,
     position_review: Optional[Mapping[str, object]] = None,
     selection_ranking: Optional[Mapping[str, object]] = None,
+    fundamental_metrics: object = _UNSET,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
@@ -74,7 +83,8 @@ def build_team_inputs(
     2.2：再加交易 Agent 看到的前次決策背景 ``prior_decision_context``（available 或 unavailable 都要存）；
     2.3：再加程式算好的名額脈絡 ``portfolio_slots``（滿檔換股），是 2.2 的超集；
     2.4：再加程式算好的持股檢視 ``position_review``（停損／停利警示），是 2.3 的超集；
-    2.5：再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集。
+    2.5：再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集；
+    2.6：再加程式計算的基本面指標 ``fundamental_metrics``（有傳入即為 2.6，沒有財報時傳 None 存為 null），是 2.5 的超集。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
@@ -84,7 +94,13 @@ def build_team_inputs(
         raise DecisionToolError("team_inputs 2.4 的持股檢視必須與名額脈絡同時存在")
     if selection_ranking is not None and position_review is None:
         raise DecisionToolError("team_inputs 2.5 的入選排序必須與持股檢視同時存在")
-    if selection_ranking is not None:
+    if fundamental_metrics is not _UNSET and selection_ranking is None:
+        raise DecisionToolError("team_inputs 2.6 的基本面指標必須與入選排序同時存在")
+    if fundamental_metrics is not _UNSET and fundamental_metrics is not None and not isinstance(fundamental_metrics, Mapping):
+        raise DecisionToolError("team_inputs 2.6 的 fundamental_metrics 必須是物件或 None")
+    if fundamental_metrics is not _UNSET:
+        version = FUNDAMENTAL_TEAM_VERSION
+    elif selection_ranking is not None:
         version = RANKING_TEAM_VERSION
     elif position_review is not None:
         version = REVIEW_TEAM_VERSION
@@ -111,6 +127,8 @@ def build_team_inputs(
         team["position_review"] = dict(position_review)
     if selection_ranking is not None:
         team["selection_ranking"] = dict(selection_ranking)
+    if fundamental_metrics is not _UNSET:
+        team["fundamental_metrics"] = dict(fundamental_metrics) if fundamental_metrics is not None else None
     return team
 
 
@@ -267,11 +285,20 @@ class DecisionFinalizer:
         if fields is None:
             return [
                 "team_inputs.schema_version 必須為 2.0（舊封存）、2.1（事件併入分析團隊）、"
-                "2.2（附前次決策背景）、2.3（再附名額脈絡）、2.4（再附持股檢視）或 2.5（再附入選排序）"
+                "2.2（附前次決策背景）、2.3（再附名額脈絡）、2.4（再附持股檢視）、2.5（再附入選排序）或 2.6（再附基本面指標）"
             ]
         if set(team) != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
         integrated = version != STANCE_SCHEMA_VERSION
+        # 2.6 與 bundle 的 fundamental_period_policy 必須同時存在；基本面指標以同一份決策輸入整份重算比對。
+        # 沒有該閘門的舊 bundle／舊 run 不重算基本面指標，行為與舊版相同。
+        if (version == FUNDAMENTAL_TEAM_VERSION) != (fundamental_period_policy(self.bundle) is not None):
+            errors.append("team_inputs 2.6 的基本面指標必須與 DecisionInputBundle.fundamental_period_policy 同時存在")
+        if version == FUNDAMENTAL_TEAM_VERSION:
+            errors.extend(
+                "team_inputs.fundamental_metrics：%s" % error
+                for error in validate_fundamental_metrics(self.bundle, team.get("fundamental_metrics"))
+            )
         # 2.2／2.3 的前次決策背景先自行重建驗證，再交給 TradeDecisionValidator 檢查交易 Agent 沒有引用它。
         prior = team.get("prior_decision_context") if version in MEMORY_TEAM_VERSIONS else None
         if version in MEMORY_TEAM_VERSIONS:
@@ -338,10 +365,10 @@ class DecisionFinalizer:
         if "positions_by_breadth" in sizing:
             expected["position_breadth"] = stance.get("breadth") if isinstance(stance, Mapping) else None
         # 入選排序與 policy 的 selection_ranking 必須同時存在；排序以交易決策重建驗證，名次由程式綁定。
-        ranking = team.get("selection_ranking") if version == RANKING_TEAM_VERSION else None
-        if (version == RANKING_TEAM_VERSION) != ("selection_ranking" in sizing):
-            errors.append("DecisionPolicy 的 position_sizing.selection_ranking 必須與 team_inputs 2.5 同時存在")
-        if version == RANKING_TEAM_VERSION:
+        ranking = team.get("selection_ranking") if version in RANKING_TEAM_VERSIONS else None
+        if (version in RANKING_TEAM_VERSIONS) != ("selection_ranking" in sizing):
+            errors.append("DecisionPolicy 的 position_sizing.selection_ranking 必須與 team_inputs 2.5／2.6 同時存在")
+        if version in RANKING_TEAM_VERSIONS:
             if not isinstance(ranking, Mapping):
                 errors.append("team_inputs.selection_ranking 必須是物件")
             else:

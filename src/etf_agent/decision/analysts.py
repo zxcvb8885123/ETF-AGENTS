@@ -9,11 +9,22 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import json
-from typing import Dict, List, Mapping, Optional, Sequence, Set
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnapshotTools
 from etf_agent.core import canonical_sha256, parse_decimal, decimal_string, parse_aware_time
-from etf_agent.fundamentals.contracts import METRIC_KEYS, POLICY_VERSION, REQUIRED_STATEMENT_TYPES
+from etf_agent.fundamentals.contracts import (
+    METRIC_KEYS,
+    POLICY_VERSION,
+    REQUIRED_STATEMENT_TYPES,
+    FundamentalToolError,
+)
+from .input_validator import (
+    FUNDAMENTAL_PERIOD_PER_SYMBOL,
+    FUNDAMENTAL_PERIOD_POLICIES,
+    FUNDAMENTAL_PERIOD_POLICY_FIELD,
+)
+from .input_context import CLAIM_KINDS
 from .trend_history import TechnicalTrendHistoryTools
 from .fundamental_language import chinese_gap_explanations
 from .event_financial_context import event_financial_context
@@ -42,6 +53,8 @@ LLM_ANALYSTS = ("technical", "fundamental", "event")
 OUTLOOKS = ("positive", "negative", "neutral", "unknown")
 MATERIALITY = ("high", "medium", "low", "unknown")
 NO_SENTIMENT_SOURCE = "NO_LICENSED_SENTIMENT_SOURCE"
+# 逐檔期別的合併指標 artifact 版本；舊 run 的 fundamental_metrics 仍是 fundamentals 契約的 1.0。
+FUNDAMENTAL_METRICS_PER_SYMBOL_VERSION = "1.1"
 _EVENT_BODY_LIMIT = 1500
 _EVENT_EXCERPT_HEAD = 500
 _EVENT_EXCERPT_TAIL = 160
@@ -268,6 +281,10 @@ def build_analyst_brief(
                 metrics.get("metrics", []), bundle["snapshot"].get("documents", []), symbol
             )
             entry["financial_status"] = metrics.get("status", "unavailable")
+            period_selection = (fundamental_metrics or {}).get("period_by_symbol", {})
+            if isinstance(period_selection, Mapping) and isinstance(period_selection.get(symbol), Mapping):
+                # 逐檔期別政策：告訴分析師這檔用的是自己最新可得的一季，不是全池統一期別。
+                entry["financial_period"] = dict(period_selection[symbol])
             entry["growth_signal_quality"] = growth_signal_quality(metrics)
             # 策略文件：基本面看現金流。數值由程式從已核對的現金流文件計算，缺少時明確說明。
             entry["cash_flow"] = cash_flow_by_symbol.get(symbol) or {
@@ -490,6 +507,9 @@ class AnalystReportValidator:
     }
     ITEM = {"symbol", "outlook", "findings", "data_gaps"}
     FINDING = {"finding_id", "text", "evidence_ids"}
+    # typed_evidence_v1 才有：分析師宣告發現依據的種類（price／financial／revenue／material_event／news），
+    # 程式核對引用的證據種類對映；舊 bundle 出現此欄位即拒絕。程式產生的 sentiment 報告不填。
+    FINDING_KIND = "finding_kind"
     EVENT = {"evidence_id", "materiality", "summary"}
     # 策略文件：公司事件要看「反證與尚待確認事項」。舊封存沒有這兩欄，照原樣驗證；有就必須是字串陣列。
     EVENT_REVIEW = ("counter_evidence", "pending_confirmations")
@@ -654,13 +674,18 @@ class AnalystReportValidator:
         if outlook == "unknown" and not gaps:
             errors.append("%s outlook=unknown 時必須說明 data_gaps" % prefix)
         if outlook in {"positive", "negative", "neutral"} and not findings:
-            errors.append("%s outlook=%s 必須至少有一項 finding" % (prefix, outlook))
+            errors.append(
+                "%s outlook=%s 需要至少一項有證據的 finding；沒有可引用的依據時請改為 unknown 並說明 data_gaps，不要補上沒有依據的發現"
+                % (prefix, outlook)
+            )
+        typed = self.context.evidence_policy is not None and self.analyst != "sentiment"
+        allowed_fields = self.FINDING | ({self.FINDING_KIND} if typed else set())
         for index, finding in enumerate(findings):
             finding_prefix = "%s.findings[%d]" % (prefix, index)
             if not isinstance(finding, Mapping):
                 errors.append("%s 必須是物件" % finding_prefix)
                 continue
-            reject_unknown_fields(finding, self.FINDING, finding_prefix, errors)
+            reject_unknown_fields(finding, allowed_fields, finding_prefix, errors)
             try:
                 finding_id = required_string(finding, "finding_id")
                 required_string(finding, "text")
@@ -673,7 +698,13 @@ class AnalystReportValidator:
             finding_ids.add(finding_id)
             if not evidence:
                 errors.append("%s.evidence_ids 不得為空" % finding_prefix)
-            self.context.validate_evidence(evidence, symbol, finding_prefix, errors)
+            kind = None
+            if typed:
+                kind = finding.get(self.FINDING_KIND)
+                if kind not in CLAIM_KINDS:
+                    errors.append("%s.%s 必須是 %s" % (finding_prefix, self.FINDING_KIND, "／".join(CLAIM_KINDS)))
+                    kind = None
+            self.context.validate_evidence(evidence, symbol, finding_prefix, errors, kind=kind)
         if self.analyst == "event":
             self._validate_events(item.get("events"), symbol, prefix, errors)
 
@@ -743,8 +774,69 @@ class AnalystReportValidator:
             )
 
 
-def compute_fundamental_metrics(bundle: Mapping[str, object]) -> Optional[Dict[str, object]]:
-    """以 Snapshot 內最新的財報期別確定性計算全部股票的基本面指標；沒有財報時回傳 None。"""
+def _statement_periods_by_symbol(snapshot: Mapping[str, object]) -> Dict[str, Dict[Tuple[int, int], Set[str]]]:
+    """每檔股票各財報期別已有哪些報表類型；只讀 Snapshot 的 financial_statement 文件。"""
+    result: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}
+    for document in snapshot.get("documents", []):
+        if not isinstance(document, Mapping) or not isinstance(document.get("financial_statement"), Mapping):
+            continue
+        statement = document["financial_statement"]
+        period = (int(statement["fiscal_year"]), int(statement["fiscal_quarter"]))
+        symbol = str(document.get("symbol", "")).upper()
+        result.setdefault(symbol, {}).setdefault(period, set()).add(str(statement.get("statement_type")))
+    return result
+
+
+def select_fundamental_periods(bundle: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
+    """逐檔決定基本面指標的「當期」：該股在 Snapshot（即 cutoff 前可得）中最新的一季。
+
+    - ``symbol_latest_complete``：該股損益表與資產負債表都齊的最新期別（優先）。
+    - ``symbol_latest_any``：沒有任一期別兩表齊全時，取該股任一報表的最新期別，缺的報表照常
+      標 CURRENT_STATEMENT_MISSING。
+    - ``pool_max_fallback``：該股完全沒有財報時沿用全快照最大期別，結果必為 unavailable，
+      只為了讓指標仍覆蓋全部交易池。
+    比較期一律是同季去年。不以法定公告期限推測，也不因別家公司提早公布就把其他公司標為缺資料。
+    """
+    by_symbol = _statement_periods_by_symbol(bundle["snapshot"])
+    pool_periods = {period for periods in by_symbol.values() for period in periods}
+    if not pool_periods:
+        return {}
+    pool_max = max(pool_periods)
+    required = set(REQUIRED_STATEMENT_TYPES)
+    selection: Dict[str, Dict[str, object]] = {}
+    for symbol in _symbols(bundle):
+        periods = by_symbol.get(symbol, {})
+        complete = [period for period, types in periods.items() if required <= types]
+        if complete:
+            chosen, source = max(complete), "symbol_latest_complete"
+        elif periods:
+            chosen, source = max(periods), "symbol_latest_any"
+        else:
+            chosen, source = pool_max, "pool_max_fallback"
+        selection[symbol] = {
+            "fiscal_year": chosen[0],
+            "fiscal_quarter": chosen[1],
+            "period": "%dQ%d" % chosen,
+            "comparison_period": "%dQ%d" % (chosen[0] - 1, chosen[1]),
+            "selection": source,
+        }
+    return selection
+
+
+def _fundamental_request(identifier: str, symbols: Sequence[str], fiscal_year: int, fiscal_quarter: int) -> Dict[str, object]:
+    return {
+        "request_id": identifier,
+        "symbols": list(symbols),
+        "fiscal_year": fiscal_year,
+        "fiscal_quarter": fiscal_quarter,
+        "required_statement_types": list(REQUIRED_STATEMENT_TYPES),
+        "metric_keys": sorted(METRIC_KEYS),
+        "policy_version": POLICY_VERSION,
+    }
+
+
+def _compute_pool_period_metrics(bundle: Mapping[str, object]) -> Optional[Dict[str, object]]:
+    """舊行為：以全快照最新的財報期別計算全部股票；沒有財報時回傳 None。輸出逐位元不變。"""
     snapshot = bundle["snapshot"]
     periods = {
         (int(document["financial_statement"]["fiscal_year"]), int(document["financial_statement"]["fiscal_quarter"]))
@@ -757,21 +849,106 @@ def compute_fundamental_metrics(bundle: Mapping[str, object]) -> Optional[Dict[s
     tools = FundamentalSnapshotTools(snapshot)
     identifier = "fundamental:%s:%dQ%d" % (str(bundle["bundle_sha256"])[:16], fiscal_year, fiscal_quarter)
     fundamental_bundle = tools.build_bundle(
-        {
-            "request_id": identifier,
-            "symbols": _symbols(bundle),
-            "fiscal_year": fiscal_year,
-            "fiscal_quarter": fiscal_quarter,
-            "required_statement_types": list(REQUIRED_STATEMENT_TYPES),
-            "metric_keys": sorted(METRIC_KEYS),
-            "policy_version": POLICY_VERSION,
-        },
+        _fundamental_request(identifier, _symbols(bundle), fiscal_year, fiscal_quarter),
         bundle_id=identifier,
         generated_at=str(bundle["decision_cutoff"]),
     )
     return FundamentalMetricsCalculator(tools, fundamental_bundle).compute(
         metrics_id=identifier, computed_at=str(bundle["decision_cutoff"])
     )
+
+
+def _compute_per_symbol_period_metrics(bundle: Mapping[str, object]) -> Optional[Dict[str, object]]:
+    """新行為：依 select_fundamental_periods 分組，每組各建一份 FundamentalDataBundle 並計算後合併。
+
+    每組仍是 ``etf_agent.fundamentals`` 既有契約（可各自重建驗證）；合併結果記錄每檔實際期別、
+    每組的 bundle／metrics 識別與雜湊，供 ``validate_fundamental_metrics`` 整份重算比對。
+    """
+    selection = select_fundamental_periods(bundle)
+    if not selection:
+        return None
+    cutoff = str(bundle["decision_cutoff"])
+    prefix = "fundamental:%s" % str(bundle["bundle_sha256"])[:16]
+    tools = FundamentalSnapshotTools(bundle["snapshot"])
+    groups: Dict[Tuple[int, int], List[str]] = {}
+    for symbol, chosen in selection.items():
+        groups.setdefault((int(chosen["fiscal_year"]), int(chosen["fiscal_quarter"])), []).append(symbol)
+    period_groups: List[Dict[str, object]] = []
+    items: List[Dict[str, object]] = []
+    for (fiscal_year, fiscal_quarter), symbols in sorted(groups.items()):
+        identifier = "%s:%dQ%d" % (prefix, fiscal_year, fiscal_quarter)
+        group_bundle = tools.build_bundle(
+            _fundamental_request(identifier, sorted(symbols), fiscal_year, fiscal_quarter),
+            bundle_id=identifier,
+            generated_at=cutoff,
+        )
+        metrics = FundamentalMetricsCalculator(tools, group_bundle).compute(metrics_id=identifier, computed_at=cutoff)
+        period_groups.append({
+            "period": "%dQ%d" % (fiscal_year, fiscal_quarter),
+            "fiscal_year": fiscal_year,
+            "fiscal_quarter": fiscal_quarter,
+            "symbols": sorted(symbols),
+            "bundle_id": group_bundle["bundle_id"],
+            "bundle_sha256": group_bundle["content_sha256"],
+            "metrics_id": metrics["metrics_id"],
+            "metrics_sha256": metrics["content_sha256"],
+            "status": metrics["status"],
+        })
+        items.extend(dict(item) for item in metrics["items"])
+    items.sort(key=lambda item: str(item["symbol"]))
+    statuses = {str(item["status"]) for item in items}
+    status = "completed" if statuses == {"completed"} else "unavailable" if statuses == {"unavailable"} else "degraded"
+    payload: Dict[str, object] = {
+        "schema_version": FUNDAMENTAL_METRICS_PER_SYMBOL_VERSION,
+        "metrics_id": "%s:%s" % (prefix, FUNDAMENTAL_PERIOD_PER_SYMBOL),
+        "snapshot_id": bundle["snapshot_id"],
+        "decision_cutoff": cutoff,
+        "computed_at": cutoff,
+        "period_policy": FUNDAMENTAL_PERIOD_PER_SYMBOL,
+        "status": status,
+        "period_by_symbol": {symbol: dict(selection[symbol]) for symbol in sorted(selection)},
+        "period_groups": period_groups,
+        "items": items,
+    }
+    payload["content_sha256"] = artifact_content_sha256(payload)
+    return payload
+
+
+def fundamental_period_policy(bundle: Mapping[str, object]) -> Optional[str]:
+    """讀取 bundle 的基本面期別政策；沒有欄位為舊行為（None），未知值 fail-closed。"""
+    policy = bundle.get(FUNDAMENTAL_PERIOD_POLICY_FIELD)
+    if policy is None:
+        return None
+    if policy not in FUNDAMENTAL_PERIOD_POLICIES:
+        raise DecisionToolError("不支援的基本面期別政策：%s" % policy)
+    return str(policy)
+
+
+def compute_fundamental_metrics(bundle: Mapping[str, object]) -> Optional[Dict[str, object]]:
+    """確定性計算全部股票的基本面指標；沒有財報時回傳 None。
+
+    bundle 沒有 ``fundamental_period_policy`` 時維持全快照 max(period) 的原行為（舊 run 重建逐位元不變）；
+    為 ``per_symbol_latest_available_v1`` 時改為每檔股票各用自己在 cutoff 前可得的最新一季。
+    """
+    if fundamental_period_policy(bundle) == FUNDAMENTAL_PERIOD_PER_SYMBOL:
+        return _compute_per_symbol_period_metrics(bundle)
+    return _compute_pool_period_metrics(bundle)
+
+
+def validate_fundamental_metrics(bundle: Mapping[str, object], payload: Optional[Mapping[str, object]]) -> List[str]:
+    """以同一份決策輸入整份重算基本面指標並比對；任何數值、期別或分組被改寫都拒絕。"""
+    try:
+        expected = compute_fundamental_metrics(bundle)
+    except (DecisionToolError, FundamentalToolError) as error:
+        return [str(error)]
+    if expected is None or payload is None:
+        return [] if expected is None and payload is None else ["基本面指標與決策輸入不一致：一方沒有財報"]
+    errors: List[str] = []
+    if canonical_sha256(dict(payload)) != canonical_sha256(expected):
+        errors.append("基本面指標未通過確定性重算")
+    if payload.get("content_sha256") != artifact_content_sha256(payload):
+        errors.append("基本面指標 content_sha256 與內容不一致")
+    return errors
 
 
 def high_materiality_events(report: Mapping[str, object]) -> List[Dict[str, str]]:

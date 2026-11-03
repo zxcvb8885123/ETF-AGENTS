@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- D-Plan 看門狗：週一到週五 08:20（主機時區 Asia/Taipei；07:00 重做大致跑完、08:55 交件期限前）檢查今天要交的
+     D-Plan 主檔 artifacts/competition_d_plan/D-Plan_<team_id>_<交易日>.json 是否存在、通過本地驗證，以及最新 run 的
+     pipeline.json dplan.status。缺少、無效或主檔是備援（全部續抱）時發本機通知，並在 var/logs/daily_status.log 記一行。
+     只讀檔、不跑 Agent、不上傳、不改任何檔案。休市日自行略過。
+     安裝：把 __PROJECT_ROOT__ 與 __HOME__ 換成實際路徑，mkdir -p __PROJECT_ROOT__/var/logs，複製到 ~/Library/LaunchAgents/
+     後 launchctl load；完整指令與通知權限檢查見 docs/operations.md「D-Plan 看門狗」。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etf-agents.dplan-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/scripts/check_dplan_ready.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TZ</key>
+    <string>Asia/Taipei</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/var/logs/dplan-watchdog-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/var/logs/dplan-watchdog-launchd.log</string>
+</dict>
+</plist>

@@ -18,7 +18,7 @@ from etf_agent.decision import DecisionInputValidator, DecisionResultValidator
 from etf_agent.core import parse_decimal
 from etf_agent.data.evidence import TAIPEI_TIMEZONE as TAIPEI
 from etf_agent.data.trading_calendar import DECISION_DEADLINE
-from etf_agent.decision.contracts import DecisionToolError, decimal_value, snapshot_execution_price
+from etf_agent.decision.contracts import DecisionToolError, decimal_value
 
 
 class DPlanError(ValueError):
@@ -334,6 +334,61 @@ def require_official_closes(rows: Sequence[Mapping[str, object]], symbols: set) 
         raise DPlanError("缺少交易所前日收盤價，不能換算主辦方股數：" + "、".join(unofficial))
 
 
+# DataPack 持股收盤價與 Snapshot 官方價的相對差超過此比例時，不再視為資料口徑差異（台股單日漲跌幅上限 10%），
+# 可能是代號對應錯誤或除權息未調整，維持 fail-closed。
+DATAPACK_PRICE_MAX_RELATIVE_DIFF = Decimal("0.15")
+
+
+def derivation_prices(
+    rows: Sequence[Mapping[str, object]], symbols: set, official_prices: Mapping[str, object] = None,
+) -> "tuple[Dict[str, Decimal], List[str]]":
+    """換算主辦方股數用的每檔前日收盤價，以及可記錄但不阻擋的警告。
+
+    主辦方公式用的是「資料包／交易所公布的前日收盤價」。已對帳 DataPack 有該檔持股收盤價時，一律以它為準：
+    `official_target_weight` 與 `official_target_shares` 用同一個價格互為反函數，所以不論採用哪個價格，
+    推導出的委託股數都等於已核准 Decision 的股數（proposed == derived 不受價格來源影響）；差別只在主辦方
+    用他們的價格重算時是否得到同一張數，而 DataPack 價正是主辦方的價。因此：
+
+    - 持股在 DataPack 有收盤價：用 DataPack 價。Snapshot 官方價不同或缺官方價只記警告，不阻擋。
+    - DataPack 沒有該檔價格（新買進、資料包 `missing` 含 prev_close）：必須有 Snapshot 同日官方價，
+      缺官方價（只剩調整價）照舊拒絕。
+    - 兩者相對差超過 DATAPACK_PRICE_MAX_RELATIVE_DIFF：不是口徑差異，拒絕。
+    """
+    official: Dict[str, Decimal] = {}
+    for symbol, value in sorted((official_prices or {}).items()):
+        official[str(symbol)] = parse_decimal(value, "DataPack close_price", error=DPlanError, reject_bool=True)
+    by_symbol = {str(row["symbol"]): row for row in rows}
+    prices: Dict[str, Decimal] = {}
+    warnings: List[str] = []
+    missing: List[str] = []
+    for symbol in sorted(symbols):
+        row = by_symbol.get(symbol)
+        snapshot_official = None
+        if row is not None and row.get("execution_close_price") is not None:
+            snapshot_official = decimal_value(row["execution_close_price"], "latest_prices.execution_close_price")
+        datapack_price = official.get(symbol)
+        if datapack_price is not None:
+            if datapack_price <= 0:
+                raise DPlanError("DataPack %s 收盤價必須大於 0" % symbol[:4])
+            if snapshot_official is None:
+                warnings.append("%s 缺 Snapshot 同日官方收盤價，改用 DataPack 收盤價 %s 換算主辦方股數" % (symbol[:4], datapack_price))
+            elif snapshot_official != datapack_price:
+                relative = abs(snapshot_official - datapack_price) / datapack_price
+                if relative > DATAPACK_PRICE_MAX_RELATIVE_DIFF:
+                    raise DPlanError("%s Snapshot 官方收盤價 %s 與 DataPack %s 相差 %.1f%%，超過口徑差異範圍，拒絕換算" % (
+                        symbol[:4], snapshot_official, datapack_price, relative * 100))
+                warnings.append("%s Snapshot 官方收盤價 %s 與 DataPack %s 不同，以 DataPack 價換算主辦方股數" % (
+                    symbol[:4], snapshot_official, datapack_price))
+            prices[symbol] = datapack_price
+        elif snapshot_official is not None:
+            prices[symbol] = snapshot_official
+        else:
+            missing.append(symbol[:4])
+    if missing:
+        raise DPlanError("缺少交易所前日收盤價，不能換算主辦方股數：" + "、".join(missing))
+    return prices, warnings
+
+
 def derivation_nav(
     ledger_nav: object, latest_prices: Mapping[str, Decimal],
     official_nav: object = None, official_prices: Mapping[str, object] = None,
@@ -371,6 +426,10 @@ def check_cutoff_before_deadline(decision_cutoff: object, trade_date: str) -> No
 
 class DPlanExporter:
     """Map a validated decision run plus agent-authored reasoning into D-Plan."""
+
+    def __init__(self) -> None:
+        # 最近一次 build 的非阻擋警告（例如 DataPack 與 Snapshot 收盤價口徵差異）；呼叫端記入 pipeline.json。
+        self.warnings: List[str] = []
 
     def build(
         self,
@@ -430,11 +489,14 @@ class DPlanExporter:
         positions = artifacts["proposal"].get("allocation_proposal", {}).get("positions", [])
         account = bundle["account_snapshot"]
         held = {str(row["symbol"]): int(row["shares"]) for row in account.get("positions", [])}
-        latest_prices = {str(row["symbol"]): snapshot_execution_price(row, "latest_prices") for row in bundle["snapshot"].get("latest_prices", [])}
         target = {str(row["symbol"]): int(row["shares"]) for row in positions}
-        require_official_closes(bundle["snapshot"].get("latest_prices", []), set(held) | set(target))
         if any(not re.fullmatch(r"\d{4}\.(?:TW|TWO)", symbol) for symbol in set(held) | set(target)):
             raise DPlanError("D-Plan 只支援具四位數台股代碼且可映射為 ####.TW／####.TWO 的標的")
+        # 換算價：持股有 DataPack 收盤價時用它（主辦方的價），其餘須有 Snapshot 同日官方價；兩者不同只記警告。
+        # 權重與股數用同一個價格互推，所以不論取哪個價，推導的委託都等於已核准 Decision 的 orders。
+        latest_prices, self.warnings = derivation_prices(
+            bundle["snapshot"].get("latest_prices", []), set(held) | set(target), official_prices,
+        )
         nav = derivation_nav(account["nav"], latest_prices, official_nav, official_prices)
         refs_map = context.get("inference_refs_by_ticker")
         if not isinstance(refs_map, Mapping):

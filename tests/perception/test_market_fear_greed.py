@@ -13,8 +13,10 @@ from etf_agent.decision.market_scope import market_sentiment_channel
 from etf_agent.perception.market_fear_greed import (
     FearGreedError, attach_fear_greed, build_fear_greed_input, capture_fear_greed, evaluate, validate_pair,
 )
-from etf_agent.perception.market_fear_greed.contracts import PACK_VERSION, SOURCES, seal
-from etf_agent.perception.market_fear_greed.provider import margin_url, vix_url
+from etf_agent.perception.market_fear_greed.contracts import (
+    EXTRA_SOURCES, LEVEL_WINDOW, PACK_VERSION, PACK_VERSION_V11, PACK_VERSION_V12, SOURCES, seal,
+)
+from etf_agent.perception.market_fear_greed.provider import margin_url, recent_months, twse_url, vix_url
 from test_analysts import bundle_with_event, event_items
 
 CUTOFF = "2026-09-20T00:55:00+00:00"
@@ -49,6 +51,13 @@ def raw_margin(days):
         rows.append({"date": d.isoformat(), "name": "MarginPurchase", "TodayBalance": 9_000_000, "YesBalance": 0,
                      "buy": 0, "sell": 0, "Return": 0})
     return json.dumps({"msg": "success", "status": 200, "data": rows})
+
+
+def raw_twse(days, base=40000):
+    rows = [["%d/%02d/%02d" % (d.year - 1911, d.month, d.day), "1", "1", "1", "{:,.2f}".format(base + i * 10), "0"]
+            for i, d in enumerate(days)]
+    return json.dumps({"stat": "OK", "fields": ["日期", "成交股數", "成交金額", "成交筆數", "發行量加權股價指數", "漲跌點數"],
+                       "data": rows})
 
 
 def capture(source, url, raw, available=AVAILABLE, status="fetched"):
@@ -254,6 +263,8 @@ class FearGreedServiceTests(unittest.TestCase):
         days = trading_days(date(2026, 9, 18), 30)
         bodies = {vix_url(m): raw_vix(days).encode("cp950") for m in ("202607", "202608", "202609")}
         bodies[SOURCES["TAIFEX_PCR"]["url"]] = raw_pcr(days).encode("utf-8")
+        for month in recent_months(now.astimezone(timezone(timedelta(hours=8))).date(), 14):
+            bodies[twse_url(month)] = raw_twse(days).encode("utf-8")
         from etf_agent.perception.market_fear_greed import FearGreedProvider
 
         def opener(request, timeout):
@@ -262,7 +273,7 @@ class FearGreedServiceTests(unittest.TestCase):
                 self.assertEqual(request.headers["Authorization"], "Bearer token")
                 return FakeResponse(url, raw_margin(days).encode("utf-8"))
             return FakeResponse(url, bodies[url])
-        provider = FearGreedProvider(opener=opener, token="token")
+        provider = FearGreedProvider(opener=opener, token="token", sleep=lambda seconds: None)
         provider.capture = (lambda original: lambda source, url, **kw: dict(original(source, url, **kw), available_at=now.isoformat()))(provider.capture)
         return provider
 
@@ -300,3 +311,188 @@ class FearGreedServiceTests(unittest.TestCase):
         (path / "captures.json").write_text(json.dumps(payload), encoding="utf-8")
         with self.assertRaises(FearGreedError):
             build_fear_greed_input(self.root, self.approvals, "snapshot-decision-1", CUTOFF)
+
+
+def long_margin(days, step=1_000_000_000):
+    rows = [{"date": d.isoformat(), "name": "MarginPurchaseMoney", "TodayBalance": 600_000_000_000 + i * step,
+             "YesBalance": 0, "buy": 0, "sell": 0, "Return": 0} for i, d in enumerate(days)]
+    return json.dumps({"msg": "success", "status": 200, "data": rows})
+
+
+def v11_approvals(taiex=True):
+    rows = approvals()
+    if taiex:
+        spec = EXTRA_SOURCES["TWSE_TAIEX"]
+        rows.append({"source": "TWSE_TAIEX", "license_status": "approved", "terms_url": spec["terms_url"],
+                     "usage_scope": "competition_research", "reviewed_at": "2026-09-19T00:00:00+00:00",
+                     "approved_by": "測試", "evidence": "人工測試核准"})
+    return rows
+
+
+def v11_pack(count=LEVEL_WINDOW + 5, step=1_000_000_000, source_approvals=None, drop_index=False):
+    days = trading_days(date(2026, 9, 18), count)
+    rows = [capture("TAIFEX_VIX", vix_url("202609"), raw_vix(days[-30:])),
+            capture("TAIFEX_PCR", SOURCES["TAIFEX_PCR"]["url"], raw_pcr(days[-30:])),
+            capture("FINMIND_MARGIN", margin_url(date(2025, 8, 1), date(2026, 9, 18)), long_margin(days, step))]
+    months = sorted({d.strftime("%Y%m") for d in days})
+    for month in ([] if drop_index else months):
+        rows.append(capture("TWSE_TAIEX", twse_url(month), raw_twse([d for d in days if d.strftime("%Y%m") == month],
+                                                                   base=40000 + 10 * days.index(next(d for d in days if d.strftime("%Y%m") == month)))))
+    return seal({"schema_version": PACK_VERSION_V11, "snapshot_id": "snapshot-decision-1", "decision_cutoff": CUTOFF,
+                 "captures": rows, "source_approvals": source_approvals if source_approvals is not None else v11_approvals()})
+
+
+class FearGreedLevelTests(unittest.TestCase):
+    def test_level_component_uses_margin_over_index_percentile(self):
+        # 融資每天加 10 億、指數每天加 10 點：比值逐日上升，最新值在窗口最高點。
+        result = evaluate(v11_pack())
+        self.assertEqual((result["schema_version"], result["score_version"]), ("market-fear-greed-result-1.1", "fear-greed-v2"))
+        level = {row["source"]: row for row in result["components"]}["FINMIND_MARGIN_LEVEL"]
+        self.assertEqual((level["status"], level["approved"], level["sample_size"]), ("available", True, LEVEL_WINDOW))
+        self.assertEqual(level["score"], "99.8")
+        self.assertEqual(len(result["components"]), 4)
+        self.assertEqual(result["findings"][0]["evidence_ids"], [row["evidence_id"] for row in result["components"]])
+
+    def test_falling_ratio_scores_low(self):
+        level = {r["source"]: r for r in evaluate(v11_pack(step=-100_000_000))["components"]}["FINMIND_MARGIN_LEVEL"]
+        self.assertEqual(level["score"], "0.2")
+
+    def test_unapproved_index_keeps_level_diagnostic_only(self):
+        result = evaluate(v11_pack(source_approvals=v11_approvals(taiex=False)))
+        level = {r["source"]: r for r in result["components"]}["FINMIND_MARGIN_LEVEL"]
+        self.assertEqual((level["status"], level["approved"]), ("available", False))
+        self.assertEqual(len([r for r in result["components"] if r["approved"]]), 3)
+        self.assertTrue(any("尚未核准" in gap and "百分位" in gap for gap in result["data_gaps"]))
+
+    def test_short_history_or_missing_index_degrades_without_filling(self):
+        short = {r["source"]: r for r in evaluate(v11_pack(count=LEVEL_WINDOW - 1))["components"]}["FINMIND_MARGIN_LEVEL"]
+        self.assertEqual(short["status"], "unavailable")
+        missing = evaluate(v11_pack(drop_index=True))
+        self.assertTrue(any("缺少融資金額或加權指數" in gap for gap in missing["data_gaps"]))
+        self.assertEqual(missing["status"], "available")
+
+    def test_index_month_after_cutoff_or_tampered_rejected(self):
+        base = v11_pack()
+        rows = [dict(c) for c in base["captures"]]
+        rows[3] = capture("TWSE_TAIEX", twse_url("202610"), rows[3]["raw_text"])
+        with self.assertRaises(FearGreedError):
+            evaluate(seal(dict(base, captures=rows)))
+        rows = [dict(c) for c in base["captures"]]
+        rows[3] = dict(rows[3], raw_text="{}")
+        with self.assertRaises(FearGreedError):
+            evaluate(seal(dict(base, captures=rows)))
+
+    def test_changed_index_layout_degrades(self):
+        base = v11_pack()
+        rows = [dict(c) for c in base["captures"]]
+        for i, row in enumerate(rows):
+            if row["source"] == "TWSE_TAIEX":
+                bad = json.dumps({"stat": "OK", "fields": ["x"], "data": []})
+                rows[i] = capture("TWSE_TAIEX", row["url"], bad)
+        result = evaluate(seal(dict(base, captures=rows)))
+        self.assertTrue(any("加權指數" in gap and "無法解析" in gap for gap in result["data_gaps"]))
+
+    def test_v10_pack_ignores_taiex_approval_and_stays_v1(self):
+        result = evaluate(pack())
+        self.assertEqual((result["schema_version"], result["score_version"]), ("market-fear-greed-result-1.0", "fear-greed-v1"))
+        with self.assertRaises(FearGreedError):
+            evaluate(pack(source_approvals=v11_approvals()))
+
+
+class FearGreedBackfillTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.approvals = self.root / "approvals.json"
+        self.approvals.write_text(json.dumps({"sources": v11_approvals()}), encoding="utf-8")
+        self.fetched = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def provider(self, now):
+        from etf_agent.perception.market_fear_greed import FearGreedProvider
+        days = trading_days(date(2026, 9, 18), 30)
+
+        def opener(request, timeout):
+            url = request.full_url
+            if "twse.com.tw" in url:
+                self.fetched.append(url)
+                return FakeResponse(url, raw_twse(days).encode("utf-8"))
+            if url.startswith("https://api.finmindtrade.com"):
+                return FakeResponse(url, raw_margin(days).encode("utf-8"))
+            if "PutCallRatio" in url:
+                return FakeResponse(url, raw_pcr(days).encode("utf-8"))
+            return FakeResponse(url, raw_vix(days).encode("cp950"))
+        provider = FearGreedProvider(opener=opener, token="token", sleep=lambda seconds: None)
+        provider.capture = (lambda original: lambda source, url, **kw: dict(original(source, url, **kw), available_at=now.isoformat()))(provider.capture)
+        return provider
+
+    def test_first_capture_backfills_then_later_runs_fetch_only_recent_months(self):
+        first_time = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+        capture_fear_greed(self.root, provider=self.provider(first_time), now=first_time)
+        self.assertEqual(len(self.fetched), 14)
+        self.fetched.clear()
+        second_time = datetime(2026, 9, 20, 3, tzinfo=timezone.utc)
+        capture_fear_greed(self.root, provider=self.provider(second_time), now=second_time)
+        # 已收盤且收盤後才抓到的月份沿用；當月（2026-09）與上個月（08，第一次抓時已收盤）以外都不重抓。
+        self.assertEqual(sorted(self.fetched), [twse_url("202609")])
+        pair = build_fear_greed_input(self.root, self.approvals, "snapshot-decision-1", "2026-09-21T00:00:00+00:00")
+        self.assertEqual(pair["bundle"]["schema_version"], PACK_VERSION_V12)
+        dates = {c["available_at"] for c in pair["bundle"]["captures"] if c["source"] == "TWSE_TAIEX"}
+        self.assertEqual(dates, {first_time.isoformat(), second_time.isoformat()})
+
+    def test_month_fetched_before_it_closed_is_refetched(self):
+        early = datetime(2026, 9, 10, 12, tzinfo=timezone.utc)
+        capture_fear_greed(self.root, provider=self.provider(early), now=early)
+        self.fetched.clear()
+        later = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+        capture_fear_greed(self.root, provider=self.provider(later), now=later)
+        self.assertEqual(sorted(self.fetched), [twse_url("202609"), twse_url("202610")])
+
+    def test_old_captures_without_index_still_build_v10(self):
+        from etf_agent.perception.market_fear_greed.service import _store
+        rows = captures()
+        _store(self.root).save("fear-greed-20260919T120000Z-legacy00000", {"captures": {"items": [
+            dict(c, available_at=AVAILABLE) for c in rows]}})
+        pair = build_fear_greed_input(self.root, self.approvals, "snapshot-decision-1", CUTOFF)
+        self.assertEqual(pair["bundle"]["schema_version"], PACK_VERSION)
+        self.assertEqual(pair["result"]["score_version"], "fear-greed-v1")
+        self.assertEqual([r["source"] for r in pair["bundle"]["source_approvals"]], list(SOURCES))
+
+
+class FearGreedNoPutCallTests(unittest.TestCase):
+    def v12_pack(self):
+        base = v11_pack()
+        rows = [c for c in base["captures"] if c["source"] != "TAIFEX_PCR"]
+        approvals_ = [r for r in base["source_approvals"] if r["source"] != "TAIFEX_PCR"]
+        return seal(dict(base, schema_version=PACK_VERSION_V12, captures=rows, source_approvals=approvals_))
+
+    def test_v12_has_three_components_without_put_call(self):
+        result = evaluate(self.v12_pack())
+        self.assertEqual((result["schema_version"], result["score_version"]), ("market-fear-greed-result-1.2", "fear-greed-v3"))
+        self.assertEqual([r["source"] for r in result["components"]], ["TAIFEX_VIX", "FINMIND_MARGIN", "FINMIND_MARGIN_LEVEL"])
+        self.assertEqual(result["status"], "available")
+        self.assertFalse(any("買賣權" in gap for gap in result["data_gaps"]))
+
+    def test_v12_rejects_put_call_capture_or_approval(self):
+        base = self.v12_pack()
+        with_pcr = seal(dict(base, captures=base["captures"] + [capture("TAIFEX_PCR", SOURCES["TAIFEX_PCR"]["url"], raw_pcr(trading_days(date(2026, 9, 18), 30)))]))
+        with self.assertRaises(FearGreedError):
+            evaluate(with_pcr)
+        with self.assertRaises(FearGreedError):
+            evaluate(seal(dict(base, source_approvals=v11_approvals())))
+
+    def test_new_captures_skip_put_call_and_build_v12(self):
+        provider = FearGreedBackfillTests.provider
+        tests = FearGreedBackfillTests("test_first_capture_backfills_then_later_runs_fetch_only_recent_months")
+        tests.setUp()
+        try:
+            now = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+            capture_fear_greed(tests.root, provider=provider(tests, now), now=now)
+            pair = build_fear_greed_input(tests.root, tests.approvals, "snapshot-decision-1", CUTOFF)
+            self.assertEqual(pair["bundle"]["schema_version"], PACK_VERSION_V12)
+            self.assertNotIn("TAIFEX_PCR", {c["source"] for c in pair["bundle"]["captures"]})
+            self.assertNotIn("TAIFEX_PCR", {r["source"] for r in pair["bundle"]["source_approvals"]})
+        finally:
+            tests.tearDown()

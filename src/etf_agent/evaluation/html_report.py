@@ -14,8 +14,15 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256
 
+from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE
 
-CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+
+def _notice(report: Mapping[str, object]) -> str:
+    """每份回放類報告首段固定的提醒：回放不是對 LLM 判斷的前瞻驗證。"""
+    return "%s（evidence_grade：%s）" % (esc(report.get("notice") or REPLAY_NOTICE), esc(report.get("evidence_grade") or REPLAY_EVIDENCE_GRADE))
+
+
+CSP ="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
 _STYLE = """
 :root { color-scheme: light; --ink: #1b2233; --muted: #5b6475; --line: #e3e7ee; --soft: #f1f4f9; --card: #ffffff; --brand: #2b4c8c; --accent: #c47a1a; }
 * { box-sizing: border-box; }
@@ -215,8 +222,8 @@ def render_replay_html(report: Mapping[str, object]) -> str:
     template = (report.get("provenance") or {}).get("policy_template") or {}
     inputs = report.get("inputs") or {}
     replay_id = report.get("replay_id", "未封存")
-    lead = "策略樣板 <code>%s</code>（content_sha256 <code>%s</code>）；%d 個 Decision run；as_of %s；狀態 %s。不呼叫 Agent，只重算確定性程式。" % (
-        esc(template.get("policy_id")), esc(template.get("content_sha256")), len(inputs.get("run_ids") or []), esc(inputs.get("as_of")), esc(report.get("status")))
+    lead = "%s 策略樣板 <code>%s</code>（content_sha256 <code>%s</code>）；%d 個 Decision run；as_of %s；狀態 %s。不呼叫 Agent，只重算確定性程式。" % (
+        _notice(report), esc(template.get("policy_id")), esc(template.get("content_sha256")), len(inputs.get("run_ids") or []), esc(inputs.get("as_of")), esc(report.get("status")))
     sections: List[str] = []
     annualized = metrics.get("annualized_return") or {}
     sharpe = metrics.get("sharpe") or {}
@@ -289,8 +296,8 @@ def render_grid_html(grid: Mapping[str, object]) -> str:
     inputs = grid.get("inputs") or {}
     provenance = grid.get("provenance") or {}
     grid_id = grid.get("grid_id", "未封存")
-    lead = "%d 個決策日、%d 列（run × symbol）；基準 <code>%s</code>；as_of %s；provenance_class <code>%s</code>。零 token，只讀已封存 Decision run 與官方成交均價。" % (
-        len(grid.get("days") or []), len(grid.get("rows") or []), esc(inputs.get("benchmark")), esc(inputs.get("as_of")), esc(provenance.get("provenance_class")))
+    lead = "%s %d 個決策日、%d 列（run × symbol）；基準 <code>%s</code>；as_of %s；provenance_class <code>%s</code>。零 token，只讀已封存 Decision run 與官方成交均價。" % (
+        _notice(grid), len(grid.get("days") or []), len(grid.get("rows") or []), esc(inputs.get("benchmark")), esc(inputs.get("as_of")), esc(provenance.get("provenance_class")))
     sections: List[str] = []
     sections.append("<h2>口徑</h2>" + _kv([
         ("成交價", esc(provenance.get("price_basis"))), ("日曆", esc(provenance.get("calendar_basis"))),
@@ -388,8 +395,8 @@ def _summary_table(summary: Mapping[str, object]) -> str:
 def render_eval_html(report: Mapping[str, object]) -> str:
     overall = report.get("overall") or {}
     eval_id = report.get("eval_id", "未知")
-    lead = "評測集 %s；每份重跑 %s 次；範圍：%s。共 %s 次，失敗 %s 次；估算用量 $%s。「相同」只表示結論一樣，不代表對錯。" % (
-        esc(report.get("suite")), esc(report.get("repeats")), "只到分析師" if report.get("stop_after") == "analysts" else "完整決策鏈",
+    lead = "%s 評測集 %s；每份重跑 %s 次；範圍：%s。共 %s 次，失敗 %s 次；估算用量 $%s。「相同」只表示結論一樣，不代表對錯。" % (
+        _notice(report), esc(report.get("suite")), esc(report.get("repeats")), "只到分析師" if report.get("stop_after") == "analysts" else "完整決策鏈",
         esc(overall.get("runs")), esc(overall.get("failed_runs")), esc(overall.get("estimated_usage_usd")))
     sections: List[str] = []
     versus = overall.get("versus_reference") or {}

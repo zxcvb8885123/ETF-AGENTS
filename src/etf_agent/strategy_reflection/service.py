@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.automation.agent_runner import AgentRunner, AgentTask, DailyPipelineError
 from etf_agent.calibration import CalibrationRepository, evaluate
@@ -34,11 +34,12 @@ from .thesis import DEFAULT_TOLERANCE, build_thesis_tracking
 from .thesis_review import REVIEW_SCHEMA, batches, current_context, review_briefs, unknown_items, validate_review
 from .report import render_weekly_report, write_weekly_report
 from .contracts import (
-    AUTO_DISABLE_REVERTS, KNOBS, MAX_PROPOSALS, POLICY_PATH, SCHEMA_VERSION, STATUS_OBSERVE_ONLY, STATUS_PROPOSED, SWITCH_PATH,
-    REPLAY_MIN_GAIN, TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS, VERIFICATION_OBSERVE, ReflectionError,
+    AUTO_DISABLE_REVERTS, KNOBS, MAX_PROPOSALS, NEEDS_HUMAN_ACTION, POLICY_PATH, SCHEMA_VERSION, STATUS_OBSERVE_ONLY, STATUS_PROPOSED, SWITCH_PATH,
+    REPLAY_BENCHMARK_ID, REPLAY_BENCHMARK_MIN_COVERAGE, REPLAY_EVIDENCE_GRADE, REPLAY_MIN_GAIN, REPLAY_MIN_SEGMENTS, REPLAY_NOTICE,
+    TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS, VERIFICATION_OBSERVE, ReflectionError,
 )
 from .repository import ReflectionRepository, atomic_write_json
-from .tools import apply_proposals, check_proposal, validate_template
+from .tools import apply_proposals, check_proposal, knob_risk_directions, non_risk_reducing, validate_template
 from .trial import (
     consecutive_reverts, evaluate_trial, excess_series, extensions, open_trial, trial_verification,
 )
@@ -46,6 +47,8 @@ from .validator import reflection_sha256, validate_reflection
 
 TAIPEI = timezone(timedelta(hours=8))
 Replayer = Callable[[Path, str], Mapping[str, object]]
+# 給一串回放日期（含起點），回傳等權基準 NAV（{日期: NAV}）；基準不可用時回空字典，閘門 fail-closed。
+Benchmarker = Callable[[Sequence[str]], Mapping[str, Decimal]]
 # 自動套用不得落在 20:50～隔天 09:00：21:00 備案與 07:00 重做要讀到同一份策略樣板。
 APPLY_BLOCKED_FROM = 20 * 60 + 50
 APPLY_BLOCKED_UNTIL = 9 * 60
@@ -222,7 +225,11 @@ def agent_task(brief_path: Path) -> AgentTask:
         "規則：每則 observations 與 proposals 都必須引用簡報內存在的 evidence_ids；knob 只能是簡報 knobs 列出的路徑；"
         "proposed 是新數值（字串；列舉旋鈕給選項名稱），單次變幅不得超過程式上限（%s；回撤門檻只准調低），"
         "且離人設定的起點最多偏離 2 個 step；最多 %d 筆提案；position_review.* 一週最多提一個；"
-        "不得提出簡報以外的欄位、權重、股數或風控規則。不確定就不要提案。" % (brief_path, knob_limits_text(), MAX_PROPOSALS)
+        "不得提出簡報以外的欄位、權重、股數或風控規則。不確定就不要提案。\n"
+        "風險方向：簡報 knob_risk_directions 標出每個旋鈕往哪個方向是降風險；只有降風險方向的提案可由程式自動套用，"
+        "加風險或方向不明的提案只會封存並標 needs_human、等人決定，所以提加風險方向時必須在 rationale 寫明為何值得人工審。\n"
+        "證據等級：簡報裡的校準統計與影子回放都只是對舊日期的重算（%s），不是對你或交易 Agent 判斷的前瞻驗證，不要把它當成已被證明的優勢。"
+        % (brief_path, knob_limits_text(), MAX_PROPOSALS, REPLAY_NOTICE)
     )
     return AgentTask("strategy_reflection", prompt, REFLECTION_SCHEMA)
 
@@ -273,23 +280,74 @@ def load_reflection(repository: ReflectionRepository, reflection_id: str):
     return _read_json(run_dir / "reflection.json", "reflection"), _read_json(run_dir / "brief.json", "brief")
 
 
-def replay_gate(base: Mapping[str, object], candidate: Mapping[str, object]) -> Dict[str, object]:
-    """候選策略回放要有改善：兩邊都完成、期末 NAV 高出目前策略至少 ``REPLAY_MIN_GAIN``、Guard 拒絕日不增加。
-    回放與提案用同一段歷史（樣本內），NAV 持平不算通過。回放只是必要條件，不是獲利證明。"""
+def _nav_points(body: Mapping[str, object]) -> List[Tuple[str, Decimal]]:
+    return [(str(point["trade_date"]), Decimal(str(point["nav"]))) for point in body.get("nav_series") or []]
+
+
+def _excess(navs: Mapping[str, Decimal], benchmark: Mapping[str, Decimal], start: str, end: str) -> Decimal:
+    """區間 (start, end] 的「策略報酬 − 等權基準報酬」。"""
+    return (navs[end] / navs[start] - 1) - (benchmark[end] / benchmark[start] - 1)
+
+
+def replay_segments(dates: Sequence[str], count: int = REPLAY_MIN_SEGMENTS) -> List[Tuple[str, str]]:
+    """把 n 個 NAV 點（n−1 個成交日）切成 ``count`` 段不重疊子區間（每段至少一個成交日）；切不出來回空清單。"""
+    intervals = len(dates) - 1
+    if intervals < count:
+        return []
+    bounds = [round(index * intervals / count) for index in range(count + 1)]
+    return [(dates[bounds[index]], dates[bounds[index + 1]]) for index in range(count)]
+
+
+def _rate(value: Decimal) -> str:
+    return str(value.quantize(Decimal("0.000001")))
+
+
+def replay_gate(base: Mapping[str, object], candidate: Mapping[str, object], benchmark: Optional[Mapping[str, object]] = None) -> Dict[str, object]:
+    """候選策略回放要有改善，比的是**對等權基準的超額**而不是絕對 NAV（否則自動套用等於在賭市場 beta）：
+
+    - 兩邊都完成、至少一個成交日、Guard 拒絕日不增加；
+    - 整段：候選對等權基準的超額至少比目前策略高 ``REPLAY_MIN_GAIN``（回放與提案用同一段歷史，持平不算）；
+    - 切成 ``REPLAY_MIN_SEGMENTS`` 段不重疊子區間，候選在每一段都不劣於等權基準（超額 ≥ 0）、也不劣於目前策略；
+      成交日切不出這麼多段、或基準缺任一回放日期的估值，一律不通過（不以單段或絕對 NAV 放行）。
+
+    回放只固定已封存的 Agent 意圖重算配置（``REPLAY_EVIDENCE_GRADE``），是必要條件，不是獲利證明。"""
     reasons: List[str] = []
+    segments: List[Dict[str, object]] = []
     for label, body in (("目前策略", base), ("候選策略", candidate)):
         if body.get("status") != "completed":
             reasons.append("%s 回放未完成（%s）" % (label, body.get("status")))
     if not reasons:
         if int(candidate["metrics"].get("trading_days") or 0) < 1:
             reasons.append("回放沒有完成任何成交日")
-        base_nav = Decimal(str(base["metrics"]["end_nav"]))
-        if Decimal(str(candidate["metrics"]["end_nav"])) < base_nav * (1 + REPLAY_MIN_GAIN):
-            reasons.append("候選策略期末 NAV 沒有比目前策略高出 %s（持平或更低）" % REPLAY_MIN_GAIN)
         rejected = lambda body: sum(1 for day in body["days"] if day.get("decision_status") == "rejected")  # noqa: E731
         if rejected(candidate) > rejected(base):
             reasons.append("候選策略 Guard 拒絕日增加")
-    return {"passed": not reasons, "reasons": reasons}
+        base_points, candidate_points = _nav_points(base), _nav_points(candidate)
+        dates = [day for day, _ in candidate_points]
+        bench = {str(day): Decimal(str(value)) for day, value in (benchmark or {}).items()}
+        if dates != [day for day, _ in base_points] or len(dates) != len(set(dates)):
+            reasons.append("兩次回放的 NAV 日期不對齊，無法比較")
+        elif not replay_segments(dates):
+            reasons.append("回放只有 %d 個成交日，切不出 %d 段不重疊子區間，不以單段結果放行" % (max(len(dates) - 1, 0), REPLAY_MIN_SEGMENTS))
+        elif any(day not in bench or bench[day] <= 0 for day in dates):
+            reasons.append("等權基準（%s）缺少回放日期的估值：%s" % (
+                REPLAY_BENCHMARK_ID, "、".join(day for day in dates if day not in bench or bench[day] <= 0)))
+        else:
+            base_nav, candidate_nav = dict(base_points), dict(candidate_points)
+            overall_base = _excess(base_nav, bench, dates[0], dates[-1])
+            overall_candidate = _excess(candidate_nav, bench, dates[0], dates[-1])
+            if overall_candidate < overall_base + REPLAY_MIN_GAIN:
+                reasons.append("候選策略整段對等權基準的超額 %s 沒有比目前策略 %s 高出 %s（持平或更低）" % (
+                    _rate(overall_candidate), _rate(overall_base), REPLAY_MIN_GAIN))
+            for index, (start, end) in enumerate(replay_segments(dates), start=1):
+                candidate_excess, base_excess = _excess(candidate_nav, bench, start, end), _excess(base_nav, bench, start, end)
+                segments.append({"segment": index, "from": start, "to": end, "candidate_excess": _rate(candidate_excess), "base_excess": _rate(base_excess)})
+                if candidate_excess < 0:
+                    reasons.append("第 %d 段（%s～%s）候選策略劣於等權基準（超額 %s）" % (index, start, end, _rate(candidate_excess)))
+                if candidate_excess < base_excess:
+                    reasons.append("第 %d 段（%s～%s）候選策略劣於目前策略（超額 %s < %s）" % (index, start, end, _rate(candidate_excess), _rate(base_excess)))
+    return {"passed": not reasons, "reasons": reasons, "benchmark_id": REPLAY_BENCHMARK_ID, "segments": segments,
+            "evidence_grade": REPLAY_EVIDENCE_GRADE, "notice": REPLAY_NOTICE}
 
 
 def default_replayer(root: Path, database: Path, decisions: Path, as_of: str) -> Replayer:
@@ -303,12 +361,66 @@ def default_replayer(root: Path, database: Path, decisions: Path, as_of: str) ->
     return replay
 
 
+def equal_weight_benchmark(root: Path, database: Path, as_of: str, dates: Sequence[str]) -> Dict[str, Decimal]:
+    """交易池等權（每日再平衡）基準 NAV，起點 1，只用 ``as_of`` 前抓到的官方收盤價。
+
+    相鄰兩個日期兩天都有官方收盤的股票不足 ``REPLAY_BENCHMARK_MIN_COVERAGE`` 時視為基準不可用，回空字典（閘門不通過），不補值。
+    交易池沿用 ``config/benchmarks.json`` 等權基準的 universe（沒有就用 ``data/official_universe.csv``）。"""
+    from etf_agent.data.benchmarks import BENCHMARK_KIND_EQUAL_WEIGHT, BenchmarkConfigError, load_benchmarks
+    from etf_agent.data.universe import UniverseLoader
+    from etf_agent.virtual_account import VirtualAccountError
+    from etf_agent.virtual_account.daily import OfficialCloseMarket
+
+    if not dates:
+        return {}
+    try:
+        universe_path = "data/official_universe.csv"
+        benchmarks_path = Path(root) / "config" / "benchmarks.json"
+        if benchmarks_path.exists():
+            definition = next((item for item in load_benchmarks(benchmarks_path) if item.kind == BENCHMARK_KIND_EQUAL_WEIGHT), None)
+            if definition is not None and definition.universe_path:
+                universe_path = definition.universe_path
+        symbols = sorted({item.symbol for item in UniverseLoader().load(Path(root) / universe_path)})
+        market = OfficialCloseMarket(Path(database))
+        closes = lambda day: {symbol: Decimal(str(row["close_price"])) for symbol, row in market.quotes(day, as_of).items() if symbol in symbols}  # noqa: E731
+        nav = Decimal(1)
+        series = {str(dates[0]): nav}
+        previous = closes(str(dates[0]))
+        for day in dates[1:]:
+            current = closes(str(day))
+            common = [symbol for symbol in symbols if symbol in previous and symbol in current and previous[symbol] > 0]
+            if not symbols or Decimal(len(common)) < REPLAY_BENCHMARK_MIN_COVERAGE * Decimal(len(symbols)):
+                return {}
+            nav *= sum((current[symbol] / previous[symbol] for symbol in common), Decimal(0)) / Decimal(len(common))
+            series[str(day)] = nav
+            previous = current
+        return series
+    except (BenchmarkConfigError, VirtualAccountError, OSError, ValueError, ArithmeticError, sqlite3.Error):
+        return {}
+
+
+def default_benchmarker(root: Path, database: Path, as_of: str) -> Benchmarker:
+    return lambda dates: equal_weight_benchmark(root, database, as_of, dates)
+
+
+def _record_needs_human(repository: ReflectionRepository, reflection_id: str, blocked: Mapping[str, str], now: datetime) -> None:
+    """加風險／方向不明的提案只封存並標 needs_human（同一份反思只記一次）；歷史裡其他邏輯都依 action 過濾，不受影響。"""
+    if any(entry.get("action") == NEEDS_HUMAN_ACTION and entry.get("reflection_id") == reflection_id for entry in repository.history()):
+        return
+    repository.append_history({"action": NEEDS_HUMAN_ACTION, "reflection_id": reflection_id,
+                               "at": now.astimezone(TAIPEI).isoformat(), "knobs": dict(blocked)})
+
+
 def apply_reflection(
     root: Path, reflection_id: str, replayer: Replayer, now: datetime, repository: Optional[ReflectionRepository] = None,
     write_lock: Optional[Callable[[], object]] = None, clock: Optional[Callable[[], datetime]] = None, enforce_window: bool = False,
+    benchmarker: Optional[Benchmarker] = None, allow_risk_increase: bool = False,
 ) -> Dict[str, object]:
-    """驗證 → 影子回放 → 原子寫入設定檔。全有或全無；失敗不改設定檔，只回傳原因。
+    """驗證 → 風險方向 → 影子回放 → 原子寫入設定檔。全有或全無；失敗不改設定檔，只回傳原因。
 
+    只有全部提案都是降風險方向才會自動套用；含加風險或方向不明的提案時只封存並標 ``needs_human``，
+    要人以 ``allow_risk_increase=True``（CLI ``--allow-risk-increase``）明確放行才繼續。
+    ``benchmarker`` 提供回放日期的等權基準 NAV；沒有提供或基準不可用時閘門不通過（fail-closed）。
     回放與 Agent 可能很久，所以鎖只在最後寫入時取（避免佔住 artifacts/daily/.lock 讓 21:00 決策被略過）；
     取鎖後重讀樣板確認沒被改動，``enforce_window`` 時再確認不在決策窗口內。"""
     repository = repository or ReflectionRepository(root)
@@ -319,6 +431,13 @@ def apply_reflection(
     if reflection["status"] != STATUS_PROPOSED:
         return {"applied": False, "reason": "沒有提案"}
     candidate = apply_proposals(template, reflection["proposals"], rules)  # type: ignore[arg-type]
+    blocked = non_risk_reducing(reflection["proposals"])  # type: ignore[arg-type]
+    if blocked and not allow_risk_increase:
+        _record_needs_human(repository, reflection_id, blocked, now)
+        return {"applied": False, "needs_human": True, "risk_direction": blocked,
+                "reason": "提案含加風險或方向不明的旋鈕（%s），不自動套用；已封存並標 needs_human，請看週報後用 "
+                          "cli/strategy_reflection.py apply-pending --allow-risk-increase %s（或 apply --reflection-id %s --allow-risk-increase）明確放行"
+                          % ("、".join("%s=%s" % item for item in sorted(blocked.items())), reflection_id, reflection_id)}
     today = now.astimezone(TAIPEI)
     if _applied_today(history, today):
         return {"applied": False, "reason": "今天已套用過一次，明天再調"}
@@ -329,9 +448,10 @@ def apply_reflection(
     atomic_write_json(candidate_path, candidate)  # 回放用副本保留原 available_at，live 檔才換新的
     base_replay = replayer(base_path, "%s-base" % reflection_id)
     candidate_replay = replayer(candidate_path, "%s-candidate" % reflection_id)
-    gate = replay_gate(base_replay, candidate_replay)
+    benchmark = benchmarker([day for day, _ in _nav_points(candidate_replay)]) if benchmarker is not None else None
+    gate = replay_gate(base_replay, candidate_replay, benchmark)
     if not gate["passed"]:
-        return {"applied": False, "reason": "影子回放未通過：" + "；".join(gate["reasons"])}
+        return {"applied": False, "reason": "影子回放未通過：" + "；".join(gate["reasons"]), "replay_gate": gate}
     try:
         with (write_lock or _no_lock)():
             moment = (clock or (lambda: now))()
@@ -367,6 +487,9 @@ def apply_reflection(
                 # 每顆旋鈕這次的方向（from→to）：試用被還原後，提案驗證用它禁止再往同方向調。
                 "changes": {item["knob"]: {"from": item["current"], "to": item["proposed"]} for item in reflection["proposals"]},  # type: ignore[union-attr]
                 "trial": {"verification": trial_verification([item["knob"] for item in reflection["proposals"]])},  # type: ignore[union-attr]
+                # 含加風險方向而由人明確放行時留下稽核痕跡；全部降風險的自動套用沒有這個欄位。
+                **({"risk_increase_allowed_by_human": dict(blocked)} if blocked else {}),
+                "replay_gate": {"benchmark_id": gate["benchmark_id"], "segments": gate["segments"], "evidence_grade": gate["evidence_grade"]},
             })
             try:
                 atomic_write_json(root / POLICY_PATH, live)
@@ -376,18 +499,22 @@ def apply_reflection(
                 raise
     except BlockingIOError:
         return {"applied": False, "reason": "每日決策進行中（artifacts/daily/.lock 被佔用），反思已封存，之後可用 apply 再套用"}
-    return {"applied": True, "policy_id": live["policy_id"], "knobs": [item["knob"] for item in reflection["proposals"]]}  # type: ignore[union-attr]
+    return {"applied": True, "policy_id": live["policy_id"], "knobs": [item["knob"] for item in reflection["proposals"]],  # type: ignore[union-attr]
+            **({"risk_increase_allowed_by_human": dict(blocked)} if blocked else {})}
 
 
 # ------------------------------------------------------------------ 開關與試用期
 def load_switch(root: Path) -> Dict[str, bool]:
-    """``config/strategy_reflection.json``：{"enabled": true, "auto_apply": true}。缺檔視為全開；格式錯誤 fail-closed 全關。"""
+    """``config/strategy_reflection.json``：{"enabled": true, "auto_apply": false}。
+
+    缺檔視為「啟用但人工模式」；``auto_apply`` 缺欄位一律視為 false（自動套用必須明寫 true 才開）；
+    ``enabled`` 缺欄位或任一欄位不是布林值 fail-closed 全關。"""
     path = Path(root) / SWITCH_PATH
     if not path.exists():
-        return {"enabled": True, "auto_apply": True}
+        return {"enabled": True, "auto_apply": False}
     try:
         data = _read_json(path, "反思開關")
-        switch = {"enabled": data["enabled"], "auto_apply": data["auto_apply"]}
+        switch = {"enabled": data["enabled"], "auto_apply": data.get("auto_apply", False)}
     except (ReflectionError, KeyError):
         return {"enabled": False, "auto_apply": False}
     if not all(isinstance(value, bool) for value in switch.values()):
@@ -608,11 +735,16 @@ def last_reflection_at(repository: ReflectionRepository) -> Optional[datetime]:
 def apply_pending(
     root: Path, database: Path, decisions: Path, now: datetime, replayer: Optional[Replayer] = None,
     write_lock: Optional[Callable[[], object]] = None, clock: Optional[Callable[[], datetime]] = None,
-    excess: Optional[Mapping[str, Decimal]] = None,
+    excess: Optional[Mapping[str, Decimal]] = None, benchmarker: Optional[Benchmarker] = None,
+    allow_risk_increase_for: Optional[str] = None,
 ) -> Dict[str, object]:
-    """週六早上套用本週五封存、尚未套用的提案。仍走 ``apply_reflection`` 的驗證、影子回放、取鎖與時段保護。"""
+    """週六早上套用本週五封存、尚未套用的提案。仍走 ``apply_reflection`` 的驗證、風險方向、影子回放、取鎖與時段保護。
+
+    自動只套用降風險方向；``allow_risk_increase_for`` 是人明確指定的 reflection id（CLI ``--allow-risk-increase``），
+    只有它等於最近一份待套用的反思時才放行加風險方向，且這個人工指令在 ``auto_apply=false`` 的人工模式也有效（只套旋鈕、不套教訓）。"""
     repository = ReflectionRepository(root)
     switch = load_switch(root)
+    human_override = allow_risk_increase_for is not None
     if not switch["enabled"]:
         return {"applied": False, "reason": "config/strategy_reflection.json 的 enabled 為 false，反思整體停用"}
     # 先結算上一次套用的試用期（明確變差才還原）；結案前不套用新提案。
@@ -623,17 +755,18 @@ def apply_pending(
         return {"applied": False, "reason": "試用觀察期尚未結案（%s），本週不套用新提案" % trial["trial"], **trial}
     if trial is not None and trial.get("auto_apply_disabled"):
         switch = load_switch(root)  # 結算剛因連續還原關閉自動套用：以最新開關為準，本次不再套用
-    if not switch["auto_apply"]:
+    if not switch["auto_apply"] and not human_override:
         return {"applied": False, "reason": "config/strategy_reflection.json 的 auto_apply 為 false（人工模式）；提案已封存，請看週報後用 apply 手動套用",
                 **({"trial": trial} if trial else {})}
-    result = _apply_pending_knobs(root, database, decisions, now, repository, replayer, write_lock, clock)
-    # 一次只有一件變更在試用：旋鈕這週已套用就不再套教訓（教訓留到下週，過期就作廢）。
-    if not result.get("applied"):
+    result = _apply_pending_knobs(root, database, decisions, now, repository, replayer, write_lock, clock, benchmarker, allow_risk_increase_for)
+    # 一次只有一件變更在試用：旋鈕這週已套用就不再套教訓（教訓留到下週，過期就作廢）；人工模式下的人工指令只套旋鈕。
+    if not result.get("applied") and switch["auto_apply"]:
         result["lessons"] = _apply_pending_lessons(root, now, repository, write_lock, clock)
     return {**result, **({"trial": trial} if trial else {})}
 
 
-def _apply_pending_knobs(root, database, decisions, now, repository, replayer, write_lock, clock) -> Dict[str, object]:
+def _apply_pending_knobs(root, database, decisions, now, repository, replayer, write_lock, clock,
+                         benchmarker=None, allow_risk_increase_for=None) -> Dict[str, object]:
     applied = {str(entry.get("reflection_id")) for entry in repository.history() if entry.get("action") == "apply"}
     ids = reflection_ids(repository)
     if not ids:
@@ -647,8 +780,14 @@ def _apply_pending_knobs(root, database, decisions, now, repository, replayer, w
     moment = last_reflection_at(repository)
     if moment is None or now - moment > timedelta(days=PENDING_MAX_AGE_DAYS):
         return {"applied": False, "reason": "最近一份反思超過 %d 天，已過期，等下一週" % PENDING_MAX_AGE_DAYS, "reflection_id": latest}
-    result = apply_reflection(root, latest, replayer or default_replayer(root, database, decisions, str(brief["as_of"])), now,
-                              repository, write_lock=write_lock, clock=clock or (lambda: datetime.now(timezone.utc)), enforce_window=True)
+    if allow_risk_increase_for is not None and allow_risk_increase_for != latest:
+        return {"applied": False, "reason": "--allow-risk-increase 指定的 %s 不是最近一份待套用的反思（%s），不套用" % (allow_risk_increase_for, latest),
+                "reflection_id": latest}
+    as_of = str(brief["as_of"])
+    result = apply_reflection(root, latest, replayer or default_replayer(root, database, decisions, as_of), now,
+                              repository, write_lock=write_lock, clock=clock or (lambda: datetime.now(timezone.utc)), enforce_window=True,
+                              benchmarker=benchmarker or default_benchmarker(root, database, as_of),
+                              allow_risk_increase=allow_risk_increase_for == latest)
     return {**result, "reflection_id": latest}
 
 
@@ -741,10 +880,10 @@ def rollback_lessons(root: Path, now: datetime, repository: Optional[ReflectionR
 def run_auto(
     root: Path, database: Path, decisions: Path, runner: Optional[AgentRunner], now: datetime,
     replayer: Optional[Replayer] = None, apply: bool = True, write_lock: Optional[Callable[[], object]] = None,
-    clock: Optional[Callable[[], datetime]] = None, force: bool = False,
+    clock: Optional[Callable[[], datetime]] = None, force: bool = False, benchmarker: Optional[Benchmarker] = None,
 ) -> Dict[str, object]:
     """每週自動流程。樣本不足時完全不呼叫 Agent（零用量），但每週都會產生程式算好的反思報告；
-    提案不過驗證或回放就整份不套用。距上一份反思不到 6 天時略過（``force`` 手動補跑）。"""
+    提案不過驗證或回放就整份不套用，加風險方向的提案只封存標 needs_human。距上一份反思不到 6 天時略過（``force`` 手動補跑）。"""
     repository = ReflectionRepository(root)
     previous = last_reflection_at(repository)
     if not force and previous is not None and now - previous < timedelta(days=MIN_INTERVAL_DAYS):
@@ -810,7 +949,8 @@ def run_auto(
     if apply and switch["auto_apply"] and reflection["status"] == STATUS_PROPOSED:
         result["apply"] = apply_reflection(root, str(reflection["reflection_id"]),
                                            replayer or default_replayer(root, database, decisions, as_of), now, repository,
-                                           write_lock=write_lock, clock=clock or (lambda: datetime.now(timezone.utc)), enforce_window=True)
+                                           write_lock=write_lock, clock=clock or (lambda: datetime.now(timezone.utc)), enforce_window=True,
+                                           benchmarker=benchmarker or default_benchmarker(root, database, as_of))
     notes = [] if apply and switch["auto_apply"] else ["本次只封存、不套用；週六早上由 apply-pending 套用，或用 apply 手動套用。"]
     if not switch["auto_apply"]:
         notes.append("自動套用已關閉（人工模式）：提案只封存，請看完報告後用 apply 手動套用。")

@@ -47,6 +47,8 @@
 
 `finding_id` 在整份報告唯一，建議 `fund-<代號>-<序號>`。
 
+決策輸入帶 `evidence_policy = typed_evidence_v1`（主控提示會說明）時，每項 finding 另填 `finding_kind`，表示依據的證據種類：`financial`（財務指標、現金流、`financial_facts`、`company_profiles` 的證據）或 `revenue`（`monthly_revenue` 的證據）。一項 finding 只宣告一種、只引用該種類的證據；同時講財報與月營收時拆成兩項。程式核對種類與證據對映，不符即退回；修法是改引用相符的證據、拆項，或把該檔改為 `unknown` 並說明 `data_gaps`，不要為了通過驗證補上沒有依據的發現。
+
 
 ## 對外說明
 

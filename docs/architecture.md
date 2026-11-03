@@ -40,7 +40,31 @@
 
 強制換股由 `position_sizing.rotation.forced_swap`（目前 `v1`，版本閘門，只由人設定）開啟：持股滿檔又沒人出場時，信心達門檻（目前 `high`）的未持有新股，由程式換掉交易 Agent 標為 hold、且每週論點檢視判定「理由被推翻（broken）」的持股（名單由每日 pipeline 綁進 Policy 的 `forced_swap.broken_symbols`＋`verdicts_ref`，事後重建不讀結論檔；沒有名單就不換）（每次最多 2 檔，賣單意圖標 `exit`、旗標 `RISK_FORCED_SWAP`）。沒有此欄位的舊 run 維持原行為。
 
-現金緩衝下限由 `position_sizing.cash_buffer_floor`（目前 `v1`，版本閘門，只由人設定）開啟：現金已低於姿態緩衝時，緩衝只擋買單動用原有現金，不擋用本次賣出收入買的替補（下限取 `min(緩衝, 開始現金)`），讓出場釋出的名額不會因現金湊不到緩衝而流失。沒有此欄位的舊 Decision run 維持緩衝一律生效的原重建行為。防守姿態仍不會主動賣股降曝險，那是另一個待決定的設計。
+現金緩衝下限由 `position_sizing.cash_buffer_floor`（目前 `v1`，版本閘門，只由人設定）開啟：現金已低於姿態緩衝時，緩衝只擋買單動用原有現金，不擋用本次賣出收入買的替補（下限取 `min(緩衝, 開始現金)`），讓出場釋出的名額不會因現金湊不到緩衝而流失。沒有此欄位的舊 Decision run 維持緩衝一律生效的原重建行為。防守姿態主動降曝險由另一個閘門 `drawdown_derisk` 開啟（見下方「2026-11-03 晚間的風控閘門」），減碼收入不受 `cash_buffer_floor` 放行、不拿去買替補。
+
+強制換股自 `forced_swap.confirmation: "v1"`（版本閘門，只由人設定）起要有本次證據：被換出的持股除了在 `broken_symbols` 名單內，還必須有交易 Agent 本次在 `adopted_claim_ids` 採納的該股空頭 claim（`bear-` 開頭）；沒有即不換、記 `RISK_FORCED_SWAP_UNCONFIRMED`（只記錄原因，不擋決策）。同閘門內換出數不超過「出場後持股數 − `min_positions`」與現金（含本次賣出收入，依 `reuse_sell_proceeds`）能支應一張新股的檔數；被換出者若替補因現金／換手被取消而使持股數不足或換手超限，可被 `RISK_MIN_POSITIONS`／`RISK_TURNOVER` 留住。配置程式只讀交易決策，拿不到多空 debate，所以「空頭 strength ≥ moderate」這一條沒有實作（需 Finalizer 另綁定與重建）。旗標文案改為與實作一致（依代號換出，不是 20 日報酬）；沒有 `confirmation` 的舊 Policy 文案與行為逐字不變。
+
+### 交割口徑與 2026-11-03 的執行面閘門
+
+主辦方 DataPack 規格 §2.4 寫「交割以淨額計，同日賣出款也計入結算」，比賽辦法以全數成交、當日結算現金為負才罰，帳本 `account_snapshot.cash`（含未交割）也已與 DataPack 現金對帳吻合，所以 `config/decision_rules.json` 自 `decision-rules-2026-11-03` 起 `reuse_sell_proceeds: true`（之前為 `false`，使 `cash_buffer_floor` 形同死碼）。rules 會封進 Decision run 的 `decision_input.json`（`config_sha256` 由 `DecisionInputBuilder` 計算），Finalizer、Validator、虛擬帳戶結算與評測回放都只讀封存的那份，不讀 live 檔，所以舊 run 照舊以 `false` 重建；live 檔的讀者只有策略反思的旋鈕範圍、基準比較與儀表板的費稅設定，不影響重建。配置用的現金仍以 `settled_cash` 加本次賣出收入為底，不先用前幾日未交割賣款（較主辦方保守）。
+
+同日另加四個版本閘門（都在 `position_sizing`，只由人設定、策略反思禁區；沒有該欄位的舊 Policy／舊 run 逐位元維持原重建行為，`effective_policy` 也只在有欄位時才多出對應鍵）：
+
+- `cash_fit_order: "v1"`（參數 `cash_fit_min_fill_ratio`，預設 `0.5`）：現金不足時買單改依（信心、`rank_by_symbol` 名次、代號）順序取得現金，不再依代號；未持有新股的殘量低於目標股數 × 比例就整筆取消、留 `RISK_CASH_FIT` 旗標，現金給下一檔，不留 1～4 張的塵埃持股（11/03 的 6239.TW 只買到 4,000 股＝0.10% NAV 卻占一個名額）；已持有的 add 不受影響，只減少增量（維持 `CASH_BUFFER`）。輸出的訂單與旗標仍依（賣先買後、代號）排列。
+- `cash_ceiling_fix: "v1"`：配置後 base 情境期末現金比例達 `cash_weight_ceiling`（25%）時，程式依 ATR14 由低到高（同值依代號）留住交易 Agent 標為 `exit` 的持股續抱（`RISK_CASH_CEILING`，`forced_exit` 不留、不可交易者不動），一檔一檔加到低於上限或沒有可留的 exit；與 `RISK_MIN_POSITIONS` 共用同一個留住集合、同一個迴圈，每輪至少多留一檔所以必定收斂。沒有可留的 exit 時照舊由 Guard `CASH_WEIGHT` 拒絕。
+- `stock_limit_headroom: "v1"`：比賽規則「因加碼導致超限當日即警告，價格波動超限才有 5 日寬限」，所以當日有 buy／add 的股票單股上限封頂改留 3%（×0.97，2330 為 25%×0.97），只續抱的仍 ×0.995；`_fit_stock_weights` 每輪重算係數，買單被減光後該股回到 0.995，不會因價格漂移被多賣。D-Plan 的 `_validate_official_posture` 用的是 10%／25% 原上限，不需配合。
+- `buy_gap_reserve: "v1"`（參數 `buy_gap_reserve_rate`，預設 `0.03`）：決策用前日收盤、成交用當日均價，買單累計總額 × 比例另計入現金需求（`現金 − 買單 − 累計買單×比例 ≥ 緩衝`），避免跳空開高讓主辦方以資金不足整批作廢。
+
+虛擬帳本另有 `insufficient_funds_policy: "void_batch"`（同屬 `position_sizing`，由結算時封存的 policy 讀出）：模擬成交時任一買單湊不到現金就整批作廢（含賣單），與主辦方相同；沒有此欄位的舊 run 維持逐張減少。
+
+### 2026-11-03 晚間的風控閘門
+
+同日晚間再加四個版本閘門（都在 `position_sizing`，只由人設定、策略反思禁區；沒有該欄位的舊 Policy／舊 run 逐位元維持原重建行為，6 份封存 run 10/27～11/03 重建驗證全數通過）與兩個數字：
+
+- **產業上限 0.6**：`config/decision_rules.json` 的 `max_sector_weight` 由 1（關閉）改為 `0.6`（版本 `decision-rules-2026-11-03b`，`available_at` 2026-11-03 20:30，早於當晚 21:00 的 cutoff；舊 run 讀封存的 `decision-rules-2026-10-25`）。產業上限不是比賽硬規則、是本隊自設的風控，所以 `sector_fit: "v1"` 啟用時 `_fit_sector_weights` 只按整張減少當日 buy／add 的增量（同產業先減低信心、情境市值大者），**不賣既有持股**；減光買單仍超限的產業（價格漂移造成）由 Guard 的 `SECTOR_WEIGHT` 與三個情境以「既有已超限且本次沒有買進該產業」容忍，details 記為 `carried`；有買進的產業仍是硬性違規。沒有閘門的舊路徑維持「先減買單、再賣持股」並由 Guard 嚴格判定。目前持股最大產業約 26%，0.6 不會立即觸發。
+- **換手上限 0.3**：`config/decision_policy.json` 的 `max_turnover_rate` 由 1 改為 `0.3`（換手 = 買賣 gross 合計 ÷ 決策時 NAV，Guard 的 `TURNOVER` 同口徑）。`turnover_fit: "v1"` 啟用時 `_fit_cash` 不再逐張擋換手，改由配置最後一步 `_fit_turnover` 依（信心低→高、ATR14 高→低、代號）縮減買單：已持有的 add 只減增量、未持有的新股殘量低於目標 × `cash_fit_min_fill_ratio` 就整筆取消（換股數減少），每筆記 `TURNOVER_LIMIT`；買單減光仍超過（賣單本身超過）時由 `_run_min_positions` 依 ATR14 由低到高留住 exit 持股（`RISK_TURNOVER`），不讓 Guard 整份拒絕。風險 Agent 的 `reduce_turnover_limit` 修正照樣走同一條縮減。舊路徑依取得現金的順序逐張擋換手、超過即由 Guard 拒絕，逐位不變。
+- **出場冷卻** `reentry_cooldown: {"version": "v1", "days": 3}`：每日 pipeline 以 `decision/reentry_cooldown.py::bind_reentry_cooldown` 從決策庫找同帳戶、`approved`、目標交易時段早於本次且相隔不超過 `days` 個日曆天、cutoff 更早的 run，取其最終 `decision.orders` 中 `side=sell` 且訂單意圖 `exit`／`forced_exit`（含程式強制換股與風控減至零）的股票，綁成 `blocked_symbols`＋`source_run_ids`；配置時未持有的買進候選在名單內就不建買單（`RISK_REENTRY_COOLDOWN`，已持有的 add 不受影響）。這是決策層的出場紀錄（主辦方作廢整批時該股仍在冷卻內，屬保守方向）；事後重建只讀 Policy、不重掃決策庫（與 `broken_symbols` 同做法）。`prior_decision_context` 只涵蓋前一個 run 的持股、沒有出場資訊，所以不用它。沒有目標時段或找不到決策庫時綁空名單，不是錯誤。
+- **回撤解除門檻與防守減碼** `drawdown_derisk: {"version": "v1", "max_derisk_fraction": "0.25"}`，與 `drawdown_control` 的 `release_neutral_below: "0.03"`、`release_defensive_below: "0.07"` 成對（只有一邊即拒絕）：(a) 姿態下限改由 `stance_floor_path` 沿帳本 NAV 歷史逐筆重放狀態機——達 10% 進 defensive、達 5% 至少 neutral；在 defensive 時回撤要低於 7% 才降回 neutral、在 neutral 時要低於 3% 才解除，避免在 5% 附近日日切換；`DecisionPolicyValidator` 有帳本歷史時整段重放比對（Finalizer 對帶 `history_ref` 的 run 一律讀帳本），沒有歷史時只能確認下限不低於無記憶門檻。(b) 現金姿態為 `defensive` 且交易 Agent 的賣單算進現金後仍低於姿態緩衝（20% NAV）時，程式依（ATR14 高→低、信心低→高、代號）把持股按整張減碼到緩衝，一次最多賣 NAV × `max_derisk_fraction`，每檔記 `RISK_DRAWDOWN`、訂單意圖標 trim／exit，不動不可交易、被留住的 exit 與交易 Agent 已標 exit／trim 的持股，持股數不低於 `min_positions`（必要時留一張）；減碼收入不受 `cash_buffer_floor` 放行、不拿去買替補。(c) 配置預算 ≤ 0（現金已低於姿態緩衝）時候選的旗標由誤導的 `LOT_SIZE` 改為 `CASH_BUFFER`。沒有閘門的舊 Policy 維持無記憶門檻與「防守只停買、不降曝險」。
 
 啟用 `position_sizing.rotation` 時，名額改由程式全域配對（須與 `held_add_priority` 同時存在）：
 
@@ -72,15 +96,27 @@
 
 | 文件寫的 | 程式提供 | 交給誰 |
 | --- | --- | --- |
-| 基本面：營收、獲利、負債、現金流與期間比較 | 財務比率、月營收、`cash_flow`（營業現金流、資本支出、自由現金流、營業現金流對稅前淨利比率） | 基本面分析師 |
+| 基本面：營收、獲利、負債、現金流與期間比較 | 財務比率（逐檔以該股最新可得的一季計算，見下方「基本面期別」）、月營收、`cash_flow`（營業現金流、資本支出、自由現金流、營業現金流對稅前淨利比率） | 基本面分析師 |
 | 技術：5／20／60 日變化、均線、ATR 與下行波動 | `return_5d／20d／60d`、`ma20`、`ma60`、是否站上均線、`atr_14_pct`、`downside_volatility_20d` | 技術分析師 |
 | 公司事件：事件影響、反證與尚待確認事項 | 重大訊息原文、同快照財報，以及截止時已核准的 FinMind 個股新聞標題（白名單媒體、截止前最後一批；新聞標 `high` 須在 `corroborated_by` 指出重大訊息或另一家媒體的佐證）；Agent 逐則輸出 `summary`、`counter_evidence`、`pending_confirmations` | 事件分析師 → 多空研究員 |
 | 市場背景與風險：整體市場情緒、集中度、流動性與壓力情境 | `market_sentiment`、產業曝險、`liquidity_exposure`、壓力情境、峰值回撤 | 風險 Agent |
 
+### 基本面期別
+
+基本面比率由 `decision/analysts.py::compute_fundamental_metrics` 以 `fundamentals` 的 `FundamentalDataBundle`／`FundamentalMetrics` 契約確定性計算，期別的選法由決策輸入的版本閘門決定：
+
+- **新行為**（`DecisionInputBundle.fundamental_period_policy = "per_symbol_latest_available_v1"`，`DecisionInputBuilder` 建新 bundle 時預設寫入；`DecisionInputValidator` 只接受已知值）：`select_fundamental_periods` 逐檔取該股在 Snapshot（即 cutoff 前可得）中損益表與資產負債表都齊的最新一季（`symbol_latest_complete`）；沒有任一季兩表齊全時取任一報表的最新季（`symbol_latest_any`，缺的報表照常標 `CURRENT_STATEMENT_MISSING`）；完全沒有財報的股票沿用全池最大期別（`pool_max_fallback`，結果必為 unavailable，只為覆蓋全部交易池）。比較期一律同季去年。程式依期別分組，每組各建一份 `FundamentalDataBundle` 並計算，再合併成 `fundamental_metrics`（schema 1.1：`period_policy`、`period_by_symbol`、`period_groups` 記錄每檔實際期別與每組 bundle／metrics 雜湊，`items` 逐檔）；`validate_fundamental_metrics` 以同一份決策輸入整份重算比對。基本面 brief 每檔多附 `financial_period`，告訴分析師該檔用的是自己最新可得的一季。
+- **舊行為**（bundle 沒有此欄位）：全快照 `max(period)` 當所有股票的當期，輸出逐位元不變，舊 run 重建不受影響。2026-11-03 實測顯示舊做法在少數公司提早公布 Q3 時，其餘 132／150 檔都被標 `CURRENT_STATEMENT_MISSING`。
+- 不以 `data/financial.py::latest_due_quarter` 的法定公告期限推測（那是財報收集的驗收分母），而以逐股實際可得性為準。
+
+### 快照交易日退回
+
+`SnapshotRepository.latest_trade_date_coverage` 選快照交易日：全池每檔都有定案行情的最新日；最新日 D 有任一檔缺行情時整池退回前一個齊全日 D−1（與原 `find_latest_trade_date` 相同），並由 `SnapshotQualityPolicy` 在 `quality_flags` 留下資訊性旗標 `PRICE_DATE_FALLBACK_<D>_MISSING_<代號,…>`（超過 20 檔只列前 20 個並註明餘數）。資訊性旗標不影響 `usable`；其餘旗標（`MISSING_PRICE_DATA`、`INCOMPLETE_PRICE_COVERAGE_*`、交易池驗證）仍是阻擋性。沒有改成「以 D 為最新日、缺檔逐檔標 `MISSING_PRICE_<代號>`」，因為 `DecisionInputValidator` 要求 `universe_size` 等於最新行情檔數，`SnapshotQualityPolicy` 也會標 `INCOMPLETE_PRICE_COVERAGE` 使快照不可用：單檔缺價會讓整份決策 fail-closed，而不是只擋該檔；退回 D−1 是較保守的降級。舊 Snapshot 的 `quality_flags`／`usable` 都是封存值，不重算。
+
 ### 回撤控制
 
 - 程式沿帳本 `parent_run_id` 往回取每個狀態的 NAV，峰值回撤 = (峰值 − 目前 NAV) ÷ 峰值。
-- Policy 的 `drawdown_control` 設門檻（目前回撤 ≥ 5% 時姿態至少 `neutral`、≥ 10% 時至少 `defensive`），觀察值與下限綁進 Policy，由 `DecisionPolicyValidator` 重算。
+- Policy 的 `drawdown_control` 設門檻（目前回撤 ≥ 5% 時姿態至少 `neutral`、≥ 10% 時至少 `defensive`），觀察值與下限綁進 Policy，由 `DecisionPolicyValidator` 重算。自 2026-11-03 起另有解除門檻 `release_neutral_below` 3%／`release_defensive_below` 7%（與 `position_sizing.drawdown_derisk` 閘門成對），下限沿帳本歷史重放狀態機，見上方「2026-11-03 晚間的風控閘門」。
 - 風險 Agent 給的姿態比下限積極時，程式退回重答；Agent 不計算回撤，也不能放寬。
 - 綁定時若歷史列都有 `run_id`（帳本鏈），另存 `history_ref`（`head_run_id`、`length`、歷史 `run_id／as_of／nav` 序列的 canonical sha256）。Validator 在有帳本歷史可讀時（每日 pipeline 綁定後的檢查，`nav_history` 止於 `head_run_id`，可用 `VirtualAccountRepository.nav_history(head_run_id)` 讀）重算參照、`peak_nav`、`peak_as_of`、`history_length` 並逐項比對，把峰值竄改成目前 NAV 會被拒絕；提供歷史卻缺 `history_ref` 同樣拒絕。`history_ref` 屬版本閘門，策略反思只能調兩個門檻、不能動它。
 - 事後重建已接入：`DecisionFinalizer`、`DecisionResultValidator` 接受選用的 `nav_history_provider(head_run_id)`；policy 含 `history_ref` 時以 `head_run_id` 讀帳本歷史（`ledger_nav_history_provider(帳本根目錄, bundle)`，依 `account_snapshot.account_id` 開帳本、呼叫 `nav_history(head_run_id)`）重算參照與峰值，帳本讀不到、head 不存在、歷史不符，或呼叫端沒有提供帳本來源，一律 fail-closed 拒絕。已接上的呼叫端：`cli/portfolio_decision.py`（`--ledger-repository`）、每日 pipeline（用綁定 policy 的同一份 `nav_history`）、D-Plan 匯出（`DPlanExporter.build`）、`decision_delivery`（`--ledger-repository`）與虛擬帳戶結算。沒有 `history_ref` 的舊 Policy／舊 Decision run 與沒有 `drawdown_control` 的舊 Policy 不讀帳本、照原樣重建驗證。
@@ -107,6 +143,8 @@
 
 帳本若有前次已封存的決策，必須先用該決策指定成交日的 TWSE／TPEx 官方價量結算，才能建立新的「決策前帳戶快照」。
 
+主辦方結果是地面真相：`DailyAccountRunner` 給了 `datapack_dir` 與 `team_id` 時，結算前會在資料夾找「`as_of_date` 等於成交日」的本隊 DataPack（交易日 T 的資料包在 T−1 結算後產生，其 `prev_day_orders` 就是 T−1 委託的結果；同日多份取 `generated_at` 最新者），`outcome` 為 `voided` 時該決策結算為無成交（每筆訂單列入 `unfilled_orders`、原因 `HOST_VOIDED`，持股現金只做交割與估值），`executed`／`unknown`／`none` 照模擬成交；`host_outcome`（含 DataPack 雜湊、路徑、`as_of_date`）寫進 close 狀態的 `provenance` 與 `transition`，`as_of_date` 與成交日不符或欄位不合規格一律拒絕。找不到資料包或沒給參數時維持純模擬成交，狀態形狀不變。`cli/virtual_account.py daily` 與 `./start.sh daily` 目前尚未把 `var/datapack` 與 `config/competition_profile.json` 的 `team_id` 傳給 runner，所以每日流程還沒真的用到這條路徑（見 `docs/status.md`）。
+
 歷史上櫃價量有缺口時，可用 `scripts/repair_pending_tpex_close.py` 從 TPEx 指定日期的原頁補抓：
 
 - 抓取時間不回填成歷史可得時間。
@@ -123,6 +161,7 @@
 - 同日沒有官方價時，`execution_*` 為空。配置、風控與 D-Plan 退回 `analysis_close_price`。
 - 重放過去日期時，退回的價格含事後除權息調整，這是已知限制。
 - 舊封存沒有此欄位，仍可重建驗證。
+- Yahoo 來源沒有成交金額與成交筆數：`daily_prices` 的 `trade_value`／`transactions` 為 NOT NULL，只能以 0 佔位，Snapshot 的 `latest_prices` 對 `YAHOO_FINANCE` 列輸出 `null`；官方列維持整數。帳本結算與校準只讀官方列的 `trade_value`，不受影響。
 
 ## 平行執行與耗時
 
@@ -195,6 +234,9 @@
 - `RISK_NOT_TRADABLE`：交易狀態包中非 `allowed` 的標的，程式不建立買單、續抱不賣，避免 Guard 的 `TRADABLE` 否決整份決策。
 - `RISK_MIN_POSITIONS`：配置後持股低於 `min_positions` 時，程式依 ATR14 由低到高留住標為 `exit` 的持股（`forced_exit` 不留），避免 `POSITION_COUNT` 否決整份決策而當日無單可交。
 - `RISK_ACTIVE_SHARE`：配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 15% 時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次，不賣既有持股，避免 `ACTIVE_SHARE_ALL` 否決整份決策。
+- `RISK_CASH_CEILING`（`cash_ceiling_fix` 啟用時）：配置後現金比例達競賽上限，程式依 ATR14 由低到高留住標為 `exit` 的持股續抱直到低於上限，避免 `CASH_WEIGHT` 否決整份決策。
+- `RISK_CASH_FIT`（`cash_fit_order` 啟用時）：現金不足使未持有新股只買得到低於目標一定比例的零頭，程式整筆取消、不留塵埃持股。
+- `RISK_SECTOR_WEIGHT`（`sector_fit` 啟用時只減買單增量、不賣持股，Guard 容忍既有已超限且未買進的產業）、`TURNOVER_LIMIT`／`RISK_TURNOVER`（`turnover_fit`：依信心低→高、ATR 高→低縮減買單，賣單本身超過時留住 exit）、`RISK_REENTRY_COOLDOWN`（出場後 N 日不再買）、`RISK_DRAWDOWN`（防守姿態減碼到姿態緩衝）、`RISK_FORCED_SWAP_UNCONFIRMED`（論點被推翻但沒有本次空頭 claim，不換）：見「2026-11-03 晚間的風控閘門」。
 - 風險 Agent 不手寫股數或權重。
 - 交易受限、整張／現金／換手等限制無法同時滿足時，CompetitionGuard 仍然拒絕。
 
@@ -202,11 +244,23 @@
 
 | 版本 | 內容 |
 | --- | --- |
-| 2.2（舊封存，目前為 2.5，見上方說明） | 三份分析報告、現金姿態，以及交易 Agent 看到的前次決策背景 `prior_decision_context`（available 或 unavailable 都要存） |
+| 2.6（目前） | 2.5 再加程式計算的基本面指標 `fundamental_metrics`（基本面分析師看到的那份；沒有財報時為 `null`）。bundle 有 `fundamental_period_policy` 時必為 2.6，Finalizer 以 `validate_fundamental_metrics` 用同一份決策輸入整份重算比對（逐檔期別、數值、分組雜湊），改寫、缺少或降回 2.5 都拒絕；沒有該閘門的舊 bundle／舊 run 不重算、維持 2.5 以前 |
+| 2.5（舊封存） | 2.4 再加交易 Agent 第二輪的入選排序 `selection_ranking` |
+| 2.2（舊封存，見上方說明） | 三份分析報告、現金姿態，以及交易 Agent 看到的前次決策背景 `prior_decision_context`（available 或 unavailable 都要存） |
 | 2.1（舊封存） | 三份分析報告與現金姿態 |
 | 2.0（舊封存） | 依原始分析報告與事件研究輸入重建 |
 
 2.1／2.2 的事件報告可為 2.2 或 2.3，由決策資料包決定：資料包含 `company_news_input` 時必須是 2.3，否則是 2.2；沒有新增 `team_inputs` 版本。
+
+### 證據種類與引用內容（`evidence_policy = typed_evidence_v1`）
+
+2026-11-03 起 `DecisionInputBuilder` 建新 bundle 時預設寫入 `evidence_policy: "typed_evidence_v1"`（版本閘門，`DecisionInputValidator` 只接受已知值；傳 `None` 不寫欄位）。沒有此欄位的舊 bundle／舊 run 維持「引用存在且屬該股」的原驗證，逐位元重建不變。閘門開啟時：
+
+- **證據種類由程式判定**（`DecisionContext.evidence_kinds`，Agent 不填）：`latest_prices` 為 `price`；文件依 `document_type` 為 `financial`（財報、已核對現金流）、`profile`（公司基本資料）、`revenue`（月營收）、`material_event`（重大訊息）；個股新聞與情緒資料包的來源證據為 `news`；交易狀態記錄為 `status`；帳戶快照為 `account`；隔夜市場成分、全市場情緒（新聞 findings 或恐懼貪婪成分）與程式市場狀態編號 `market-regime:pool-breadth` 為 `market`（沒有 symbol，只在閘門下註冊）。
+- **個股 claim／finding 不得只靠無 symbol 的證據成立**：至少一個 `evidence_id` 必須屬於該股票；市場層級（`market`）、帳戶與交易狀態證據只能作補充（隔夜市場證據仍一律不得用於個股）。
+- **Agent 必須宣告種類**：多空 claim 填 `claim_kind`、分析師 finding 填 `finding_kind`，列舉為 `price`／`financial`／`revenue`／`material_event`／`news`；主要依據（屬該股票的證據）種類必須與宣告相同（`financial` 可引用 `profile`），其餘引用只能是同種類或補充種類，claim 引用的 finding 也必須同種類；依據跨兩種時拆成兩個 claim／finding。輸出 JSON Schema（`agent_schemas.analyst_schema／event_analyst_schema／stance_schema(typed)`）與 Skill 同步加欄位；舊 bundle 的 schema 不變，出現種類欄位即被 `reject_unknown_fields` 拒絕。多空 brief 每檔另附 `evidence_kinds` 對照與頂層 `evidence_policy` 規則。
+- **風險 Agent 現金姿態**（`sizing.validate_cash_stance`，Finalizer、`apply_trade_decision` 與 pipeline 同一套）：`evidence_ids` 至少一個市場層級證據（brief 的 `market_level_evidence_ids`：全市場情緒／恐懼貪婪／隔夜／`regime_assessment.evidence_id`），個股行情只能作補充；一致性護欄：`market_sentiment` 為 available 且 `negative` 時 `aggressive` 一律退回（回撤下限另由 `stance_floor` 強制）。brief 不再附交易 Agent 的意圖與 buy／add 信心統計（避免群體思維），這是 brief 變更、不影響重建。
+- **驗證回饋措辭中性**（`pipeline_base.VALIDATION_FEEDBACK_PREFIX` 與 trader／stance／analysts 的錯誤訊息）：並列「降級」與「補依據」兩種合法修法，不暗示補採納才是正解；重試時 `agent_calls` 多記 `revision_diff`（逐檔 intent／conviction／strength／outlook／level／breadth 與 claims／findings／採納數的前後值，並標 `more_aggressive`／`more_conservative`／`other` 計數），供事後稽核「因驗證回饋變積極」。
 
 Finalizer 與下游驗證遇到以下情況一律拒絕：
 
@@ -238,7 +292,9 @@ Finalizer 與下游驗證遇到以下情況一律拒絕：
 
 ## 策略反思旁觀者
 
-`src/etf_agent/strategy_reflection/` 讀校準報告，每週五晚上讓 Agent 提出策略樣板旋鈕（信心乘數、現金姿態比例、持股廣度檔數、回撤門檻、波動下限、減碼比例）的調整提案，通過程式驗證與影子回放後自動改寫 `config/decision_policy.json`。**不在決策鏈內**：每日決策只讀樣板，不匯入它；Agent 不輸出數字以外的任何決定，也不碰硬性規則與模擬假設。每週產生診斷包與反思報告，週六才套用，套用後有試用觀察期與自動還原。完整流程、邊界與回滾見[策略反思旁觀者](../src/etf_agent/strategy_reflection/README.md)。
+`src/etf_agent/strategy_reflection/` 讀校準報告，每週五晚上讓 Agent 提出策略樣板旋鈕（信心乘數、現金姿態比例、持股廣度檔數、回撤門檻、波動下限、減碼比例）的調整提案，通過程式驗證與影子回放後才改寫 `config/decision_policy.json`。**不在決策鏈內**：每日決策只讀樣板，不匯入它；Agent 不輸出數字以外的任何決定，也不碰硬性規則與模擬假設。每週產生診斷包與反思報告，週六才套用，套用後有試用觀察期與自動還原。
+
+自動套用只放行**降風險方向**（白名單每個旋鈕都定義了方向：降低信心乘數、提高現金緩衝、增加持股檔數、調低回撤門檻、提高減碼比例、提高 `volatility_exponent`、減少換股、提高換股信心門檻、調低停損／回落警示門檻；`volatility_floor` 方向不明），加風險方向的提案只封存標 `needs_human`，需人用 `apply-pending --allow-risk-increase <reflection_id>` 明確套用。影子回放比的是對交易池等權基準的超額（不是絕對 NAV），且候選在兩段不重疊子區間都不得劣於基準或目前策略。回放只固定已封存的 Agent 意圖重算配置，不是對 LLM 判斷的前瞻驗證（`evidence_grade: replay_reference_only`）。有文獻支持的設計——逆波動配置（1/ATR14 的 `conviction_volatility_v2`）、續抱優先（`held_add_priority`）、多空單輪隔離——是版本閘門而非旋鈕，`tests/strategy_reflection/test_design_guards.py` 守住。完整流程、邊界與回滾見[策略反思旁觀者](../src/etf_agent/strategy_reflection/README.md)。
 
 ## 事件如何處理
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from .analysts import analyst_report_names, AnalystReportValidator
+from .input_context import CLAIM_KINDS
 from .contracts import (
     validate_forbidden_keys,
     DecisionContext,
@@ -25,6 +26,8 @@ from .contracts import (
 STANCE_SCHEMA_VERSION = "2.0"
 STANCE_ROLES = ("bull", "bear")
 STRENGTHS = ("strong", "moderate", "weak", "none")
+# typed_evidence_v1（bundle.evidence_policy）下每個 claim 必須宣告種類；舊 bundle 出現此欄位即拒絕，舊 run 重建不變。
+CLAIM_KIND_FIELD = "claim_kind"
 
 
 def _symbols(bundle: Mapping[str, object]) -> List[str]:
@@ -110,6 +113,8 @@ def build_stance_brief(
                 "evidence_ids": item.get("evidence_ids", []),
             }
         )
+    # typed_evidence_v1：每檔附程式判定的證據種類對照，研究員宣告 claim_kind 時據此選對映的證據；舊 bundle 不附。
+    context = DecisionContext(bundle) if bundle.get("evidence_policy") is not None else None
     symbols = []
     for symbol in _symbols(bundle):
         symbols.append(
@@ -127,6 +132,10 @@ def build_stance_brief(
                     for name in analyst_report_names(analyst_reports)
                 },
                 "event_research": research.get(symbol, []),
+                **({"evidence_kinds": {
+                    evidence_id: context.evidence_kinds[evidence_id]
+                    for evidence_id, owner in sorted(context.evidence_symbols.items()) if owner == symbol
+                }} if context is not None else {}),
             }
         )
     brief = {
@@ -143,6 +152,13 @@ def build_stance_brief(
             item.pop("event_research")
     if "market_sentiment" in analyst_reports["event"]:
         brief["market_sentiment"] = dict(analyst_reports["event"]["market_sentiment"])
+    if context is not None:
+        brief["evidence_policy"] = {
+            "version": context.evidence_policy,
+            "claim_kinds": list(CLAIM_KINDS),
+            "rule": "每個 claim 填 claim_kind；至少一個 evidence_id 必須屬於該股票且種類與 claim_kind 對映（financial 可引用 profile）；"
+                    "market／account／status 種類只能作補充，不能單獨成立；finding_ids 只能引用同種類的發現。",
+        }
     return brief
 
 
@@ -155,6 +171,8 @@ class StancePacketValidator:
     }
     ITEM = {"symbol", "strength", "claims", "invalidation_conditions"}
     CLAIM = {"claim_id", "text", "evidence_ids", "finding_ids"}
+    # typed_evidence_v1 才有：研究員宣告論點依據的種類，程式核對引用的證據種類對映；舊 bundle 出現即拒絕。
+    CLAIM_KIND = CLAIM_KIND_FIELD
 
     def __init__(
         self,
@@ -178,11 +196,20 @@ class StancePacketValidator:
             bundle, momentum, shared_input_sha256(bundle, momentum, analyst_reports, research_result), role
         )
         self.universe = {str(symbol).upper() for symbol in (symbols if symbols is not None else _symbols(bundle))}
+        self.typed = self.context.evidence_policy is not None
         self.findings: Dict[str, str] = {
             str(finding["finding_id"]): str(item["symbol"]).upper()
             for report in analyst_reports.values()
             for item in report.get("items", [])
             for finding in [*item.get("findings", []), *item.get("sentiment", {}).get("findings", [])]
+        }
+        # typed_evidence_v1：分析師發現的種類（finding_kind），claim 引用的發現必須與 claim_kind 同種類。
+        self.finding_kinds: Dict[str, Optional[str]] = {
+            str(finding["finding_id"]): finding.get("finding_kind")
+            for report in analyst_reports.values()
+            for item in report.get("items", [])
+            for finding in item.get("findings", [])
+            if isinstance(finding, Mapping)
         }
 
     def validate(self, packet: Mapping[str, object]) -> List[str]:
@@ -239,13 +266,17 @@ class StancePacketValidator:
         if strength == "none" and claims:
             errors.append("%s strength=none 時不得有 claims" % prefix)
         if strength in {"strong", "moderate", "weak"} and not claims:
-            errors.append("%s strength=%s 必須至少有一個 claim" % (prefix, strength))
+            errors.append(
+                "%s strength=%s 需要至少一個有證據的 claim；沒有可引用的依據時請改為 none，不要為了通過驗證補上沒有依據的論點"
+                % (prefix, strength)
+            )
+        allowed = self.CLAIM | ({self.CLAIM_KIND} if self.typed else set())
         for index, claim in enumerate(claims):
             claim_prefix = "%s.claims[%d]" % (prefix, index)
             if not isinstance(claim, Mapping):
                 errors.append("%s 必須是物件" % claim_prefix)
                 continue
-            reject_unknown_fields(claim, self.CLAIM, claim_prefix, errors)
+            reject_unknown_fields(claim, allowed, claim_prefix, errors)
             try:
                 claim_id = required_string(claim, "claim_id")
                 required_string(claim, "text")
@@ -261,13 +292,24 @@ class StancePacketValidator:
             claim_ids.add(claim_id)
             if not evidence:
                 errors.append("%s.evidence_ids 不得為空" % claim_prefix)
-            self.context.validate_evidence(evidence, symbol, claim_prefix, errors)
+            kind = None
+            if self.typed:
+                kind = claim.get(self.CLAIM_KIND)
+                if kind not in CLAIM_KINDS:
+                    errors.append("%s.%s 必須是 %s" % (claim_prefix, self.CLAIM_KIND, "／".join(CLAIM_KINDS)))
+                    kind = None
+            self.context.validate_evidence(evidence, symbol, claim_prefix, errors, kind=kind)
             for finding_id in finding_ids:
                 owner = self.findings.get(finding_id)
                 if owner is None:
                     errors.append("%s 引用不存在的 finding：%s" % (claim_prefix, finding_id))
                 elif owner != symbol:
                     errors.append("%s 引用的 finding 不屬於 %s：%s" % (claim_prefix, symbol, finding_id))
+                elif kind is not None and self.finding_kinds.get(finding_id) not in {None, kind}:
+                    errors.append(
+                        "%s 引用的 finding %s 種類是 %s，與 %s=%s 不對映；請拆成各自種類的 claim 或移除這個引用"
+                        % (claim_prefix, finding_id, self.finding_kinds.get(finding_id), self.CLAIM_KIND, kind)
+                    )
 
 
 def build_research_debate(

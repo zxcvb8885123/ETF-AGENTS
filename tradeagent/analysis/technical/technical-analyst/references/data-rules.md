@@ -15,5 +15,7 @@
 
 輸出格式由主控的 JSON Schema 限制；`finding_id` 在整份報告唯一，建議 `tech-<代號>-<序號>`。
 
+決策輸入帶 `evidence_policy = typed_evidence_v1`（主控提示會說明）時，每項 finding 另填 `finding_kind`：技術分析師一律 `price`，`evidence_ids` 只能是該股票的行情證據；程式核對種類與證據對映，不符即退回。退回時兩種修法都合法：改引用正確的證據，或把該檔改為 `unknown` 並說明 `data_gaps`；不要為了通過驗證補上沒有依據的發現。
+
 
 均線暖機不足為 null，不補值。不得自行計算斜率、天數或報酬。不同期間累積報酬不可直接比較速度。

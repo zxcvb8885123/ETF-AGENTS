@@ -75,10 +75,10 @@ class TradeDecisionValidatorTests(unittest.TestCase):
         cases.append((foreign, "不屬於該股票的 claim"))
         no_bull = items()
         no_bull[0] = dict(no_bull[0], adopted_claim_ids=[], rejected_claim_ids=["bull-2317-1"])
-        cases.append((no_bull, "必須採納至少一個多頭 claim"))
+        cases.append((no_bull, "至少一個被採納的多頭 claim"))
         trim_without_bear = items()
         trim_without_bear[1] = dict(trim_without_bear[1], intent="trim")
-        cases.append((trim_without_bear, "必須採納至少一個空頭 claim"))
+        cases.append((trim_without_bear, "至少一個被採納的空頭 claim"))
         missing = items()[:1]
         cases.append((missing, "未裁決全部股票"))
         for values, message in cases:
@@ -132,7 +132,7 @@ class TradeDecisionAllocationTests(unittest.TestCase):
             conviction_by_symbol={"2317.TW": "medium", "1101.TW": "medium"},
             support_by_symbol={"2317.TW": 2, "1101.TW": 0},
         )
-        ordered, _, _ = engine._conviction_targets(["1101.TW", "2317.TW"], set(), {}, Decimal("1000000"), 0, {"cash_buffer_rate": Decimal("0.1")}, 0)
+        ordered, _, _, _ = engine._conviction_targets(["1101.TW", "2317.TW"], set(), {}, Decimal("1000000"), 0, {"cash_buffer_rate": Decimal("0.1")}, 0)
         self.assertEqual(ordered, ["2317.TW", "1101.TW"])
 
     def test_invalid_cash_stance_is_rejected(self):

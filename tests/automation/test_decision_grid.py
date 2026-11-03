@@ -122,14 +122,14 @@ class BuildGridTests(GridWorld):
 
     def test_benchmark_missing_or_fetched_after_as_of_is_unavailable_not_filled(self):
         # 0050 的列都在 as_of 之後才抓到：基準 unavailable，池 alpha 照算，基準欄留空。
-        self.build_world(6, benchmark_fetched="2027-01-01T00:00:00+00:00")
+        self.build_world(10, benchmark_fetched="2027-01-01T00:00:00+00:00")
         body = self.grid()
         entry = body["horizons"]["1"]
         self.assertEqual(entry["status"], "ok")
-        self.assertEqual(entry["benchmark_days"], {"available": 0, "unavailable": 6, "ex_rights": 0})
+        self.assertEqual(entry["benchmark_days"], {"available": 0, "unavailable": 10, "ex_rights": 0})
         high = entry["by_conviction"]["high"]
         self.assertIsNotNone(high["mean_excess_vs_pool"])
-        self.assertEqual((high["n_obs"], high["n_obs_benchmark"], high["mean_excess_vs_benchmark"]), (6, 0, None))
+        self.assertEqual((high["n_obs"], high["n_obs_benchmark"], high["mean_excess_vs_benchmark"]), (10, 0, None))
         self.assertEqual(high["beat_benchmark"], {"n": 0, "wins": 0, "ties": 0, "rate": None})
         cell = body["rows"][0]["horizons"]["1"]
         self.assertEqual((cell["benchmark_status"], cell["excess_vs_benchmark"]), ("unavailable", None))
@@ -231,8 +231,10 @@ class SaveAndVerifyTests(GridWorld):
         grid, _ = read_grid(self.tmp, grid_id)
         self.assertEqual(grid["content_sha256"], body["content_sha256"])
         self.assertEqual(grid["grid_id"], "grid-test")
+        self.assertEqual(grid["evidence_grade"], "replay_reference_only")  # 對舊日期的重算，不是前瞻驗證
         html_path = run_dir.parent / "grid-test.html"
         self.assertTrue(html_path.exists())
+        self.assertIn("不構成對 LLM 判斷的前瞻驗證", html_path.read_text(encoding="utf-8"))
         manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(manifest["artifacts"]), ["grid"])
         result = verify_grid(self.tmp, grid_id)
@@ -247,7 +249,7 @@ class SaveAndVerifyTests(GridWorld):
         self.assertTrue(verify_grid(self.tmp, grid_id)["valid"])
 
     def test_tampered_grid_is_rejected(self):
-        self.build_world(6)
+        self.build_world(10)
         body = self.grid()
         grid_id, run_dir = save_grid(self.tmp, body, "grid-tamper")
         path = run_dir / "grid.json"
@@ -283,7 +285,7 @@ class HtmlReportTests(GridWorld):
             self.assertNotIn(forbidden, page)
 
     def test_grid_html_escapes_untrusted_text_and_has_no_external_resources(self):
-        self.build_world(6)
+        self.build_world(10)
         body = self.grid()
         evil = "<script>alert(1)</script>\" onload=\"x"
         body["provenance"]["runs"][0]["run_id"] = evil

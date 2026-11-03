@@ -20,7 +20,8 @@
 
 ## 開關、試用觀察期與累積偏移
 
-- `config/strategy_reflection.json`：`enabled`＝false 整體停用（只產報告）；`auto_apply`＝false 為人工模式（提案只封存，用 `apply` 手動套用）。缺檔視為全開，格式錯誤 fail-closed。2026-11-02 起設為 `auto_apply: false`：比賽只有約 24 個交易日，樣本門檻（每個 horizon 至少 5 個完整決策日）與冷卻（10 個決策日）湊不出可靠證據，自動套用等於憑雜訊改策略；反思降為診斷與週報，旋鈕提案只封存，由人看過再 `apply` 全關。連續 2 次試用被還原會自動把 `auto_apply` 改為 false。
+- `config/strategy_reflection.json`：`enabled`＝false 整體停用（只產報告）；`auto_apply`＝false 為人工模式（提案只封存，用 `apply` 手動套用）。缺檔視為「反思開、自動套用關」，缺 `auto_apply` 欄位也視為 false（自動套用必須明寫 true 才開，有測試守住），缺 `enabled` 或格式錯誤 fail-closed 全關。2026-11-02 起設為 `auto_apply: false`：比賽只有約 24 個交易日，樣本門檻（每個 horizon 至少 10 個完整決策日）與冷卻（10 個決策日）湊不出可靠證據，自動套用等於憑雜訊改策略；反思降為診斷與週報，旋鈕提案只封存，由人看過再 `apply` 全關。連續 2 次試用被還原會自動把 `auto_apply` 改為 false。
+- 套用後的**試用觀察期**判定門檻：變差超過 max(2 倍前後平均差標準誤, `TRIAL_FLOOR`＝0.0005) 才還原。絕對下限由 0.002 降到 0.0005（日超額 5 bp）：原值等於要求 5 個觀察日平均每天輸等權基準 0.2%（一週 1%），基準期平靜時實際上觸發不了；降到 5 bp 後每天輸 5 bp 以上就算明確變差，統計檢定仍是主要門檻（基準期波動大時門檻自動更高）。
 - 套用後的**試用觀察期**（`trial.py`）：比較套用前最近 10 個交易日與套用後新交易日的「帳戶日報酬 − 等權基準日報酬」平均；套用日之後 5 個交易日起算，變差超過 max(2 倍前後平均差標準誤〔基準期樣本標準差 × sqrt(1/試用天數 + 1/基準天數)〕, 0.002) 才還原、變好超過同一門檻才保留；落在門檻之內（看不出差別）或基準期少於 4 日時延長 3 日一次，仍看不出差別：回放驗得了的旋鈕保留，停損／停利門檻（`position_review.*`）還原。還原走 `rollback`（取每日鎖、避開 20:50～09:00、設定檔被人改過就不動），由週六 `apply-pending` 執行。觀察期未結案時禁止新提案。這是護欄不是獲利證明，比賽只有 24 個交易日。
 - 試用**不會永久卡住**：套用日起超過 15 個日曆天仍湊不齊觀察交易日（例如基準資料不可用）→ `timeout` 結案，變更保留、標 `needs_manual`；歷史已寫但 live 檔沒換（套用中途被中止）或 live 檔事後被人改過（雜湊對不上 `policy_sha256_after`／`sha256_after`）→ `orphaned` 結案、不碰 live 檔，live 檔仍是套用前版本時順手補一筆 `rollback` 讓冷卻與累積偏移回到真實狀態；判定要還原卻還原失敗 → `revert_failed` 結案。三者都是 final、標 `needs_manual` 並在週六結果的 `alert` 欄位告警。這是刻意取捨：先記歷史再換檔，中途中止留下「有紀錄」的狀態，由結算時偵測並收尾。
 - 週報的試用進度用與結算相同的交易日計數；基準資料不可用時退回決策日差並註明。
@@ -36,26 +37,29 @@
 ## 流程（`cli/strategy_reflection.py auto`）
 
 1. 程式用校準報告與目前樣板產生簡報 `brief`（每個統計一個 `evidence_id`；只收 `status=ok` 的 horizon）。
-2. **門檻**：1 日或 5 日 horizon 任一為 `ok`（完整決策日 ≥ `calibration.MIN_DECISION_DAYS`，目前 5）才呼叫 Agent；否則封存 `observe_only` 反思，**零用量**。
+2. **門檻**：1 日或 5 日 horizon 任一為 `ok`（完整決策日 ≥ `calibration.MIN_DECISION_DAYS`，目前 10；2026-11-03 由 5 提高）才呼叫 Agent；否則封存 `observe_only` 反思、週報首段明寫「決策日不足 10 天，不下結論」，**零用量**。簡報另帶 `knob_risk_directions`（每個旋鈕往哪個方向是降風險）與 `evidence_grade: replay_reference_only`（校準統計與回放都只是對舊日期的重算，不是前瞻驗證），Agent 提示也明講這兩點。
 3. Agent 只輸出 `{summary, observations, proposals}`（Skill：`tradeagent/risk/strategy-reflection`）；狀態、`current`、數值格式與雜湊由程式補算。
 4. `validate_reflection` 重建驗證：欄位白名單、雜湊、門檻、evidence 存在、旋鈕白名單／變幅／上下限／方向、冷卻期、樣板未過期。
-5. 影子回放：目前策略與候選策略各回放一次已封存決策（`evaluation.build_replay`，零 token）；候選期末 NAV 須比目前策略高出至少 0.01%（`REPLAY_MIN_GAIN`，持平不算通過，因為回放與提案用同一段歷史）、Guard 拒絕日不得增加、至少完成一個成交日，否則不套用。回放只是必要條件，不是獲利證明。
-6. 通過才原子寫入設定檔（暫存檔再 rename），新 `policy_id`＝`strategy-<日期>-r<序號>`、`available_at`＝套用時間；舊檔備份到 `var/strategy_reflection/policies/`，歷史寫入 `history.json`（讀改寫在 `var/strategy_reflection/.history.lock` 的檔案鎖內，手動與排程同時寫入不會互相覆蓋）。任一步失敗都不改設定檔。
+5. **風險方向**：每個旋鈕在 `KNOBS.risk_reducing` 定義「往哪個方向是降風險」（見下表）。只有全部提案都是降風險方向才繼續自動套用；含加風險或方向不明（`volatility_floor`）的提案只封存、歷史記 `needs_human`（週報標「需人工決定」），要人用 `apply-pending --allow-risk-increase <reflection_id>`（id 須等於最近一份待套用的反思；`auto_apply=false` 的人工模式也有效，只套旋鈕不套教訓）或 `apply --reflection-id <id> --allow-risk-increase` 明確放行，套用紀錄留下 `risk_increase_allowed_by_human`。
+6. 影子回放：目前策略與候選策略各回放一次已封存決策（`evaluation.build_replay`，零 token），比的是**對交易池等權基準（每日再平衡，只用 as_of 前的官方收盤）的超額**而不是絕對 NAV（否則自動套用等於在賭市場 beta）：整段候選超額須比目前策略高出至少 0.01%（`REPLAY_MIN_GAIN`，持平不算通過，因為回放與提案用同一段歷史）；回放期間切成 `REPLAY_MIN_SEGMENTS`（2）段不重疊子區間，候選在每一段都不得劣於等權基準（超額 < 0）、也不得劣於目前策略；成交日切不出兩段、等權基準缺任一回放日期（兩天都有收盤的交易池股票不足 80%）、Guard 拒絕日增加、沒完成任何成交日，一律不通過。回放只固定已封存的 Agent 意圖重算配置（`evidence_grade: replay_reference_only`），是必要條件，不是獲利證明，更不是對 LLM 判斷的前瞻驗證。
+7. 通過才原子寫入設定檔（暫存檔再 rename），新 `policy_id`＝`strategy-<日期>-r<序號>`、`available_at`＝套用時間；舊檔備份到 `var/strategy_reflection/policies/`，歷史寫入 `history.json`（讀改寫在 `var/strategy_reflection/.history.lock` 的檔案鎖內，手動與排程同時寫入不會互相覆蓋）。任一步失敗都不改設定檔。
 
 ## 可調與禁區
 
-| 可調旋鈕 | 單次變幅上限 | 範圍 |
-| --- | --- | --- |
-| `conviction_multipliers.{high,medium,low}` | 0.10 | 0.1～3，且 high ≥ medium ≥ low |
-| `cash_buffer_by_stance.{aggressive,neutral,defensive}` | 0.02 | 0～0.22，且 aggressive ≤ neutral ≤ defensive |
-| `positions_by_breadth.{concentrated,balanced,diversified}` | 1 檔 | 夾在 `min_positions`～`max_positions`，且集中 ≤ 平衡 ≤ 分散 |
-| `drawdown_control.{neutral_at,defensive_at}` | 0.01 | 只准調低（更保守），且 neutral_at < defensive_at |
-| `volatility_floor` | 0.005 | 0.005～0.05 |
-| `trim_fraction` | 0.05 | 0.1～1 |
-| `volatility_exponent` | 0.10 | 0～1 |
-| `rotation.max_swaps_per_run` | 1 檔 | 0～10 |
-| `rotation.min_new_conviction` | 相鄰一階 | low／medium／high |
-| `position_review.loss_alert`／`retrace_alert_20d` | 0.01 | 0.05～0.20／0.06～0.25，影子回放驗不了，一週最多一個，走試用觀察期 |
+| 可調旋鈕 | 單次變幅上限 | 範圍 | 降風險方向（才可自動套用） |
+| --- | --- | --- | --- |
+| `conviction_multipliers.{high,medium,low}` | 0.10 | 0.1～3，且 high ≥ medium ≥ low | 調低（降低集中度與曝險） |
+| `cash_buffer_by_stance.{aggressive,neutral,defensive}` | 0.02 | 0～0.22，且 aggressive ≤ neutral ≤ defensive | 調高（提高現金緩衝） |
+| `positions_by_breadth.{concentrated,balanced,diversified}` | 1 檔 | 夾在 `min_positions`～`max_positions`，且集中 ≤ 平衡 ≤ 分散 | 調高（更分散） |
+| `drawdown_control.{neutral_at,defensive_at}` | 0.01 | 只准調低（更保守），且 neutral_at < defensive_at | 調低（更早進入防守） |
+| `volatility_floor` | 0.005 | 0.005～0.05 | 方向不明，任何方向都需人決定 |
+| `trim_fraction` | 0.05 | 0.1～1 | 調高（減碼減得更多） |
+| `volatility_exponent` | 0.10 | 0～1 | 調高（逆波動偏好更強） |
+| `rotation.max_swaps_per_run` | 1 檔 | 0～10 | 調低（少換股） |
+| `rotation.min_new_conviction` | 相鄰一階 | low／medium／high | 調高（換股門檻更嚴） |
+| `position_review.loss_alert`／`retrace_alert_20d` | 0.01 | 0.05～0.20／0.06～0.25，影子回放驗不了，一週最多一個，走試用觀察期 | 調低（更早警示） |
+
+反方向（提高曝險、降低現金緩衝、減少檔數、放寬回撤門檻、增加換股、放寬警示門檻）屬加風險：只封存標 `needs_human`，不自動套用。
 
 禁區（出現即整份拒絕）：單股／產業上限、現金上限、持股數、費稅、Active Share、`slippage_bps`、壓力情境、換手與成交率假設、`policy_id`／`available_at`、個股權重與股數。滑價與壓力情境不可調，因為影子回放用它們衡量候選策略，自己調自己的尺會失去意義。
 
@@ -74,7 +78,7 @@
 | 檔案 | 職責 |
 | --- | --- |
 | `contracts.py` | 常數、可調旋鈕表（`KNOBS`）、禁區、`ReflectionError` |
-| `tools.py` | 旋鈕讀取、單筆提案檢查、套用提案、樣板預檢（沿用 `validate_position_sizing`） |
+| `tools.py` | 旋鈕讀取、單筆提案檢查、風險方向判定（`risk_direction`、`non_risk_reducing`）、套用提案、樣板預檢（沿用 `validate_position_sizing`） |
 | `brief.py` | 校準報告與樣板 → 帶 `evidence_id` 的簡報與門檻 |
 | `validator.py` | 反思重建驗證 |
 | `repository.py` | 不可變反思封存、原子寫檔、套用歷史（`var/strategy_reflection/`） |

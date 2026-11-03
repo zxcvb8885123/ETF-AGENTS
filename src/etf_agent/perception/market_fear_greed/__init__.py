@@ -1,4 +1,4 @@
-"""台股恐懼貪婪指標：期交所 VIX、Put/Call 比與 FinMind 融資的確定性全市場情緒分數。"""
+"""台股恐懼貪婪指標：期交所 VIX、Put/Call 比、FinMind 融資與（v2）融資水位的確定性全市場情緒分數。"""
 from .contracts import FearGreedError
 from .provider import FearGreedProvider
 from .service import attach_fear_greed, build_fear_greed_input, capture_fear_greed, latest_captures, load_approvals

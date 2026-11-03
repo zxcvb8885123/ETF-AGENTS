@@ -7,7 +7,7 @@ from typing import Dict, List, Mapping, Optional
 
 from etf_agent.core import canonical_sha256
 
-from .contracts import REPLAY_SCHEMA_VERSION, ReplayError
+from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, REPLAY_SCHEMA_VERSION, ReplayError
 from .replay_tools import format_rate
 
 
@@ -32,6 +32,7 @@ def render_replay_report(report: Mapping[str, object]) -> str:
     tradeagent = report["provenance"].get("tradeagent") or {}
     lines = [
         "# 便宜版回測（多日滾動回放）：%s" % report.get("replay_id", "未封存"), "",
+        "> %s（evidence_grade：%s）" % (report.get("notice") or REPLAY_NOTICE, report.get("evidence_grade") or REPLAY_EVIDENCE_GRADE), "",
         "策略樣板 `%s`（content_sha256 `%s`）；%d 個 Decision run；as_of %s；狀態 %s。不呼叫 Agent，只重算確定性程式。" % (
             template["policy_id"], template["content_sha256"], len(report["inputs"]["run_ids"]), report["inputs"]["as_of"], report["status"]),
         "",
@@ -142,6 +143,7 @@ def compare_replays(left: Mapping[str, object], right: Mapping[str, object]) -> 
             order_diffs.append({"run_id": day_a["run_id"], "trade_date": day_a.get("trade_date"), "only_a": only_a, "only_b": only_b, "changed": changed})
     comparison = {
         "schema_version": REPLAY_SCHEMA_VERSION,
+        "evidence_grade": REPLAY_EVIDENCE_GRADE, "notice": REPLAY_NOTICE,
         "a": {"replay_id": left.get("replay_id"), "policy_id": left["provenance"]["policy_template"]["policy_id"],
               "policy_sha256": left["provenance"]["policy_template"]["content_sha256"], "report_sha256": left["content_sha256"]},
         "b": {"replay_id": right.get("replay_id"), "policy_id": right["provenance"]["policy_template"]["policy_id"],
@@ -157,6 +159,7 @@ def render_comparison(comparison: Mapping[str, object]) -> str:
     a, b = comparison["a"], comparison["b"]
     lines = [
         "# 兩個 Policy 的同期回放比較", "",
+        "> %s（evidence_grade：%s）" % (comparison.get("notice") or REPLAY_NOTICE, comparison.get("evidence_grade") or REPLAY_EVIDENCE_GRADE), "",
         "A：`%s`（%s，policy sha `%s`）；B：`%s`（%s，policy sha `%s`）；%d 個 run。" % (
             a["policy_id"], a["replay_id"], a["policy_sha256"], b["policy_id"], b["replay_id"], b["policy_sha256"], len(comparison["run_ids"])),
         "",

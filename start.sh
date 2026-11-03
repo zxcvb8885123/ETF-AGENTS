@@ -376,12 +376,14 @@ if [ "$DAILY_RUN" -eq 1 ]; then
   stage_time "研究 Snapshot"
   ACCOUNT_ID=${ACCOUNT_ID:-$(active_account_id)}
   ACCOUNT_RUN_ID=${ACCOUNT_RUN_ID:-prepare-$(TZ=UTC date '+%Y%m%dT%H%M%SZ')}
-  echo "[3c+/4] 推進虛擬帳本：以收盤價結算前一份決策，並建立決策前帳戶快照"
+  echo "[3c+/4] 推進虛擬帳本：以收盤價結算前一份決策（主辦方 DataPack 標 voided 的日子結算為無成交），並建立決策前帳戶快照"
   set +e
   docker compose run --rm agent python3 cli/virtual_account.py \
     --account-id "$ACCOUNT_ID" daily \
     --snapshot artifacts/data/research_snapshot_latest.json \
     --database var/etf_agent.db \
+    --datapack-dir var/datapack \
+    --competition-profile config/competition_profile.json \
     --run-id "$ACCOUNT_RUN_ID" \
     --account-output "artifacts/ledger/$ACCOUNT_ID/account_snapshot_latest.json"
   ACCOUNT_EXIT=$?

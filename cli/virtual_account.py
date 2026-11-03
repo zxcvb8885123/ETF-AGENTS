@@ -6,7 +6,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -53,6 +53,19 @@ def load_calendar(captures_root: Path, limit_time: str) -> TradingCalendar:
     return calendar_from_capture(capture)
 
 
+def load_team_id(profile_path: Path) -> Optional[str]:
+    """``config/competition_profile.json`` 的 ``team_id``；讀不到（缺檔、格式錯、欄位空）時回 None 並印明確訊息，結算維持純模擬成交。"""
+    try:
+        team_id = read_json(profile_path).get("team_id")
+    except VirtualAccountError as error:
+        print("競賽設定讀不到 team_id（%s）：結算不核對主辦方 DataPack，維持純模擬成交" % error, file=sys.stderr)
+        return None
+    if not isinstance(team_id, str) or not team_id.strip():
+        print("競賽設定 %s 沒有 team_id：結算不核對主辦方 DataPack，維持純模擬成交" % profile_path, file=sys.stderr)
+        return None
+    return team_id.strip()
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=Path, default=ROOT / "artifacts" / "ledger")
@@ -97,6 +110,14 @@ def main(argv=None) -> int:
         daily.add_argument(
             "--captures-root", type=Path, default=ROOT / "artifacts" / "data" / "trading_status",
             help="政府開放 CSV 封存根目錄；使用其中最新的開休市日期表計算交割日",
+        )
+        daily.add_argument(
+            "--datapack-dir", type=Path, default=ROOT / "var" / "datapack",
+            help="主辦方 DataPack 資料夾；結算前找結算日對應的本隊資料包，prev_day_orders.outcome=voided 時決策結算為無成交（HOST_VOIDED）",
+        )
+        daily.add_argument(
+            "--competition-profile", type=Path, default=ROOT / "config" / "competition_profile.json",
+            help="競賽設定；讀其 team_id 對應 DataPack。讀不到 team_id 時維持純模擬成交並印出訊息",
         )
         if name == "daily":
             daily.add_argument("--snapshot", type=Path, required=True)
@@ -187,7 +208,9 @@ def main(argv=None) -> int:
             limit_time = (read_json(args.snapshot).get("decision_cutoff") if args.command == "daily"
                           else datetime.now(timezone.utc).isoformat())
             calendar = load_calendar(args.captures_root, str(limit_time))
-            runner = DailyAccountRunner(repository, args.database, args.decision_repository, args.settlement_days, calendar)
+            team_id = load_team_id(args.competition_profile)
+            runner = DailyAccountRunner(repository, args.database, args.decision_repository, args.settlement_days, calendar,
+                                        datapack_dir=args.datapack_dir if team_id else None, team_id=team_id)
             result = runner.settle() if args.command == "settle" else runner.run(args.snapshot, args.run_id, args.account_output)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0

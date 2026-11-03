@@ -17,10 +17,14 @@ from typing import Callable, Dict, Iterator, List, Mapping, Optional
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time, parse_decimal
 from etf_agent.decision.contracts import DecisionInputValidator
 from etf_agent.decision.finalization import DecisionRepository, DecisionResultValidator
-from etf_agent.ledger import AccountLedger, ExecutionSimulator
+from etf_agent.ledger import HOST_VOIDED, AccountLedger, ExecutionSimulator
 
 
 RUN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+# 主辦方 DataPack prev_day_orders.outcome 的合法值；結算只對 voided 改變行為（整批不成交），其餘照模擬成交。
+HOST_OUTCOMES = ("none", "unknown", "voided", "executed")
+HOST_OUTCOME_FIELDS = {"outcome", "void_reasons", "excluded_codes", "datapack_sha256", "datapack_path",
+                       "trade_date", "as_of_date", "generated_at"}
 
 
 class VirtualAccountError(ValueError):
@@ -412,7 +416,35 @@ class VirtualAccountService:
         self.repository.save(run_id, {"source": dict(source), "state": next_state}, next_state)
         return {"run_id": run_id, "state": next_state}
 
-    def apply_decision(self, decision_repository: Path, decision_run_id: str, execution_market_path: Path, close_market_path: Path, settlement_date: str, run_id: str) -> Mapping[str, object]:
+    @staticmethod
+    def _host_outcome(value: object) -> Optional[Dict[str, object]]:
+        """主辦方資料包的前一日委託結果；None 維持純模擬成交。欄位與值嚴格檢查，不猜測補值。"""
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise VirtualAccountError("host_outcome 必須是物件")
+        unknown = set(value) - HOST_OUTCOME_FIELDS
+        if unknown:
+            raise VirtualAccountError("host_outcome 含未知欄位：%s" % "、".join(sorted(unknown)))
+        if value.get("outcome") not in HOST_OUTCOMES:
+            raise VirtualAccountError("host_outcome.outcome 必須是 %s" % "／".join(HOST_OUTCOMES))
+        reasons = value.get("void_reasons", [])
+        if not isinstance(reasons, list) or not all(isinstance(item, str) and item for item in reasons):
+            raise VirtualAccountError("host_outcome.void_reasons 必須是字串陣列")
+        if (value["outcome"] == "voided") != bool(reasons):
+            raise VirtualAccountError("只有 voided 時 void_reasons 才可非空，且 voided 必須至少一項")
+        for field in ("datapack_sha256", "as_of_date"):
+            if not isinstance(value.get(field), str) or not value[field]:
+                raise VirtualAccountError("host_outcome.%s 必須是非空字串（結算依據要可稽核）" % field)
+        return dict(value)
+
+    def apply_decision(self, decision_repository: Path, decision_run_id: str, execution_market_path: Path, close_market_path: Path, settlement_date: str, run_id: str, host_outcome: Optional[Mapping[str, object]] = None) -> Mapping[str, object]:
+        """以執行日官方價量結算一份已驗證的 Decision run。
+
+        ``host_outcome`` 是主辦方 DataPack 的 ``prev_day_orders``（含來源雜湊與 as_of_date）；outcome 為
+        ``voided`` 時主辦方已整批作廢，帳本把該決策結算為「無成交」（持股、現金只做交割與估值），不再模擬成交。
+        省略或 outcome 為其他值時維持原模擬成交。"""
+        host = self._host_outcome(host_outcome)
         prepared = self.repository.latest()
         state = prepared["state"]
         if state.get("provenance", {}).get("type") != "prepared":
@@ -467,13 +499,23 @@ class VirtualAccountService:
         ledger = self._ledger(state)
         ledger.settle(execution_day.isoformat())
         rules = bundle["rules"]
+        if host is not None and host["as_of_date"] != execution_day.isoformat():
+            raise VirtualAccountError("host_outcome.as_of_date %s 與成交日 %s 不一致" % (host["as_of_date"], execution_day.isoformat()))
         assumptions = {
             "lot_size": rules["lot_size"], "commission_rate": rules["commission_rate"],
             "sell_tax_rate": rules["sell_tax_rate"], "minimum_commission": rules["minimum_commission"],
             "reuse_sell_proceeds": bool(rules["reuse_sell_proceeds"]),
         }
+        # 現金不足整批作廢是版本閘門：只讀封進 Decision run 的 policy，省略欄位的舊 run 維持逐張減少。
+        sizing = decision_files["policy"].get("position_sizing")
+        if isinstance(sizing, Mapping) and "insufficient_funds_policy" in sizing:
+            assumptions["insufficient_funds_policy"] = sizing["insufficient_funds_policy"]
         simulator = ExecutionSimulator(assumptions)
-        execution = simulator.run(decision, market, ledger.buying_power(bool(rules["reuse_sell_proceeds"])), market["execution_at"])
+        buying_power = ledger.buying_power(bool(rules["reuse_sell_proceeds"]))
+        if host is not None and host["outcome"] == "voided":
+            execution = simulator.void_batch(decision, market, buying_power, market["execution_at"], HOST_VOIDED, host["void_reasons"])
+        else:
+            execution = simulator.run(decision, market, buying_power, market["execution_at"])
         ledger.apply_fills(execution, settlement_date, bool(rules["reuse_sell_proceeds"]))
         ledger.settle(execution_day.isoformat())
         close_quotes = close_market.get("quotes")
@@ -493,9 +535,12 @@ class VirtualAccountService:
             parent_state_id=state["state_id"], as_of=close_market["available_at"],
             settled_cash=Decimal(state_snapshot["settled_cash"]), unsettled_cash=Decimal(state_snapshot["unsettled_cash"]),
             pending_settlements=ledger.pending_settlements, positions=state_snapshot["positions"], nav=Decimal(state_snapshot["nav"]),
-            provenance={"type": "close", "parent_run_id": prepared["run_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution_sha256": execution["content_sha256"], "execution_at": market["execution_at"], "trade_date": close_trade_date, "settlement_date": str(settlement_date), "close_market_sha256": canonical_sha256(close_market)},
+            provenance={"type": "close", "parent_run_id": prepared["run_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution_sha256": execution["content_sha256"], "execution_at": market["execution_at"], "trade_date": close_trade_date, "settlement_date": str(settlement_date), "close_market_sha256": canonical_sha256(close_market),
+                        # 有主辦方結果時一併留下（含 DataPack 雜湊），沒有時不加欄位，舊帳本狀態形狀不變。
+                        **({"host_outcome": host} if host is not None else {})},
         )
-        transition = {"schema_version": "1.0", "parent_state_id": state["state_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution": execution, "close_ledger": state_snapshot, "state_sha256": next_state["content_sha256"]}
+        transition = {"schema_version": "1.0", "parent_state_id": state["state_id"], "decision_run_id": decision_run_id, "decision_status": decision["status"], "execution": execution, "close_ledger": state_snapshot, "state_sha256": next_state["content_sha256"],
+                      **({"host_outcome": host} if host is not None else {})}
         transition["content_sha256"] = canonical_sha256(transition)
         self.repository.save(run_id, {"decision_run": {"run_id": decision_run_id, "manifest_sha256": _read(dpath / "manifest.json", "Decision manifest")["manifest_sha256"]}, "execution_market": market, "close_market": close_market, "transition": transition, "state": next_state}, next_state)
         return {"run_id": run_id, "state": next_state, "transition": transition}

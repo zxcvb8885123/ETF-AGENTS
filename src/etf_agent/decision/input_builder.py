@@ -14,6 +14,14 @@ from .contracts import (
     decision_bundle_sha256,
     decision_rules_sha256,
 )
+from .input_validator import (
+    EVIDENCE_POLICIES,
+    EVIDENCE_POLICY_FIELD,
+    EVIDENCE_POLICY_TYPED,
+    FUNDAMENTAL_PERIOD_PER_SYMBOL,
+    FUNDAMENTAL_PERIOD_POLICIES,
+    FUNDAMENTAL_PERIOD_POLICY_FIELD,
+)
 
 
 DEFAULT_LOOKBACK_BARS = 120
@@ -42,7 +50,19 @@ class DecisionInputBuilder:
         benchmarks: Sequence[Mapping[str, object]] = (),
         company_news_input: Optional[Mapping[str, object]] = None,
         overnight_market_input: Optional[Mapping[str, object]] = None,
+        fundamental_period_policy: Optional[str] = FUNDAMENTAL_PERIOD_PER_SYMBOL,
+        evidence_policy: Optional[str] = EVIDENCE_POLICY_TYPED,
     ):
+        # 基本面期別政策是版本閘門：新建立的 bundle 預設寫入 per_symbol_latest_available_v1，
+        # 傳 None 則不寫欄位（維持舊 bundle 形狀，供重建舊封存或對照測試）。未知值直接拒絕。
+        if fundamental_period_policy is not None and fundamental_period_policy not in FUNDAMENTAL_PERIOD_POLICIES:
+            raise DecisionToolError("不支援的基本面期別政策：%s" % fundamental_period_policy)
+        self.fundamental_period_policy = fundamental_period_policy
+        # 證據種類政策同為版本閘門：預設 typed_evidence_v1（claim／finding 須填種類、市場層級證據不可單獨支持個股），
+        # 傳 None 則不寫欄位，維持舊 bundle 的引用驗證行為。
+        if evidence_policy is not None and evidence_policy not in EVIDENCE_POLICIES:
+            raise DecisionToolError("不支援的證據種類政策：%s" % evidence_policy)
+        self.evidence_policy = evidence_policy
         self.perception_inputs = [dict(item) for item in perception_inputs]
         self.market_news_input = dict(market_news_input) if market_news_input is not None else None
         self.market_fear_greed_input = dict(market_fear_greed_input) if market_fear_greed_input is not None else None
@@ -87,6 +107,10 @@ class DecisionInputBuilder:
             bundle["overnight_market_input"] = self.overnight_market_input
         if self.company_news_input is not None:
             bundle["company_news_input"] = self.company_news_input
+        if self.fundamental_period_policy is not None:
+            bundle[FUNDAMENTAL_PERIOD_POLICY_FIELD] = self.fundamental_period_policy
+        if self.evidence_policy is not None:
+            bundle[EVIDENCE_POLICY_FIELD] = self.evidence_policy
         if self.trading_status is not None:
             bundle["trading_status_bundle"] = self.trading_status.get("bundle")
             bundle["tradability_assessment"] = self.trading_status.get("assessment")

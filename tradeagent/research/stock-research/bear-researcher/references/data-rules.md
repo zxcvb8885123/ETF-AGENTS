@@ -47,6 +47,8 @@ symbols 是本批股票清單；清單裡的每一檔都必須交付一次，不
 
 每個論點的 evidence_ids 至少一個，必須從輸入中選取，並通過本檔股票的引用歸屬檢查。不能借用其他公司的證據。若使用分析師的某項發現，把其既有 finding_id 放進 finding_ids；沒有對應發現時填 []，不要編造識別碼。
 
+摘要帶 `evidence_policy`（`typed_evidence_v1`）時，每檔另附 `evidence_kinds`（該股票每個 evidence_id 的種類：price／financial／profile／revenue／material_event／news／status），每個 claim 必須填 `claim_kind`（price／financial／revenue／material_event／news）：至少一個 evidence_id 必須屬於該股票且種類與 claim_kind 相同（financial 可引用 profile），finding_ids 只能引用同種類的分析師發現（分析師發現有 finding_kind）；市場層級證據（全市場情緒、市場狀態）與帳戶證據只能作補充，不能單獨支持個股論點。依據跨兩種時拆成兩個 claim。程式核對不符即退回；退回時兩種修法都合法：改引用相符的證據或拆分 claim，或撤回這個 claim（沒有論點就用 none），不要為了通過驗證補上沒有依據的論點。
+
 ## 4. 每檔交付什麼
 
 模型只輸出 items 陣列，每檔剛好一個物件。程式會補上角色、版本、共同輸入識別與內容雜湊；這些共同外層資訊不由模型手寫。
@@ -66,6 +68,7 @@ symbols 是本批股票清單；清單裡的每一檔都必須交付一次，不
 | text | 用中文寫清楚：依據是什麼、你從中推論出什麼、有哪些限制。不要只抄分析師的方向標籤。 |
 | evidence_ids | 實際支持這個論點的既有證據識別碼陣列，至少一個。 |
 | finding_ids | 此論點使用的本檔既有分析師發現識別碼陣列，沒有對應發現時填 []。 |
+| claim_kind | 只在摘要帶 `evidence_policy` 時填：此論點主要依據的證據種類（price／financial／revenue／material_event／news），見上節。 |
 
 strength 是整檔論點的支持程度，不是每個 claim 各給一個分數。若選 none，claims 必須為 []；選 strong／moderate／weak 時至少要有一個有證據的論點。沒有充分論點就用 none，不新增契約外的說明欄位。
 

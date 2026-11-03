@@ -14,7 +14,7 @@ from etf_agent.strategy_reflection import (
     save_reflection, service,
 )
 from test_policy_replay import AS_OF, DAYS, PRICES, archive_day
-from test_strategy_reflection import Fixture, NOW, report, replay_body
+from test_strategy_reflection import Fixture, NOW, flat_benchmark, report, replay_body
 from test_virtual_account_daily import create_prices
 
 FRIDAY = NOW  # 2026-11-20 12:30 UTC＝週五 20:30 台北
@@ -187,7 +187,9 @@ class WeeklyRunTests(Fixture):
     def test_report_marks_unavailable_and_insufficient_items(self):
         brief = self.closed()
         text = render_weekly_report(NOW, brief, observe_only(brief, NOW))
-        self.assertIn("決策日 2／5", text)
+        self.assertIn("決策日 2／10", text)
+        self.assertIn("決策日不足 10 天，不下結論", text)
+        self.assertIn("replay_reference_only", text)
         self.assertIn("尚無 team_inputs 2.4", text)
 
 
@@ -382,7 +384,7 @@ class ApplyPendingTests(Fixture):
 
     def pending(self, now=SATURDAY, **options):
         return apply_pending(self.tmp, self.tmp / "db", self.tmp / "decisions", now,
-                             replayer=passing_replayer, clock=lambda: now, **options)
+                             replayer=passing_replayer, clock=lambda: now, **options, benchmarker=flat_benchmark)
 
     def test_saturday_morning_applies_the_friday_proposal(self):
         reflection_id = self.seal()
@@ -417,7 +419,7 @@ class ApplyPendingTests(Fixture):
         self.seal()
         result = apply_pending(self.tmp, self.tmp / "db", self.tmp / "decisions", SATURDAY,
                                replayer=lambda path, replay_id: replay_body("90") if replay_id.endswith("candidate") else replay_body(),
-                               clock=lambda: SATURDAY)
+                               clock=lambda: SATURDAY, benchmarker=flat_benchmark)
         self.assertFalse(result["applied"])
         self.assertIn("影子回放未通過", result["reason"])
 

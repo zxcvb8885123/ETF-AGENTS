@@ -4,8 +4,10 @@
 成交均價（官方成交金額 ÷ 成交股數，四捨五入到 0.01 元），不設成交量上限；日終以
 官方收盤價估值。當日無成交（成交股數或金額為 0）則沒有均價，視為不可成交。
 手續費、證交稅、整張單位與賣款可否再用皆沿用 Decision run 內已驗證的 rules；
-現金不足時仍由模擬器依買力減少張數。只使用 TWSE／TPEx 官方未還原資料，不以
-Yahoo 等還原價格成交。
+現金不足時由模擬器依買力減少張數，Decision run 的 policy 帶 ``insufficient_funds_policy:
+void_batch`` 時改為整批作廢（與主辦方相同）。提供主辦方 DataPack 資料夾與隊伍代號時，
+資料包判定前一日委託 voided 的決策結算為無成交。只使用 TWSE／TPEx 官方未還原資料，
+不以 Yahoo 等還原價格成交。
 """
 
 from __future__ import annotations
@@ -57,6 +59,44 @@ def average_price(trade_value: object, volume_shares: object) -> Optional[Decima
     if value <= 0 or volume <= 0:
         return None
     return (Decimal(value) / Decimal(volume)).quantize(PRICE_TICK, rounding=ROUND_HALF_UP)
+
+
+def find_host_outcome(datapack_dir: Optional[Path], team_id: Optional[str], trade_date: str,
+                      read_at: Optional[datetime] = None) -> Optional[Dict[str, object]]:
+    """在主辦方 DataPack 資料夾找出「結算日（as_of_date）等於 ``trade_date``」的本隊資料包，回傳其 prev_day_orders。
+
+    交易日 T 的資料包在 T−1 結算後產生，``prev_day_orders`` 就是 T−1 委託的結果，所以用 as_of_date 對應成交日；
+    同日多份取 generated_at 最新者。沒有資料夾、隊伍代號或找不到對應資料包時回 None（維持純模擬成交，不是錯誤）；
+    資料包本身不合規格則略過該檔。回傳值另含來源雜湊與路徑，供帳本留下稽核依據。"""
+    if datapack_dir is None or not team_id:
+        return None
+    directory = Path(datapack_dir)
+    if not directory.is_dir():
+        return None
+    # 延後匯入：competition 套件反向匯入 virtual_account（開帳與對帳），模組層匯入會循環。
+    from etf_agent.competition.datapack import DataPackError, load_datapack
+
+    candidates = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            loaded = load_datapack(path, read_at)
+        except DataPackError:
+            continue
+        pack = loaded["pack"]
+        if pack["team_id"] != team_id or pack["as_of_date"] != trade_date:
+            continue
+        candidates.append((parse_time(pack["generated_at"], "generated_at"), loaded))
+    if not candidates:
+        return None
+    loaded = max(candidates, key=lambda item: item[0])[1]
+    pack = loaded["pack"]
+    orders = pack["prev_day_orders"]
+    return {
+        "outcome": orders["outcome"], "void_reasons": list(orders["void_reasons"]),
+        "excluded_codes": list(orders["excluded_codes"]),
+        "datapack_sha256": loaded["raw_sha256"], "datapack_path": loaded["path"],
+        "trade_date": pack["trade_date"], "as_of_date": pack["as_of_date"], "generated_at": pack["generated_at"],
+    }
 
 
 def find_decision_run(decision_repository: Path, account_snapshot: Mapping[str, object]) -> Optional[str]:
@@ -312,10 +352,15 @@ class DailyAccountRunner:
         settlement_days: int = 2,
         calendar: Optional[TradingCalendar] = None,
         archive_root: Optional[Path] = None,
+        datapack_dir: Optional[Path] = None,
+        team_id: Optional[str] = None,
     ):
         """``calendar`` 為官方開休市日曆；省略時交割日退回週一至週五近似並在結果標示。
 
         ``archive_root`` 存放開盤前被新資料取代的決策；省略時為決策庫旁的 ``archive/superseded_decisions``。
+
+        ``datapack_dir`` 與 ``team_id`` 同時提供時，結算前會找結算日對應的主辦方 DataPack：其 prev_day_orders
+        為 voided 時，該決策結算為「無成交」（主辦方結果是地面真相）；找不到資料包或省略參數時維持純模擬成交。
         """
         self.repository = repository
         self.service = VirtualAccountService(repository)
@@ -325,6 +370,8 @@ class DailyAccountRunner:
         self.calendar = calendar
         self.archive_root = (Path(archive_root) if archive_root is not None
                              else self.decision_repository.parent / "archive" / "superseded_decisions")
+        self.datapack_dir = Path(datapack_dir) if datapack_dir is not None else None
+        self.team_id = team_id
 
     def settlement_date(self, trade_date: str) -> Tuple[str, Dict[str, object]]:
         day = date.fromisoformat(trade_date)
@@ -379,14 +426,16 @@ class DailyAccountRunner:
         execution_path, close_path = run_dir / "execution_market.json", run_dir / "close_market.json"
         for path, payload in ((execution_path, markets[0]), (close_path, markets[1])):
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        host_outcome = find_host_outcome(self.datapack_dir, self.team_id, trade_date, parse_time(observed_at, "observed_at") if observed_at else None)
         result = self.service.apply_decision(
             self.decision_repository, decision_run_id, execution_path, close_path,
-            settlement, ("close-%s-%s" % (trade_date, decision_run_id))[:80],
+            settlement, ("close-%s-%s" % (trade_date, decision_run_id))[:80], host_outcome=host_outcome,
         )
         return {"status": "settled", "run_id": result["run_id"], "decision_run_id": decision_run_id,
                 "trade_date": trade_date, "settlement_date": settlement, "nav": result["state"]["nav"],
                 "fills": len(result["transition"]["execution"]["fills"]),
                 "unfilled": len(result["transition"]["execution"]["unfilled_orders"]),
+                **({"host_outcome": host_outcome["outcome"]} if host_outcome is not None else {}),
                 **calendar_basis}
 
     def supersede_unstarted_decision(self, decision_run_id: Optional[str], cutoff: str) -> Optional[Path]:

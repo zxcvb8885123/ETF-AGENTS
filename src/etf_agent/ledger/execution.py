@@ -6,11 +6,20 @@ Used by the virtual account so fills, fees and cash follow one rule set.
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_CEILING
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Sequence
 
 from etf_agent.core import content_sha256
 
 from .contracts import MONEY, LedgerError, decimal_value, money_string, parse_time
+
+
+# 現金不足時的處理：省略（舊 Decision run）即逐張減少買單；void_batch 與主辦方相同，整批作廢、一張都不成交。
+INSUFFICIENT_FUNDS_REDUCE_LOTS = "reduce_lots"
+INSUFFICIENT_FUNDS_VOID_BATCH = "void_batch"
+INSUFFICIENT_FUNDS_POLICIES = (INSUFFICIENT_FUNDS_REDUCE_LOTS, INSUFFICIENT_FUNDS_VOID_BATCH)
+# 整批未成交的原因代碼：主辦方資料包判定作廢（host_voided）或模擬現金不足整批作廢。
+HOST_VOIDED = "HOST_VOIDED"
+INSUFFICIENT_FUNDS_VOIDED = "INSUFFICIENT_FUNDS_VOID_BATCH"
 
 
 class ExecutionSimulator:
@@ -18,20 +27,20 @@ class ExecutionSimulator:
 
     A quote's ``available_lots`` caps the fill; ``None`` means no liquidity cap
     (competition accounting fills every tradable order in full). Buying power
-    still limits buys in every case.
+    still limits buys in every case: by default the buy is reduced lot by lot
+    (legacy runs); with ``insufficient_funds_policy = "void_batch"`` the whole
+    batch is voided like the competition host does.
     """
 
     def __init__(self, assumptions: Mapping[str, object]):
         self.assumptions = dict(assumptions)
         self.lot_size = int(assumptions["lot_size"])
+        policy = self.assumptions.get("insufficient_funds_policy", INSUFFICIENT_FUNDS_REDUCE_LOTS)
+        if policy not in INSUFFICIENT_FUNDS_POLICIES:
+            raise LedgerError("insufficient_funds_policy 只允許 %s" % "／".join(INSUFFICIENT_FUNDS_POLICIES))
+        self.insufficient_funds_policy = str(policy)
 
-    def run(
-        self,
-        decision: Mapping[str, object],
-        market: Mapping[str, object],
-        buying_power: Decimal,
-        execution_at: str,
-    ) -> Dict[str, object]:
+    def _check_inputs(self, decision: Mapping[str, object], market: Mapping[str, object], execution_at: str) -> Mapping[str, object]:
         if decision.get("content_sha256") != content_sha256(decision):
             raise LedgerError("DecisionResult.content_sha256 與內容不一致")
         if decision.get("status") not in {"approved", "no_trade", "rejected"}:
@@ -47,9 +56,48 @@ class ExecutionSimulator:
         quotes = market.get("quotes")
         if not isinstance(quotes, Mapping):
             raise LedgerError("ExecutionMarketData.quotes 必須是物件")
+        return quotes
+
+    @staticmethod
+    def _sorted_orders(decision: Mapping[str, object]) -> list:
+        return sorted(decision.get("orders", []), key=lambda item: (0 if item.get("side") == "sell" else 1, str(item.get("symbol"))))
+
+    def void_batch(
+        self,
+        decision: Mapping[str, object],
+        market: Mapping[str, object],
+        buying_power: Decimal,
+        execution_at: str,
+        reason: str,
+        void_reasons: Sequence[str] = (),
+    ) -> Dict[str, object]:
+        """整批作廢：一張都不成交，每筆訂單列入 unfilled_orders，買力原封不動。
+
+        主辦方資料包判定前一日委託作廢（reason=HOST_VOIDED）時由帳本直接採用，不自行模擬成交。"""
+        self._check_inputs(decision, market, execution_at)
+        unfilled = []
+        for order in self._sorted_orders(decision):
+            shares = order.get("shares")
+            if not isinstance(shares, int) or isinstance(shares, bool) or shares <= 0 or shares % self.lot_size:
+                raise LedgerError("訂單必須為正整張")
+            unfilled.append({"symbol": str(order.get("symbol", "")).upper(), "side": order.get("side"),
+                             "unfilled_shares": shares, "reason": reason})
+        body: Dict[str, object] = {"fills": [], "unfilled_orders": unfilled, "remaining_buying_power": money_string(buying_power),
+                                   "voided": {"reason": reason, "void_reasons": [str(item) for item in void_reasons]}}
+        body["content_sha256"] = content_sha256(body)
+        return body
+
+    def run(
+        self,
+        decision: Mapping[str, object],
+        market: Mapping[str, object],
+        buying_power: Decimal,
+        execution_at: str,
+    ) -> Dict[str, object]:
+        quotes = self._check_inputs(decision, market, execution_at)
         fills, unfilled = [], []
         available = buying_power
-        for order in sorted(decision.get("orders", []), key=lambda item: (0 if item.get("side") == "sell" else 1, str(item.get("symbol")))):
+        for order in self._sorted_orders(decision):
             symbol = str(order.get("symbol", "")).upper()
             shares = order.get("shares")
             if not isinstance(shares, int) or isinstance(shares, bool) or shares <= 0 or shares % self.lot_size:
@@ -73,6 +121,9 @@ class ExecutionSimulator:
                 trial = self._fill(symbol, side, fill_lots * self.lot_size, price)
                 if side == "sell" or -decimal_value(trial["net_cash_impact"], "net_cash_impact") <= available:
                     break
+                if self.insufficient_funds_policy == INSUFFICIENT_FUNDS_VOID_BATCH:
+                    # 與主辦方相同：任一買單湊不到現金就整批作廢（含已排在前面的賣單），不逐張減少。
+                    return self.void_batch(decision, market, buying_power, execution_at, INSUFFICIENT_FUNDS_VOIDED, ["insufficient_funds"])
                 fill_lots -= 1
             if fill_lots:
                 fill = self._fill(symbol, side, fill_lots * self.lot_size, price)

@@ -68,6 +68,74 @@ DEFAULT_RETRY_DELAY_SECONDS = 30.0
 # 不含每次都會重寫的 brief_bull_*／brief_bear_*（兩方共同輸入，不含任何研究員輸出）。
 RESEARCH_RESIDUE_GLOBS = ("bull_*.json", "bear_*.json") + LATER_STAGE_GLOBS
 _Job = TypeVar("_Job")
+# 驗證失敗的回饋採中性措辭：兩種合法修法並列，不暗示「補採納」才是正解，避免 Agent 為了通過驗證而變積極。
+VALIDATION_FEEDBACK_PREFIX = (
+    "\n\n上一次輸出未通過確定性驗證，錯誤列在下方。每一項都有兩種合法修法，請依你的判斷擇一："
+    "（1）降級：改為較保守或不需該依據的結果，例如把 buy／add 改為 hold 或 no_trade、把 strength 改為 none、"
+    "把 outlook 改為 unknown 並說明 data_gaps、撤回沒有依據的 claim 或 finding；"
+    "（2）補依據：只在輸入中確實存在對應的證據、發現或論點、而且你本來就認同時，補上正確的引用或採納。"
+    "不要為了通過驗證而把判斷變得更積極、採納你不認同的論點，或引用不相符的證據。請修正後重新輸出完整結果：\n- "
+)
+
+
+_DIFF_FIELDS = ("intent", "conviction", "strength", "outlook", "event_outlook", "level", "breadth")
+_DIFF_COUNTS = ("claims", "findings", "adopted_claim_ids", "rejected_claim_ids", "events")
+_ORDERS = {
+    "conviction": (None, "low", "medium", "high"),  # None→有信心等級代表新增 buy／add
+    "strength": ("none", "weak", "moderate", "strong"),
+    "outlook": ("negative", "unknown", "neutral", "positive"),
+    "event_outlook": ("negative", "unknown", "neutral", "positive"),
+    "intent": ("exit", "trim", "no_trade", "hold", "add", "buy"),
+    "level": ("defensive", "neutral", "aggressive"),
+    "breadth": ("diversified", "balanced", "concentrated"),
+}
+
+
+def _direction(field: str, before: object, after: object) -> str:
+    """同一欄位前後值的方向：積極、保守或無法排序；供稽核統計，不影響驗證。
+
+    claims／findings／採納／否決等計數的增減方向不明（多一個空頭 claim 不等於更積極），一律標 other。"""
+    order = _ORDERS.get(field)
+    if order is None or before not in order or after not in order:
+        return "other"
+    delta = order.index(after) - order.index(before)
+    return "more_aggressive" if delta > 0 else "more_conservative" if delta < 0 else "same"
+
+
+def _row_summary(row: Mapping[str, object]) -> Dict[str, object]:
+    summary: Dict[str, object] = {field: row.get(field) for field in _DIFF_FIELDS if field in row}
+    for field in _DIFF_COUNTS:
+        if isinstance(row.get(field), list):
+            summary["%s_count" % field] = len(row[field])
+    return summary
+
+
+def output_revision_diff(before: Mapping[str, object], after: Mapping[str, object]) -> Dict[str, object]:
+    """驗證回饋重試前後的差異摘要：逐檔（``items`` 依 symbol）或整體（現金姿態等）比較意圖、信心、強度、
+    看法與 claims／findings 數，並標示每個改變是變積極、變保守或其他。只做摘要，不改變任何輸出。"""
+    def rows(payload: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
+        items = payload.get("items")
+        if isinstance(items, list):
+            return {str(item.get("symbol", "")).upper(): _row_summary(item) for item in items if isinstance(item, Mapping)}
+        return {"": _row_summary(payload)}
+
+    old, new = rows(before), rows(after)
+    changes: List[Dict[str, object]] = []
+    counts = {"more_aggressive": 0, "more_conservative": 0, "other": 0}
+    for key in sorted(set(old) | set(new)):
+        previous, current = old.get(key, {}), new.get(key, {})
+        for field in sorted(set(previous) | set(current)):
+            if previous.get(field) == current.get(field):
+                continue
+            direction = _direction(field, previous.get(field), current.get(field))
+            if direction == "same":
+                direction = "other"
+            counts[direction] += 1
+            change: Dict[str, object] = {"field": field, "before": previous.get(field), "after": current.get(field), "direction": direction}
+            if key:
+                change["symbol"] = key
+            changes.append(change)
+    return {"changed_fields": len(changes), **counts, "changes": changes[:200]}
 
 
 class PipelineBase:
@@ -118,6 +186,8 @@ class PipelineBase:
         self._research_staging = not getattr(self.research_runner, "enforces_deny_reads", False)
         self._staged_raw: Optional[List[Tuple[str, Dict[str, object]]]] = None
         self.technical_gate = technical_gate
+        # 分析團隊階段算好的基本面指標（沒有財報時 None）；bundle 有 fundamental_period_policy 時封進 team_inputs 2.6。
+        self.fundamental_metrics: Optional[Dict[str, object]] = None
         self.decision_repository = decision_repository
         self.max_attempts = max_attempts
         self.log = log
@@ -259,6 +329,7 @@ class PipelineBase:
         errors: List[str] = []
         # 原始輸出只新增、不覆寫，保留每次嘗試供稽核。
         offset = len(previous)
+        previous_artifact: Optional[Mapping[str, object]] = None
         for attempt in range(1, self.max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             prefix = task.name.split("_", 1)[0]
@@ -272,17 +343,18 @@ class PipelineBase:
             self._save_raw(task.name, offset + attempt, call.output)
             artifact = build(call.output)
             errors = validate(artifact)
+            if previous_artifact is not None:
+                # 驗證回饋後的重試：記錄每檔意圖／信心／強度／看法與 claims 數的變化，供事後稽核「因驗證回饋變積極」。
+                with self._calls_lock:
+                    item["revision_diff"] = output_revision_diff(previous_artifact, artifact)
+            previous_artifact = artifact
             if not errors:
                 return artifact
             # 每次驗證失敗的錯誤數與前幾項留在執行紀錄，評測時可看出 Agent 在哪裡出錯。
             with self._calls_lock:
                 item["validation_errors"] = len(errors)
                 item["first_validation_errors"] = [str(error)[:200] for error in errors[:3]]
-            prompt = (
-                task.prompt
-                + "\n\n上一次輸出未通過確定性驗證，錯誤如下；請修正後重新輸出完整結果：\n- "
-                + "\n- ".join(errors[:40])
-            )
+            prompt = task.prompt + VALIDATION_FEEDBACK_PREFIX + "\n- ".join(errors[:40])
         raise DailyPipelineError("%s Agent 輸出驗證失敗：%s" % (task.name, "；".join(errors[:10])))
 
     def _call_agent(

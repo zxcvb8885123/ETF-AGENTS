@@ -177,6 +177,8 @@ class EvaluateTests(DecisionRunFixture):
     def test_enough_days_report_means_and_rank_ic(self):
         self.build_world(10)
         report = evaluate(self.repository, self.db, "2026-12-31T00:00:00+00:00")
+        self.assertEqual((report["required_decision_days"], report["evidence_grade"]), (10, "replay_reference_only"))
+        self.assertIn("前瞻驗證", report["notice"])
         for horizon in ("1", "5", "20"):
             self.assertEqual(report["horizons"][horizon]["status"], "ok")
             self.assertEqual(report["horizons"][horizon]["complete_days"], 10)

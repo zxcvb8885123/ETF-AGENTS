@@ -19,7 +19,7 @@ from etf_agent.core.run_layout import find_run_dir, list_run_dirs
 
 from .answers import score_runs
 from .compare import compare_outputs, load_outputs, pairwise_stability, process_stats, summarize
-from .contracts import EVALUATION_SCHEMA_VERSION, STOP_STAGES, EvaluationError
+from .contracts import EVALUATION_SCHEMA_VERSION, REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, STOP_STAGES, EvaluationError
 
 
 EVALUATION_ROOT = Path("artifacts") / "evaluation"
@@ -266,6 +266,8 @@ def evaluate(root: Path, eval_id: str, as_of: Optional[str] = None) -> Dict[str,
         })
     report = {
         "schema_version": EVALUATION_SCHEMA_VERSION, "eval_id": eval_id, "suite": manifest["suite"],
+        # 重跑讀的是舊考卷：模型對那些日期可能有訓練資料記憶，重跑結果與答案命中率都不是前瞻驗證。
+        "evidence_grade": REPLAY_EVIDENCE_GRADE, "notice": REPLAY_NOTICE,
         "stop_after": manifest["stop_after"], "repeats": manifest["repeats"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "overall": {"versus_reference": summarize(all_reference), "stability": summarize(all_stability),
@@ -326,6 +328,7 @@ def render_report(report: Mapping[str, object]) -> str:
     overall = report["overall"]
     lines = [
         "# Agent 評測報告：%s" % report["eval_id"], "",
+        "> %s（evidence_grade：%s）" % (report.get("notice") or REPLAY_NOTICE, report.get("evidence_grade") or REPLAY_EVIDENCE_GRADE), "",
         "評測集 %s；每份重跑 %d 次；範圍：%s。共 %d 次，失敗 %d 次；估算用量 $%s。" % (
             report["suite"], report["repeats"], "只到分析師" if report["stop_after"] == "analysts" else "完整決策鏈",
             overall["runs"], overall["failed_runs"], overall["estimated_usage_usd"]), "",

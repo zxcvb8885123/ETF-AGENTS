@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# 回放、評測重跑與格子都只是對舊日期的重算（模型對那些日期可能有訓練資料記憶），不是前瞻驗證；
+# 每份報告的 JSON 帶 evidence_grade、Markdown／HTML 首段帶同一句話，常數與 calibration 共用。
+from etf_agent.calibration.contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE  # noqa: F401
 
 EVALUATION_SCHEMA_VERSION = "1.0"
 COVERAGE_SCHEMA_VERSION = "1.0"

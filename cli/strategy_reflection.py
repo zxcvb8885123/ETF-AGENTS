@@ -20,7 +20,7 @@ from etf_agent.strategy_reflection import (  # noqa: E402
     ReflectionError, ReflectionRepository, apply_pending, apply_reflection, default_replayer, make_brief, rollback, rollback_lessons, run_auto,
 )
 from etf_agent.evaluation import EvaluationError, ReplayError  # noqa: E402
-from etf_agent.strategy_reflection.service import load_reflection  # noqa: E402
+from etf_agent.strategy_reflection.service import default_benchmarker, load_reflection  # noqa: E402
 
 
 def _daily_lock():
@@ -41,9 +41,12 @@ def main(argv=None) -> int:
     auto.add_argument("--model", help="反思使用的模型；預設沿用 Claude CLI 設定")
     auto.add_argument("--no-apply", action="store_true", help="只產生並封存反思，不套用")
     auto.add_argument("--force", action="store_true", help="距上一份反思不到 6 天也照跑（手動補跑）")
-    sub.add_parser("apply-pending", help="套用最近一份已封存、尚未套用且未過期的提案（週六早上；仍要通過驗證、影子回放與時段保護）")
-    apply = sub.add_parser("apply", help="套用指定的已封存反思（同樣要通過驗證與影子回放）")
+    pending = sub.add_parser("apply-pending", help="套用最近一份已封存、尚未套用且未過期的提案（週六早上；仍要通過驗證、風險方向、影子回放與時段保護）")
+    pending.add_argument("--allow-risk-increase", metavar="REFLECTION_ID",
+                         help="人明確放行含加風險／方向不明旋鈕的提案；只對最近一份待套用的反思生效，id 不符即拒絕")
+    apply = sub.add_parser("apply", help="套用指定的已封存反思（同樣要通過驗證、風險方向與影子回放）")
     apply.add_argument("--reflection-id", required=True)
+    apply.add_argument("--allow-risk-increase", action="store_true", help="人明確放行含加風險／方向不明旋鈕的提案（預設只套用降風險方向）")
     sub.add_parser("rollback", help="把最近一次套用的策略樣板還原為備份")
     sub.add_parser("lessons-rollback", help="把最近一次套用的經驗教訓還原成套用前（沒有前一版就刪檔）")
     sub.add_parser("history", help="列出套用與回滾歷史")
@@ -60,11 +63,14 @@ def main(argv=None) -> int:
                                   ClaudeAgentRunner(ROOT, model=args.model, max_budget_usd=3.0, timeout_seconds=600),
                                   _now(), apply=not args.no_apply, write_lock=_daily_lock, force=args.force)
             elif args.command == "apply-pending":
-                result = apply_pending(ROOT, args.database, args.decisions, _now(), write_lock=_daily_lock)
+                result = apply_pending(ROOT, args.database, args.decisions, _now(), write_lock=_daily_lock,
+                                       allow_risk_increase_for=args.allow_risk_increase)
             elif args.command == "apply":
                 reflection, brief = load_reflection(ReflectionRepository(ROOT), args.reflection_id)
                 replayer = default_replayer(ROOT, args.database, args.decisions, str(brief["as_of"]))
-                result = apply_reflection(ROOT, args.reflection_id, replayer, _now(), write_lock=_daily_lock)
+                result = apply_reflection(ROOT, args.reflection_id, replayer, _now(), write_lock=_daily_lock,
+                                          benchmarker=default_benchmarker(ROOT, args.database, str(brief["as_of"])),
+                                          allow_risk_increase=args.allow_risk_increase)
             else:
                 try:
                     with _daily_lock():

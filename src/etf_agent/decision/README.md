@@ -33,7 +33,7 @@ flowchart TD
 | `contracts.py` | 相容轉出層，維持 `etf_agent.decision.contracts` 既有匯入路徑 | 轉出下列三檔的全部公開名稱 |
 | `fields.py` | 時間點一致的共用基礎：列舉、錯誤型別、欄位解析、雜湊、禁用欄位與未知欄位檢查 | `DecisionToolError`、`decision_bundle_sha256`、`decision_rules_sha256`、`artifact_content_sha256`、`validate_forbidden_keys`、`reject_unknown_fields`、`snapshot_execution_price`、`intent_artifact_id` |
 | `input_validator.py` | DecisionInputBundle 重建驗證 | `DecisionInputValidator` |
-| `input_context.py` | 已驗證的 bundle 查詢視圖與證據對應（含 `company_news_input` 的 `news:finmind:` 證據） | `DecisionContext` |
+| `input_context.py` | 已驗證的 bundle 查詢視圖與證據對應（含 `company_news_input` 的 `news:finmind:` 證據）；`evidence_policy: typed_evidence_v1` 下另判定證據種類（price／financial／profile／revenue／material_event／news／market／account／status）、註冊市場層級證據（全市場情緒、恐懼貪婪、隔夜、`market-regime:pool-breadth`），並要求個股 claim／finding 的 `claim_kind`／`finding_kind` 與證據種類對映、至少一個證據屬於該股票 | `DecisionContext`、`evidence_policy`、`CLAIM_KINDS`、`MARKET_REGIME_EVIDENCE_ID` |
 | `input_builder.py` | 由 `ResearchSnapshot` 組裝時間點一致的 `DecisionInputBundle`；有傳入時附上選配的 `company_news_input` | `DecisionInputBuilder` |
 | `active_share.py` | 競賽 Active Share：讀取並驗證主動型 ETF 前 15 大持股（來源核准、可得時間、排名、權重），選取前 15 大並以占淨值權重計算 | `load_active_etf_benchmarks`、`top_weights`、`active_share`、`ACTIVE_SHARE_TOP_N` |
 | `momentum.py` | 確定性動能與市場狀態計算與驗證 | `MomentumEngine`、`MomentumResultValidator` |
@@ -41,7 +41,8 @@ flowchart TD
 | `analysts.py` | 分析團隊：確定性輸入摘要、`AnalystReport` 契約與 Validator、技術 gate、基本面指標、事件 high 重大性挑出；資料包含 `company_news_input` 時事件 brief 逐檔帶 `news`（只有標題），事件報告為 `EVENT_NEWS_VERSION`（2.3），否則 2.2 | `company_news`、`event_market_version`、`build_analyst_brief`、`seal_report`、`AnalystReportValidator`、`technical_trend_gate`、`compute_fundamental_metrics`、`growth_signal_quality`、`high_materiality_events`、`sentiment_unavailable_report`、`sentiment_report`、`seal_event_sentiment_report`、`seal_event_market_report`、`compact_event_batch`、`analyst_report_names`、`report_envelope` |
 | `event_financial_context.py` | 將同一快照財報接到事件解讀，保留原值、單位、期間與引用 | `event_financial_context` |
 | `cash_flow_context.py` | 從已核對的現金流文件計算營業現金流、自由現金流與對稅前淨利比率，給基本面分析師 | `cash_flow_context` |
-| `drawdown.py` | 從帳本 NAV 歷史計算峰值回撤，綁進 Policy 的 `drawdown_control`，強制現金姿態下限；歷史列有 `run_id` 時另存 `history_ref`（head_run_id、length、sha256），驗證時可由帳本重算峰值 | `bind_drawdown`、`measure_drawdown`、`stance_floor`、`stance_meets_floor`、`history_reference`、`verify_history_reference`、`validate_drawdown_control` |
+| `drawdown.py` | 從帳本 NAV 歷史計算峰值回撤，綁進 Policy 的 `drawdown_control`，強制現金姿態下限；歷史列有 `run_id` 時另存 `history_ref`（head_run_id、length、sha256），驗證時可由帳本重算峰值；有解除門檻時沿歷史重放狀態機 | `bind_drawdown`、`measure_drawdown`、`stance_floor`、`stance_floor_path`、`stance_meets_floor`、`history_reference`、`verify_history_reference`、`validate_drawdown_control` |
+| `reentry_cooldown.py` | 出場後 N 日不再買進的冷卻名單：從決策庫確定性取得最近出場的股票並綁進 Policy 的 `position_sizing.reentry_cooldown` | `recent_exit_symbols`、`bind_reentry_cooldown` |
 | `market_scope.py` | 全市場情緒通道狀態：新聞優先，否則用恐懼貪婪指標；個股情緒與交易行情不能代替。另有隔夜市場背景通道（美股指數、台股代理，1.1 另含日韓、VIX、夜盤與 `agreement`，與 `market_sentiment` 分開，只給風險 Agent 現金姿態與報告） | `market_sentiment_channel`、`overnight_market_channel` |
 | `fundamental_language.py` | 把指標缺口轉為有期間、報表與欄位的中文說明；不改寫數值或分類 | `explain_metric_gap`、`chinese_gap_explanations`、`period_label`、`render_fundamental_report` |
 | `event_sentiment_report.py` | 將已驗證的合併分析報告呈現為繁體中文，不新增結論 | `render_event_sentiment_report` |
@@ -49,12 +50,12 @@ flowchart TD
 | `trader.py` | 交易 Agent：權衡多空論點的 `TradeDecision` 與確定性配置轉接 | `TradeDecisionValidator`、`seal_trade_decision`、`trade_decision_envelope`、`apply_trade_decision`、`claims_by_symbol`、`support_by_symbol` |
 | `prior_decision.py` | 前次決策背景：從決策庫找同帳戶、目標交易時段更早、approved／no_trade 的封存 run（同時段多個時優先帳本結算記錄），整理持股的前次意圖與重估條件為不可引用的 `PriorDecisionContext`，並重建驗證 | `find_prior_decision_run`、`read_decision_run`、`build_prior_decision_context`、`prior_decision_brief`、`prior_reference_tokens`、`PriorDecisionContextValidator` |
 | `trader_report.py` | 以已驗證 `TradeDecision` 呈現交易整合結果，不重貼多空全文 | `render_trader_report` |
-| `sizing.py` | conviction 等級、現金姿態、持股廣度（`positions_by_breadth` 對應檔數）、換股名額（`rotation`）、入選順序（`selection_tiebreak`）與低波動偏好強度（v2 的 `volatility_exponent`），及其到權重的確定性轉換 | `validate_cash_stance`、`validate_position_sizing`、`breadth_target`、`conviction_weights` |
+| `sizing.py` | conviction 等級、現金姿態、持股廣度（`positions_by_breadth` 對應檔數）、換股名額（`rotation`）、入選順序（`selection_tiebreak`）與低波動偏好強度（v2 的 `volatility_exponent`），及其到權重的確定性轉換；2026-11-03 的執行面版本閘門常數與驗證（`cash_fit_order`／`cash_fit_min_fill_ratio`、`cash_ceiling_fix`、`stock_limit_headroom`＋`LIMIT_HEADROOM_BUY`、`buy_gap_reserve`／`buy_gap_reserve_rate`、`insufficient_funds_policy`） | `validate_cash_stance`、`validate_position_sizing`、`breadth_target`、`conviction_weights`、`cash_fit_min_fill_ratio`、`buy_gap_reserve_rate` |
 | `position_review.py` | 持股檢視（停損／停利警示）：程式算帳面報酬與近 20 日高點回落（policy `context: "v1"` 時另附相對交易池的 5／20 日報酬與基本面資料可得時間）、依 `position_review` 門檻標警示，交易 Agent 須處理，Finalizer 重算比對（team_inputs 2.4） | `build_position_review`、`validate_position_review`、`position_review_brief`、`POSITION_REVIEW_VERSION` |
 | `selection_ranking.py` | 入選排序：交易 Agent 第二輪在同信心等級內排先後；封存、驗證涵蓋範圍、轉成 `rank_by_symbol` 綁進 policy（team_inputs 2.5） | `SelectionRankingValidator`、`apply_selection_ranking`、`program_ranking`、`selection_ranking_brief` |
 | `rotation.py` | 滿檔換股的名額脈絡：程式算好的持股檔數、硬上限、空名額與全池多空強度統計，交給交易 Agent 當背景並由 Finalizer 重算比對 | `build_portfolio_slots`、`validate_portfolio_slots`、`PORTFOLIO_SLOTS_VERSION` |
 | `policy_builder.py` | 由策略樣板、bundle 規則與產業資料組成 `DecisionPolicy` | `build_decision_policy` |
-| `allocation.py` | 確定性配置、下單、費稅與現金；Policy 與 Proposal 驗證 | `AllocationOrderEngine`、`DecisionPolicyValidator`、`ProposalValidator`、`decision_policy_sha256` |
+| `allocation.py` | 確定性配置、下單、費稅與現金；Policy 與 Proposal 驗證。`_fit_cash` 依閘門決定買單取得現金的順序、塵埃取消與跳空預留；`_run_min_positions` 同時處理最低檔數與現金上限補救；`_fit_stock_weights` 依是否有買單決定封頂係數。`effective_policy` 只在 policy 有閘門欄位時才多出對應鍵 | `AllocationOrderEngine`、`DecisionPolicyValidator`、`ProposalValidator`、`decision_policy_sha256` |
 | `risk.py` | 確定性情境、競賽檢查（Guard，Active Share 以前 15 大比前 15 大）與風險審查契約 | `ScenarioEngine`、`ScenarioValidator`、`CompetitionGuardV2`、`GuardValidator`、`RiskReviewValidator`、`sector_exposure`、`liquidity_exposure`、`revision_effects` |
 | `revision.py` | 提案／審查修正鏈的確定性建立與重播 | `RevisionHistoryBuilder`、`RevisionHistoryValidator` |
 | `finalization.py` | 最終決策重建與不可變封存（`DecisionRepository` 繼承 `ImmutableRunStore`） | `DecisionFinalizer`、`DecisionResultValidator`、`DecisionRepository`、`build_team_inputs` |
@@ -74,7 +75,7 @@ flowchart TD
 ## 對應的 CLI／scripts／測試
 
 - CLI：`cli/portfolio_decision.py`；scripts：`scripts/evaluate_event_brief.py`、`scripts/evaluate_technical_brief.py`。
-- 測試：`tests/decision/`（`test_portfolio_decision_agent.py`、`test_portfolio_risk_decision.py`、`test_decision_input_builder.py`、`test_active_share.py`、`test_stance.py`、`test_trader.py`、`test_team_chain.py`、`test_position_sizing.py`、`test_trader_report.py`、`test_batching.py`、`test_decision_delivery.py`、`test_drawdown.py`）；`tests/research/test_analysts.py`、`test_fundamental_language.py`、`test_technical_trend_history.py`。
+- 測試：`tests/decision/`（`test_portfolio_decision_agent.py`、`test_portfolio_risk_decision.py`、`test_decision_input_builder.py`、`test_active_share.py`、`test_stance.py`、`test_trader.py`、`test_team_chain.py`、`test_position_sizing.py`、`test_cash_fit_and_limits.py`、`test_risk_limit_gates.py`、`test_trader_report.py`、`test_batching.py`、`test_decision_delivery.py`、`test_drawdown.py`）；`tests/research/test_analysts.py`、`test_fundamental_language.py`、`test_technical_trend_history.py`。
 - 帳本歷史驗證：policy 的 `drawdown_control` 含 `history_ref` 時，`DecisionFinalizer`／`DecisionResultValidator` 需要選用參數 `nav_history_provider`（型別 `NavHistoryProvider`，以 `history_ref.head_run_id` 讀回 NAV 歷史；`ledger_nav_history_provider(ledger_root, bundle)` 為依帳戶開帳本的實作）。沒有提供、帳本讀不到或歷史不符一律拒絕；沒有 `history_ref` 的舊 policy 不讀帳本。
 - 架構文件：[docs/architecture.md](../../../docs/architecture.md)、[docs/technical_trend_history.md](../../../docs/technical_trend_history.md)。
 
@@ -93,8 +94,12 @@ flowchart TD
 - 非可交易標的不建立買賣單（`RISK_NOT_TRADABLE`）；持股將低於 `min_positions` 時依 ATR14 由低到高留住 `exit` 持股（`RISK_MIN_POSITIONS`，`forced_exit` 不留）。
 - 配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 `minimum_active_share`（15%）時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次（`RISK_ACTIVE_SHARE`，不賣既有持股）；仍不通過由 Guard 拒絕。
 - 強制換股（`position_sizing.rotation.forced_swap`，版本閘門）：持股滿檔又沒人出場時，信心達門檻的未持有買進候選由程式換掉交易 Agent 標 hold、且每週論點檢視判定 broken（名單綁在 Policy）的持股，賣單意圖標 `exit`、旗標 `RISK_FORCED_SWAP`；省略此欄位的舊 Policy 維持原行為。
-- 產業權重在任一情境超過 `max_sector_weight` 時，`_fit_sector_weights` 同樣在 Guard 前按整張減碼（先減買單、再賣持股；同產業先減低信心、大市值），留下 `RISK_SECTOR_WEIGHT` 旗標；上限為 1 時不動作。
-- Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。2.2 另含 `prior_decision_context`，交易 Agent 的文字欄位引用它即拒絕。
+- 產業權重在任一情境超過 `max_sector_weight`（目前 0.6）時，`_fit_sector_weights` 同樣在 Guard 前按整張減碼（舊路徑先減買單、再賣持股；`sector_fit: "v1"` 啟用時只減買單增量、不賣持股，Guard 容忍「既有已超限且本次沒有買進」的產業並記 `carried`），留下 `RISK_SECTOR_WEIGHT` 旗標；上限為 1 時不動作。
+- 2026-11-03 晚間的風控閘門（`position_sizing`，只由人設定、策略反思禁區，省略即舊行為）：`turnover_fit`（換手超過 `max_turnover_rate`（目前 0.3）時依信心低→高、ATR 高→低縮減買單，`TURNOVER_LIMIT`；賣單本身超過時留住 exit，`RISK_TURNOVER`）、`reentry_cooldown`（`days` 3：決策庫最近出場的股票未持有時不再買，`RISK_REENTRY_COOLDOWN`；名單由 `reentry_cooldown.py::bind_reentry_cooldown` 綁進 Policy）、`drawdown_derisk`（與 `drawdown_control.release_neutral_below`／`release_defensive_below` 成對：姿態下限沿帳本歷史重放 `stance_floor_path`；defensive 時依 ATR 高→低減碼到姿態緩衝，一次最多 NAV × `max_derisk_fraction`，`RISK_DRAWDOWN`；預算 ≤ 0 的旗標改為 `CASH_BUFFER`）、`rotation.forced_swap.confirmation`（被換出者須有本次採納的空頭 claim，否則 `RISK_FORCED_SWAP_UNCONFIRMED`；換出數受 `min_positions` 與現金限制，可被留住）。
+- 交割以淨額計：rules 的 `reuse_sell_proceeds` 自 `decision-rules-2026-11-03` 起為 `true`，同日賣出收入可買替補；rules 封進 bundle，舊 run 以封存值重建。
+- 2026-11-03 執行面版本閘門（`position_sizing`，只由人設定、策略反思禁區，省略即舊行為）：`cash_fit_order`（買單依信心、名次、代號取得現金；新股殘量低於 `cash_fit_min_fill_ratio`（預設 0.5）整筆取消，`RISK_CASH_FIT`；持有的 add 只減量）、`cash_ceiling_fix`（現金比例達上限時依 ATR14 留住 `exit` 持股，`RISK_CASH_CEILING`，與 `RISK_MIN_POSITIONS` 同迴圈）、`stock_limit_headroom`（有 buy／add 的股票封頂 ×0.97，只續抱 ×0.995）、`buy_gap_reserve`（買單累計總額 × `buy_gap_reserve_rate`（預設 0.03）計入現金需求）、`insufficient_funds_policy: "void_batch"`（只給虛擬帳本結算：現金不足整批作廢）。
+- Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。2.2 另含 `prior_decision_context`，交易 Agent 的文字欄位引用它即拒絕。2.6（bundle 有 `fundamental_period_policy` 時必為 2.6）另含程式計算的 `fundamental_metrics`，Finalizer 以 `validate_fundamental_metrics` 整份重算比對，改寫或降版即拒絕；舊 bundle／舊 run 不重算。
+- `typed_evidence_v1`（bundle 的 `evidence_policy`，新 bundle 預設）：個股 claim／finding 宣告種類並至少引用一個屬於該股票且對映的證據，市場層級與帳戶證據只能作補充；現金姿態至少引用一個市場層級證據、全市場情緒負面時不得 aggressive。舊 bundle 維持原驗證。
 - 舊版 1.0 debate 已移除，Finalizer 與 Validator 遇到一律拒絕。
 - Decision artifacts 使用嚴格欄位白名單與可重算內容雜湊。
 - Snapshot、研究結果與決策的 `snapshot_id`、cutoff 與資料版本必須一致。

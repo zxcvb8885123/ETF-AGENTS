@@ -14,7 +14,7 @@ from etf_agent.strategy_reflection import (
 from etf_agent.strategy_reflection.contracts import TRIAL_MAX_CALENDAR_DAYS
 from etf_agent.strategy_reflection.trial import change_direction, consecutive_reverts, knob_outcomes, open_trial
 
-from test_strategy_reflection import Fixture, NOW, report, replay_body
+from test_strategy_reflection import Fixture, NOW, flat_benchmark, report, replay_body
 from test_trial import APPLY, days
 from test_weekly_reflection import FRIDAY, SATURDAY, passing_replayer
 
@@ -69,7 +69,7 @@ class SettleHardeningTests(Fixture):
 class OrphanedTrialTests(Fixture):
     def apply(self):
         reflection_id = save_reflection(self.repository, self.reflection(), self.brief)
-        self.assertTrue(apply_reflection(self.tmp, reflection_id, passing_replayer, NOW, self.repository)["applied"])
+        self.assertTrue(apply_reflection(self.tmp, reflection_id, passing_replayer, NOW, self.repository, benchmarker=flat_benchmark)["applied"])
 
     def settle(self, excess=None):
         return service.settle_open_trial(self.tmp, SATURDAY, self.repository, excess or {}, clock=lambda: SATURDAY)
@@ -149,7 +149,7 @@ class FeedbackLoopTests(Fixture):
 
     def test_apply_records_the_direction_of_every_change(self):
         reflection_id = save_reflection(self.repository, self.reflection(), self.brief)
-        apply_reflection(self.tmp, reflection_id, passing_replayer, NOW, self.repository)
+        apply_reflection(self.tmp, reflection_id, passing_replayer, NOW, self.repository, benchmarker=flat_benchmark)
         self.assertEqual(self.repository.history()[0]["changes"], {KNOB: {"from": "1.5", "to": "1.4"}})
         self.assertEqual((change_direction(KNOB, "1.5", "1.4"), change_direction(KNOB, "1.5", "1.5"), change_direction("nope", 1, 2)), (-1, 0, 0))
         self.assertEqual(change_direction("rotation.min_new_conviction", "low", "medium"), 1)
@@ -210,7 +210,7 @@ class AgentFailureTests(Fixture):
     def test_proposal_sealed_a_week_ago_is_still_applied_on_the_next_saturday(self):
         save_reflection(self.repository, self.reflection(), self.brief)
         later = SATURDAY + timedelta(days=7)  # 週五 20:30 封存 → 下週六 10:00：8 天又 13.5 小時
-        result = apply_pending(self.tmp, self.tmp / "db", self.tmp / "decisions", later, replayer=passing_replayer, clock=lambda: later)
+        result = apply_pending(self.tmp, self.tmp / "db", self.tmp / "decisions", later, replayer=passing_replayer, clock=lambda: later, benchmarker=flat_benchmark)
         self.assertTrue(result["applied"], result)
 
 

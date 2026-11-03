@@ -31,6 +31,7 @@ from etf_agent.competition import DataPackError, DPlanError, DPlanExportService,
 from etf_agent.competition.datapack import DEFAULT_CASH_TOLERANCE_RATE
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, active_account_id
 
+from etf_agent.automation import local_notify  # noqa: E402
 from etf_agent.automation.daily_pipeline import (  # noqa: E402
     ClaudeAgentRunner,
     CodexAgentRunner,
@@ -161,11 +162,125 @@ def write_json(path: Path, payload) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def notify(title: str, message: str) -> None:
-    if sys.platform != "darwin":
+def notify(title: str, message: str) -> bool:
+    """本機通知（macOS `display notification`，不用會阻塞的 `display alert`／`display dialog`）。
+
+    通知只是提醒：osascript 不存在、逾時、非零結束（含通知權限被拒）都只記日誌、不拋出，不影響 run 的結果與結束碼。"""
+    return local_notify.notify(title, message, log=log)
+
+
+def record_run_status(status: str, *, trade_date=None, run_id=None, detail: str = "", now=None, logs_root=None) -> "Path | None":
+    """把這次 run 的最終狀態附加一行到 var/logs/daily_status.log；寫不進去只記日誌，不影響 run。
+
+    status 取值：approved／no_trade／rejected／blocked／fallback／failed，略過時為 skipped。"""
+    if status not in local_notify.RUN_STATUSES:
+        raise ValueError("未定義的最終狀態：%s" % status)
+    now = now or datetime.now(TAIPEI_TIMEZONE)
+    line = local_notify.format_status_line(now, local_notify.classify_run_type(now), status, trade_date, run_id, detail)
+    return local_notify.append_status_line(logs_root or daily_logs_root(), line, log=log)
+
+
+def final_run_status(summary: dict) -> str:
+    """由 pipeline.json 摘要算出對外的單一最終狀態。
+
+    approved／no_trade：決策完成且 D-Plan ready；fallback：備援 D-Plan 已產生；rejected：決策被拒且沒有備援；
+    blocked：決策完成但 D-Plan 被擋且沒有備援；failed：流程失敗且沒有備援。"""
+    dplan_status = (summary.get("dplan") or {}).get("status")
+    if dplan_status == "fallback":
+        return "fallback"
+    if summary.get("status") != "completed":
+        return "failed"
+    decision = summary.get("decision_status")
+    if decision == "rejected":
+        return "rejected"
+    if dplan_status == "ready" and decision in {"approved", "no_trade"}:
+        return decision
+    return "blocked"
+
+
+def finish_notification(summary: dict, args) -> str:
+    """結束時的通知文字：最終狀態、委託數、姿態、D-Plan 路徑或未產生原因、備援與還原提示。"""
+    status = final_run_status(summary)
+    dplan = summary.get("dplan") or {}
+    if summary.get("status") == "completed":
+        message = "最終狀態 %s；決策 %s，%d 筆委託，現金姿態 %s，持股廣度 %s，CLI %s" % (
+            status, summary.get("decision_status"), summary.get("order_count", 0),
+            summary.get("cash_stance"), summary.get("position_breadth") or "-", args.agent_cli,
+        )
+        if "claude" in (args.agent_cli, args.research_agent_cli):
+            message += "，Agent 估算用量 $%s（訂閱不計費）" % summary.get("agent_estimated_usage_usd")
+    else:
+        message = "最終狀態 %s；失敗：%s" % (status, str(summary.get("error"))[:120])
+    if status == "fallback":
+        message += "；備援 D-Plan（全部續抱、無委託，程式產生）已存為 %s，請人工決定是否上傳" % dplan.get("output")
+        if not dplan.get("main_replaced"):
+            message += "（主檔仍是正式決策，備援只在 versions/）"
+    elif dplan.get("fallback", {}).get("status") == "not_generated":
+        message += "；備援 D-Plan 也未產生：%s" % str(dplan["fallback"].get("error"))[:160]
+    if summary.get("rolled_back"):
+        message += "；已還原重跑前的備案決策，請上傳原本的 D-Plan 主檔（latest 報告仍是本次內容）"
+    elif summary.get("rollback_error"):
+        message += "；還原重跑前的決策失敗，請人工檢查帳本"
+    if summary.get("delivery") and status not in {"fallback"}:
+        message += "；報告 %s；D-Plan %s" % (summary["delivery"]["report_status"], dplan.get("status", "not_run"))
+    return message
+
+
+def status_detail(summary: dict) -> str:
+    """狀態列的最後一欄：有 D-Plan 時是路徑，否則是未產生的原因。"""
+    dplan = summary.get("dplan") or {}
+    if dplan.get("status") in {"ready", "fallback"}:
+        return str(dplan.get("output"))
+    reasons = [str(summary.get("error") or dplan.get("error") or "")]
+    if dplan.get("fallback", {}).get("status") == "not_generated":
+        reasons.append("備援未產生：%s" % dplan["fallback"].get("error"))
+    return "；".join(part for part in reasons if part) or "not_run"
+
+
+def attempt_fallback_dplan(summary: dict, args, session, account_path: Path, snapshot_path: Path, now: datetime) -> None:
+    """決策被拒、D-Plan 被擋或流程失敗時，嘗試產生「全部續抱、無委託」的備援 D-Plan 候選；結果寫進 summary["dplan"]。
+
+    不產生的情況都明寫原因：已還原重跑前的備案（原主檔仍有效）、已過交件期限、沒有目標時段、DataPack 未對帳、
+    比賽前提不滿足（持股檔數、現金比、單股上限、150 檔、持股與資料包不同）。備援只是本機候選檔，不會上傳。"""
+    from etf_agent.competition import FallbackDPlanService
+
+    dplan = summary.get("dplan") or {}
+    if dplan.get("status") in {"ready", "fallback"}:
         return
-    script = 'display notification %s with title %s' % (json.dumps(message), json.dumps(title))
-    subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+    if summary.get("status") == "completed" and summary.get("decision_status") == "rejected":
+        reason, detail = "decision_rejected", "決策被風控拒絕；%s" % (dplan.get("error") or "")
+    elif summary.get("status") == "completed":
+        reason, detail = "dplan_blocked", str(dplan.get("error") or "D-Plan 未產生")
+    else:
+        reason, detail = "pipeline_failed", str(summary.get("error") or "每日流程失敗")
+    summary.setdefault("dplan", {"status": "blocked", "error": detail})
+    if summary.get("rolled_back"):
+        summary["dplan"]["fallback"] = {"status": "not_generated", "error": "已還原重跑前的備案決策，原 D-Plan 主檔仍可上傳，不需備援"}
+        log("[備援] 不產生：已還原重跑前的備案決策")
+        return
+    if session is None or not isinstance(summary.get("datapack"), dict):
+        summary["dplan"]["fallback"] = {"status": "not_generated", "error": "流程在目標時段或 DataPack 對帳前就失敗，缺少產生備援所需的輸入"}
+        log("[備援] 不產生：缺少目標時段或 DataPack 對帳結果")
+        notify("ETF Agent 備援 D-Plan", "未產生備援：流程在 DataPack 對帳前失敗，今日沒有可交的 D-Plan，請人工處理")
+        return
+    if session_deadline_passed(session, now):
+        summary["dplan"]["fallback"] = {"status": "not_generated", "error": "已過目標時段的交件期限，備援 D-Plan 無法繳交"}
+        log("[備援] 不產生：已過交件期限")
+        return
+    result = FallbackDPlanService(ROOT).generate(
+        daily_run=dict(summary, target_session=session), account_path=account_path, snapshot_path=snapshot_path,
+        profile_path=ROOT / "config" / "competition_profile.json", account_id=args.account_id,
+        reason=reason, detail=detail, now=now,
+    )
+    if result.get("status") == "fallback":
+        summary["dplan"] = dict(result, original={k: dplan.get(k) for k in ("status", "error") if k in dplan})
+        log("[備援] 已產生備援 D-Plan（全部續抱、無委託，程式產生，未上傳）：%s" % result["output"])
+        if not result.get("main_replaced"):
+            log("[備援] 主檔是正式決策的 D-Plan，備援只存在 versions/，請人工決定要交哪一份")
+    else:
+        summary["dplan"]["fallback"] = result
+        log("[備援] 未產生備援 D-Plan：%s" % result.get("error"))
+        notify("ETF Agent 備援 D-Plan", "未產生備援 D-Plan：%s" % str(result.get("error"))[:160])
 
 
 LOCK_STALE_HOURS = 6
@@ -802,11 +917,13 @@ def _main(args) -> int:
         # 權限、磁碟等非「鎖被佔用」的錯誤：不能當成別的流程在跑而靜默成功，否則排程漏跑沒人知道。
         log("無法取得每日流程鎖（artifacts/daily/.lock）：%s" % error)
         notify("ETF Agent 每日決策", "失敗：無法取得每日流程鎖：%s" % str(error)[:100])
+        record_run_status("failed", detail="無法取得每日流程鎖：%s" % error)
         return 1
     if not acquired:
         holder = describe_lock_holder(runs_root / ".lock", datetime.now(TAIPEI_TIMEZONE))
         log("另一個每日流程正在執行，本次略過。%s" % holder)
         notify("ETF Agent 每日決策", "本次略過：另一個每日流程仍在執行。%s" % holder)
+        record_run_status("skipped", detail="另一個每日流程仍在執行。%s" % holder)
         return 0
     write_lock_holder(lock_handle, datetime.now(TAIPEI_TIMEZONE))
     min_free_bytes = int(args.min_free_gb * 1024 ** 3)
@@ -825,6 +942,7 @@ def _main(args) -> int:
         try:
             if not trading_day_check(captures_root, now):
                 log("%s 依官方開休市日曆休市、隔天也不是交易時段的晚間備案，不執行（--force 可強制）。" % now.date().isoformat())
+                record_run_status("skipped", detail="%s 休市，不執行" % now.date().isoformat())
                 return 0
         except (TradingCalendarError, OSError, ValueError) as error:
             log("無法判定今天是否為交易日，停止：%s" % error)
@@ -835,6 +953,7 @@ def _main(args) -> int:
             except (ValueError, OSError) as publish_error:
                 log("交付診斷發布失敗：%s" % publish_error)
             notify("ETF Agent 每日決策", "失敗：無法判定交易日：%s" % str(error)[:100])
+            record_run_status("failed", detail="無法判定交易日：%s" % error)
             return 1
     day_run_prefix = "daily-%s" % now.strftime("%Y%m%d")
     session_start_hint = upcoming_session_start(captures_root, now)
@@ -843,6 +962,8 @@ def _main(args) -> int:
         done = completed_run_for_session(runs_root, day_run_prefix, session_start_hint, now)
         if done is not None:
             log("%s 已完成（%s），不重跑。" % done)
+            record_run_status("skipped", trade_date=trade_date_from_session_start(session_start_hint), run_id=done[0],
+                              detail="同一時段 1 小時內已完成（%s），不重跑" % done[1])
             return 0
     # 每次 run 目錄都帶台北時間，同日多次執行各自保留、互不覆蓋；資料夾改用目標交易日
     # （跟 D-Plan 一致），日曆缺漏等估不出目標時段時才退回執行日期。
@@ -854,6 +975,7 @@ def _main(args) -> int:
             resumable = named_resumable_run(runs_root, args.resume)
         except RuntimeError as error:
             log("無法續跑：%s" % error)
+            record_run_status("failed", detail="無法續跑：%s" % error)
             return 1
     else:
         resumable = latest_resumable_run(runs_root, day_run_prefix) if args.resume else None
@@ -861,10 +983,12 @@ def _main(args) -> int:
         previous_cli = resumable_agent_cli(resumable)
         if previous_cli != args.agent_cli:
             log("無法續跑：原 run 使用 %s，這次選擇 %s" % (previous_cli, args.agent_cli))
+            record_run_status("failed", run_id=resumable.name, detail="無法續跑：原 run 使用 %s，這次選擇 %s" % (previous_cli, args.agent_cli))
             return 1
         previous_research_cli = resumable_research_agent_cli(resumable)
         if previous_research_cli != args.research_agent_cli:
             log("無法續跑：原 run 的多空研究員使用 %s，這次選擇 %s" % (previous_research_cli, args.research_agent_cli))
+            record_run_status("failed", run_id=resumable.name, detail="無法續跑：研究員 CLI %s 與原 run %s 不同" % (args.research_agent_cli, previous_research_cli))
             return 1
         # 續跑沿用最近一個未完成且已有 Agent 輸出的 run 目錄，否則新目錄中沒有可沿用的輸出。
         run_id = resumable.name
@@ -901,6 +1025,10 @@ def _main(args) -> int:
             summary["data_reused_trade_date"] = trade_date.isoformat()
             args.skip_data = True
     write_json(summary_path, summary)
+    # 備援 D-Plan 需要目標時段、帳戶快照與 Snapshot 路徑；流程在哪一步失敗都要能判斷還缺什麼。
+    session = None
+    snapshot_path = ROOT / "artifacts" / "data" / "research_snapshot_latest.json"
+    account_path = ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json"
 
     try:
         # 在抓資料與呼叫任何子 Agent 前確認環境；一次列出全部失敗項目。
@@ -917,8 +1045,6 @@ def _main(args) -> int:
                                 agent_cli=args.agent_cli, research_agent_cli=args.research_agent_cli)
         summary["preflight"] = checks_to_dict(checks)
         require_preflight(checks)
-        snapshot_path = ROOT / "artifacts" / "data" / "research_snapshot_latest.json"
-        account_path = ROOT / "artifacts" / "ledger" / args.account_id / "account_snapshot_latest.json"
         if not args.skip_data:
             # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
             log("[0/4] 封存交易狀態與開休市政府開放 CSV")
@@ -1113,32 +1239,27 @@ def _main(args) -> int:
                 log("交付診斷發布失敗：%s" % publish_error)
     if summary.get("superseded_pending") and summary.get("dplan", {}).get("status") != "ready":
         roll_back_superseded(summary, run_dir, args.account_id, decision_run_id)
+    if summary.get("dplan", {}).get("status") != "ready":
+        # 決策被拒、D-Plan 被擋或流程失敗：嘗試程式產生的「全部續抱、無委託」備援候選（只落地、不上傳）。
+        try:
+            attempt_fallback_dplan(summary, args, session, account_path, snapshot_path, datetime.now(TAIPEI_TIMEZONE))
+        except Exception as error:  # noqa: BLE001 — 備援本身出錯不得改變原本的失敗處理
+            summary.setdefault("dplan", {"status": "blocked", "error": str(summary.get("error"))})["fallback"] = {
+                "status": "not_generated", "error": "備援程式例外：%s" % error}
+            log("[備援] 備援程式例外，未產生：%s" % error)
     summary["calibration"] = record_calibration()
     summary.setdefault("finished_at", datetime.now(TAIPEI_TIMEZONE).isoformat())
+    summary["final_status"] = final_run_status(summary)
     write_json(summary_path, summary)
 
     log("[4/4] 通知")
-    if summary["status"] == "completed":
-        message = "決策 %s，%d 筆委託，現金姿態 %s，持股廣度 %s，CLI %s" % (
-            summary.get("decision_status"), summary.get("order_count", 0),
-            summary.get("cash_stance"), summary.get("position_breadth") or "-", args.agent_cli,
-        )
-        if "claude" in (args.agent_cli, args.research_agent_cli):
-            message += "，Agent 估算用量 $%s（訂閱不計費）" % summary.get("agent_estimated_usage_usd")
-    else:
-        message = "失敗：%s" % str(summary.get("error"))[:120]
-    if summary.get("rolled_back"):
-        message += "；已還原重跑前的備案決策，請上傳原本的 D-Plan 主檔（latest 報告仍是本次內容）"
-    elif summary.get("rollback_error"):
-        message += "；還原重跑前的決策失敗，請人工檢查帳本"
-    if summary.get("delivery"):
-        message += "；報告 %s；D-Plan %s" % (
-            summary["delivery"]["report_status"], summary.get("dplan", {}).get("status", "not_run"),
-        )
+    message = finish_notification(summary, args)
     notify("ETF Agent 每日決策", message)
+    record_run_status(summary["final_status"], trade_date=trade_date_from_session_start((session or {}).get("start")) if session else None,
+                      run_id=run_id, detail=status_detail(summary))
     if summary.get("delivery"):
         dplan = summary.get("dplan", {})
-        detail = dplan.get("output") if dplan.get("status") == "ready" else dplan.get("error", "not_run")
+        detail = dplan.get("output") if dplan.get("status") in {"ready", "fallback"} else dplan.get("error", "not_run")
         log("最終報告：%s；D-Plan：%s（%s）" % (
             summary["delivery"]["report_path"], dplan.get("status", "not_run"), detail,
         ))

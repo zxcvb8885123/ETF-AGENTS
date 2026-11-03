@@ -39,7 +39,7 @@ from etf_agent.core import canonical_sha256, parse_aware_time
 from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.core.run_layout import find_run_dir, list_run_dirs
 
-from .contracts import DEFAULT_BENCHMARK_SYMBOL, GRID_SCHEMA_VERSION, GridError
+from .contracts import DEFAULT_BENCHMARK_SYMBOL, GRID_SCHEMA_VERSION, REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, GridError
 from .replay_tools import code_version
 from .service import EVALUATION_ROOT
 
@@ -286,6 +286,9 @@ def build_grid(
     body: Dict[str, object] = {
         "schema_version": GRID_SCHEMA_VERSION,
         "status": "completed",
+        # 格子只是把已封存決策拿來對之後的價格，不是對 LLM 判斷的前瞻驗證（見 contracts）。
+        "evidence_grade": REPLAY_EVIDENCE_GRADE,
+        "notice": REPLAY_NOTICE,
         "inputs": {
             "decision_root": str(decision_root), "database": str(database), "as_of": book.as_of, "benchmark": benchmark,
             "run_ids": pinned_all,

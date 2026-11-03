@@ -194,16 +194,25 @@ class TradeDecisionValidator:
             errors.append("%s 未處理全部 claim：%s" % (prefix, ", ".join(missing)))
         adopted_roles: Set[str] = {available[claim] for claim in adopted if claim in available}
         if intent in SIZED and "bull" not in adopted_roles:
-            errors.append("%s %s 必須採納至少一個多頭 claim" % (prefix, intent))
+            errors.append(
+                "%s %s 需要至少一個被採納的多頭 claim；若你不認同任何多頭論點，請改為 %s（降級），"
+                "不要為了通過驗證而採納不認同的 claim" % (prefix, intent, "hold 或 no_trade" if held else "no_trade")
+            )
         if intent in REDUCING and not adopted_roles & {"bear", "review", "position"}:
-            errors.append("%s %s 必須採納至少一個空頭 claim、持股檢視警示或持股事實" % (prefix, intent))
+            errors.append(
+                "%s %s 需要至少一個被採納的空頭 claim、持股檢視警示或持股事實；若沒有可採納的依據，請改為 hold（降級）"
+                % (prefix, intent)
+            )
         rejected_reviews = sorted(claim for claim in rejected if available.get(claim) == "review")
         if rejected_reviews:
             errors.append("%s 持股檢視警示是程式事實，只能採納不可否決：%s" % (prefix, ", ".join(rejected_reviews)))
         # 虧損警示的持股若要續抱或加碼，必須有多頭依據；沒有多頭論點時只剩減碼或出場。
         loss_alert = any(flag == "loss_alert" for flag in self.reviews.get(symbol, {}).values())
         if loss_alert and intent in {"hold", "add", "no_trade"} and "bull" not in adopted_roles:
-            errors.append("%s 虧損警示的持股 %s 必須採納至少一個多頭 claim，否則請 trim 或 exit" % (prefix, intent))
+            errors.append(
+                "%s 虧損警示的持股 %s 需要至少一個被採納的多頭 claim；兩種合法修法：有你認同的多頭論點就補採納它，"
+                "沒有就改為 trim 或 exit（降級），不要為了續抱而採納不認同的 claim" % (prefix, intent)
+            )
 
 
 def support_by_symbol(

@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from etf_agent.core import canonical_sha256, decimal_string
 from .contracts import (
-    LOOKBACK_CALENDAR_DAYS, NIGHT_SYMBOL, SOURCE_ID, SYMBOLS_V11, TAIFEX_QUOTE_URL, TAIFEX_SOURCE_ID, YAHOO_CHART_PREFIX,
+    LOOKBACK_CALENDAR_DAYS_V12, NIGHT_SYMBOL, SOURCE_ID, SYMBOLS_V11, TAIFEX_QUOTE_URL, TAIFEX_SOURCE_ID, YAHOO_CHART_PREFIX,
     OvernightMarketError,
 )
 
@@ -69,7 +69,7 @@ class OvernightProvider:
         """抓一個標的；失敗時保留原因，不拋出，讓其他標的照常計算。"""
         text, error, status = "", "", "fetched"
         try:
-            start = (now - timedelta(days=LOOKBACK_CALENDAR_DAYS)).date()
+            start = (now - timedelta(days=LOOKBACK_CALENDAR_DAYS_V12)).date()
             bars = self.fetcher(symbol, start, (now + timedelta(days=1)).date())
             if not bars:
                 raise OvernightMarketError("原始回應為空")

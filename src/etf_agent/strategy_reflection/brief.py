@@ -7,8 +7,8 @@ from typing import Dict, Mapping, Optional, Sequence
 from etf_agent.calibration.contracts import MIN_DECISION_DAYS
 from etf_agent.core import canonical_sha256
 
-from .contracts import GATE_HORIZONS, SCHEMA_VERSION
-from .tools import current_knobs
+from .contracts import GATE_HORIZONS, REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, SCHEMA_VERSION
+from .tools import current_knobs, knob_risk_directions
 from .trial import knob_outcomes
 
 _SKIP_KEYS = {"pending_days", "excluded_obs"}
@@ -72,6 +72,11 @@ def build_brief(
         "base_policy_id": template.get("policy_id"),
         "base_policy_sha256": canonical_sha256(template),
         "knobs": knobs,
+        # 每個旋鈕往哪個方向是降風險（decrease／increase／ambiguous）：只有降風險方向的提案能自動套用。
+        "knob_risk_directions": {path: direction for path, direction in knob_risk_directions().items() if path in knobs},
+        # 校準統計與影子回放都只是對舊日期的重算，不是對 LLM 判斷的前瞻驗證。
+        "evidence_grade": REPLAY_EVIDENCE_GRADE,
+        "notice": REPLAY_NOTICE,
         "evidence": evidence,
     }
     if diagnostics is not None:
