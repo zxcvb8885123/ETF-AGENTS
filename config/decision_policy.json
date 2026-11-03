@@ -27,8 +27,8 @@
     "method": "conviction_volatility_v2",
     "conviction_multipliers": {
       "high": "1.5",
-      "medium": "1",
-      "low": "0.5"
+      "medium": "0.6",
+      "low": "0.3"
     },
     "volatility_floor": "0.01",
     "volatility_exponent": "0",
