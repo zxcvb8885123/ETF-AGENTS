@@ -30,7 +30,7 @@ flowchart TD
     DB --> ST[status.py<br/>DataAgentStatusRepository]
 ```
 
-FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對前不進正式 Snapshot（見根 README）。個股新聞候選不進 Snapshot；核准後由 `perception/company_news` 直接從資料庫建立決策輸入的 `company_news_input`，只進事件分析師（核對指令尚未執行）。
+FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對前不進正式 Snapshot（見根 README）。個股新聞候選不進 Snapshot；核准後由 `perception/company_news` 直接從資料庫建立決策輸入的 `company_news_input`，只進事件分析師（`company_news_source_reviews` 已有 2026-10-27 的 `approved` 核對，每日決策輸入自此帶入個股新聞）。
 
 ## 檔案清單
 
@@ -48,10 +48,11 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `latest.py` | 官方 TWSE＋TPEx 最新價合併收集 | `LatestPriceCollectionResult`、`LatestPriceProviderFactory`、`LatestPriceCollector`、`latest_price_providers`、`collect_latest_prices` |
 | `historical.py` | TWSE 上市股票歷史月行情 Provider、節流與刷新規劃 | `HistoricalResponse`、`HistoryRefreshBatch`、`HistoricalPriceProvider`、`RequestGate`、`SourceThrottledError`、`SourceBlockedError`、`rolling_start`、`plan_history_refresh`、`month_starts` |
 | `historical_collector.py` | 有界並行的月歷史回應批次保存、官方歷史刷新；`HistoricalPriceCollector(in_competition_universe=False)` 只存行情、不把標的標成交易池成員 | `HistoricalPriceCollector`、`OfficialHistoricalRefreshService`、`HistoricalCollectionResult`、`HistoricalCollectionError`、`OfficialHistoryBatchResult`、`OfficialHistoryCoverage`、`OfficialHistoryRefreshResult` |
-| `yfinance_history.py` | 透過 yfinance 收集上市／上櫃兩年 OHLCV（研究用調整價）；同樣提供 `in_competition_universe` 開關；官方行情整天沒有任何一檔的日期（如颱風休市）視為休市，Yahoo 成交量 0、開高低收相同的補位日線不寫入 | `YFinanceHistoryCollector`、`no_trade_placeholder`、`drop_closed_day_placeholders`、`YFinanceCollectionResult`、`YFinanceRefreshResult`、`stale_basis_symbols`、`stored_closes`、`close_rebased_symbols` |
+| `yfinance_history.py` | 透過 yfinance 收集上市／上櫃兩年 OHLCV（研究用調整價）；同樣提供 `in_competition_universe` 開關；官方行情整天沒有任何一檔的日期（如颱風休市）視為休市，Yahoo 成交量 0、開高低收相同的補位日線不寫入；Yahoo 沒有成交金額與筆數，資料庫欄位 NOT NULL 以 0 佔位，由快照層輸出 `None` | `YFinanceHistoryCollector`、`no_trade_placeholder`、`drop_closed_day_placeholders`、`YFinanceCollectionResult`、`YFinanceRefreshResult`、`stale_basis_symbols`、`stored_closes`、`close_rebased_symbols` |
 | `benchmarks.py` | 讀 `config/benchmarks.json`（基準清單與 `license_status`），以官方個股月行情收集已核准的基準標的（如 0050）；`in_competition_universe=False`，交易池、Snapshot 與 `analysis_daily_prices` 不受影響 | `BenchmarkDefinition`、`BenchmarkConfigError`、`load_benchmarks`、`parse_benchmarks`、`benchmark_instruments`、`collect_benchmark_history` |
 | `price_freshness.py` | 判斷資料庫是否已有某交易日收盤後定案行情，供 `start.sh` 略過重複抓取 | `prices_current` |
 | `corporate.py`（轉出層）、`corporate_contracts.py`、`corporate_parsing.py`、`corporate_provider.py`、`corporate_collector.py` | 官方公司資料（重大訊息、月營收、財報）：契約、解析、Provider、收集與保存分檔，`corporate.py` 維持舊 import 路徑 | `SourceDocument`、`MonthlyRevenue`、`FinancialStatementFact`、`FinancialStatement`、`CorporateRecord`、`CorporateResponse`、`OfficialCorporateProvider`、`OfficialCorporateProviderFactory`、`CorporateDataCollector`、`CorporateCollectionResult` |
+| `monthly_revenue_identity.py` | 月營收文件的版本比較雜湊：排除來源每日變動的產製欄位（「出表日期」／`Date`）與 `published_at`，相同營收數字不再因出表日期變動成為新版本；舊資料列不改寫，比較時對舊列以同一公式重算 | `MONTHLY_REVENUE_PRODUCTION_FIELDS`、`comparable_monthly_revenue_body`、`monthly_revenue_content_sha256` |
 | `financial.py` | 官方財報彙總資料的請求、覆蓋驗收與來源可行性結果 | `FinancialStatementRequest`、`FinancialCoverageGap`、`FinancialCollectionResult`、`FinancialStatementCollector`、`latest_due_quarter` |
 | `cash_flow.py` | 以官方累計稅前淨利核對 FinMind 現金流量表，轉成 `cash_flow_statement` 快照文件（不連網） | `VerifiedCashFlowProvider`、`verified_cash_flow_record` |
 | `fundamental_repair.py` | 以官方當期金額核對 FinMind 單季口徑，補足去年同期累計財報 | `OfficialCompanyProfileProvider`、`FundamentalRepairProvider`、`verified_prior_record` |
@@ -60,8 +61,8 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 | `news_content.py` | 新聞原頁核對版本保存；候選不直接升級為正式情緒證據 | `save_news_captures` |
 | `sector_classification.py` | 官方公司基本資料的產業代碼分類，供產業曝險檢查使用 | `SectorSource`、`SectorClassificationBuilder`、`SectorClassificationError`、`capture_sector_sources` |
 | `evidence.py` | `ResearchSnapshot` 的來源證據輔助（授權、台北時間戳、內容時間） | `SourceEvidenceBuilder`、`source_authority`、`taipei_timestamp`、`daily_content_as_of`、`public_price_url` |
-| `snapshot.py` | 研究快照物件與建構流程 | `ResearchSnapshot`、`SnapshotBuilder`、`DataAgentService`、`SnapshotQualityPolicy`、`SnapshotPrice`、`SnapshotMonthlyRevenue`、`SnapshotFinancialStatement`、`SnapshotDocument`、`UniverseValidationState` |
-| `snapshot_repository.py` | `ResearchSnapshot` 的 SQLite 存取 | `SnapshotRepository` |
+| `snapshot.py` | 研究快照物件與建構流程；`SnapshotQualityPolicy` 分阻擋性旗標（使 `usable=False`）與資訊性旗標（`PRICE_DATE_FALLBACK_<最新日>_MISSING_<代號,…>`：最新交易日有檔缺行情而退回前一齊全日，快照仍可用）；`SnapshotPrice` 對 `YAHOO_FINANCE` 列的 `trade_value`／`transactions` 輸出 `None` | `ResearchSnapshot`、`SnapshotBuilder`、`DataAgentService`、`SnapshotQualityPolicy`、`SnapshotPrice`、`SnapshotMonthlyRevenue`、`SnapshotFinancialStatement`、`SnapshotDocument`、`UniverseValidationState`、`PRICE_DATE_FALLBACK_FLAG_PREFIX` |
+| `snapshot_repository.py` | `ResearchSnapshot` 的 SQLite 存取；`latest_trade_date_coverage` 回傳選定交易日、任一檔有行情的最新日與該日缺行情的代號，`find_latest_trade_date` 為其相容包裝 | `SnapshotRepository` |
 | `source_health.py` | 確定性來源健康探測與交易池驗證 | `SourceHealthProbe`、`SourceProbeDefinition`、`UniverseValidator`、`compute_universe_version`、`load_probe_definitions`、`write_json_artifact` |
 | `status.py` | Data Agent 狀態查詢物件 | `DataAgentStatusRepository`、`DataAgentStatus`、`DocumentStatus`、`PriceSourceStatus`、`PriceStatus`、`CollectionRunStatus`、`SourceReportStatus`、`UniverseValidationStatus`、`format_status_time` |
 | `trading_status.py` | 官方交易狀態的版本化契約、重建與可交易性判斷 | `TradingStatusBundleBuilder`、`TradingStatusBundleValidator`、`TradingStatusCollector`、`TradingStatusRepository`、`TradingStatusProvider`、`SavedJsonTradingStatusProvider`、`TradingStatusRequest`、`TradingStatusSourceDefinition`、`TradingStatusCollectionResult`、`TradingStatusError`、`parse_trading_status_payload` |
@@ -111,6 +112,7 @@ FinMind 財報與新聞是候選資料，未通過授權、時間與覆蓋核對
 
 - 所有資料保存來源、抓取時間、內容時間、版本及原始回應識別。
 - 以 `available_at` 判斷當時是否可用；補抓的歷史資料以抓取時間為 `available_at`，不回填到過去的決策。
+- 月營收與財報 OpenAPI 的「出表日期」（TPEx 為 `Date`）是資料產製日、每日重新產製都會變，不是公司公告時間。月營收文件的 `published_at` 只在該月營收首次被觀測時取「出表日期 00:00（台北）」寫入，之後同一 `external_id` 的版本（數字真的更正時）沿用首版值、不隨出表日期漂移；更正何時被系統取得由 `available_at`／`fetched_at` 表達。版本比較的 `content_sha256` 由 `monthly_revenue_identity` 排除產製欄位計算，`body` 仍保留首次觀測時的整列原文。此規則只影響修正後新抓取的資料：既有資料列（含先前因出表日期漂移產生的多版本）與舊 Snapshot／舊 run 的重建不改寫、不刪除、不補雜湊。財報文件目前仍以含整列的舊公式比較、`reported_at` 取出表日期（已知差距，見 `evidence.py` 註解）。
 - 決策與帳本用價是同日官方原價（`execution_close_price`），研究指標用調整價。
 - 缺官方價時退回調整價（見架構文件）。
 - FinMind、政府開放 CSV 等候選資料不產生交易許可，通過授權、時間與覆蓋核對前不進正式 Snapshot。

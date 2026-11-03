@@ -520,6 +520,8 @@ class YFinanceHistoryCollector:
                 close_price=close,
                 change=change,
                 volume_shares=volume,
+                # Yahoo 不提供成交金額與成交筆數；daily_prices 這兩欄 NOT NULL，只能以 0 佔位。
+                # 快照層（SnapshotPrice）對 YAHOO_FINANCE 來源一律輸出 None，不把 0 當真實值。
                 trade_value=0,
                 transactions=0,
                 adjusted_close=adjusted,

@@ -15,6 +15,14 @@ from .price_finality import MARKET_CLOSE_TIME
 from .snapshot_repository import SnapshotRepository
 
 
+# 不提供成交金額／成交筆數的來源（資料庫以 0 佔位），快照層輸出 None。
+_SOURCES_WITHOUT_TURNOVER = frozenset({"YAHOO_FINANCE"})
+
+# 資訊性品質旗標：記錄快照退回前一個全池齊全交易日與當日缺行情的代號；不影響 usable。
+PRICE_DATE_FALLBACK_FLAG_PREFIX = "PRICE_DATE_FALLBACK_"
+_FALLBACK_FLAG_SYMBOL_LIMIT = 20
+
+
 @dataclass(frozen=True)
 class SnapshotPrice:
     symbol: str
@@ -28,8 +36,10 @@ class SnapshotPrice:
     adjusted_close_price: Optional[str]
     price_change: Optional[str]
     volume_shares: int
-    trade_value: int
-    transactions: int
+    # Yahoo 日線沒有成交金額與成交筆數；資料庫欄位 NOT NULL 只能存 0，快照層改為 None，
+    # 不讓假值 0 被當成真實成交金額。官方來源維持整數。
+    trade_value: Optional[int]
+    transactions: Optional[int]
     source: str
     source_evidence_id: str
     # 同日官方原價；決策與帳本用價。analysis_close_price 是調整價，重放時含之後的除權息。
@@ -39,6 +49,8 @@ class SnapshotPrice:
 
     @classmethod
     def from_row(cls, row, evidence_builder: SourceEvidenceBuilder):
+        source = str(row["source"])
+        provides_turnover = source.upper() not in _SOURCES_WITHOUT_TURNOVER
         return cls(
             symbol=str(row["symbol"]),
             code=str(row["code"]),
@@ -53,9 +65,9 @@ class SnapshotPrice:
             adjusted_close_price=row["adjusted_close_price"],
             price_change=row["price_change"],
             volume_shares=int(row["volume_shares"]),
-            trade_value=int(row["trade_value"]),
-            transactions=int(row["transactions"]),
-            source=str(row["source"]),
+            trade_value=int(row["trade_value"]) if provides_turnover else None,
+            transactions=int(row["transactions"]) if provides_turnover else None,
+            source=source,
             source_evidence_id=evidence_builder.price_evidence_id(row),
             **cls._execution_fields(row, evidence_builder),
         )
@@ -349,7 +361,28 @@ class ResearchSnapshot:
 
 
 class SnapshotQualityPolicy:
-    """集中計算正式快照的 fail-closed 品質旗標。"""
+    """集中計算正式快照的 fail-closed 品質旗標。
+
+    旗標分兩類：阻擋性旗標使快照 ``usable=False``；資訊性旗標（目前只有
+    ``PRICE_DATE_FALLBACK_…``）只記錄降級事實，快照仍可用。
+    """
+
+    @staticmethod
+    def is_informational(flag: str) -> bool:
+        return flag.startswith(PRICE_DATE_FALLBACK_FLAG_PREFIX)
+
+    @classmethod
+    def blocking_flags(cls, flags: Sequence[str]) -> List[str]:
+        return [flag for flag in flags if not cls.is_informational(flag)]
+
+    @staticmethod
+    def price_date_fallback_flag(latest_any_trade_date: str, missing_symbols: Sequence[str]) -> str:
+        """``PRICE_DATE_FALLBACK_<最新日>_MISSING_<代號,…>``；代號過多時只列前 20 個並註明餘數。"""
+        symbols = sorted(str(symbol) for symbol in missing_symbols)
+        listed = ",".join(symbols[:_FALLBACK_FLAG_SYMBOL_LIMIT]) or "UNKNOWN"
+        if len(symbols) > _FALLBACK_FLAG_SYMBOL_LIMIT:
+            listed += "_AND_%d_MORE" % (len(symbols) - _FALLBACK_FLAG_SYMBOL_LIMIT)
+        return "%s%s_MISSING_%s" % (PRICE_DATE_FALLBACK_FLAG_PREFIX, latest_any_trade_date, listed)
 
     def evaluate(
         self,
@@ -361,6 +394,8 @@ class SnapshotQualityPolicy:
         latest_price_symbols: int,
         require_prices: bool,
         require_universe_validation: bool,
+        latest_any_trade_date: Optional[str] = None,
+        missing_symbols: Sequence[str] = (),
     ) -> List[str]:
         flags: List[str] = []
         if universe_size == 0:
@@ -386,6 +421,13 @@ class SnapshotQualityPolicy:
                 "INCOMPLETE_PRICE_COVERAGE_%d_OF_%d"
                 % (latest_price_symbols, universe_size)
             )
+        if (
+            latest_trade_date
+            and latest_any_trade_date
+            and latest_any_trade_date > latest_trade_date
+        ):
+            # 最新交易日有檔缺行情而整池退回前一日：以前無聲，現在記錄退回到哪天、缺了誰。
+            flags.append(self.price_date_fallback_flag(latest_any_trade_date, missing_symbols))
         return flags
 
 
@@ -420,11 +462,12 @@ class SnapshotBuilder:
             validation = UniverseValidationState.from_row(
                 self.repository.load_validation(connection, cutoff)
             )
-            latest_trade_date = self.repository.find_latest_trade_date(
+            coverage = self.repository.latest_trade_date_coverage(
                 connection,
                 _price_date_limit(cutoff),
                 cutoff,
             )
+            latest_trade_date = coverage["trade_date"]
             price_rows = (
                 self.repository.load_prices(connection, latest_trade_date, cutoff)
                 if latest_trade_date
@@ -452,13 +495,15 @@ class SnapshotBuilder:
                 latest_price_symbols=len(prices),
                 require_prices=require_prices,
                 require_universe_validation=require_universe_validation,
+                latest_any_trade_date=coverage["latest_any_date"],
+                missing_symbols=coverage["missing_symbols"],
             )
             snapshot = ResearchSnapshot(
                 snapshot_id=snapshot_id,
                 decision_cutoff=cutoff,
                 universe_version=universe_version,
                 created_at=created_at,
-                usable=not quality_flags,
+                usable=not self.quality_policy.blocking_flags(quality_flags),
                 quality_flags=quality_flags,
                 latest_trade_date=latest_trade_date,
                 universe_size=len(instruments),
