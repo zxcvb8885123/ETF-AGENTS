@@ -124,7 +124,7 @@ class KnobTests(Fixture):
         """正式樣板已啟用：反思員必須看得到這兩個旋鈕才可能依校準報告調整。"""
         values = current_knobs(self.template)
         self.assertEqual(values["volatility_exponent"], "0")
-        self.assertEqual(values["rotation.max_swaps_per_run"], "10")
+        self.assertEqual(values["rotation.max_swaps_per_run"], "5")
 
     def test_drawdown_can_only_tighten(self):
         self.assertEqual(check_proposal("drawdown_control.neutral_at", "0.04", self.template, self.rules)["proposed"], "0.04")
@@ -206,7 +206,9 @@ class ApplyTests(Fixture):
         return replay
 
     def test_replay_gate(self):
-        self.assertTrue(replay_gate(replay_body(), replay_body("100"))["passed"])
+        self.assertTrue(replay_gate(replay_body(), replay_body("101"))["passed"])
+        self.assertFalse(replay_gate(replay_body(), replay_body("100"))["passed"])  # 持平不算改善
+        self.assertFalse(replay_gate(replay_body(), replay_body("100.005"))["passed"])  # 低於最小改善幅度
         self.assertFalse(replay_gate(replay_body(), replay_body("99"))["passed"])
         self.assertFalse(replay_gate(replay_body(), replay_body(rejected=1))["passed"])
         self.assertFalse(replay_gate(replay_body(), replay_body(status="failed"))["passed"])

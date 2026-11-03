@@ -489,6 +489,163 @@ class RotationEndToEndTests(unittest.TestCase):
         self.assertEqual(list(body["position_sizing"]["target_weights"]), ["2317.TW"])
 
 
+class ForcedSwapEndToEndTests(unittest.TestCase):
+    """滿檔（max_positions=1）、2330 續抱、2317 新買：forced_swap 才會由程式換掉 2330。"""
+
+    def proposal(self, tier_new="high", forced=True, min_new="high", intent_2330="hold", broken=True):
+        from test_team_chain import tradable_bundle  # 延後匯入：test_team_chain 也匯入本模組的 SIZING
+        from test_trader import items as trade_items
+
+        full = tradable_bundle()
+        full["rules"]["max_positions"] = 1
+        full["rules"]["min_positions"] = 1
+        full["rules"]["config_sha256"] = decision_rules_sha256(full["rules"])
+        full["bundle_sha256"] = decision_bundle_sha256(full)
+        bundle, _, debate, _, _, _, _, _ = chain_inputs(full)
+        decisions = trade_items()
+        decisions[0] = dict(decisions[0], conviction=tier_new)
+        decisions[1] = dict(
+            decisions[1], intent=intent_2330,
+            **({"conviction": "low", "adopted_claim_ids": ["bull-2330-1"], "rejected_claim_ids": ["bear-2330-1"]}
+               if intent_2330 == "add" else {}),
+        )
+        intent = seal_trade_decision(trade_decision_envelope(bundle, debate, "trade-1"), decisions)
+        stance = {"level": "neutral", "rationale": "市場廣度中性。", "evidence_ids": ["price-2330"]}
+        policy = base_policy()
+        policy["position_sizing"] = copy.deepcopy(SIZING)
+        policy["position_sizing"]["held_add_priority"] = HELD_ADD_PRIORITY
+        policy["position_sizing"]["rotation"] = {
+            "version": ROTATION_VERSION, "max_swaps_per_run": 3, "min_new_conviction": "low",
+            **({"forced_swap": dict({"version": "v1", "min_new_conviction": min_new, "max_swaps_per_run": 1}, **(
+                {"broken_symbols": ["2330.TW"], "verdicts_ref": {"verdicts_id": "v-1", "as_of": "2026-10-30T11:30:00Z", "sha256": "a" * 64}}
+                if broken else {}))} if forced else {}),
+        }
+        policy["max_positions"] = 1
+        policy["min_positions"] = 1
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        policy = sized_policy(policy, intent, stance, bundle)
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(policy), [])
+        body = AllocationOrderEngine(bundle, policy).run(intent)
+        self.assertEqual(ProposalValidator(bundle, policy, intent).validate(body), [])
+        return body
+
+    @staticmethod
+    def sides(body):
+        return {order["symbol"]: order for order in body["order_proposal"]["orders"]}
+
+    def test_high_conviction_new_symbol_swaps_out_the_held_symbol(self):
+        body = self.proposal()
+        orders = self.sides(body)
+        self.assertEqual(orders["2330.TW"]["side"], "sell")
+        self.assertEqual(orders["2330.TW"]["intent"], "exit")  # 程式標的訂單意圖；交易 Agent 原意圖仍是 hold
+        self.assertEqual(orders["2317.TW"]["side"], "buy")
+        self.assertIn(("2330.TW", "RISK_FORCED_SWAP"), {(f["symbol"], f["code"]) for f in body["constraint_flags"]})
+
+    def test_without_forced_swap_a_full_portfolio_stays_put(self):
+        body = self.proposal(forced=False)
+        self.assertEqual(body["order_proposal"]["orders"], [])
+        self.assertIn(("2317.TW", "MAX_POSITIONS"), {(f["symbol"], f["code"]) for f in body["constraint_flags"]})
+
+    def test_hold_that_is_not_broken_is_never_swapped(self):
+        self.assertEqual(self.proposal(broken=False)["order_proposal"]["orders"], [])
+
+    def test_conviction_below_threshold_does_not_swap(self):
+        for tier in ("medium", "low"):
+            with self.subTest(tier=tier):
+                self.assertEqual(self.proposal(tier_new=tier)["order_proposal"]["orders"], [])
+
+    def test_held_symbol_the_agent_wants_to_add_is_never_a_victim(self):
+        orders = self.sides(self.proposal(intent_2330="add"))
+        self.assertNotIn("2330.TW", {s for s, o in orders.items() if o["side"] == "sell"})
+
+    def test_policy_rejects_bad_forced_swap_config(self):
+        for bad in ({"version": "v2", "min_new_conviction": "high", "max_swaps_per_run": 1},
+                    {"version": "v1", "min_new_conviction": "top", "max_swaps_per_run": 1},
+                    {"version": "v1", "min_new_conviction": "high", "max_swaps_per_run": 0},
+                    {"version": "v1", "min_new_conviction": "high", "max_swaps_per_run": 1, "broken_symbols": ["2330.TW"]},
+                    {"version": "v1", "min_new_conviction": "high", "max_swaps_per_run": 1, "broken_symbols": ["b", "a"],
+                     "verdicts_ref": {"verdicts_id": "v", "as_of": "t", "sha256": "h"}}):
+            with self.subTest(bad=bad):
+                errors = []
+                sizing = copy.deepcopy(SIZING)
+                sizing.update({"held_add_priority": HELD_ADD_PRIORITY, "rotation": {
+                    "version": ROTATION_VERSION, "max_swaps_per_run": 3, "min_new_conviction": "low", "forced_swap": bad}})
+                policy = base_policy()
+                policy["position_sizing"] = sizing
+                validate_position_sizing(policy, ["2330.TW", "2317.TW"], errors)
+                self.assertTrue(any("forced_swap" in error for error in errors), errors)
+
+
+class FullPortfolioStanceEndToEndTests(unittest.TestCase):
+    """持股在手、現金低於防守緩衝、2330 出場、2317 加碼：整條 AllocationOrderEngine.run 與重建驗證。
+
+    fixture 的交易池只有 2 檔，湊不出「30 檔滿檔」的真實規模；這裡鎖的是各姿態與
+    cash_buffer_floor 的交互不變量（可重建、緩衝閘門只會多放行、不會多砍），而不是檔數。
+    """
+
+    def proposal(self, stance, floor):
+        from test_team_chain import tradable_bundle  # 延後匯入：test_team_chain 也匯入本模組的 SIZING
+        from test_trader import items as trade_items
+
+        full = tradable_bundle()
+        full["account_snapshot"]["positions"] = [
+            {"symbol": "2330.TW", "shares": 3000, "average_cost": "120"},
+            {"symbol": "2317.TW", "shares": 1000, "average_cost": "100"},
+        ]
+        full["account_snapshot"].update({"cash": "90000", "settled_cash": "90000", "nav": "694000"})
+        full["bundle_sha256"] = decision_bundle_sha256(full)
+        bundle, _, debate, _, _, _, _, _ = chain_inputs(full)
+        decisions = trade_items()
+        decisions[0] = dict(
+            decisions[0], intent="add", conviction="high",
+            adopted_claim_ids=["bull-2317-1"], rejected_claim_ids=["bear-2317-1"],
+        )
+        decisions[1] = dict(
+            decisions[1], intent="exit",
+            adopted_claim_ids=["bear-2330-1"], rejected_claim_ids=["bull-2330-1"],
+        )
+        intent = seal_trade_decision(trade_decision_envelope(bundle, debate, "trade-1"), decisions)
+        cash_stance = {"level": stance, "rationale": "市場廣度中性。", "evidence_ids": ["price-2330"]}
+        policy = base_policy()
+        policy["max_turnover_rate"] = "1"
+        policy["position_sizing"] = copy.deepcopy(SIZING)
+        policy["position_sizing"]["held_add_priority"] = HELD_ADD_PRIORITY
+        if floor:
+            policy["position_sizing"]["cash_buffer_floor"] = "v1"
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        policy = sized_policy(policy, intent, cash_stance, bundle)
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(policy), [])
+        body = AllocationOrderEngine(bundle, policy).run(intent)
+        self.assertEqual(ProposalValidator(bundle, policy, intent).validate(body), [])
+        return body
+
+    @staticmethod
+    def sides(body):
+        return {order["symbol"]: (order["side"], order["shares"]) for order in body["order_proposal"]["orders"]}
+
+    def test_exit_is_executed_under_every_stance_and_gate(self):
+        for stance in ("aggressive", "neutral", "defensive"):
+            for floor in (False, True):
+                with self.subTest(stance=stance, floor=floor):
+                    self.assertEqual(self.sides(self.proposal(stance, floor))["2330.TW"], ("sell", 3000))
+
+    def test_floor_gate_never_removes_a_buy_the_old_rule_allowed(self):
+        for stance in ("aggressive", "neutral", "defensive"):
+            with self.subTest(stance=stance):
+                old, new = self.sides(self.proposal(stance, False)), self.sides(self.proposal(stance, True))
+                for symbol, (side, shares) in old.items():
+                    if side == "buy":
+                        self.assertGreaterEqual(new.get(symbol, ("buy", 0))[1], shares)
+
+    def test_floor_gate_does_not_hide_buffer_flag_for_unfunded_buys(self):
+        for stance in ("aggressive", "neutral", "defensive"):
+            with self.subTest(stance=stance):
+                body = self.proposal(stance, True)
+                for flag in body["constraint_flags"]:
+                    if flag["code"] == "CASH_BUFFER":
+                        self.assertNotIn(flag["symbol"], self.sides(body))
+
+
 class VolatilityExponentTests(unittest.TestCase):
     """v2 的波動度指數：1 等同 v1、0 完全不看波動度；v1 路徑不得改變。"""
 

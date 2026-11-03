@@ -92,6 +92,7 @@ flowchart TD
 - 減碼賣單意圖由程式標為 `trim` 或 `exit`，並留下 `RISK_STOCK_WEIGHT` 旗標。
 - 非可交易標的不建立買賣單（`RISK_NOT_TRADABLE`）；持股將低於 `min_positions` 時依 ATR14 由低到高留住 `exit` 持股（`RISK_MIN_POSITIONS`，`forced_exit` 不留）。
 - 配置後投資組合前 15 大與任一必備主動型 ETF 前 15 大的 Active Share 低於 `minimum_active_share`（15%）時，程式取消與最低那檔 ETF 重疊最多的 buy／add 候選後重新配置，最多 3 次（`RISK_ACTIVE_SHARE`，不賣既有持股）；仍不通過由 Guard 拒絕。
+- 強制換股（`position_sizing.rotation.forced_swap`，版本閘門）：持股滿檔又沒人出場時，信心達門檻的未持有買進候選由程式換掉交易 Agent 標 hold、且每週論點檢視判定 broken（名單綁在 Policy）的持股，賣單意圖標 `exit`、旗標 `RISK_FORCED_SWAP`；省略此欄位的舊 Policy 維持原行為。
 - 產業權重在任一情境超過 `max_sector_weight` 時，`_fit_sector_weights` 同樣在 Guard 前按整張減碼（先減買單、再賣持股；同產業先減低信心、大市值），留下 `RISK_SECTOR_WEIGHT` 旗標；上限為 1 時不動作。
 - Decision run 另存 `team_inputs`；Finalizer 與下游重建驗證都要傳入，缺少即拒絕。2.2 另含 `prior_decision_context`，交易 Agent 的文字欄位引用它即拒絕。
 - 舊版 1.0 debate 已移除，Finalizer 與 Validator 遇到一律拒絕。

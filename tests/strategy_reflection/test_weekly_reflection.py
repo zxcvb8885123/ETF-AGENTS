@@ -1,6 +1,7 @@
 """每週反思：診斷包、週報、六天保護與週六套用的確定性與 fail-closed 測試。"""
 
 import json
+from decimal import Decimal
 import sqlite3
 import tempfile
 import unittest
@@ -331,7 +332,7 @@ class ThesisReviewTests(unittest.TestCase):
                                     "intents_since": {}, "alerts_since": {}}], review)
         self.assertIn("理由轉弱", text)
         self.assertIn("毛利率低於指引（未觸發）", text)
-        self.assertIn("只供參考，不影響交易", text)
+        self.assertIn("交易 Agent 只當背景參考，不影響 policy", text)
 
 
 class BenchmarkDiagnosticsTests(Fixture):
@@ -423,3 +424,43 @@ class ApplyPendingTests(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThesisEntryTests(unittest.TestCase):
+    """買進日取目前這段持有期間的第一次買進，成本用官方均價而非預估價。"""
+
+    def rows(self, held_days):
+        from decimal import Decimal
+        from etf_agent.strategy_reflection.thesis import build_thesis_tracking
+
+        prices = {"2026-10-27": "100", "2026-10-28": "110", "2026-10-29": "120"}
+
+        class Book:
+            def trading_days(self, start):
+                return sorted(day for day in prices if day >= start)
+
+            def vwap(self, day):
+                return {"2330.TW": Decimal(prices[day])}
+
+            def ex_rights_symbols(self, after, through):
+                return set()
+
+        def run(intent, held, estimated="999"):
+            orders = [{"symbol": "2330.TW", "side": "buy", "estimated_price": estimated}] if intent in ("buy", "add") else []
+            return {"intent": {"items": [{"symbol": "2330.TW", "intent": intent, "conviction": "medium", "rationale": intent,
+                                          "invalidation_conditions": [], "unresolved_questions": []}]},
+                    "decision": {"orders": orders, "portfolio": {"positions": [{"symbol": "2330.TW"}] if held else []}}, "team_inputs": {}}
+
+        chosen = {"2026-10-27": run("buy", True), "2026-10-28": run("add", held_days[0]), "2026-10-29": run("hold", True)}
+        return build_thesis_tracking(chosen, Book(), Decimal("0.10"))
+
+    def test_add_does_not_replace_first_buy_and_cost_is_official_price(self):
+        row = self.rows([True])[0]
+        self.assertEqual(row["entry_day"], "2026-10-27")
+        self.assertEqual(row["entry_intent"], "buy")
+        self.assertEqual(row["entry_price_source"], "official_vwap")
+        self.assertEqual(Decimal(row["entry_price"]), Decimal("100"))
+
+    def test_a_gap_in_holding_starts_a_new_entry(self):
+        # 10/28 沒持有後 10/29 才又持有：新的一段沒有任何買單，不列入。
+        self.assertEqual(self.rows([False]), [])

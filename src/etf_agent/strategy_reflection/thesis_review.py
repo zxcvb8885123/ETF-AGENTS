@@ -7,7 +7,7 @@
 - 對每個重估條件逐條判斷 ``triggered`` ／ ``not_triggered`` ／ ``unknown``，``triggered`` 必須引用最新發現的 ID；
   整體 verdict 為 ``intact`` ／ ``weakened`` ／ ``broken`` ／ ``unknown``。
 - 短期價格波動本身不是理由失效；價格事實只是背景，不能單獨讓 verdict 變成 weakened／broken。
-- **只出報告，不影響交易**：結果不進 ``brief``、不進 policy，也不給任何數字或建議委託。驗證沒過的批次標 ``unknown``，
+- **只當背景，不影響 policy**：結果進週報，並寫成 ``thesis_verdicts.json`` 給交易 Agent 當持股背景（不可引用、沒有識別碼），不進反思 ``brief``、不進 policy，也不給任何數字或建議委託。驗證沒過的批次標 ``unknown``，
   不會中斷反思流程（這是旁觀者的輔助欄位，不是決策鏈的一環）。
 """
 

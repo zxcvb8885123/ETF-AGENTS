@@ -35,7 +35,7 @@
 
 ## 單一產業超過 35% 時
 
-`config/decision_rules.json` 的 `max_sector_weight` 為 0.35。配置程式在 Guard 前檢查各壓力情境下的產業權重：
+`config/decision_rules.json` 的 `max_sector_weight` 目前為 1（不設產業上限，程式不動作；2026-11-03 前為 0.35）。配置程式在 Guard 前檢查各壓力情境下的產業權重：
 
 1. 超標時按整張減碼：先減當日買進，再賣既有持股；同產業內先減信心等級低、市值大的股票。
 2. 減碼紀錄為 `RISK_SECTOR_WEIGHT` 旗標，賣單意圖由程式標為 `trim`／`exit`，不改寫交易 Agent 的原意圖。

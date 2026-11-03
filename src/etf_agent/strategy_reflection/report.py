@@ -61,7 +61,7 @@ _CUT = 220
 
 
 _VERDICT = {"intact": "理由仍成立", "weakened": "理由轉弱", "broken": "理由已被推翻", "unknown": "無法判斷"}
-_COND = {"triggered": "已觸發", "not_triggered": "未觸發", "unknown": "無法判斷"}
+_COND = {"triggered": "已觸發", "not_triggered": "未觸發", "unknown": "尚無新資料可判斷"}
 
 
 def _thesis_section(thesis: Optional[List[Mapping[str, object]]], week: object, review: Mapping[str, Mapping[str, object]]) -> List[str]:
@@ -75,13 +75,13 @@ def _thesis_section(thesis: Optional[List[Mapping[str, object]]], week: object, 
         counts: Dict[str, int] = {}
         for item in review.values():
             counts[str(item["verdict"])] = counts.get(str(item["verdict"]), 0) + 1
-        lines.append("- Agent 論點檢視（只供參考，不影響交易）：" + "、".join("%s %d 檔" % (_VERDICT[k], counts[k]) for k in _VERDICT if k in counts))
+        lines.append("- Agent 論點檢視（交易 Agent 只當背景參考，不影響 policy）：" + "、".join("%s %d 檔" % (_VERDICT[k], counts[k]) for k in _VERDICT if k in counts))
     rank = {"broken": 0, "weakened": 1, "unknown": 2, "intact": 3}
     for row in sorted(thesis, key=lambda r: (rank.get(str(review.get(str(r["symbol"]).upper(), {}).get("verdict", "unknown")), 2),
                                              str(r["status"]) != "needs_review", str(r["symbol"]))):
-        head = "- **%s**｜%s｜%s 買進（%s／%s），預估成交價 %s" % (
+        head = "- **%s**｜%s｜%s 買進（%s／%s），%s %s" % (
             row["symbol"], _STATE.get(str(row["status"]), row["status"]), row["entry_day"], row["entry_intent"],
-            row.get("entry_conviction") or "—", row["entry_price"])
+            row.get("entry_conviction") or "—", "首次買進成本（官方均價）" if row.get("entry_price_source") == "official_vwap" else "預估成交價（缺官方均價）", row["entry_price"])
         if "return_since_entry" in row:
             head += "｜持有 %s 個交易日、至今 %s、期間最大回落 %s（容忍 %s）" % (row["days_held"], row["return_since_entry"], row["max_drawdown_since_entry"], row["tolerance"])
         lines.append(head)
@@ -120,7 +120,7 @@ def render_weekly_report(
         "",
         "產生時間：%s（台北時間）。決策日 %s／%s，%s。" % (
             now.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M"), days, need,
-            "命中率類統計樣本已夠，可提出旋鈕提案" if brief["gate_open"] else "報告照常產生；命中率類統計樣本還不夠，所以本週不依它調整旋鈕"),
+            "命中率類統計樣本已夠，可提出旋鈕提案" if brief["gate_open"] else "報告照常產生；命中率類統計樣本還不夠（最新一個決策日還沒有隔日價格，可完整評分的決策日比這個數字少，見第三節），所以本週不依它調整旋鈕"),
         "",
         "> 本報告的數字由程式依已封存決策與官方成交價計算；Agent 的摘要只是解讀。樣本少時任何比例都可能只是雜訊。",
         "",
@@ -145,6 +145,9 @@ def render_weekly_report(
     if isinstance(turnover, Mapping) and turnover.get("status") == "ok":
         lines.append("- 決策日 %s 天，平均每日成交金額占 NAV %s、費稅占 NAV %s，賣單 %s 筆。" % (
             turnover.get("days"), turnover.get("mean_turnover_rate"), turnover.get("mean_fee_drag"), turnover.get("sell_orders")))
+        if turnover.get("first_day_turnover_rate") is not None:
+            lines.append("- 第一天（多半是開帳建倉）成交金額占 NAV %s；扣掉第一天後平均每日 %s。平均值被第一天拉高，看日常換手請看後者。" % (
+                turnover.get("first_day_turnover_rate"), turnover.get("mean_turnover_rate_after_first")))
     else:
         lines.append("- 資料不足。")
     review = diagnostics.get("review", {})

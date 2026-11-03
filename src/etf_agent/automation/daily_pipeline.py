@@ -34,6 +34,7 @@ from etf_agent.decision import (
     revision_effects,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
+from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
 
 from .agent_runner import (  # noqa: F401 — 對外仍由本模組匯出
@@ -276,6 +277,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         )
         # 回撤由程式從帳本 NAV 歷史計算並綁進 policy；風險 Agent 只看到結果與現金姿態下限。
         base_policy = bind_drawdown(base_policy, bundle, nav_history)
+        # 強制換股只認「論點被推翻」名單；名單綁進 policy，重建驗證不讀結論檔。
+        base_policy = bind_forced_swap(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
         base_policy["content_sha256"] = decision_policy_sha256(base_policy)
         # 沒有 rotation 的樣板一律不建名額脈絡，team_inputs 維持 2.2、brief 與舊版逐位相同。
         slots = (
@@ -311,7 +314,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.save_artifact("policy_base", base_policy)
         with self._timed("cash_stance"):
             stance = self.run_cash_stance(bundle, momentum, analysts, trade, base_policy.get("drawdown_control"),
-                                          (base_policy.get("position_sizing") or {}).get("positions_by_breadth"))
+                                          (base_policy.get("position_sizing") or {}).get("positions_by_breadth"),
+                                          (base_policy.get("position_sizing") or {}).get("cash_buffer_by_stance"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)

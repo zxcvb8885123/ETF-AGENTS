@@ -39,6 +39,13 @@ class EvaluateTests(unittest.TestCase):
         better = {**before, **days(8, ["0.03"] * 6)}
         self.assertEqual(evaluate_trial({**APPLY, "applied_at": "2026-11-07"}, better)["verdict"], "not_worse")
 
+    def test_noise_sized_drop_is_not_worse(self):
+        # 基準期日超額在 ±1% 上下跳，試用期平均只低 0.5%：在雜訊範圍內，不能因此還原。
+        before = days(0, ["0.01", "-0.01", "0.01", "-0.01", "0.01", "-0.01", "0.01", "-0.01"])
+        noisy = {**before, **days(9, ["-0.005"] * 5)}
+        result = evaluate_trial({**APPLY, "applied_at": "2026-11-09"}, noisy)
+        self.assertEqual(result["verdict"], "inconclusive")
+
     def test_five_trading_days_after_apply_are_enough(self):
         before = days(0, ["0.002", "0.001", "0.003", "0.002", "0.001", "0.002"])  # 11/2～11/7
         five = {**before, **days(6, ["0.03"] * 5)}  # 11/8～11/12：套用日（11/7）之後正好 5 個交易日

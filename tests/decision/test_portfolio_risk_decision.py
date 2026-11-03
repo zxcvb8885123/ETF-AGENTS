@@ -476,6 +476,45 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             any(item["side"] == "buy" for item in proposal["order_proposal"]["orders"])
         )
 
+    def _fit_cash_case(self, floor):
+        bundle, _, _, _ = valid_inputs()
+        settings = policy()
+        engine = AllocationOrderEngine(bundle, settings)
+        # 只驗證 _fit_cash 的閘門；完整 position_sizing 驗證另有 sizing 測試。
+        engine.policy = {**engine.policy, "position_sizing": {"cash_buffer_floor": floor} if floor else {}}
+        effective = engine._effective_policy({})
+        sell = engine._order("2330.TW", "sell", 5000, "exit", effective)
+        buy = engine._order("2317.TW", "buy", 1000, "buy", effective)
+        proceeds = Decimal(sell["net_cash_impact"])
+        cost = -Decimal(buy["net_cash_impact"])
+        self.assertGreater(proceeds, cost)
+        return engine._fit_cash(
+            [sell, buy], Decimal("1000"), Decimal("1000"), Decimal("1000000000"), effective
+        )
+
+    def test_cash_buffer_floor_lets_exit_proceeds_fund_replacement(self):
+        orders, _, flags = self._fit_cash_case("v1")
+        self.assertEqual([item["side"] for item in orders], ["sell", "buy"])
+        self.assertEqual(flags, [])
+
+    def test_cash_buffer_without_floor_gate_drops_replacement(self):
+        orders, _, flags = self._fit_cash_case(None)
+        self.assertEqual([item["side"] for item in orders], ["sell"])
+        self.assertEqual([item["code"] for item in flags], ["CASH_BUFFER"])
+
+    def test_cash_buffer_floor_still_blocks_spending_existing_cash(self):
+        bundle, _, _, _ = valid_inputs()
+        settings = policy()
+        engine = AllocationOrderEngine(bundle, settings)
+        engine.policy = {**engine.policy, "position_sizing": {"cash_buffer_floor": "v1"}}
+        effective = engine._effective_policy({})
+        buy = engine._order("2317.TW", "buy", 1000, "buy", effective)
+        orders, _, flags = engine._fit_cash(
+            [buy], Decimal("1000"), Decimal("1000"), Decimal("1000000000"), effective
+        )
+        self.assertEqual(orders, [])
+        self.assertEqual([item["code"] for item in flags], ["CASH_BUFFER"])
+
     def test_guard_fails_closed_without_explicit_tradability(self):
         bundle, momentum, debate, intent, *_ = chain_inputs(bundle_with_event())
         settings = policy()

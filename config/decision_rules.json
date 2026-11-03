@@ -43,7 +43,7 @@
   "special_weight_limits": {
     "2330.TW": "0.25"
   },
-  "max_sector_weight": "0.35",
+  "max_sector_weight": "1",
   "min_positions": 20,
   "max_positions": 30,
   "cash_weight_must_be_below": "0.25",

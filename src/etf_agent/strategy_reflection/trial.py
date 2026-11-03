@@ -4,7 +4,7 @@
 也只是「必要條件，不是獲利證明」。所以每次套用都附一段試用期：比較套用前後「帳戶日報酬 − 等權基準日報酬」。
 
 這是護欄，不是證明：比賽初賽只有 24 個交易日，前後各只有幾天，雜訊遠大於多數旋鈕的效果。因此只有
-**明確變差**（差距超過基準期標準差的一半與 ``TRIAL_FLOOR`` 中較大者）才還原；看不出差別就保留。
+**明確變差**（差距超過前後平均差標準誤的 ``TRIAL_Z`` 倍與 ``TRIAL_FLOOR`` 中較大者）才還原；看不出差別就保留。
 本模組只含純函式，不讀寫任何檔案。
 """
 
@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence
 
 from .contracts import (
-    BASELINE_DAYS, KNOBS, MIN_BASELINE_DAYS, TRIAL_EXTENSION_DAYS, TRIAL_FLOOR, TRIAL_DAYS, VERIFICATION_OBSERVE,
+    BASELINE_DAYS, KNOBS, MIN_BASELINE_DAYS, TRIAL_EXTENSION_DAYS, TRIAL_FLOOR, TRIAL_DAYS, TRIAL_Z, VERIFICATION_OBSERVE,
     VERIFICATION_REPLAY,
 )
 
@@ -145,7 +145,8 @@ def _mean(values: Sequence[Decimal]) -> Decimal:
 
 def _stdev(values: Sequence[Decimal]) -> Decimal:
     center = _mean(values)
-    return (sum(((value - center) ** 2 for value in values), Decimal(0)) / Decimal(len(values))).sqrt()
+    # 樣本標準差（除以 n-1）：基準期只有 4～10 個樣本，母體公式會低估波動。
+    return (sum(((value - center) ** 2 for value in values), Decimal(0)) / Decimal(len(values) - 1)).sqrt()
 
 
 def evaluate_trial(entry: Mapping[str, object], excess: Mapping[str, Decimal], extended: bool = False) -> Dict[str, object]:
@@ -169,7 +170,8 @@ def evaluate_trial(entry: Mapping[str, object], excess: Mapping[str, Decimal], e
     if len(before) < MIN_BASELINE_DAYS:
         return {**body, "verdict": "inconclusive", "reason": "套用前的基準期只有 %d 個交易日（至少 %d）" % (len(before), MIN_BASELINE_DAYS)}
     delta = _mean(after) - _mean(before)
-    threshold = max(_stdev(before) / 2, TRIAL_FLOOR)
+    standard_error = _stdev(before) * (Decimal(1) / Decimal(len(after)) + Decimal(1) / Decimal(len(before))).sqrt()
+    threshold = max(TRIAL_Z * standard_error, TRIAL_FLOOR)
     body.update(mean_before=str(_mean(before).quantize(Decimal("0.000001"))), mean_after=str(_mean(after).quantize(Decimal("0.000001"))),
                 delta=str(delta.quantize(Decimal("0.000001"))), threshold=str(threshold.quantize(Decimal("0.000001"))))
     if delta < -threshold:

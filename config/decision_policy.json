@@ -18,7 +18,7 @@
   },
   "position_review": {
     "version": "v1",
-    "loss_alert": null,
+    "loss_alert": "0.15",
     "retrace_alert_20d": null,
     "gain_alert": null,
     "context": "v1"
@@ -27,18 +27,24 @@
     "method": "conviction_volatility_v2",
     "conviction_multipliers": {
       "high": "1.5",
-      "medium": "1",
-      "low": "0.5"
+      "medium": "0.6",
+      "low": "0.3"
     },
     "volatility_floor": "0.01",
     "volatility_exponent": "0",
     "stock_weight_fit": "v1",
     "selection_ranking": "v1",
     "held_add_priority": "v1",
+    "cash_buffer_floor": "v1",
     "rotation": {
       "version": "v1",
-      "max_swaps_per_run": 10,
-      "min_new_conviction": "low"
+      "max_swaps_per_run": 5,
+      "min_new_conviction": "medium",
+      "forced_swap": {
+        "version": "v1",
+        "min_new_conviction": "high",
+        "max_swaps_per_run": 2
+      }
     },
     "cash_buffer_by_stance": {
       "aggressive": "0.03",

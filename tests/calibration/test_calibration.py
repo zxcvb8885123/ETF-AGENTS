@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from etf_agent.calibration import CalibrationError, CalibrationRepository, build_observation, evaluate, execution_gap_report, record_all, record_day
-from etf_agent.calibration.tools import average_ranks, rank_ic
+from etf_agent.calibration.tools import average_ranks, rank_ic, t_statistic
 from etf_agent.core.artifact_store import ImmutableRunStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -167,6 +167,12 @@ class EvaluateTests(DecisionRunFixture):
             })
             record_day(run, self.repository)
         return days
+
+    def test_t_statistic_flags_noise_and_skips_degenerate_samples(self):
+        noisy = [Decimal(v) for v in ("0.3", "-0.2", "0.4", "-0.3", "0.2")]
+        self.assertLess(abs(t_statistic(noisy)), 2)
+        self.assertIsNone(t_statistic([Decimal("0.5")]))
+        self.assertIsNone(t_statistic([Decimal("0.5")] * 5))
 
     def test_enough_days_report_means_and_rank_ic(self):
         self.build_world(10)

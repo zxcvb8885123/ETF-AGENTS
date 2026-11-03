@@ -23,7 +23,8 @@ from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review_policy
 from .momentum import MomentumEngine
 from .sizing import (
-    CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, breadth_target, conviction_weights, validate_position_sizing,
+    CASH_BUFFER_FLOOR, CONVICTION_LEVELS, LIMIT_HEADROOM, SIZING_METHOD, breadth_target, conviction_weights,
+    validate_position_sizing,
 )
 
 
@@ -460,6 +461,17 @@ class AllocationOrderEngine:
         sized_weights: Optional[Dict[str, Decimal]] = None
         skipped: Dict[str, str] = {}
         rotation = (self.policy.get("position_sizing") or {}).get("rotation")
+        order_intents = dict(intents)
+        for symbol in self._forced_swap_victims(
+            candidates, current, active_symbols, target_shares, intents, kept_exits, untradable, max_positions
+        ):
+            target_shares[symbol] = 0
+            active_symbols.discard(symbol)
+            order_intents[symbol] = "exit"
+            constraint_flags.append({
+                "symbol": symbol, "code": "RISK_FORCED_SWAP",
+                "detail": "滿檔且有高信心新股沒有名額：由程式換出 20 日報酬最低的續抱持股（交易 Agent 的意圖未被改寫，訂單意圖標為 exit）",
+            })
         if "position_sizing" in self.policy:
             candidates, sized_weights, skipped = self._conviction_targets(
                 candidates, active_symbols, target_shares, marked_nav, max_positions, effective,
@@ -498,7 +510,7 @@ class AllocationOrderEngine:
                     {"symbol": symbol, "code": "LOT_SIZE", "detail": "目標金額不足一個交易單位"}
                 )
 
-        orders = self._build_orders(current, target_shares, intents, effective)
+        orders = self._build_orders(current, target_shares, order_intents, effective)
         orders, projected_cash, cash_flags = self._fit_cash(
             orders, starting_cash, starting_total_cash, marked_nav, effective
         )
@@ -595,6 +607,52 @@ class AllocationOrderEngine:
         body["content_sha256"] = artifact_content_sha256(body)
         return body
 
+    def _forced_swap_victims(
+        self,
+        candidates: Sequence[str],
+        current: Mapping[str, int],
+        active_symbols: Set[str],
+        target_shares: Mapping[str, int],
+        intents: Mapping[str, str],
+        kept_exits: Set[str],
+        untradable: Set[str],
+        hard_max: int,
+    ) -> List[str]:
+        """滿檔又沒人出場時，信心夠高的未持有新股可換掉「論點被推翻」的續抱持股（rotation.forced_swap，版本閘門）。
+
+        新股名額數量依 ``_conviction_targets`` 的同一套規則（廣度目標內的空名額＋本次出場釋出的名額）推算；
+        不夠的部分才由程式換出「交易 Agent 明確標為 hold、且在 Policy 綁定的 broken_symbols 名單內」的持股（依代號）。
+        沒有 forced_swap 設定、沒有 broken_symbols、或沒有高信心新股時一律不換；只讀 Policy，不看 20 日報酬。"""
+        sizing = self.policy.get("position_sizing") or {}
+        rotation = sizing.get("rotation")
+        forced = rotation.get("forced_swap") if isinstance(rotation, Mapping) else None
+        tiers = sizing.get("conviction_by_symbol")
+        if forced is None or tiers is None:
+            return []
+        threshold = CONVICTION_LEVELS.index(str(forced["min_new_conviction"]))
+        wanted = [
+            symbol for symbol in candidates
+            if symbol not in active_symbols and symbol in self.prices and symbol in tiers
+            and CONVICTION_LEVELS.index(tiers[symbol]) <= threshold
+        ]
+        if not wanted:
+            return []
+        target = breadth_target(sizing)
+        cap = hard_max if target is None else min(hard_max, max(target, int(self.policy["min_positions"])))
+        held_count = len(current)
+        released = max(0, held_count - len(active_symbols))
+        free = max(0, cap - held_count) + min(released, int(rotation["max_swaps_per_run"]))
+        need = min(len(wanted) - free, int(forced["max_swaps_per_run"]))
+        if need <= 0:
+            return []
+        broken = set(forced.get("broken_symbols") or [])
+        pool = sorted(
+            symbol for symbol in current
+            if symbol in broken and intents.get(symbol, "hold") == "hold" and target_shares.get(symbol, 0) > 0
+            and symbol not in untradable and symbol not in kept_exits
+        )
+        return pool[:need]
+
     def _latest_prices(self) -> Dict[str, Decimal]:
         result: Dict[str, Decimal] = {}
         for row in self.context.snapshot["latest_prices"]:
@@ -636,6 +694,7 @@ class AllocationOrderEngine:
                 "minimum_commission": decimal_value(self.policy["minimum_commission"], "minimum_commission"),
                 "slippage_bps": decimal_value(self.policy["slippage_bps"], "slippage_bps"),
                 "reuse_sell_proceeds": bool(self.policy["reuse_sell_proceeds"]),
+                "cash_buffer_floor": (self.policy.get("position_sizing") or {}).get("cash_buffer_floor"),
             }
         )
         for key, raw in overrides.items():
@@ -1059,6 +1118,10 @@ class AllocationOrderEngine:
         if effective["reuse_sell_proceeds"]:
             available += sum(decimal_value(item["net_cash_impact"], "net_cash_impact") for item in sells)
         buffer = nav * effective["cash_buffer_rate"]  # type: ignore[operator]
+        if effective.get("cash_buffer_floor") == CASH_BUFFER_FLOOR:
+            # 現金已低於緩衝時，緩衝只擋「再動用原有現金」，不擋用本次賣出收入買的替補：
+            # 否則出場釋出的名額會因現金永遠湊不到緩衝而白白流失。
+            buffer = min(buffer, starting_cash)
         turnover_budget = nav * effective["max_turnover_rate"]  # type: ignore[operator]
         turnover_used = sum(
             (decimal_value(item["gross_amount"], "gross_amount") for item in sells),

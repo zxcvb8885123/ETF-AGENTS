@@ -5,7 +5,9 @@ from .tools import cell as _cell, percent, TAIPEI
 from etf_agent.core import parse_aware_time
 from etf_agent.decision.trader_report import INTENT_LABELS, CONVICTION_LABELS
 
-TEMPLATE_MARKER = "<!-- report_template: 3 -->"
+TEMPLATE_MARKER = "<!-- report_template: 5 -->"
+TEMPLATE_MARKER_V4 = "<!-- report_template: 4 -->"
+TEMPLATE_MARKER_V3 = "<!-- report_template: 3 -->"
 TEMPLATE_MARKER_V2 = "<!-- report_template: 2 -->"
 # AccountSnapshot 沒有幣別欄位；DecisionPolicy 驗證只接受 TWD，競賽金額亦以新台幣元計。
 DEFAULT_CURRENCY = "TWD（新台幣元）"
@@ -18,6 +20,17 @@ def cell(value):
 
 
 def render_report(report):
+    """第 5 版樣板：第 4 版再加投組層級摘要首節，無委託、無限制的續抱改列表格。"""
+    return _render(report, 5)
+
+
+def render_report_v4(report):
+    """第 4 版樣板：第 3 版再加「現金姿態為防守時，買進／加碼無委託」的原因說明，只用來驗證舊交付。"""
+    return _render(report, 4)
+
+
+def render_report_v3(report):
+    """第 3 版樣板，只用來驗證舊交付。"""
     return _render(report, 3)
 
 
@@ -40,11 +53,13 @@ def _account_lines(account, template):
 
 def _render(report, template):
     p, risk = report["provenance"], report["risk_summary"]
-    marker = TEMPLATE_MARKER if template == 3 else TEMPLATE_MARKER_V2
+    marker = {5: TEMPLATE_MARKER, 4: TEMPLATE_MARKER_V4, 3: TEMPLATE_MARKER_V3}.get(template, TEMPLATE_MARKER_V2)
+    flagged = {flag["symbol"] for flag in risk["constraint_flags"] if isinstance(flag, dict) and "symbol" in flag}
     lines = [marker, "", "# 最終決策報告", "", "**%s**" % STATUS[report["decision_status"]], "",
         "交易日：%s｜資料截止：%s（台北時間）" % (cell(p["trade_date"]), cell(parse_aware_time(p["decision_cutoff"], "decision_cutoff").astimezone(TAIPEI).isoformat())), "",
         "決策 run：%s" % cell(p["decision_run_id"]), "",
         "本報告已通過決策鏈重建；預計持倉、價格、現金與費稅均非成交結果。D-Plan 狀態另見交付狀態。", "",
+        *(_summary_lines(report) if template >= 5 else []),
         "## 帳戶與預計配置", "", *_account_lines(report["account_before"], template)]
     portfolio = report["portfolio_after_estimate"]
     if portfolio is not None:
@@ -56,16 +71,30 @@ def _render(report, template):
     if not report["orders"]:
         lines += ["", "無最終委託。"]
     lines += ["", "## 最終持倉與逐檔決策", ""]
+    quiet = [row for row in report["decision_rows"] if template >= 5 and _is_quiet_hold(row, flagged)]
+    quiet_symbols = {row["symbol"] for row in quiet}
     for row in report["decision_rows"]:
         item, position = row["intent"], row["after"]
         # 未持有且無最終委託的標的列於附錄，避免主文塞滿交易池。
-        if not _in_main(row):
+        if not _in_main(row) or row["symbol"] in quiet_symbols:
             continue
         lines += ["### " + cell(row["symbol"]), "",
             "決策前股數：%s；預計股數：%s；預計配置：%s。" % (cell((row["before"] or {}).get("shares", 0)),
                 "不適用（決策拒絕）" if report["decision_status"] == "rejected" else cell((position or {}).get("shares", 0)), percent(position["weight"]) if position else "不適用"), ""]
         lines += _intent(item)
         lines += ["最終結果：%s。" % {"buy": "買進", "sell": "賣出", "no_order": "無委託（不等同原意圖為不交易，請對照風控修正及配置限制）", "rejected": "拒絕"}[row["final_action"]], ""]
+        if template >= 4 and row["final_action"] == "no_order" and item.get("intent") in ("buy", "add") and risk["cash_stance"]["level"] == "defensive":
+            lines += ["說明：本次風險 Agent 的現金姿態是防守，程式依姿態保留較高的現金比例，可分配給買進與加碼的額度被壓低，"
+                      "目標金額沒有高於現有持股時不會建立委託。這是規則的結果，不是交易 Agent 改了意圖；配置限制清單不一定逐檔列出這個原因。", ""]
+    if quiet:
+        lines += ["### 續抱（無委託、無配置限制）", "", "以下標的原意圖為續抱、沒有最終委託，也沒有任何配置限制旗標；理由與重估條件為交易 Agent 原文。", "",
+            "| 股票 | 股數 | 預計配置 | 理由 | 重估條件 |", "| --- | --- | --- | --- | --- |"]
+        for row in quiet:
+            item, position = row["intent"], row["after"]
+            lines += ["| %s | %s | %s | %s | %s |" % (cell(row["symbol"]), cell((position or {}).get("shares", 0)),
+                percent(position["weight"]) if position else "不適用", cell(item["rationale"]),
+                "<br>".join(cell(v) for v in item.get("invalidation_conditions", [])) or "未提供")]
+        lines += [""]
     stance = risk["cash_stance"]
     # 持股廣度是 2026-10-26 後新增的欄位；舊封存沒有它，輸出維持原樣。
     breadth = "；持股廣度：%s" % cell({"concentrated": "集中", "balanced": "平衡", "diversified": "分散"}.get(stance["breadth"])) if "breadth" in stance else ""
@@ -109,6 +138,43 @@ def _render(report, template):
     lines += ["| %s | %s | %s | %s | %s |" % tuple(cell(price.get(k)) for k in ("symbol", "trade_date", "close_price", "source", "source_evidence_id")) for price in report["reference_prices"]]
     lines += ["", "報告識別：%s；內容雜湊：%s。" % (cell(report["report_id"]), report["content_sha256"]), ""]
     return "\n".join(lines)
+
+
+def _is_quiet_hold(row, flagged):
+    """無委託、無旗標、原意圖為續抱的持股：逐檔樣板文字幾乎相同，改列表格。"""
+    item = row["intent"]
+    return bool(item) and _in_main(row) and row["final_action"] == "no_order" and item.get("intent") == "hold" \
+        and row["symbol"] not in flagged and row["after"] is not None
+
+
+def _summary_lines(report):
+    """投組層級摘要：只重新統計已封存欄位（意圖、委託、旗標、現金），不增加判斷。"""
+    risk, rows = report["risk_summary"], report["decision_rows"]
+    stance = risk["cash_stance"]
+    intents = {}
+    for row in rows:
+        if row["intent"]:
+            intents[row["intent"]["intent"]] = intents.get(row["intent"]["intent"], 0) + 1
+    candidates = [row for row in rows if row["intent"] and row["intent"]["intent"] in ("buy", "add")]
+    ordered = [row for row in candidates if row["final_action"] == "buy"]
+    sells = [row for row in rows if row["final_action"] == "sell"]
+    lines = ["## 本日摘要（投組層級）", "",
+        "- 決策結果：%s；最終委託：買進 %d 檔、賣出 %d 檔。" % (STATUS[report["decision_status"]], sum(1 for row in rows if row["final_action"] == "buy"), len(sells)),
+        "- 交易 Agent 原意圖：" + "、".join("%s %d 檔" % (INTENT_LABELS[key], count) for key, count in sorted(intents.items())) + "。"]
+    lines += ["- 買進／加碼候選 %d 檔，有最終委託 %d 檔，無委託 %d 檔。" % (len(candidates), len(ordered), len(candidates) - len(ordered))]
+    by_code = {}
+    for flag in risk["constraint_flags"]:
+        if isinstance(flag, dict) and "code" in flag:
+            by_code.setdefault(flag["code"], set()).add(flag.get("symbol"))
+    if by_code:
+        lines += ["- 配置限制（檔數）：" + "、".join("%s %d" % (cell(code), len(symbols)) for code, symbols in sorted(by_code.items())) + "。"]
+    portfolio = report["portfolio_after_estimate"]
+    account = report["account_before"]
+    held = len(account.get("positions", []))
+    if portfolio is not None:
+        lines += ["- 持股：%d 檔 → 預估 %d 檔；預估現金比例 %s。" % (held, len(portfolio["positions"]), percent(portfolio["cash_weight"]))]
+    lines += ["- 現金姿態：%s。" % cell({"aggressive": "積極", "neutral": "中性", "defensive": "防守"}.get(stance["level"]))]
+    return lines + [""]
 
 
 def _overnight_line(channel):
@@ -166,4 +232,8 @@ def renderer_for(markdown):
     from .renderer_v1 import render_report_v1
     if markdown.startswith(TEMPLATE_MARKER):
         return render_report
+    if markdown.startswith(TEMPLATE_MARKER_V4):
+        return render_report_v4
+    if markdown.startswith(TEMPLATE_MARKER_V3):
+        return render_report_v3
     return render_report_v2 if markdown.startswith(TEMPLATE_MARKER_V2) else render_report_v1
