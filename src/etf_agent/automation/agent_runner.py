@@ -243,14 +243,20 @@ def _trace_summary(event: Mapping[str, object], elapsed: float) -> Dict[str, obj
     if event.get("type") == "system" and event.get("subtype") == "thinking_tokens":
         row["estimated_tokens"] = event.get("estimated_tokens")
     if event.get("type") == "rate_limit_event":
-        row["rate_limit_info"] = event.get("rate_limit_info")
+        info = event.get("rate_limit_info")
+        if isinstance(info, dict):
+            row["rate_limit_info"] = {
+                key: info[key] for key in ("status", "rateLimitType", "resetsAt", "overageStatus")
+                if isinstance(info.get(key), (str, int, float, bool)) or info.get(key) is None and key in info
+            }
     message = event.get("message")
     if isinstance(message, dict) and isinstance(message.get("content"), list):
         tools = []
         for block in message["content"]:
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
-                tools.append({"name": block.get("name"), "file": tool_input.get("file_path")})
+                file_path = tool_input.get("file_path")
+                tools.append({"name": block.get("name"), "file": file_path if isinstance(file_path, str) else None})
         if tools:
             row["tools"] = tools
     if event.get("type") == "result":
@@ -271,7 +277,12 @@ def _run_claude_streaming(
     trace_file = None
     try:
         trace_path.parent.mkdir(parents=True, exist_ok=True)
-        trace_file = trace_path.open("w", encoding="utf-8")
+        # 重試時不蓋掉前一次（常是失敗那次）的紀錄：檔名已存在就加 .2、.3 …
+        unique_path, attempt = trace_path, 1
+        while unique_path.exists():
+            attempt += 1
+            unique_path = trace_path.with_name("%s.%d%s" % (trace_path.stem, attempt, trace_path.suffix))
+        trace_file = unique_path.open("x", encoding="utf-8")
     except OSError:
         trace_file = None
     process = subprocess.Popen(
