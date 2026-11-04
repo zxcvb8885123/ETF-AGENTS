@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from etf_agent.automation.agent_runner import (
     SENSITIVE_READ_GLOBS, AgentCall, AgentTask, ClaudeAgentRunner, CodexAgentRunner, DailyPipelineError, OpenCodeAgentRunner,
-    TransientAgentError, _claude_usage_tokens, _opencode_read_permission, claude_read_deny_settings, reject_secret_leak,
+    TransientAgentError, _claude_usage_tokens, _trace_summary, _opencode_read_permission, claude_read_deny_settings, reject_secret_leak,
 )
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
 
@@ -127,7 +128,7 @@ class SensitiveReadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 
-            def fake_run(command, **kwargs):
+            def fake_run(command, *args, **kwargs):
                 settings = json.loads(command[command.index("--settings") + 1])
                 self.assertEqual(settings["permissions"]["deny"], ["Read(**/%s)" % pattern for pattern in SENSITIVE_READ_GLOBS])
                 self.assertIn("Read(**/.env)", settings["permissions"]["deny"])
@@ -135,7 +136,7 @@ class SensitiveReadTests(unittest.TestCase):
                 payload = {"structured_output": {"items": []}, "total_cost_usd": 0.1}
                 return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
 
-            with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
+            with patch("etf_agent.automation.agent_runner._run_claude_streaming", side_effect=fake_run):
                 call = ClaudeAgentRunner(root).run(self.task, root)
             self.assertEqual(call.output, {"items": []})
 
@@ -254,7 +255,7 @@ class SensitiveReadTests(unittest.TestCase):
                 subprocess.CompletedProcess([], 1, json.dumps({"is_error": True, "result": "bad tok-abcdef123456"}), ""),
             ]
             for completed in failures:
-                with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=completed):
+                with patch("etf_agent.automation.agent_runner._run_claude_streaming", return_value=completed):
                     with self.assertRaises(TransientAgentError) as raised:
                         ClaudeAgentRunner(root).run(self.task, root)
                 self.assertNotIn("tok-abcdef123456", str(raised.exception))
@@ -263,10 +264,71 @@ class SensitiveReadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             payload = json.dumps({"structured_output": {"items": []}})
-            with patch("etf_agent.automation.agent_runner.subprocess.run",
+            with patch("etf_agent.automation.agent_runner._run_claude_streaming",
                        return_value=subprocess.CompletedProcess([], 1, payload, "")):
                 with self.assertRaises(TransientAgentError):
                     ClaudeAgentRunner(root).run(self.task, root)
+
+    def test_claude_uses_stream_json_and_streaming_result_is_parsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake_claude.py"
+            script.write_text(
+                "import json,sys\n"
+                "print(json.dumps({'type':'system','subtype':'init'}))\n"
+                "print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Read','input':{'file_path':'/x/brief.json'}}]}}))\n"
+                "print(json.dumps({'type':'rate_limit_event','rate_limit_info':{'status':'allowed'}}))\n"
+                "print('not json')\n"
+                "print(json.dumps({'type':'result','subtype':'success','is_error':False,'structured_output':{'items':[]},'total_cost_usd':0.2}))\n",
+                encoding="utf-8",
+            )
+            seen = {}
+            original = subprocess.Popen
+
+            def fake_popen(command, **kwargs):
+                seen["command"] = command
+                return original([sys.executable, str(script)], **kwargs)
+
+            run_dir = root / "run-1"
+            run_dir.mkdir()
+            with patch("etf_agent.automation.agent_runner.subprocess.Popen", side_effect=fake_popen):
+                call = ClaudeAgentRunner(root).run(self.task, run_dir)
+            self.assertEqual(call.output, {"items": []})
+            self.assertEqual(call.estimated_usage_usd, 0.2)
+            self.assertEqual(seen["command"][seen["command"].index("--output-format") + 1], "stream-json")
+            self.assertIn("--verbose", seen["command"])
+            trace = (root / "var" / "logs" / "agent_trace" / "run-1" / "trader_b0.jsonl").read_text(encoding="utf-8")
+            rows = [json.loads(line) for line in trace.splitlines()]
+            self.assertEqual([row["type"] for row in rows], ["system", "assistant", "rate_limit_event", "result"])
+            self.assertEqual(rows[1]["tools"], [{"name": "Read", "file": "/x/brief.json"}])
+            self.assertEqual(rows[2]["rate_limit_info"], {"status": "allowed"})
+            self.assertEqual(list(run_dir.iterdir()), [])
+
+    def test_claude_stream_without_result_event_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake_claude.py"
+            script.write_text("import json\nprint(json.dumps({'type':'system','subtype':'init'}))\n", encoding="utf-8")
+            original = subprocess.Popen
+            with patch("etf_agent.automation.agent_runner.subprocess.Popen",
+                       side_effect=lambda command, **kwargs: original([sys.executable, str(script)], **kwargs)):
+                with self.assertRaises(TransientAgentError):
+                    ClaudeAgentRunner(root).run(self.task, root)
+
+    def test_claude_stream_timeout_kills_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake_claude.py"
+            script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+            original = subprocess.Popen
+            with patch("etf_agent.automation.agent_runner.subprocess.Popen",
+                       side_effect=lambda command, **kwargs: original([sys.executable, str(script)], **kwargs)):
+                with self.assertRaises(TransientAgentError):
+                    ClaudeAgentRunner(root, timeout_seconds=1).run(self.task, root)
+
+    def test_trace_does_not_store_model_text_or_secrets(self):
+        row = _trace_summary({"type": "assistant", "message": {"content": [{"type": "text", "text": "機密內文"}]}}, 1.234)
+        self.assertEqual(row, {"t": 1.2, "type": "assistant"})
 
     def test_missing_env_file_does_not_block(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -367,7 +429,8 @@ class TransientErrorClassificationTests(unittest.TestCase):
         self.task = AgentTask("trader_b0", "只讀 brief，回覆 JSON", {"type": "object"})
 
     def assertTransient(self, runner, side_effect=None, return_value=None):
-        with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=side_effect, return_value=return_value):
+        target = "_run_claude_streaming" if isinstance(runner, ClaudeAgentRunner) else "subprocess.run"
+        with patch("etf_agent.automation.agent_runner.%s" % target, side_effect=side_effect, return_value=return_value):
             with self.assertRaises(TransientAgentError):
                 runner.run(self.task, self.root)
 
@@ -394,7 +457,7 @@ class TransientErrorClassificationTests(unittest.TestCase):
             root = Path(directory)
             (root / ".env").write_text("FINMIND_TOKEN=tok-abcdef123456\n", encoding="utf-8")
             payload = {"structured_output": {"rationale": "tok-abcdef123456"}, "total_cost_usd": 0.1}
-            with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=subprocess.CompletedProcess([], 0, json.dumps(payload), "")):
+            with patch("etf_agent.automation.agent_runner._run_claude_streaming", return_value=subprocess.CompletedProcess([], 0, json.dumps(payload), "")):
                 with self.assertRaises(DailyPipelineError) as raised:
                     ClaudeAgentRunner(root).run(self.task, root)
             self.assertNotIsInstance(raised.exception, TransientAgentError)
