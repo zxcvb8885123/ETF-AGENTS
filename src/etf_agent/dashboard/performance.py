@@ -71,11 +71,43 @@ def _chain(repository: VirtualAccountRepository) -> List[Dict[str, object]]:
     return runs
 
 
-def _positions(state: Mapping[str, object]) -> List[Dict[str, object]]:
+def _pre_rebase_costs(runs: List[Mapping[str, object]]) -> Dict[str, Decimal]:
+    """最近一次 datapack_rebase 之前帳本記錄的真實均價（rebase 會把成本改成結算收盤價，持倉報酬因此歸零）。
+
+    只回傳持倉成本仍等於 rebase 後成本的代號（rebase 之後沒有再買賣改變成本者）。
+    """
+    for item in reversed(runs):
+        state = item["state"]
+        provenance = state.get("provenance") or {}
+        if provenance.get("type") != "datapack_rebase":
+            continue
+        rebased = {str(row["symbol"]): _dec(row["cost_basis"], "cost_basis") for row in state.get("positions", [])}
+        latest = {str(row["symbol"]): _dec(row["cost_basis"], "cost_basis") for row in runs[-1]["state"].get("positions", [])}
+        result = {}
+        for row in provenance.get("replaced_positions") or []:
+            symbol = str(row["symbol"])
+            if symbol in rebased and latest.get(symbol) == rebased[symbol]:
+                result[symbol] = _dec(row["cost_basis"], "%s.cost_basis" % symbol)
+        # 模擬帳本已賣光、主辦方資料仍顯示持有的代號：沿鏈往回找最後一次記錄的真實均價
+        for symbol in rebased:
+            if symbol in result or latest.get(symbol) != rebased[symbol]:
+                continue
+            for earlier in reversed(runs[:runs.index(item)]):
+                match = [r for r in earlier["state"].get("positions", []) if str(r["symbol"]) == symbol]
+                if match:
+                    result[symbol] = _dec(match[0]["cost_basis"], "%s.cost_basis" % symbol)
+                    break
+        return result
+    return {}
+
+
+def _positions(state: Mapping[str, object], cost_overrides: Optional[Mapping[str, Decimal]] = None) -> List[Dict[str, object]]:
     rows = []
     for row in state.get("positions", []):
         shares = int(row["shares"])
         cost = _dec(row["cost_basis"], "%s.cost_basis" % row["symbol"])
+        if cost_overrides and row["symbol"] in cost_overrides:
+            cost = cost_overrides[row["symbol"]]
         price = _dec(row["close_price"], "%s.close_price" % row["symbol"]) if row.get("close_price") is not None else None
         market_value = _dec(row["market_value"], "%s.market_value" % row["symbol"]) if row.get("market_value") is not None else None
         cost_value = cost * shares
@@ -218,7 +250,7 @@ def build_performance_summary(repository: VirtualAccountRepository, decision_rep
     nav = _dec(latest["nav"], "nav")
     settled = _dec(latest["settled_cash"], "settled_cash")
     unsettled = _dec(latest["unsettled_cash"], "unsettled_cash")
-    positions = _positions(latest)
+    positions = _positions(latest, _pre_rebase_costs(runs))
     market_value = sum((_dec(row["market_value"], "market_value") for row in positions if row["market_value"] is not None), Decimal(0))
     for row in positions:  # 權重＝該檔市值占 NAV（與現金比同分母）
         row["weight"] = _rate(_dec(row["market_value"], "market_value"), nav) if row["market_value"] is not None else None
@@ -227,6 +259,8 @@ def build_performance_summary(repository: VirtualAccountRepository, decision_rep
     previous: Optional[Decimal] = None
     for point in points:
         change = point["nav"] - previous if previous is not None else None
+        if point["type"] == "datapack_rebase":  # 主辦方對帳重設：新交易日尚無收盤，差額是模擬與主辦方帳的差異，不是績效
+            change = None
         history.append({
             "run_id": point["run_id"], "as_of": point["as_of"], "trade_date": point["trade_date"], "type": point["type"],
             "nav": _money(point["nav"]),
@@ -236,7 +270,7 @@ def build_performance_summary(repository: VirtualAccountRepository, decision_rep
         })
         previous = point["nav"]
 
-    today = history[-1] if len(history) > 1 else None
+    today = next((item for item in reversed(history[1:]) if item["type"] != "datapack_rebase"), None)
     return {
         "status": "ok",
         "account_id": repository.root.name,
