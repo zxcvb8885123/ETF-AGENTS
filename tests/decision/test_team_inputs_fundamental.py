@@ -69,6 +69,11 @@ class PipelineFundamentalMetricsTests(unittest.TestCase):
             world.snapshot["source_evidence"].append({
                 "evidence_id": document["source_evidence_id"], "source": document["source"],
                 "authority": "mops", "data_type": "financial_statement",
+                "url": document["source_url"],
+                "content_as_of": document["published_at"],
+                "fetched_at": document["available_at"],
+                "content_sha256": document["content_sha256"],
+                "raw_payload_id": document["document_id"],
             })
         world.paths["snapshot"].write_text(json.dumps(world.snapshot, ensure_ascii=False), encoding="utf-8")
         return world

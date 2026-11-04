@@ -334,7 +334,163 @@ class ForcedSwapConfirmationTests(unittest.TestCase):
         self.assertEqual(ProposalValidator(bundle, policy, intent).validate(body), [])
         return bundle, policy, body
 
+    def ranked_victim_case(self, victim_prices, confirmation=True, adopted_bear=None, min_positions=20):
+        """以通過驗證的真實 engine fixture 測 21 檔滿檔；只替 private method 所需的持股／行情擴成競賽規模。"""
+        bundle, intent, stance, policy = sized_inputs("high", "high")
+        policy = sized_policy(policy, intent, stance, bundle)
+        engine = AllocationOrderEngine(bundle, policy)
+
+        candidates = ["1000.TW", "9000.TW"]  # 代號順序先昂貴者；真實排名則以便宜的 9000 為第一。
+        held = ["%04d.TW" % number for number in range(3000, 3021)]
+        current = {symbol: 1000 for symbol in held}
+        engine.prices.update({symbol: Decimal("10") for symbol in held})
+        engine.prices.update({"1000.TW": Decimal("1000"), "9000.TW": Decimal("100")})
+        engine.prices.update({symbol: Decimal(price) for symbol, price in victim_prices.items()})
+
+        sizing = engine.policy["position_sizing"]
+        sizing["conviction_by_symbol"].update({symbol: "high" for symbol in candidates})
+        sizing["rank_by_symbol"] = {"9000.TW": 1, "1000.TW": 2}
+        forced = {
+            "version": "v1", "min_new_conviction": "high", "max_swaps_per_run": 2,
+            "broken_symbols": sorted(victim_prices),
+        }
+        if confirmation:
+            forced["confirmation"] = FORCED_SWAP_CONFIRMATION
+        sizing["rotation"] = {
+            "version": ROTATION_VERSION, "max_swaps_per_run": 2,
+            "min_new_conviction": "high", "forced_swap": forced,
+        }
+        engine.policy["min_positions"] = min_positions
+        effective = engine._effective_policy({})
+        effective["cash_buffer_rate"] = Decimal("0")
+        return engine._forced_swap_victims(
+            candidates, current, set(current), current, {symbol: "hold" for symbol in current}, {}, set(), 21,
+            set(victim_prices) if adopted_bear is None else set(adopted_bear), Decimal("0"), Decimal("1000000"), effective,
+        )
+
+    def ranked_three_symbol_proposal(self):
+        """完整三檔 fixture：1101 昂貴且代號在前，2317 為同信心排名第一且 2330 賣款足以替換。"""
+        from etf_agent.automation.daily_pipeline import degraded_research_result
+        from etf_agent.decision import (
+            MomentumEngine,
+            apply_selection_ranking,
+            build_research_debate,
+            build_stance_brief,
+            canonical_sha256,
+            ranking_envelope,
+            seal_selection_ranking,
+            seal_stance_packet,
+            sentiment_unavailable_report,
+        )
+        from etf_agent.decision.sizing import SELECTION_RANKING
+        from test_analysts import event_items, finding, report, technical_items
+        from test_team_chain import tradable_bundle
+
+        bundle = tradable_bundle()
+        snapshot = bundle["snapshot"]
+        expensive = copy.deepcopy(bundle["price_series"][0])
+        expensive.update(symbol="1101.TW", evidence_id="price-1101")
+        for bar in expensive["bars"]:
+            bar.update(open="999", high="1001", low="998", close="1000")
+        expensive["series_sha256"] = canonical_sha256(expensive["bars"])
+        bundle["price_series"].append(expensive)
+        snapshot["source_evidence"].append({
+            "evidence_id": "price-1101", "source": "FIXTURE", "authority": "vendor", "data_type": "daily_price",
+        })
+        snapshot["latest_prices"].append({
+            "symbol": "1101.TW", "trade_date": "2026-09-19", "analysis_close_price": "1000",
+            "close_price": "1000", "source_evidence_id": "price-1101",
+        })
+        snapshot.update(universe_size=3, tradable_symbols=["1101.TW", "2317.TW", "2330.TW"])
+        bundle["rules"].update(min_positions=0, max_positions=1)
+        bundle["rules"]["config_sha256"] = decision_rules_sha256(bundle["rules"])
+        bundle["snapshot_sha256"] = canonical_sha256(snapshot)
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+
+        momentum = MomentumEngine(bundle).run()
+        technical = [
+            {"symbol": "1101.TW", "outlook": "positive", "findings": [finding("tech-1101-1", "price-1101")], "data_gaps": []},
+            *technical_items(),
+        ]
+        unknown = [
+            {"symbol": symbol, "outlook": "unknown", "findings": [], "data_gaps": ["NO_FINANCIAL_STATEMENTS"]}
+            for symbol in ("1101.TW", "2317.TW", "2330.TW")
+        ]
+        events = [
+            {"symbol": "1101.TW", "outlook": "unknown", "findings": [], "data_gaps": ["NO_MATERIAL_EVENT_IN_WINDOW"], "events": []},
+            *event_items(),
+        ]
+        reports = {
+            "technical": report(bundle, "technical", technical),
+            "fundamental": report(bundle, "fundamental", unknown),
+            "event": report(bundle, "event", events),
+            "sentiment": sentiment_unavailable_report(bundle),
+        }
+        research = degraded_research_result(snapshot, "research-1")
+        claim = lambda claim_id, evidence: {
+            "claim_id": claim_id, "text": "依價格證據。", "evidence_ids": [evidence], "finding_ids": [],
+        }
+        bull_items = [
+            {"symbol": "1101.TW", "strength": "moderate", "claims": [claim("bull-1101-1", "price-1101")], "invalidation_conditions": []},
+            {"symbol": "2317.TW", "strength": "moderate", "claims": [claim("bull-2317-1", "price-2317")], "invalidation_conditions": []},
+            {"symbol": "2330.TW", "strength": "weak", "claims": [claim("bull-2330-1", "price-2330")], "invalidation_conditions": []},
+        ]
+        bear_items = [
+            {"symbol": symbol, "strength": "none", "claims": [], "invalidation_conditions": []}
+            for symbol in ("1101.TW", "2317.TW")
+        ] + [{
+            "symbol": "2330.TW", "strength": "moderate", "claims": [claim("bear-2330-1", "price-2330")],
+            "invalidation_conditions": [],
+        }]
+        bull = seal_stance_packet(build_stance_brief(bundle, momentum, reports, research, "bull")["packet_envelope"], bull_items)
+        bear = seal_stance_packet(build_stance_brief(bundle, momentum, reports, research, "bear")["packet_envelope"], bear_items)
+        debate = build_research_debate(bundle, bull, bear, "debate-ranked-1")
+        decisions = [
+            {"symbol": symbol, "intent": "buy", "conviction": "high", "rationale": "多頭論點成立。",
+             "adopted_claim_ids": ["bull-%s-1" % symbol.split(".")[0]], "rejected_claim_ids": [],
+             "unresolved_questions": [], "invalidation_conditions": []}
+            for symbol in ("1101.TW", "2317.TW")
+        ] + [{
+            "symbol": "2330.TW", "intent": "hold", "conviction": None, "rationale": "等待換股規則判定。",
+            "adopted_claim_ids": ["bull-2330-1", "bear-2330-1"], "rejected_claim_ids": [],
+            "unresolved_questions": [], "invalidation_conditions": [],
+        }]
+        intent = seal_trade_decision(trade_decision_envelope(bundle, debate, "trade-ranked-1"), decisions)
+
+        stance = {"level": "neutral", "rationale": "市場廣度中性。", "evidence_ids": ["price-2330"]}
+        policy = base_policy()
+        policy.update(min_positions=0, max_positions=1)
+        policy["sector_by_symbol"]["1101.TW"] = "水泥"
+        policy["position_sizing"] = copy.deepcopy(SIZING)
+        policy["position_sizing"].update({
+            "held_add_priority": HELD_ADD_PRIORITY,
+            "selection_ranking": SELECTION_RANKING,
+            "rotation": {
+                "version": ROTATION_VERSION, "max_swaps_per_run": 1, "min_new_conviction": "high",
+                "forced_swap": {
+                    "version": "v1", "min_new_conviction": "high", "max_swaps_per_run": 1,
+                    "broken_symbols": ["2330.TW"], "confirmation": FORCED_SWAP_CONFIRMATION,
+                    "verdicts_ref": {"verdicts_id": "v-ranked", "as_of": "2026-09-19T10:00:00+00:00", "sha256": "a" * 64},
+                },
+            },
+        })
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        policy = sized_policy(policy, intent, stance, bundle)
+        ranking = seal_selection_ranking(ranking_envelope(bundle, intent, "ranking-1"), [{
+            "conviction": "high", "ordered": [
+                {"symbol": "2317.TW", "reason": "價格較低且優先。"},
+                {"symbol": "1101.TW", "reason": "價格較高且次之。"},
+            ],
+        }])
+        policy = apply_selection_ranking(policy, ranking)
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        self.assertEqual(DecisionPolicyValidator(bundle).validate(policy), [])
+        body = AllocationOrderEngine(bundle, policy).run(intent)
+        self.assertEqual(ProposalValidator(bundle, policy, intent).validate(body), [])
+        return body
+
     def test_adopted_bear_claim_confirms_the_swap(self):
+        """完整 proposal／validator／guard 路徑，不只單獨呼叫 private method。"""
         bundle, policy, body = self.proposal(adopt_bear=True)
         self.assertEqual(orders(body)[("2330.TW", "sell")]["intent"], "exit")
         self.assertIn(("2317.TW", "buy"), orders(body))
@@ -342,6 +498,43 @@ class ForcedSwapConfirmationTests(unittest.TestCase):
         self.assertIn("依代號", detail)
         self.assertNotIn("20 日報酬", detail)
         self.assertTrue(guard(bundle, policy, body)["passed"])
+
+    def test_ranked_affordable_candidate_skips_an_insufficient_first_victim(self):
+        """同為 high 時排名反代號；便宜首選可由第二 victim 支應，不能被昂貴低排名候選或第一 victim 阻斷。"""
+        victims, unconfirmed = self.ranked_victim_case({"3000.TW": "50", "3001.TW": "200"})
+        self.assertEqual(victims, ["3001.TW"])
+        self.assertEqual(unconfirmed, {})
+
+    def test_full_proposal_swaps_for_the_affordable_rank_first_candidate(self):
+        body = self.ranked_three_symbol_proposal()
+        by_symbol = {order["symbol"]: order for order in body["order_proposal"]["orders"]}
+        self.assertEqual((by_symbol["2330.TW"]["side"], by_symbol["2330.TW"]["intent"]), ("sell", "exit"))
+        self.assertEqual(by_symbol["2317.TW"]["side"], "buy")
+        self.assertNotIn("1101.TW", by_symbol)
+        self.assertIn(("2330.TW", "RISK_FORCED_SWAP"), flags(body))
+
+    def test_no_affordable_confirmed_victim_does_not_swap(self):
+        victims, unconfirmed = self.ranked_victim_case({"3000.TW": "50", "3001.TW": "90"})
+        self.assertEqual(victims, [])
+        self.assertEqual(unconfirmed, {})
+
+    def test_competition_scale_victims_without_adopted_bear_do_not_swap(self):
+        victims, unconfirmed = self.ranked_victim_case(
+            {"3000.TW": "50", "3001.TW": "200"}, adopted_bear=set(),
+        )
+        self.assertEqual(victims, [])
+        self.assertEqual(set(unconfirmed), {"3000.TW", "3001.TW"})
+
+    def test_competition_scale_minimum_position_floor_blocks_the_swap(self):
+        victims, _ = self.ranked_victim_case(
+            {"3000.TW": "50", "3001.TW": "200"}, min_positions=21,
+        )
+        self.assertEqual(victims, [])
+
+    def test_confirmation_cash_fix_is_not_applied_to_legacy_forced_swap(self):
+        """省略 confirmation 的舊路徑仍依 victim 代號直接取用，不套用新排序／現金檢查。"""
+        victims, _ = self.ranked_victim_case({"3000.TW": "50", "3001.TW": "200"}, confirmation=False)
+        self.assertEqual(victims, ["3000.TW", "3001.TW"])
 
     def test_without_bear_evidence_nothing_is_swapped_and_the_reason_is_flagged(self):
         _, _, body = self.proposal(adopt_bear=False)

@@ -5,13 +5,15 @@ import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from etf_agent.competition import (
     DataPackError, check_dplan_against_datapack, find_datapack, load_datapack, load_universe,
     open_competition_account, reconcile,
 )
 from etf_agent.competition.datapack import parse_datapack
-from etf_agent.virtual_account import VirtualAccountRepository, active_account_id
+from etf_agent.ledger import LedgerError
+from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository, active_account_id
 
 
 READ_AT = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
@@ -301,8 +303,12 @@ class RebaseAccountTests(unittest.TestCase):
         }
         self.snapshot_path = self.root / "snapshot.json"
         self.snapshot_path.write_text(json.dumps(self.snapshot), encoding="utf-8")
-        self.service.prepare_day(self.snapshot_path, "prepare-1")
+        prepared = self.service.prepare_day(self.snapshot_path, "prepare-1")
         self.account_output = self.root / "artifacts/ledger/acct/account_snapshot_latest.json"
+        self.account_output.write_text(
+            json.dumps(prepared["account_snapshot"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+        )
+        self.original_output = self.account_output.read_bytes()
         self.pack = dict(settled(), generated_at="2026-10-27T18:58:18+08:00")  # 10:58Z，早於 cutoff 12:00Z
 
     def rebase(self, pack=None):
@@ -336,6 +342,87 @@ class RebaseAccountTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.rebase(no_price)
         self.assertEqual(self.repository.latest()["run_id"], "prepare-1")  # 失敗時帳本不動。
+
+    def test_prepare_failure_does_not_publish_rebase_or_change_output(self):
+        missing_snapshot_price = copy.deepcopy(self.pack)
+        missing_snapshot_price["holdings"][0]["code"] = "2317"
+        missing_snapshot_price["holdings"][0]["close_price"] = 100.0
+        with self.assertRaisesRegex(LedgerError, "2317.TW.close_price"):
+            self.rebase(missing_snapshot_price)
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-1")
+        self.assertEqual(self.account_output.read_bytes(), self.original_output)
+        self.assertFalse((self.repository.runs / "rebase-prepare-1-datapack").exists())
+        self.assertFalse((self.repository.runs / "prepare-1-datapack").exists())
+
+    def test_output_failure_does_not_publish_staged_runs(self):
+        with patch.object(VirtualAccountRepository, "_stage_json_output", side_effect=OSError("測試輸出失敗")):
+            with self.assertRaisesRegex(OSError, "測試輸出失敗"):
+                self.rebase()
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-1")
+        self.assertEqual(self.account_output.read_bytes(), self.original_output)
+        self.assertFalse((self.repository.runs / "rebase-prepare-1-datapack").exists())
+        self.assertFalse((self.repository.runs / "prepare-1-datapack").exists())
+
+    def test_latest_publish_failure_restores_output_latest_and_moved_runs(self):
+        original_write_latest = VirtualAccountRepository._write_latest
+        failed = {"once": False}
+
+        def fail_final_publish(repository, run_id, state_sha256):
+            if (
+                repository.root == self.repository.root
+                and run_id == "prepare-1-datapack"
+                and not failed["once"]
+            ):
+                # 此 hook 位於最後 latest 指標發布點：確認前兩個 runs 與新輸出確實已先落地。
+                self.assertTrue((repository.runs / "rebase-prepare-1-datapack").is_dir())
+                self.assertTrue((repository.runs / "prepare-1-datapack").is_dir())
+                self.assertNotEqual(self.account_output.read_bytes(), self.original_output)
+                self.assertEqual(repository.latest()["run_id"], "prepare-1")
+                failed["once"] = True
+                raise OSError("測試 latest 發布失敗")
+            return original_write_latest(repository, run_id, state_sha256)
+
+        with patch.object(VirtualAccountRepository, "_write_latest", autospec=True, side_effect=fail_final_publish):
+            with self.assertRaisesRegex(OSError, "測試 latest 發布失敗"):
+                self.rebase()
+        self.assertTrue(failed["once"])
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-1")
+        self.assertEqual(self.account_output.read_bytes(), self.original_output)
+        self.assertFalse((self.repository.runs / "rebase-prepare-1-datapack").exists())
+        self.assertFalse((self.repository.runs / "prepare-1-datapack").exists())
+
+    def test_concurrent_legal_writer_advancing_latest_blocks_staged_publish(self):
+        original_staging_copy = VirtualAccountRepository.staging_copy
+
+        def stage_then_advance(repository, staging_root, expected_run_id):
+            staged = original_staging_copy(repository, staging_root, expected_run_id)
+            from etf_agent.virtual_account import VirtualAccountService
+            VirtualAccountService(repository).rebase(
+                {}, "1000000000", "2026-10-27T11:30:00+00:00",
+                {"as_of_date": "2026-10-27", "writer": "concurrent-test"}, "concurrent-rebase",
+            )
+            return staged
+
+        with patch.object(VirtualAccountRepository, "staging_copy", autospec=True, side_effect=stage_then_advance):
+            with self.assertRaisesRegex(VirtualAccountError, "latest 已變更"):
+                self.rebase()
+        self.assertEqual(self.repository.latest()["run_id"], "concurrent-rebase")
+        self.assertEqual(self.account_output.read_bytes(), self.original_output)
+        self.assertTrue(self.repository.verify("concurrent-rebase").exists())
+        self.assertFalse((self.repository.runs / "rebase-prepare-1-datapack").exists())
+        self.assertFalse((self.repository.runs / "prepare-1-datapack").exists())
+
+    def test_existing_prepare_run_conflict_fails_closed_without_overwrite(self):
+        conflict = self.repository.runs / "prepare-1-datapack"
+        conflict.mkdir()
+        marker = conflict / "keep.txt"
+        marker.write_text("既有內容", encoding="utf-8")
+        with self.assertRaises(VirtualAccountError):
+            self.rebase()
+        self.assertEqual(self.repository.latest()["run_id"], "prepare-1")
+        self.assertEqual(self.account_output.read_bytes(), self.original_output)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "既有內容")
+        self.assertFalse((self.repository.runs / "rebase-prepare-1-datapack").exists())
 
     def test_rebase_requires_fresh_prepare_without_pending_decision(self):
         from unittest.mock import patch

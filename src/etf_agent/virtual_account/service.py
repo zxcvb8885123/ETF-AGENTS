@@ -102,6 +102,133 @@ class VirtualAccountRepository:
         with self._write_lock():
             return self._save_locked(run_id, artifacts, state)
 
+    def staging_copy(self, staging_root: Path, expected_run_id: str) -> "VirtualAccountRepository":
+        """在鎖內複製目前帳本，供多步狀態轉移先完整演算、驗證而不發布。"""
+        destination = Path(staging_root).resolve() / self.root.name
+        with self._write_lock():
+            current = self.latest()
+            if current["run_id"] != expected_run_id:
+                raise VirtualAccountError("帳本 latest 已變更，拒絕建立 staging")
+            if destination.exists():
+                raise VirtualAccountError("staging 帳本目錄已存在")
+            shutil.copytree(self.root, destination, ignore=shutil.ignore_patterns(".write.lock"))
+        return VirtualAccountRepository(Path(staging_root), self.root.name)
+
+    @staticmethod
+    def _stage_json_output(path: Path, value: object) -> Path:
+        """先在輸出目的目錄完成 JSON 寫入；失敗時尚未碰觸帳本。"""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and not path.is_file():
+            raise VirtualAccountError("帳戶輸出路徑不是一般檔案：%s" % path)
+        fd, temporary = tempfile.mkstemp(prefix=".account-output-", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+            return Path(temporary)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+    def publish_staged_chain(
+        self,
+        staged: "VirtualAccountRepository",
+        run_ids: List[str],
+        expected_run_id: str,
+        account_output: Path,
+        account_snapshot: Mapping[str, object],
+    ) -> None:
+        """一次發布已在 staging 完成的連續 runs、latest 與帳戶快照。
+
+        所有會正常拋出的準備／輸出錯誤都發生在發布前；發布期間持有帳戶寫鎖，並在例外時還原
+        latest、輸出檔與本次新增 runs。這不覆寫任何既有 run，也不把 staging run 視為歷史。
+        """
+        if (
+            not run_ids
+            or len(set(run_ids)) != len(run_ids)
+            or any(not RUN_RE.fullmatch(run_id) for run_id in run_ids)
+        ):
+            raise VirtualAccountError("staging run_ids 不得為空或重複")
+        output = Path(account_output)
+        output_existed = output.is_file()
+        old_output = output.read_bytes() if output_existed else None
+        temporary_output = self._stage_json_output(output, account_snapshot)
+        moved: List[Path] = []
+        output_replaced = False
+        try:
+            with self._write_lock():
+                try:
+                    current = self.latest()
+                    if current["run_id"] != expected_run_id:
+                        raise VirtualAccountError("帳本 latest 已變更，拒絕發布 staging")
+                    parent_state = current["state"]
+                    parent_run_id = expected_run_id
+                    staged_states = []
+                    for run_id in run_ids:
+                        final = self.runs / run_id
+                        if final.exists() or final.is_symlink():
+                            raise VirtualAccountError("同一 run_id 已存在，拒絕覆寫：%s" % run_id)
+                        staged_dir = staged.verify(run_id)
+                        state = _read(staged_dir / "state.json", "staging state")
+                        if (
+                            int(state.get("sequence", -1)) != int(parent_state["sequence"]) + 1
+                            or state.get("parent_state_id") != parent_state.get("state_id")
+                            or state.get("provenance", {}).get("parent_run_id") != parent_run_id
+                        ):
+                            raise VirtualAccountError("staging 帳本鏈未直接續接目前 latest：%s" % run_id)
+                        staged_states.append(state)
+                        parent_state, parent_run_id = state, run_id
+                    final_snapshot = _read(staged.verify(run_ids[-1]) / "account_snapshot.json", "staging account_snapshot")
+                    if dict(final_snapshot) != dict(account_snapshot):
+                        raise VirtualAccountError("staging 最終帳戶快照與待發布輸出不一致")
+
+                    self.runs.mkdir(parents=True, exist_ok=True)
+                    for run_id in run_ids:
+                        final = self.runs / run_id
+                        os.replace(staged.runs / run_id, final)
+                        moved.append(final)
+                    os.replace(temporary_output, output)
+                    output_replaced = True
+                    self._write_latest(run_ids[-1], staged_states[-1]["content_sha256"])
+                except Exception:
+                    # 仍持有寫鎖，其他 writer 不可能在回復期間推進。
+                    rollback_error = None
+                    latest_restored = False
+                    try:
+                        latest = self.latest(optional=True)
+                        if latest is not None and latest["run_id"] == run_ids[-1]:
+                            restore = _read(self.verify(expected_run_id) / "state.json", "restore state")
+                            self._write_latest(expected_run_id, restore["content_sha256"])
+                        latest_restored = latest is not None and latest["run_id"] in {expected_run_id, run_ids[-1]}
+                    except Exception as error:
+                        rollback_error = error
+                    if output_replaced:
+                        try:
+                            if output_existed:
+                                restore_fd, restore_temp = tempfile.mkstemp(prefix=".account-output-restore-", dir=str(output.parent))
+                                with os.fdopen(restore_fd, "wb") as stream:
+                                    stream.write(old_output or b"")
+                                os.replace(restore_temp, output)
+                            else:
+                                output.unlink(missing_ok=True)
+                        except Exception as error:
+                            rollback_error = rollback_error or error
+                    if latest_restored:
+                        for path in reversed(moved):
+                            shutil.rmtree(path, ignore_errors=True)
+                    if rollback_error is not None:
+                        raise VirtualAccountError("staging 發布失敗且無法完整回復，拒絕繼續") from rollback_error
+                    raise
+        finally:
+            try:
+                temporary_output.unlink()
+            except FileNotFoundError:
+                pass
+
     def _write_latest(self, run_id: str, state_sha256: object) -> None:
         index_path = self.root / "latest.json"
         fd, temporary = tempfile.mkstemp(prefix=".latest-", dir=str(self.root))

@@ -567,7 +567,8 @@ class DPlanExporter:
         errors = DPlanValidator().validate(plan)
         if errors:
             raise DPlanError("D-Plan 本地驗證失敗：" + "; ".join(errors))
-        self._validate_official_posture(plan, account, bundle, order_rows, latest_prices, target)
+        # 姿態檢查必須沿用上方 target_weight／股數推導的同一估值分母；有 DataPack 時不能退回帳本 NAV。
+        self._validate_official_posture(plan, account, bundle, order_rows, latest_prices, target, nav)
         return plan
 
     @staticmethod
@@ -588,7 +589,11 @@ class DPlanExporter:
             raise DPlanError("策略說明須以 SHA-256 識別已確認版本")
 
     @staticmethod
-    def _validate_official_posture(plan: Mapping[str, object], account: Mapping[str, object], bundle: Mapping[str, object], orders: Sequence[Mapping[str, object]], prices: Mapping[str, Decimal], target: Mapping[str, int]) -> None:
+    def _validate_official_posture(
+        plan: Mapping[str, object], account: Mapping[str, object], bundle: Mapping[str, object],
+        orders: Sequence[Mapping[str, object]], prices: Mapping[str, Decimal], target: Mapping[str, int],
+        valuation_nav: object = None,
+    ) -> None:
         posture = plan["market_view"]["posture"]
         ticker_prices = {}
         for symbol, price in prices.items():
@@ -603,7 +608,8 @@ class DPlanExporter:
                 buy += amount
             else:
                 sell += amount
-        nav = Decimal(str(account["nav"]))
+        # 無官方 NAV 的舊流程仍以帳本 NAV 驗證；build 有 DataPack 時會明確傳入 derivation_nav 的結果。
+        nav = Decimal(str(account["nav"] if valuation_nav is None else valuation_nav))
         for symbol, shares in target.items():
             weight = Decimal(shares) * prices[symbol] / nav
             limit = Decimal("0.25") if symbol == "2330.TW" else Decimal("0.10")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import tempfile
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -94,13 +94,20 @@ def rebase_account_to_datapack(root: Path, account_id: str, loaded: Mapping[str,
         if symbol is None:
             raise DataPackError("DataPack 持股 %s 不在官方交易池，無法對應" % row["code"])
         positions[symbol] = {"shares": int(row["shares"]), "close_price": row["close_price"]}
-    service = VirtualAccountService(repository)
     source = {"datapack_sha256": loaded["raw_sha256"], "team_id": pack["team_id"], "trade_date": pack["trade_date"],
               "as_of_date": pack["as_of_date"], "generated_at": pack["generated_at"],
               "cost_basis": "主辦方未提供成本，以結算收盤價代替"}
-    rebased = service.rebase(positions, pack["account"]["cash"], pack["generated_at"], source, "rebase-" + prepare_run_id)
-    prepared = service.prepare_day(Path(snapshot_path), prepare_run_id)
-    account_output = Path(account_output)
-    account_output.parent.mkdir(parents=True, exist_ok=True)
-    account_output.write_text(json.dumps(prepared["account_snapshot"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    rebase_run_id = "rebase-" + prepare_run_id
+    # rebase 與 prepare 先在同檔案系統的暫存帳本完整跑完；兩步或輸出準備任一失敗都不發布 real latest。
+    with tempfile.TemporaryDirectory(prefix=".datapack-rebase-", dir=str(repository.root.parent)) as staging_root:
+        staged_repository = repository.staging_copy(Path(staging_root), current["run_id"])
+        staged_service = VirtualAccountService(staged_repository)
+        rebased = staged_service.rebase(
+            positions, pack["account"]["cash"], pack["generated_at"], source, rebase_run_id,
+        )
+        prepared = staged_service.prepare_day(Path(snapshot_path), prepare_run_id)
+        repository.publish_staged_chain(
+            staged_repository, [rebase_run_id, prepare_run_id], current["run_id"], Path(account_output),
+            prepared["account_snapshot"],
+        )
     return {"rebase_run_id": rebased["run_id"], "prepare_run_id": prepared["run_id"], "account_snapshot": prepared["account_snapshot"]}

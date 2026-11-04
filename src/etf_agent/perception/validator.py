@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Sequence
 
 from .contracts import (
     PRICED_IN_STATES,
@@ -19,8 +19,22 @@ from .tools import PerceptionDataTools
 class MarketPerceptionResultValidator:
     """Validate agent output and recompute all aggregate values."""
 
-    def __init__(self, tools: PerceptionDataTools):
+    def __init__(
+        self,
+        tools: PerceptionDataTools,
+        expected_symbols: Optional[Sequence[str]] = None,
+    ):
         self.tools = tools
+        self.expected_symbols: Optional[set[str]] = None
+        if expected_symbols is not None:
+            normalized = {
+                str(symbol).strip().upper()
+                for symbol in expected_symbols
+                if isinstance(symbol, str) and symbol.strip()
+            }
+            if len(normalized) != len(expected_symbols):
+                raise PerceptionToolError("expected_symbols 必須是唯一且非空的股票字串")
+            self.expected_symbols = normalized
 
     def validate(self, result: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
@@ -63,9 +77,59 @@ class MarketPerceptionResultValidator:
                 errors.append("%s.symbol 不得重複" % prefix)
             seen.add(symbol)
             self._validate_item(item, prefix, symbol, errors)
-        if result.get("status") == "completed" and result.get("errors"):
+        status = result.get("status")
+        if status in {"completed", "degraded"}:
+            expected = self.expected_symbols
+            explicit_universe = expected is not None
+            if expected is None:
+                expected = {
+                    str(item["symbol"]).upper() for item in self.tools.sentiment_items
+                }
+            missing = sorted(expected - seen)
+            extra = sorted(
+                symbol
+                for symbol in seen - expected
+                if explicit_universe
+                or not self._is_no_data_item(
+                    next(
+                        item
+                        for item in items
+                        if isinstance(item, Mapping)
+                        and str(item.get("symbol", "")).upper() == symbol
+                    )
+                )
+            )
+            if missing:
+                errors.append("items 缺少股票：%s" % ", ".join(missing))
+            if extra:
+                errors.append("items 包含額外股票：%s" % ", ".join(extra))
+        if status == "completed" and not items:
+            errors.append("completed 結果的 items 不得為空")
+        if status == "completed" and any(
+            isinstance(item, Mapping)
+            and item.get("research_status") != "usable_secondary"
+            for item in items
+        ):
+            errors.append("completed 結果不得包含資料不足的股票")
+        if status == "completed" and result.get("errors"):
             errors.append("completed 結果不得同時包含 errors")
+        result_errors = result.get("errors")
+        if status == "failed" and (
+            not isinstance(result_errors, list) or not result_errors
+        ):
+            errors.append("failed 結果必須包含 errors")
         return errors
+
+    @staticmethod
+    def _is_no_data_item(item: Mapping[str, object]) -> bool:
+        sentiment = item.get("sentiment")
+        return (
+            item.get("research_status") == "unavailable"
+            and isinstance(sentiment, Mapping)
+            and sentiment.get("status") == "unavailable"
+            and item.get("sentiment_labels") == []
+            and item.get("evidence_ids") == []
+        )
 
     def _validate_item(
         self,

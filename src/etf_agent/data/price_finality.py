@@ -19,12 +19,23 @@ from .evidence import TAIPEI_TIMEZONE
 MARKET_CLOSE_TIME = time(13, 30)
 PRICE_FINALIZED_TIME = time(15, 0)
 
-# 盤中即回傳當日日線、收盤後才定案的來源。
+# 只有已知由交易所於收盤後發布的行情可在抓到後直接視為定案。未列入白名單的
+# 來源一律依非官方來源處理，避免新來源或拼字錯誤繞過定案時間。
+OFFICIAL_PRICE_SOURCES = (
+    "TWSE_STOCK_DAY_ALL",
+    "TPEX_MAINBOARD_QUOTES",
+    "TWSE_STOCK_DAY",
+    "TPEX_TRADING_STOCK",
+    "TPEX_DAILY_QUOTES_HISTORY",
+)
+
+# 相容既有 Yahoo 收集器的來源宣告；定案判斷本身採上方官方白名單，不能用此清單
+# 推論其他未知來源為官方。
 UNOFFICIAL_PRICE_SOURCES = ("YAHOO_FINANCE",)
 
 
 def requires_finalized_fetch(source: str) -> bool:
-    return str(source).upper() in UNOFFICIAL_PRICE_SOURCES
+    return str(source).upper() not in OFFICIAL_PRICE_SOURCES
 
 
 def _as_date(trade_date: Union[date, str]) -> date:
@@ -76,9 +87,9 @@ FINALIZED_FETCH_UTC_SUFFIX = "T%s+00:00" % _finalized_utc_clock()
 
 
 def finalized_rows_sql(alias: str = "daily_prices") -> str:
-    """SQL 條件：非官方來源的列必須在該交易日定案時間之後抓取；官方來源不受限。"""
-    sources = ", ".join("'%s'" % item for item in UNOFFICIAL_PRICE_SOURCES)
-    return "(%s.source NOT IN (%s) OR %s.fetched_at >= %s.trade_date || '%s')" % (
+    """SQL 條件：白名單官方來源不受限，其餘來源必須在定案時間後抓取。"""
+    sources = ", ".join("'%s'" % item for item in OFFICIAL_PRICE_SOURCES)
+    return "(%s.source IN (%s) OR %s.fetched_at >= %s.trade_date || '%s')" % (
         alias,
         sources,
         alias,

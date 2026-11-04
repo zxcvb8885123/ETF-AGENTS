@@ -36,7 +36,7 @@ def statement(document_id, statement_type, year, facts, industry="ci"):
         period_start = None
         period_end = "%d-06-30" % year
         period_kind = "point_in_time"
-    evidence_id = "financial-evidence-%d" % document_id
+    evidence_id = "document:%d" % document_id
     return {
         "document_id": document_id,
         "source": "TWSE_MOPS_%s" % statement_type.upper(),
@@ -102,6 +102,11 @@ def snapshot_fixture():
                 "source": document["source"],
                 "authority": "mops",
                 "data_type": "financial_statement",
+                "url": document["source_url"],
+                "content_as_of": document["published_at"],
+                "fetched_at": document["available_at"],
+                "content_sha256": document["content_sha256"],
+                "raw_payload_id": document["document_id"],
             }
             for document in documents
         ],
@@ -275,6 +280,43 @@ class FundamentalResearchAgentTests(unittest.TestCase):
         bundle = tools.build_bundle(request(), bundle_id="bundle-bank", generated_at=GENERATED_AT)
         self.assertEqual(bundle["companies"][0]["status"], "unavailable")
         self.assertIn("UNSUPPORTED_INDUSTRY_basi", str(bundle["companies"][0]["missing_data"]))
+
+    def test_rejects_financial_document_evidence_mismatch(self):
+        mutations = (
+            ("source", "OTHER_SOURCE", "來源"),
+            ("content_sha256", "tampered", "雜湊"),
+            ("fetched_at", "2026-09-20T00:59:59+00:00", "時間"),
+            ("symbol", "2317.TW", "股票"),
+            ("available_at", "2026-09-20T01:00:01+00:00", "時間"),
+        )
+        for field, value, message in mutations:
+            with self.subTest(field=field):
+                snapshot = snapshot_fixture()
+                snapshot["source_evidence"][0][field] = value
+                with self.assertRaisesRegex(FundamentalToolError, message):
+                    FundamentalSnapshotTools(snapshot)
+
+        snapshot = snapshot_fixture()
+        snapshot["documents"][0]["source_evidence_id"] = "document:12"
+        with self.assertRaisesRegex(FundamentalToolError, "文件"):
+            FundamentalSnapshotTools(snapshot)
+
+    def test_rejects_financial_evidence_available_after_cutoff(self):
+        snapshot = snapshot_fixture()
+        snapshot["source_evidence"][0]["fetched_at"] = "2026-09-21T01:00:01+00:00"
+        with self.assertRaisesRegex(FundamentalToolError, "cutoff 後"):
+            FundamentalSnapshotTools(snapshot)
+
+        snapshot = snapshot_fixture()
+        snapshot["source_evidence"][0]["available_at"] = "2026-09-21T01:00:01+00:00"
+        with self.assertRaisesRegex(FundamentalToolError, "cutoff 後"):
+            FundamentalSnapshotTools(snapshot)
+
+    def test_document_may_be_available_before_evidence_fetch(self):
+        snapshot = snapshot_fixture()
+        snapshot["documents"][0]["available_at"] = "2026-09-20T00:30:00+00:00"
+        tools = FundamentalSnapshotTools(snapshot)
+        self.assertEqual(tools.status()["financial_document_count"], 3)
 
     def test_cli_builds_validates_and_archives_without_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:

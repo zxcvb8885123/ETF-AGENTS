@@ -124,7 +124,7 @@ class DecisionInputValidator:
         self._validate_benchmarks(universe, errors)
         self._validate_price_series(universe, price_evidence, errors)
         self._validate_research_results(errors)
-        self._validate_perception_inputs(errors)
+        self._validate_perception_inputs(universe, errors)
         if "market_news_input" in self.bundle:
             from etf_agent.perception.market_news import validate_pair, MarketNewsError
             try:
@@ -736,7 +736,9 @@ class DecisionInputValidator:
                 for error in result_errors
             )
 
-    def _validate_perception_inputs(self, errors: List[str]) -> None:
+    def _validate_perception_inputs(
+        self, universe: Set[str], errors: List[str]
+    ) -> None:
         inputs = self.bundle.get("perception_inputs", [])
         if not isinstance(inputs, list):
             errors.append("perception_inputs 必須是陣列")
@@ -767,7 +769,9 @@ class DecisionInputValidator:
                 errors.append(str(error))
             try:
                 tools = PerceptionDataTools(data_bundle)
-                result_errors = MarketPerceptionResultValidator(tools).validate(result)
+                result_errors = MarketPerceptionResultValidator(
+                    tools, expected_symbols=sorted(universe)
+                ).validate(result)
             except PerceptionToolError as error:
                 result_errors = [str(error)]
             errors.extend(

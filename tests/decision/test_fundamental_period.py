@@ -54,7 +54,7 @@ def statement(document_id, symbol, statement_type, year, quarter, facts, availab
         "published_at": "2026-09-19T00:00:00+00:00",
         "available_at": available_at,
         "content_sha256": "financial-sha-%d" % document_id,
-        "source_evidence_id": "financial-evidence-%d" % document_id,
+        "source_evidence_id": "document:%d" % document_id,
         "financial_statement": {
             "statement_type": statement_type,
             "industry": "ci",
@@ -93,6 +93,11 @@ def bundle_with_statements(documents, policy=FUNDAMENTAL_PERIOD_PER_SYMBOL):
         snapshot["source_evidence"].append({
             "evidence_id": document["source_evidence_id"], "source": document["source"],
             "authority": "mops", "data_type": "financial_statement",
+            "url": document["source_url"],
+            "content_as_of": document["published_at"],
+            "fetched_at": document["available_at"],
+            "content_sha256": document["content_sha256"],
+            "raw_payload_id": document["document_id"],
         })
         snapshot["documents"].append(document)
     if policy is not None:
