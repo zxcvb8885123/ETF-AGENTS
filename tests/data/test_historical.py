@@ -18,6 +18,7 @@ from etf_agent.data import (
     Instrument,
     MarketDataDatabase,
     OfficialHistoricalRefreshService,
+    SnapshotRepository,
     YFinanceHistoryCollector,
     month_starts,
     plan_history_refresh,
@@ -154,6 +155,23 @@ def seed_latest_price(database, instrument, source, trade_date="2026-09-17"):
 
 
 class HistoricalProviderTests(unittest.TestCase):
+    def test_unknown_source_cannot_anchor_official_gap_rebasing(self):
+        instrument = Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14")
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            seed_latest_price(database, instrument, "YAHOO_FINANCE", "2026-09-18")
+            seed_latest_price(database, instrument, "UNKNOWN_VENDOR", "2026-09-18")
+            seed_latest_price(database, instrument, "TWSE_STOCK_DAY", "2026-09-19")
+            with database.connect() as connection:
+                connection.execute(
+                    "UPDATE daily_prices SET adjusted_close_price = '200' "
+                    "WHERE source = 'YAHOO_FINANCE' AND trade_date = '2026-09-18'"
+                )
+                rows = SnapshotRepository.load_price_history(
+                    connection, "2026-09-20", "2026-09-20T08:00:00+00:00", 10
+                )
+        self.assertEqual([row["trade_date"] for row in rows], ["2026-09-18"])
+
     def test_snapshot_uses_latest_fully_covered_day_and_yahoo_research_price(self):
         universe = [
             Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),

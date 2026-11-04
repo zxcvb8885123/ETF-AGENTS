@@ -77,14 +77,49 @@ class FundamentalSnapshotTools:
         linked = self.evidence_by_id.get(evidence_id)
         if linked is None:
             raise FundamentalToolError("%s 引用不存在的 source_evidence_id" % prefix)
-        if linked.get("data_type") not in {None, "financial_statement"}:
+        document_id = document.get("document_id")
+        if not isinstance(document_id, int) or document_id <= 0:
+            raise FundamentalToolError("%s.document_id 必須是正整數" % prefix)
+        if evidence_id != "document:%d" % document_id:
+            raise FundamentalToolError("%s 引用的來源證據不屬於該財報文件" % prefix)
+        if linked.get("data_type") != "financial_statement":
             raise FundamentalToolError("%s 引用不是財報來源" % prefix)
+        if "symbol" in linked and _required_string(linked, "symbol").upper() != symbol:
+            raise FundamentalToolError("%s 與來源證據的股票不一致" % prefix)
+        source = _required_string(document, "source")
+        if _required_string(linked, "source") != source:
+            raise FundamentalToolError("%s 與來源證據的來源不一致" % prefix)
+        content_sha256 = _required_string(document, "content_sha256")
+        if _required_string(linked, "content_sha256") != content_sha256:
+            raise FundamentalToolError("%s 與來源證據的內容雜湊不一致" % prefix)
+        source_url = _required_string(document, "source_url")
+        if _required_string(linked, "url") != source_url:
+            raise FundamentalToolError("%s 與來源證據的 URL 不一致" % prefix)
         available = _parse_time(document.get("available_at"), "%s.available_at" % prefix)
         published = _parse_time(document.get("published_at"), "%s.published_at" % prefix)
+        evidence_fetched = _parse_time(
+            linked.get("fetched_at"), "%s.source_evidence.fetched_at" % prefix
+        )
+        evidence_content_as_of = _parse_time(
+            linked.get("content_as_of"), "%s.source_evidence.content_as_of" % prefix
+        )
         if published > available:
             raise FundamentalToolError("%s.published_at 不得晚於 available_at" % prefix)
         if available > self.cutoff:
             raise FundamentalToolError("Snapshot 包含 cutoff 後才可得的財報")
+        if evidence_fetched > self.cutoff:
+            raise FundamentalToolError("Snapshot 包含 cutoff 後才可得的財報來源證據")
+        if available > evidence_fetched or evidence_content_as_of != published:
+            raise FundamentalToolError("%s 與來源證據的時間不一致" % prefix)
+        if "available_at" in linked:
+            evidence_available = _parse_time(
+                linked.get("available_at"),
+                "%s.source_evidence.available_at" % prefix,
+            )
+            if evidence_available > self.cutoff:
+                raise FundamentalToolError("Snapshot 包含 cutoff 後才可得的財報來源證據")
+            if evidence_available != available:
+                raise FundamentalToolError("%s 與來源證據的時間不一致" % prefix)
         statement = document.get("financial_statement")
         if not isinstance(statement, Mapping):
             raise FundamentalToolError("%s.financial_statement 必須是物件" % prefix)
@@ -119,12 +154,12 @@ class FundamentalSnapshotTools:
                 raise FundamentalToolError("%s.%s not_reported 不得有 value" % (prefix, fact_key))
             normalized_facts[fact_key] = dict(fact)
         return {
-            "document_id": document.get("document_id"),
+            "document_id": document_id,
             "symbol": symbol,
-            "source": _required_string(document, "source"),
+            "source": source,
             "version": document.get("version"),
             "source_evidence_id": evidence_id,
-            "content_sha256": _required_string(document, "content_sha256"),
+            "content_sha256": content_sha256,
             "published_at": str(document["published_at"]),
             "available_at": str(document["available_at"]),
             "statement_type": statement_type,

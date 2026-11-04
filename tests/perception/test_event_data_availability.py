@@ -40,7 +40,7 @@ class EventDataAvailabilityTests(unittest.TestCase):
         context = event_financial_context({"snapshot": snapshot})["2330.TW"]
         income = next(row for row in context if row["statement_type"] == "income_statement")
         self.assertEqual(income["fiscal_year"], 2026)
-        self.assertEqual(income["evidence_id"], "financial-evidence-11")
+        self.assertEqual(income["evidence_id"], "document:11")
         self.assertEqual(income["facts"][0]["unit_multiplier"], 1000)
         self.assertEqual(income["period_kind"], "cumulative_to_quarter")
 

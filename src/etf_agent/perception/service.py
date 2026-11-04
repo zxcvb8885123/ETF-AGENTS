@@ -54,7 +54,9 @@ class MarketPerceptionApplicationService:
                   "decision_cutoff": self.tools.decision_cutoff, "skill_version": "1.0.0",
                   "status": "completed" if all(row["research_status"] == "usable_secondary" for row in items) else "degraded",
                   "items": items, "errors": []}
-        errors = MarketPerceptionResultValidator(self.tools).validate(result)
+        errors = MarketPerceptionResultValidator(
+            self.tools, expected_symbols=universe
+        ).validate(result)
         if errors:
             raise PerceptionToolError("；".join(errors))
         return result

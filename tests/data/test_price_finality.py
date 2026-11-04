@@ -152,6 +152,34 @@ class SnapshotFinalityTests(unittest.TestCase):
             )
         self.assertEqual(history, [])
 
+    def test_unknown_source_requires_finality_and_is_never_execution_price(self):
+        self.store([_price("2410", 13_000_000)], "UNKNOWN_VENDOR", INTRADAY)
+        with self.database.connect() as connection:
+            pending = SnapshotRepository.load_prices(
+                connection, TRADE_DATE, "2026-10-21T08:00:00+00:00"
+            )
+        self.assertEqual(pending, [])
+
+        self.store([_price("2420", 27_000_000)], "UNKNOWN_VENDOR", AFTER_FINALIZED)
+        with self.database.connect() as connection:
+            finalized = SnapshotRepository.load_prices(
+                connection, TRADE_DATE, "2026-10-21T08:00:00+00:00"
+            )
+        self.assertEqual(len(finalized), 1)
+        self.assertEqual(finalized[0]["source"], "UNKNOWN_VENDOR")
+        self.assertIsNone(finalized[0]["execution_close_price"])
+        self.assertIsNone(finalized[0]["execution_source"])
+
+    def test_known_official_source_is_final_without_vendor_time_gate(self):
+        official_fetch = "2026-10-21T05:45:00+00:00"  # 台北 13:45
+        self.store([_price("2420", 27_000_000)], "TWSE_STOCK_DAY_ALL", official_fetch)
+        with self.database.connect() as connection:
+            rows = SnapshotRepository.load_prices(
+                connection, TRADE_DATE, "2026-10-21T06:00:00+00:00"
+            )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["execution_source"], "TWSE_STOCK_DAY_ALL")
+
 
 class YahooCollectorFinalityTests(unittest.TestCase):
     def _frame(self):

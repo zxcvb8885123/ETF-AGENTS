@@ -174,6 +174,87 @@ class SentimentAnalystAgentTests(unittest.TestCase):
         errors = validator.validate(tampered)
         self.assertTrue(any("確定性重算" in error for error in errors))
 
+    def test_validator_requires_exact_bundle_symbol_coverage(self):
+        bundle = perception_bundle()
+        bundle["source_evidence"].append(
+            dict(bundle["source_evidence"][0], evidence_id="other-evidence", symbol="2317.TW")
+        )
+        bundle["sentiment_items"].append(
+            dict(
+                bundle["sentiment_items"][0],
+                item_id="other-item",
+                symbol="2317.TW",
+                canonical_content_id="other-content",
+                evidence_id="other-evidence",
+            )
+        )
+        tools = PerceptionDataTools(bundle)
+        validator = MarketPerceptionResultValidator(tools)
+
+        missing = valid_result(tools)
+        self.assertTrue(any("缺少股票" in error for error in validator.validate(missing)))
+
+        empty = valid_result(tools)
+        empty["items"] = []
+        self.assertTrue(any("缺少股票" in error for error in validator.validate(empty)))
+
+        degraded = valid_result(tools)
+        degraded["status"] = "degraded"
+        self.assertTrue(any("缺少股票" in error for error in validator.validate(degraded)))
+
+        extra = valid_result(PerceptionDataTools(perception_bundle()))
+        extra["items"].append(dict(extra["items"][0], symbol="9999.TW"))
+        errors = MarketPerceptionResultValidator(
+            PerceptionDataTools(perception_bundle())
+        ).validate(extra)
+        self.assertTrue(any("額外股票" in error for error in errors))
+
+    def test_explicit_universe_rejects_unknown_but_inferred_mode_accepts_no_data_item(self):
+        tools = PerceptionDataTools(perception_bundle())
+        payload = valid_result(tools)
+        built = MarketPerceptionApplicationService(tools).build_result(
+            ["2330.TW", "2317.TW"], sentiment_labels(), "with-no-data"
+        )
+        no_data = next(item for item in built["items"] if item["symbol"] == "2317.TW")
+        payload["status"] = "degraded"
+        payload["items"].append(no_data)
+
+        self.assertEqual(MarketPerceptionResultValidator(tools).validate(payload), [])
+        completed = copy.deepcopy(payload)
+        completed["status"] = "completed"
+        self.assertTrue(
+            any(
+                "資料不足" in error
+                for error in MarketPerceptionResultValidator(tools).validate(completed)
+            )
+        )
+        errors = MarketPerceptionResultValidator(
+            tools, expected_symbols=["2330.TW"]
+        ).validate(payload)
+        self.assertTrue(any("額外股票" in error for error in errors))
+
+    def test_completed_empty_result_is_rejected_even_for_empty_bundle(self):
+        bundle = perception_bundle()
+        bundle["source_evidence"] = []
+        bundle["sentiment_items"] = []
+        tools = PerceptionDataTools(bundle)
+        payload = valid_result(PerceptionDataTools(perception_bundle()))
+        payload["items"] = []
+        errors = MarketPerceptionResultValidator(tools).validate(payload)
+        self.assertTrue(any("completed" in error and "items" in error for error in errors))
+
+    def test_failed_result_may_be_empty_but_requires_errors(self):
+        tools = PerceptionDataTools(perception_bundle())
+        failed = valid_result(tools)
+        failed["status"] = "failed"
+        failed["items"] = []
+        failed["errors"] = ["Agent 執行失敗"]
+        self.assertEqual(MarketPerceptionResultValidator(tools).validate(failed), [])
+
+        failed["errors"] = []
+        errors = MarketPerceptionResultValidator(tools).validate(failed)
+        self.assertTrue(any("failed" in error for error in errors))
+
     def test_usable_secondary_requires_available_channel(self):
         tools = PerceptionDataTools(perception_bundle())
         payload = valid_result(tools)

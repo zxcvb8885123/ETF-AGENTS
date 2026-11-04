@@ -331,6 +331,58 @@ class DPlanExportServiceTests(unittest.TestCase):
 
 
 class DPlanAdditionalContractTests(unittest.TestCase):
+    @staticmethod
+    def _validate_posture(target, prices, *, account_nav="1000000", cash="0", official_nav=None,
+                          intent="hold", cash_range=(0.0, 0.25), orders=()):
+        plan = {"market_view": {"posture": {
+            "net_exposure_intent": intent,
+            "target_cash_pct_range": list(cash_range),
+        }}}
+        account = {"nav": account_nav, "cash": cash}
+        bundle = {"rules": {"commission_rate": "0", "sell_tax_rate": "0", "minimum_commission": "0"}}
+        DPlanExporter._validate_official_posture(
+            plan, account, bundle, list(orders), prices, target, official_nav,
+        )
+
+    def test_official_nav_is_used_for_non_2330_stock_limit(self):
+        # 帳本口徑是 10.1%，DataPack nav_tradable 口徑是 9.90%；正式驗證應放行。
+        self._validate_posture(
+            {"2317.TW": 101000}, {"2317.TW": Decimal("1")}, official_nav=Decimal("1020000"),
+        )
+
+    def test_official_nav_is_used_for_2330_stock_limit(self):
+        # 2330 上限 25% 同樣必須用 DataPack 分母：25.1%（帳本）／24.61%（官方）。
+        self._validate_posture(
+            {"2330.TW": 251000}, {"2330.TW": Decimal("1")}, official_nav=Decimal("1020000"),
+        )
+
+    def test_smaller_official_nav_rejects_non_2330_stock_limit(self):
+        # 原漏洞的反向邊界：帳本 NAV 看似 9.90%，官方 NAV 實為 10.1%，必須拒絕。
+        with self.assertRaisesRegex(DPlanError, "官方單一持股上限"):
+            self._validate_posture(
+                {"2317.TW": 101000}, {"2317.TW": Decimal("1")},
+                account_nav="1020000", official_nav=Decimal("1000000"),
+            )
+
+    def test_smaller_official_nav_rejects_2330_stock_limit(self):
+        # 2330 同樣不能因帳本 NAV 較高而把官方口徑的 25.1% 誤判為合規。
+        with self.assertRaisesRegex(DPlanError, "官方單一持股上限"):
+            self._validate_posture(
+                {"2330.TW": 251000}, {"2330.TW": Decimal("1")},
+                account_nav="1020000", official_nav=Decimal("1000000"),
+            )
+
+    def test_official_nav_is_used_for_hold_cash_ratio(self):
+        # 無委託續抱時，現金 101,000 對帳本 NAV 是 10.1%，對官方 NAV 是 9.90%。
+        self._validate_posture(
+            {"2317.TW": 9000}, {"2317.TW": Decimal("10")}, cash="101000",
+            official_nav=Decimal("1020000"), cash_range=(0.09, 0.10),
+        )
+
+    def test_posture_without_official_nav_keeps_ledger_nav_behavior(self):
+        with self.assertRaisesRegex(DPlanError, "官方單一持股上限"):
+            self._validate_posture({"2317.TW": 101000}, {"2317.TW": Decimal("1")})
+
     def test_detects_orphan_references_unknown_fields_and_noncontiguous_ids(self):
         plan = valid_plan()
         self.assertEqual(DPlanValidator().validate(plan), [])

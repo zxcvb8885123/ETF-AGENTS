@@ -735,12 +735,17 @@ class AllocationOrderEngine:
         tiers = sizing.get("conviction_by_symbol")
         if forced is None or tiers is None:
             return [], {}
+        confirmation = forced.get("confirmation") == FORCED_SWAP_CONFIRMATION
         threshold = CONVICTION_LEVELS.index(str(forced["min_new_conviction"]))
         wanted = [
             symbol for symbol in candidates
             if symbol not in active_symbols and symbol in self.prices and symbol in tiers
             and CONVICTION_LEVELS.index(tiers[symbol]) <= threshold
         ]
+        if confirmation:
+            # 確認版的現金檢查必須和後續實際配置使用同一候選順序；否則代號較前但排名較後的昂貴股票
+            # 會先占用換股現金，錯誤取消本來買得起且排名較前的候選。舊 forced_swap 路徑維持原代號順序。
+            wanted = self._ordered_conviction_candidates(wanted, tiers, sizing, self._atr_pct())
         if not wanted:
             return [], {}
         target = breadth_target(sizing)
@@ -749,7 +754,6 @@ class AllocationOrderEngine:
         released = max(0, held_count - len(active_symbols))
         free = max(0, cap - held_count) + min(released, int(rotation["max_swaps_per_run"]))
         need = min(len(wanted) - free, int(forced["max_swaps_per_run"]))
-        confirmation = forced.get("confirmation") == FORCED_SWAP_CONFIRMATION
         if confirmation:
             need = min(need, len(active_symbols) - int(self.policy["min_positions"]))
         if need <= 0:
@@ -790,10 +794,40 @@ class AllocationOrderEngine:
                 self._order(symbol, "sell", target_shares[symbol], "exit", effective)["net_cash_impact"], "net_cash_impact"
             ) if reuse else Decimal("0")
             if room + proceeds < new_costs[len(victims)]:
-                break
+                # victim 依代號決定優先順序，但前一檔賣款不足不代表後一檔也不足；沿用同一候選，不另找替補算法。
+                continue
             room += proceeds - new_costs[len(victims)]
             victims.append(symbol)
         return victims, unconfirmed
+
+    def _ordered_conviction_candidates(
+        self,
+        candidates: Sequence[str],
+        tiers: Mapping[str, str],
+        sizing: Mapping[str, object],
+        volatility: Mapping[str, Decimal],
+    ) -> List[str]:
+        """回傳配置使用的唯一候選排序；forced_swap.confirmation 亦共用此規則。"""
+        support = sizing.get("support_by_symbol", {})
+        rank = sizing.get("rank_by_symbol")
+        if rank is not None:
+            return sorted(
+                candidates,
+                key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), rank[symbol], symbol),
+            )
+        if breadth_target(sizing) is None:
+            return sorted(
+                candidates,
+                key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),
+            )
+        tiebreak = str(sizing.get("selection_tiebreak", "atr_low"))
+        return sorted(
+            candidates,
+            key=lambda symbol: (
+                CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0),
+                *self._tiebreak_key(symbol, tiebreak, volatility), symbol,
+            ),
+        )
 
     def _latest_prices(self) -> Dict[str, Decimal]:
         result: Dict[str, Decimal] = {}
@@ -877,31 +911,10 @@ class AllocationOrderEngine:
         missing = [symbol for symbol in candidates if symbol not in tiers]
         if missing:
             raise DecisionToolError("交易決策缺少候選等級：" + ", ".join(missing))
-        support = sizing.get("support_by_symbol", {})
         volatility = self._atr_pct()
         target = breadth_target(sizing)
-        rank = sizing.get("rank_by_symbol")
-        if rank is not None:
-            # 排序 Agent 已在每個信心等級內排好先後：排序鍵是（信心、名次、代號），取代支持數與 selection_tiebreak。
-            ordered = sorted(candidates, key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), rank[symbol], symbol))
-            if target is not None:
-                max_positions = min(max_positions, max(target, int(self.policy["min_positions"])))
-        elif target is None:
-            ordered = sorted(
-                candidates,
-                key=lambda symbol: (CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0), symbol),
-            )
-        else:
-            # 持股廣度啟用後，同等級同支持數由 selection_tiebreak 決定誰入選；
-            # 省略此欄位的舊 Decision run 沿用 atr_low（低波動優先），重建結果不變。
-            tiebreak = str(sizing.get("selection_tiebreak", "atr_low"))
-            ordered = sorted(
-                candidates,
-                key=lambda symbol: (
-                    CONVICTION_LEVELS.index(tiers[symbol]), -support.get(symbol, 0),
-                    *self._tiebreak_key(symbol, tiebreak, volatility), symbol,
-                ),
-            )
+        ordered = self._ordered_conviction_candidates(candidates, tiers, sizing, volatility)
+        if target is not None:
             max_positions = min(max_positions, max(target, int(self.policy["min_positions"])))
         # held_add_priority：未持有的新股只能用賣出後空出的檔數；滿檔時不得排進名額，
         # 否則會擠掉已持有、買得進去的加碼。省略此欄位的舊 Decision run 維持原重建行為。

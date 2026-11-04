@@ -28,6 +28,21 @@ class DailyPerceptionIntegrationTests(unittest.TestCase):
         self.assertNotIn("consensus_metrics", by_symbol["2330.TW"])
         self.assertEqual(by_symbol["2330.TW"]["evidence_ids"], by_symbol["2330.TW"]["sentiment"]["evidence_ids"])
 
+    def test_build_all_no_news_symbols_is_degraded(self):
+        data = perception_bundle()
+        data["source_evidence"] = []
+        data["sentiment_items"] = []
+        result = MarketPerceptionApplicationService(PerceptionDataTools(data)).build_result(
+            ["2330.TW", "2317.TW"], [], "daily-empty"
+        )
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(
+            {row["symbol"] for row in result["items"]}, {"2330.TW", "2317.TW"}
+        )
+        self.assertTrue(
+            all(row["research_status"] == "unavailable" for row in result["items"])
+        )
+
     def test_missing_label_rejected(self):
         with self.assertRaises(PerceptionToolError):
             self.service().build_result(["2330.TW"], sentiment_labels()[:-1], "daily")

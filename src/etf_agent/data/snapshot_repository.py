@@ -7,7 +7,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .database import MarketDataDatabase
-from .price_finality import finalized_rows_sql
+from .price_finality import OFFICIAL_PRICE_SOURCES, finalized_rows_sql
 from .yfinance_history import BASIS_TOLERANCE
 
 
@@ -26,8 +26,12 @@ _SOURCE_PRIORITY_SQL = """CASE daily_prices.source
 # 所有查詢都只看 fetched_at ≤ cutoff 的列，並在來源優先序之後以 fetched_at DESC 取最新版本。
 _VERSION_ORDER_SQL = "%s, daily_prices.fetched_at DESC" % _SOURCE_PRIORITY_SQL
 
-# 非官方來源（Yahoo）盤中就有當日日線，只有在該日定案時間後抓到的版本才能進 Snapshot。
+# 非官方或未知來源盤中可能已有當日日線，只有在該日定案時間後抓到的版本才能進 Snapshot。
 _FINALIZED_SQL = finalized_rows_sql("daily_prices")
+_OFFICIAL_PRICE_SOURCES_SQL = ", ".join(
+    "'%s'" % source for source in OFFICIAL_PRICE_SOURCES
+)
+
 
 class SnapshotRepository:
     """集中管理快照查詢與不可變版本關聯。"""
@@ -174,7 +178,7 @@ class SnapshotRepository:
                   AND daily_prices.fetched_at <= ?
                   AND %s
             ), official AS (
-                -- 決策與帳本用價：同日官方原價（不含 Yahoo，其 Close 可能被事後調整）。
+                -- 決策與帳本用價：只接受已知交易所官方來源，未知來源不得成為執行價。
                 SELECT daily_prices.symbol, daily_prices.close_price,
                        daily_prices.source, daily_prices.raw_payload_id,
                        ROW_NUMBER() OVER (
@@ -183,7 +187,7 @@ class SnapshotRepository:
                 FROM daily_prices
                 WHERE daily_prices.trade_date = ?
                   AND daily_prices.fetched_at <= ?
-                  AND daily_prices.source != 'YAHOO_FINANCE'
+                  AND daily_prices.source IN (%s)
             )
             SELECT ranked.*, raw_payloads.endpoint,
                    raw_payloads.sha256 AS raw_sha256,
@@ -201,7 +205,12 @@ class SnapshotRepository:
                    ON execution_payloads.id = official.raw_payload_id
             WHERE source_rank = 1
             ORDER BY ranked.symbol
-            """ % (_VERSION_ORDER_SQL, _FINALIZED_SQL, _VERSION_ORDER_SQL),
+            """ % (
+                _VERSION_ORDER_SQL,
+                _FINALIZED_SQL,
+                _VERSION_ORDER_SQL,
+                _OFFICIAL_PRICE_SOURCES_SQL,
+            ),
             (trade_date, cutoff, trade_date, cutoff),
         ).fetchall()
 
@@ -404,8 +413,9 @@ def _rebase_official_gaps(
     before_date: str,
     cutoff: str,
 ) -> List[Dict[str, object]]:
+    official_sources = set(OFFICIAL_PRICE_SOURCES)
     gap_symbols = sorted({
-        str(row["symbol"]) for row in rows if row["source"] != "YAHOO_FINANCE"
+        str(row["symbol"]) for row in rows if row["source"] in official_sources
     })
     if not gap_symbols:
         return rows
@@ -420,10 +430,10 @@ def _rebase_official_gaps(
         """
         SELECT symbol, trade_date, close_price
         FROM daily_prices
-        WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
+        WHERE source IN (%s) AND trade_date <= ? AND fetched_at <= ?
           AND symbol IN (%s)
         ORDER BY %s DESC, daily_prices.fetched_at ASC
-        """ % (placeholders, _SOURCE_PRIORITY_SQL),
+        """ % (_OFFICIAL_PRICE_SOURCES_SQL, placeholders, _SOURCE_PRIORITY_SQL),
         (before_date, cutoff, *gap_symbols),
     ).fetchall():
         official_closes[(str(row["symbol"]), str(row["trade_date"]))] = Decimal(str(row["close_price"]))
@@ -463,14 +473,14 @@ def _rebase_official_gaps(
                        PARTITION BY symbol, trade_date, source ORDER BY fetched_at DESC
                    ) AS version_rank
             FROM daily_prices
-            WHERE source != 'YAHOO_FINANCE' AND trade_date <= ? AND fetched_at <= ?
+            WHERE source IN (%s) AND trade_date <= ? AND fetched_at <= ?
               AND symbol IN (%s)
         )
         SELECT symbol, trade_date, MAX(ex_rights_marker) AS marker
         FROM versions
         WHERE version_rank = 1
         GROUP BY symbol, trade_date
-        """ % placeholders,
+        """ % (_OFFICIAL_PRICE_SOURCES_SQL, placeholders),
         (before_date, cutoff, *gap_symbols),
     ).fetchall():
         markers.setdefault(str(row["symbol"]), {})[str(row["trade_date"])] = row["marker"]
@@ -478,8 +488,9 @@ def _rebase_official_gaps(
     for row in rows:
         symbol = str(row["symbol"])
         reference = references.get(symbol)
-        if row["source"] == "YAHOO_FINANCE" or reference is None:
-            # 從未有 Yahoo 的股票整段都是官方原價，本身口徑一致。
+        if row["source"] not in official_sources or reference is None:
+            # Yahoo 已有自己的還原價；未知非官方來源不冒充官方缺口、不參與還原。
+            # 從未有 Yahoo 的股票整段官方原價本身口徑一致。
             result.append(row)
             continue
         if not reference[0]:
