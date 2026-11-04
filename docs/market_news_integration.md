@@ -1,121 +1,95 @@
 # 全市場新聞收集與接入
 
-## 用途與範圍
+## 這是什麼
 
-為第三位分析師（事件與市場情緒）提供「一次整體台股情緒」的全市場新聞輸入。
+第三位分析師（事件與市場情緒）要回答兩件事：每家公司有沒有重大事件；整個台股的情緒偏正面、中性還是負面。後者「整個台股只判斷一次」，資料來自財經新聞。這份文件說明新聞怎麼抓、怎麼判讀、怎麼確認結論沒被改過。
 
-- 收集財經 RSS、保存原始回應、對查詢視窗內全部項目逐則標籤、重建研究結論、接入決策輸入。
-- 公司事件維持逐公司輸出；全市場情緒只輸出一次。
-- 不執行多空、交易或風險流程，不產生配置、權重或訂單。
-- 歷史原頁補抓與資料包 1.1 見[市場新聞缺日補抓](market_news_history.md)。
+- 全市場新聞只決定「市場情緒」，不產生買賣、權重或訂單。
+- 個股新聞（FinMind）是另一條路，只進公司事件，不進這裡，見[資料來源清單](data_sources_inventory.md#個股新聞)。
+- 歷史缺日補抓見[市場新聞缺日補抓](market_news_history.md)。
 
-## 運作方式
+## 一天怎麼跑
 
 ```mermaid
 flowchart LR
-  A[MarketNewsRSSProvider] --> B[market_news_captures]
-  B --> C[prepare]
-  C --> D[labels + synthesis + source_approvals]
-  D --> E[evaluate]
-  E --> F[market_news_input]
-  F --> G[第三位分析師]
+  A[抓 RSS 並原樣保存] --> B[整理查詢視窗內全部項目]
+  B --> C[子 Agent 逐則標註並給一個綜合看法]
+  C --> D[程式重建結果並檢查門檻]
+  D --> E[交給事件分析師]
 ```
 
-程式在 `src/etf_agent/perception/market_news/`，依 `contracts`、`provider`、`history`、`repository`、`tools`、`validator`、`service` 分檔。
-
-| 階段 | 執行者 | 說明 |
+| 階段 | 誰做 | 做什麼 |
 | --- | --- | --- |
-| 收集與保存 | 程式 | 取得 RSS，保存原始回應、內容雜湊與實際取得時間 |
-| 標籤與綜合判讀 | 分析師（Codex，依 Skill） | 讀全部標題與前言；CLI 不呼叫模型、不自動推算標籤 |
-| 核對與重建 | 程式 | 檢查覆蓋、引用、時鐘與門檻，輸出 result |
-| 接入 | 程式 | 產生 `market_news_input={bundle,result}` 並重跑輸入驗證 |
+| 抓取保存 | 程式 | `./start.sh daily` 在決策截止前抓 RSS，保存原始回應、內容雜湊與實際取得時間（存在 `artifacts/data/market_news/`） |
+| 標註與判讀 | 子 Agent | 讀視窗內全部標題與前言，逐則標註，並給一個綜合看法；指令列工具本身不呼叫模型、不自動算標籤 |
+| 核對重建 | 程式 | 檢查覆蓋、引用、時間與門檻，重建結果 |
+| 接入 | 程式 | 把資料與結果交給事件分析師，並重跑輸入驗證 |
 
-## 契約與規則
+- 決策跑的時候，取截止前最後一份抓取，查詢視窗為截止前 3 天（涵蓋週末）。
+- 新聞步驟失敗只會記錄錯誤，市場情緒改用[恐懼貪婪指標](market_fear_greed.md)，不中止每日流程。
+- 全市場情緒每次決策只輸出一次，不需要第四位分析師。
+- 程式在 `src/etf_agent/perception/market_news/`，每日串接在 `src/etf_agent/automation/market_news_stage.py`。
 
-### 來源
+## 來源與保存
 
-| 來源代碼 | 媒體 | 類型 |
+| 來源 | 媒體 | 類型 |
 | --- | --- | --- |
-| `CNA_FINANCE` | 中央通訊社財經 | RSS |
-| `LTN_BUSINESS` | 自由時報財經 | RSS |
+| 中央社財經 | 中央通訊社 | RSS |
+| 自由時報財經 | 自由時報 | RSS |
 
-來源與原文主機採白名單；回應上限 2,000,000 位元組；轉向到未允許主機即視為失敗。RSS 只有標題與前言，不當作全文。
+- RSS 只有標題與前言，不當作全文。來源與原文主機採白名單，回應上限 2,000,000 位元組，轉向到未允許的主機即視為失敗。
+- 抓取結果只追加不覆寫，且和個股新聞分開存放。
+- 來源使用核對也是只追加，記錄來源、核對結果、用途、核對時間與規範頁原文的雜湊。
 
-### 資料保存
+## 判讀規則
 
-| 項目 | 規則 |
+### 逐則標註
+
+每則新聞要標兩個欄位，並附中文理由：
+
+| 欄位 | 可選值 |
 | --- | --- |
-| `market_news_captures` | 全市場 scope 為 `TW_STOCK_MARKET`，只追加，不覆寫個股新聞 |
-| `market-news-1.0` | 保留 `snapshot_id`、cutoff、`window_start`、captures、labels、synthesis、`source_approvals`、內容雜湊 |
-| `market_news_source_reviews` | 只追加；保存來源、核對結果、用途、核對時間、保存時間、原始規範、內容雜湊 |
+| 相關性 | 全市場、個別公司、無關、無法判斷 |
+| 立場 | 正面、負面、中性、正負並存 |
 
-### 標籤
+- 必須覆蓋視窗內全部項目，不得少標、重標或改內容識別；內容相同的重複項目標籤要一致。
+- 只有標為「全市場」的項目能支持全市場結論。
+- 聚合前先去重（以「標題正規化＋發布日」判斷同一內容）。不同標題描述同一事件仍可能有多列，所以不能用列數放大結論。
 
-每則含 `item_id`、`canonical_content_id`、`relevance`、`stance`、`reason`（中文理由）。
+### 綜合看法
 
-| 欄位 | 允許值 |
-| --- | --- |
-| `relevance` | `market`、`company`、`unrelated`、`ambiguous` |
-| `stance` | `positive`、`negative`、`neutral`、`mixed` |
+- 結論只有四種：正面、中性、負面、不明；每個發現要附引用。
+- 不用篇數、固定權重或股價漲跌公式決定方向。程式只核對引用與時間。
+- 結論不是「不明」時，必須有全市場項目與發現作依據。
 
-- 必須覆蓋查詢視窗內全部項目，不得少標、重標或改內容識別；同一內容的重複標籤須一致。
-- 只有 `market` 項目能支持全市場發現。
+### 什麼時候才算「可用」
 
-### 綜合判讀
-
-- `synthesis` 含 `outlook`（`positive`／`neutral`／`negative`／`unknown`）與 `findings`（`text`、`evidence_ids`）。
-- 不以篇數、固定權重或股價漲跌公式決定方向；程式只核對引用與時鐘。
-- 非 `unknown` 的結論必須有 `market` 項目與 findings。
-
-### 去重
-
-- 聚合前依 canonical content ID 去重，由「正規化標題＋發布日」建立。
-- 不同標題描述同一事件時仍可能有多列，不能用列數加強結論。
-
-### 正式輸出門檻
-
-全部成立才輸出 `status=available`：
+下列全部成立才輸出正式結果：
 
 | 條件 | 要求 |
 | --- | --- |
-| 樣本 | 至少 5 個市場獨立內容 |
-| 來源 | 至少 2 個獨立媒體 |
-| 覆蓋 | 查詢範圍內全部項目都有標籤 |
-| 取得 | 沒有來源取得失敗 |
-| 授權 | 相關來源皆為 `approved`、`usage_scope=competition_research` 且有授權依據 |
-| 方向 | 綜合判讀 `outlook` 不是 `unknown` |
+| 樣本 | 至少 5 則獨立的全市場內容 |
+| 來源 | 至少 2 家獨立媒體 |
+| 覆蓋 | 視窗內全部項目都有標籤 |
+| 取得 | 沒有來源抓取失敗 |
+| 授權 | 相關來源皆已核准、用途為比賽研究，且有核准依據 |
+| 方向 | 綜合看法不是「不明」 |
 
-未達門檻時 `status=unavailable`、`outlook=unknown`、`findings=[]`；原判讀只存於 `diagnostic_outlook`／`diagnostic_findings`，不得複製成正式結論。
-
-### 來源使用核對
-
-| 函式 | 作用 |
-| --- | --- |
-| `MarketNewsRepository.save_source_reviews` | 保存核對依據與時間 |
-| `MarketNewsRepository.load_source_reviews` | 只讀 cutoff 前已保存的版本 |
-| `apply_database_source_reviews` | 把最新且當時可得的核對套進 market-pack |
-| `record_source_reviews` | 抓取規範頁原文並寫入一次核對（`cli/market_news.py review`），`reviewed_at` 為寫入時間，不回溯 |
-
-- 不修改新聞、標籤或結論，也不會把 `unverified` 自動升為 `approved`。
-- 核准狀態只能來自外部來源的真實授權核對；測試 fixture 的核准與真實授權無關。
-
-### 接入第三位分析師
-
-- `DecisionInputBuilder` 支援選配 `market_news_input={bundle,result}`。
-- 輸入驗證與報告驗證都從 captures + labels 重建 result，並驗證相同 Snapshot／cutoff。
-- 缺少接入時使用原降級通道。
-- brief 含全量 market_news，正式 `market_sentiment` 只出現一次；每日 pipeline 不需第四位分析師。
+不符合時，正式結果是「不可用、方向不明、沒有發現」。原本的判讀只留在診斷欄位，不得複製成正式結論。
 
 ### 報告用語
 
-| 情況 | 中文寫法 |
+| 情況 | 寫法 |
 | --- | --- |
 | 只有使用範圍未確認 | 「來源使用範圍尚未確認，正式結果暫不提供」 |
 | 同時缺樣本、來源或完整輸入 | 「資料不足」 |
 
-## 使用方式
+## 授權核對
 
-### 0. 寫入來源使用核對（只需在核准或撤回時執行）
+- 目前四個來源（兩家 RSS 與兩家歷史原頁目錄）已由使用者於 2026-10-23 核准，只對之後的決策截止時間生效，依據見[稽核紀錄](source_audit/2026-10-23_market_news_sources.md)。
+- 中央社與自由時報的 RSS 條款允許個人與非營利組織的非商業用途並須標示出處；歷史原頁屬使用者自行判斷。
+- 核准只能來自真實的條款核對。測試用 fixture 的核准與真實授權無關，系統也不會把「未核准」自動升為「已核准」。
+- 寫入或撤回核准（只在狀況改變時執行；省略 `--source` 即全部四個來源，撤回用 `--status restricted`）：
 
 ```bash
 .venv/bin/python cli/market_news.py review \
@@ -125,48 +99,44 @@ flowchart LR
   --evidence "稽核紀錄路徑與判斷"
 ```
 
-- 省略 `--source` 時為全部四個來源；撤回用 `--status restricted`。
-- 2026-10-23 已核准四個來源，依據見 [source_audit/2026-10-23_market_news_sources.md](source_audit/2026-10-23_market_news_sources.md)。
+## 驗證
 
-### 1. 補抓並保存
-
-```bash
-.venv/bin/python cli/market_news.py capture \
-  --window-start 2026-10-05T00:00:00+08:00 \
-  --database var/etf_agent.db \
-  --output-root artifacts/market_news_captures
-```
-
-### 2. 產生判讀
-
-分析師讀取 prepared 全量項目，交付完整 labels、synthesis 與真實 `source_approvals`，與 captures 組成有內容雜湊的 market-pack。
-
-### 3. 接入同 Snapshot／cutoff 的資料包
-
-```bash
-.venv/bin/python cli/market_news.py integrate \
-  --decision-input PATH_TO_DECISION_INPUT \
-  --market-pack PATH_TO_MARKET_PACK \
-  --output-root artifacts/market_news_research \
-  --database var/etf_agent.db
-```
-
-- `--database` 選配，用於讀取 cutoff 前已保存的來源使用核對。
-- 結果另存於 `--output-root` 下 `decision_inputs/` 的不可變 run，不覆蓋既有決策輸入。
-- 驗證失敗會以 `接入驗證失敗` 中止。
-
-## 限制與注意事項
-
-- RSS 只保留最近項目，不能單靠 RSS 宣稱涵蓋整段歷史；歷史補抓見[缺日補抓](market_news_history.md)。
-- 中央社與自由時報的 RSS 條款同意個人、非商業用途並須標示出處；2026-10-23 起由使用者核准四個來源（歷史原頁屬使用者自行判斷），只對之後的 cutoff 生效，見[稽核紀錄](source_audit/2026-10-23_market_news_sources.md)。
-- 每日接入：`./start.sh daily` 在 cutoff 前抓 RSS 存到 `artifacts/data/market_news/`；`./start.sh run` 取截止前最後一份、查詢視窗為 cutoff 前 3 天，由子 Agent 逐則標註並給一個綜合看法，程式重建結果後接入事件分析師。新聞步驟失敗時記錄 `market_news_error` 並改用恐懼貪婪指標。
-- FinMind 個股新聞另存核對於 `company_news_source_reviews`（與本頁 `market_news_source_reviews` 分表），核准後只進事件分析師的公司事件通道，不能代表整體台股，也不進本頁的市場情緒，見[事件研究整合](integrated_event_analysis.md#事件報告-23已核准個股新聞)。
+- 輸入驗證與報告驗證都從原始抓取與標籤重建結果，並確認 Snapshot 與截止時間相同；任何一處被改就拒絕。
+- 沒有接入全市場新聞時使用原本的降級通道（恐懼貪婪指標，或維持不可用）。
 - 診斷看法是新聞材料的研究推論，不是投資人民調，也不驗證投資效果。
-- 原有個股 PerceptionDataBundle 路徑維持兼容。
+
+## 手動操作
+
+| 目的 | 指令 |
+| --- | --- |
+| 補抓並保存 | `.venv/bin/python cli/market_news.py capture --window-start 2026-10-05T00:00:00+08:00 --database var/etf_agent.db --output-root artifacts/market_news_captures` |
+| 接入某份決策輸入 | `.venv/bin/python cli/market_news.py integrate --decision-input <決策輸入檔> --market-pack <資料包檔> --output-root artifacts/market_news_research --database var/etf_agent.db` |
+
+- `integrate` 的結果另存於輸出目錄下的新決策輸入，不覆蓋既有檔案；驗證失敗會以「接入驗證失敗」中止。`--database` 選配，用來讀截止前已保存的來源核對。
+- 資料包要由分析師依 Skill 交付完整標籤與綜合看法，與抓取內容組成有雜湊的資料包。
+
+## 限制
+
+- RSS 只保留最近的項目，不能單靠 RSS 宣稱涵蓋整段歷史。
+- 個股新聞的核對另存一個表，核准後只進事件分析師的公司事件，不能代表整體台股。
+
+## 尚未接入
+
+- 完整歷史新聞庫（含當時內容版本與可得時間證據），所以不能做正式歷史回測。
 
 來源規範：[中央通訊社 RSS](https://www.cna.com.tw/about/rss.aspx)、[自由時報 RSS](https://service.ltn.com.tw/RSS)
 
-## 尚未實作
+## 附錄：名稱對照
 
-- FinMind 個股新聞的核對指令（`cli/company_news.py review`）尚未執行，且來源時間仍沒有時區（`published_at` 為 null）。
-- 完整歷史新聞庫（含當時內容版本與可得時間證據）。
+| 白話說明 | 程式名稱 |
+| --- | --- |
+| 中央社財經 RSS | `CNA_FINANCE` |
+| 自由時報財經 RSS | `LTN_BUSINESS` |
+| 全市場新聞抓取表 | `market_news_captures`（範圍 `TW_STOCK_MARKET`） |
+| 新聞資料包版本 | `market-news-1.0`（含標籤、綜合看法、核准）；`1.1` 另含歷史原頁 |
+| 來源使用核對表 | `market_news_source_reviews` |
+| 個股新聞核對表 | `company_news_source_reviews` |
+| 逐則標籤欄位 | `relevance`（`market`／`company`／`unrelated`／`ambiguous`）、`stance`（`positive`／`negative`／`neutral`／`mixed`） |
+| 綜合看法 | `synthesis`（`outlook`、`findings`） |
+| 診斷用判讀 | `diagnostic_outlook`、`diagnostic_findings` |
+| 決策輸入欄位 | `market_news_input` |

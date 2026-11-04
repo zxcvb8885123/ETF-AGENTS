@@ -1,215 +1,203 @@
 # 資料來源清單
 
-## 用途與範圍
+這份文件回答三件事：每種資料從哪裡來、每天由誰抓、能不能進正式研究與決策。
 
-列出與 150 檔研究、公司基本面、個股新聞，以及正式競賽帳本與風控直接相關的來源。
+兩個原則：
 
-- 資料已抓到，不代表已進入正式研究。
-- 用途與限制以實際程式路徑為準。
+- 資料抓到了，不代表可以用。要看「授權核准」與「來源是否通過驗證」。
+- 每筆資料都記錄來源、實際抓取時間與原始回應，事後可以重算、稽核。
 
 ## 一覽
 
-| 用途 | 來源 | 擷取入口 | 能否進正式研究 |
+| 用途 | 來源 | 抓取指令 | 能否進正式研究 |
 | --- | --- | --- | --- |
-| [150 檔研究日線](#150-檔研究日線) | Yahoo Finance | `scripts/collect_history.py` | 技術研究用；不供帳本成交價 |
-| [月營收、重大訊息](#月營收重大訊息) | TWSE／TPEx MOPS 開放資料 | `cli/data_agent.py collect` | 可，作事件與基本面事實 |
+| [150 檔研究日線](#150-檔研究日線) | Yahoo Finance | `scripts/collect_history.py` | 只供技術研究，不供帳本成交價 |
+| [月營收、重大訊息](#月營收重大訊息) | 證交所／櫃買中心 MOPS 開放資料 | `cli/data_agent.py collect` | 可，作事件與基本面事實 |
 | [官方財報](#官方財報) | MOPS 損益表、資產負債表 | `scripts/collect_financial_statements.py` | 可 |
-| [公司基本資料](#公司基本資料) | TWSE／TPEx `t187ap03` | `scripts/collect_sector_classification.py` | 候選；正式讀已驗證的檔案 |
-| [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 否，尚未接 Snapshot |
-| [個股新聞線索](#個股新聞線索) | FinMind `TaiwanStockNews` | `scripts/collect_supplemental_sources.py finmind-news` | 核准後可，只作公司事件（白名單媒體標題、截止前最後一批）；核對指令尚未執行 |
-| [正式帳本價量](#正式帳本價量) | TWSE／TPEx 官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
-| [基準標的](#基準標的) | TWSE 官方個股日成交資訊（0050） | `cli/benchmark.py collect` | 只供績效比較，不進交易池、不進決策 |
-| [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV × 7、TWSE 開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
+| [公司基本資料](#公司基本資料) | 證交所／櫃買中心公司資料 | `scripts/collect_sector_classification.py` | 候選；正式讀已驗證的檔案 |
+| [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 部分：現金流經核對後使用；其餘僅補抓去年同期時使用 |
+| [個股新聞](#個股新聞) | FinMind 個股新聞 | `scripts/collect_supplemental_sources.py finmind-news` | 可，只進事件分析師的公司事件 |
+| [正式帳本價量](#正式帳本價量) | 證交所／櫃買中心官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
+| [基準標的](#基準標的) | 證交所個股日成交資訊（0050） | `./start.sh benchmark collect` | 只供績效比較 |
+| [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV 七份、證交所開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
 | [交易池](#交易池) | 主辦方名單 | `data/universe.py` | 可，一次性版本化輸入 |
-| [隔夜市場背景](overnight_market.md) | Yahoo Finance 日線（經 yfinance）：`^GSPC`、`^IXIC`、`^SOX`、`EWT`、`TSM`、`^N225`、`^KS11`、`^VIX`；期交所官網即時行情 `mis.taifex.com.tw` 的臺指期月合約（夜盤） | `cli/overnight_market.py capture` | 已由使用者核准（`config/overnight_market_sources.json`：`YAHOO_FINANCE`、`TAIFEX_MIS`）；只作現金姿態與報告背景；夜盤端點是官網即時行情而非 OpenAPI，使用者已在知情下明確核准 |
-| [台股恐懼貪婪指標](market_fear_greed.md) | 期交所 VIX 月檔、期交所 Put/Call 開放資料、FinMind `TaiwanStockTotalMarginPurchaseShortSale` | `cli/market_fear_greed.py capture` | 可，作全市場情緒；核准見[來源核對](source_audit/2026-10-23_market_fear_greed_sources.md)（VIX 為使用者決定） |
+| [隔夜市場背景](overnight_market.md) | Yahoo Finance 的美股與亞股指數；期交所官網即時行情的台指期夜盤 | `cli/overnight_market.py capture` | 使用者已核准；只作現金姿態與報告背景 |
+| [台股恐懼貪婪指標](market_fear_greed.md) | 期交所 VIX、FinMind 融資、證交所加權指數 | `cli/market_fear_greed.py capture` | 可，作全市場情緒（新聞不可用時） |
+| [全市場新聞](market_news_integration.md) | 中央社、自由時報 RSS 與歷史原頁 | `cli/market_news.py capture` | 使用者已核准；作全市場情緒 |
 
 ## 150 檔研究日線
 
-- **來源**：Yahoo Finance，含 OHLCV、原始收盤與調整收盤。
-- **入口**：`scripts/collect_history.py` → `data/yfinance_history.py`。`./start.sh data` 每日抓取，並檢查同日 150 檔都有資料。
+- 來源：Yahoo Finance，含開高低收量、原始收盤與調整收盤。`./start.sh data` 與每日流程都會抓，並檢查 150 檔同日都有資料。
+- 用途：技術研究。Snapshot 與歷史 K 線同日優先用 Yahoo，該股該日缺資料時改用同日官方價。
+- 不供正式帳本的成交均價。決策與帳本的用價一律是官方原價，不受 Yahoo 影響。
 
 ### 增量重抓
 
-每次重抓最近 7 天。符合下列任一情形，視為 Yahoo 的基準改變，整檔重抓：
+每次重抓最近 7 天。遇到下列情形，Yahoo 的價格基準已改變，該檔整段重抓：
 
-1. **現金股利**：已存序列的還原係數（Adj Close ÷ Close）出現「較早日期大於較晚日期」。
-2. **配股、分割、減資**：重抓前後重疊區間，同日 Close 的相對差超過 0.01%。
-   - 這類事件發生時，Yahoo 會把事件前的 Close 與 Adj Close 同比例改寫，所以 Adj÷Close 不變，只有比對同日 Close 才看得出來。
+| 情形 | 判斷方式 |
+| --- | --- |
+| 現金股利 | 還原係數（調整收盤 ÷ 收盤）出現「較早日期大於較晚日期」 |
+| 配股、分割、減資 | 重疊區間同日收盤價的相對差超過 0.01%（這類事件 Yahoo 會把事件前的收盤與調整收盤同比例改寫，只能比對同日收盤） |
+| 停抓超過 7 天 | 重疊區間看不到被改寫的舊列，直接整段重抓 |
 
-3. **停抓超過 7 天**：重疊區間已看不到停抓期間被改寫的舊列，該檔自動整段重抓（2026-10-23 起）。
+已知限制：若 Yahoo 延遲超過 7 天才改寫，每日比對仍可能看不到。
 
-**已知限制**：Yahoo 的 Close 在這類事件前，不是交易所原價；若 Yahoo 延遲超過 7 天才改寫，每日重疊比對仍可能看不到。決策與帳本用價一律是官方原價，不受影響。
+### 定案時間與版本
 
-### 定案與版本（2026-10-23 起）
+- Yahoo 盤中就會回傳當天那根日線，但收盤價與成交量尚未定案。規則：台北 15:00 之後才算定案（收盤是 13:30）。15:00 以前抓到的當日日線不寫入資料庫；讀取端也只採用「定案後才抓到」的 Yahoo 列，沒有就改用同日官方價，官方價也沒有就不納入該日。（程式：`src/etf_agent/data/price_finality.py`）
+- 價格表只追加、不覆寫。重抓內容相同就不新增；內容改變才新增一個版本。查詢一律取「抓取時間不晚於決策截止時間」的最新版本，所以事後用舊截止時間重建，拿到的是當時的版本，不會被後來的重抓蓋掉。
+- 舊資料庫用 `cli/data_agent.py migrate --database var/etf_agent.db` 遷移（可重複執行，初始化時也會自動跑一次）。遷移前已被覆寫的歷史版本無法還原。
 
-- **定案時間**：Yahoo 盤中就會回傳當日那根日線，收盤價與成交量尚未定案。`data/price_finality.py` 統一定義台北 15:00（`PRICE_FINALIZED_TIME`）為非官方日線的定案時間，13:30（`MARKET_CLOSE_TIME`）為收盤。
-  - 收集端：`YFinanceHistoryCollector` 抓取時間早於該日 15:00 的日線不寫入資料庫，只記警告；`scripts/collect_history.py` 預設 `--end` 是最近已定案日期（15:00 前為前一天）。
-  - 讀取端：`SnapshotRepository` 與事件研究的價格特徵只採用 `fetched_at ≥ 該 trade_date 15:00` 的 Yahoo 列；該日沒有定案版本時改用同日官方價，官方價也沒有就不納入該日。官方來源只在收盤後公布，不受此限制。
-- **版本**：`daily_prices` 是 append-only 版本表（主鍵 `symbol, trade_date, source, fetched_at`）。重抓時內容與最新版本相同就不新增列（原始回應仍照存）；內容改變才新增版本，且 `fetched_at` 必須遞增、含時區、不得是未來時間。唯一例外：Yahoo 最新版本在定案前抓、本次已在定案後抓到相同內容，仍新增一版記錄定案。
-  - 所有查詢取「`fetched_at ≤ cutoff` 的最新版本」，事後用舊 cutoff 重建 Snapshot 或歷史 K 線會拿到當時的版本，不再被後來的重抓覆蓋。
-  - 既有資料庫由 `cli/data_agent.py migrate --database var/etf_agent.db` 遷移（任何 `initialize()` 也會自動執行一次，可重複執行）；遷移前的每列成為第一個版本，遷移前已被覆寫掉的歷史版本無法還原。
+### 缺資料時的補法
 
-### 使用方式
+Yahoo 缺某天時，用前後 Yahoo 的還原係數換算：
 
-- 用於技術研究。
-- Snapshot 與歷史 K 線，同日優先用 Yahoo。該股該日缺 Yahoo 時，改用同日官方價。
-  - 最新一日：原價即還原價。
-  - 歷史缺口：以前後 Yahoo 的還原係數換算。
-    - 係數 = Yahoo adj ÷ 同日官方原價。不用 Yahoo Close，因為它可能被事後改寫。
-    - 同日沒有官方原價的 Yahoo 列，不作參考。缺口因此無法確定係數時，排除該日。
-    - 前後係數不同時，用 TWSE 個股月行情漲跌欄的 `X`（`daily_prices.ex_rights_marker`）定位除權息日。
-      - 除權息日不晚於缺口：用後端係數。
-      - 除權息日晚於缺口：用前端係數。
-      - 標記缺漏（NULL），或區間內有多個除權息日：排除該日，不以原價混入。
-  - `source` 欄位保留來源。
-- **不供正式帳本的成交均價。**
+- 係數 = Yahoo 調整價 ÷ 同日官方原價；不用 Yahoo 收盤價，因為它可能被事後改寫。
+- 同日沒有官方原價的 Yahoo 列不參考；缺口因此算不出係數時，排除該日。
+- 前後係數不同時，用證交所月行情漲跌欄的 `X` 標記定位除權息日：除權息日不晚於缺口用後端係數，晚於缺口用前端係數。標記缺漏或區間內有多個除權息日，就排除該日，不拿原價混入。
 
 ### Snapshot 的價格欄位
 
 | 欄位 | 用途 |
 | --- | --- |
-| `execution_close_price`、`execution_price_source`、`execution_source_evidence_id` | 同日官方原價（Yahoo 以外，依來源優先序）。配置、風控、D-Plan 與虛擬帳戶的決策用價 |
-| `analysis_close_price` | 調整價，只供研究。重放過去日期時，含該日之後的除權息調整 |
+| 決策用價（`execution_close_price` 等三欄） | 同日官方原價，配置、風控、備援 D-Plan、虛擬帳戶都用它 |
+| 分析用價（`analysis_close_price`） | 調整價，只供研究。重放過去日期時，含該日之後的除權息調整 |
 
-同日沒有官方價時，`execution_*` 為空，決策退回 `analysis_close_price`。舊封存沒有這些欄位，也是同樣處理。
+同日沒有官方價時決策用價為空，決策退回分析用價。舊封存沒有這幾欄，處理相同。
 
 ## 月營收、重大訊息
 
-- **來源**：TWSE／TPEx MOPS 開放資料 `t187ap05`（月營收）、`t187ap04`（重大訊息）。
-- **入口**：`cli/data_agent.py collect` → `data/corporate.py`，每日擷取。
-- **使用**：依公告時間與實際取得時間保存，供事件與基本面事實使用。
+- 來源：證交所／櫃買中心 MOPS 開放資料（月營收 `t187ap05`、重大訊息 `t187ap04`）。
+- 每日由 `cli/data_agent.py collect` 抓取，依公告時間與實際取得時間保存，供事件與基本面事實使用。
 
 ## 官方財報
 
-- **來源**：MOPS `t187ap06`／`t187ap07`，各業別的損益表與資產負債表。
-- **入口**：`scripts/collect_financial_statements.py --latest-due` → `data/financial.py`，每日擷取。
-- **使用**：正式基本面使用已驗證的官方資料。
-- **實測覆蓋**：2026 Q2 為 298／300；`3718.TWO` 兩張表期間未驗證。
+- 來源：MOPS 各業別損益表與資產負債表（`t187ap06`／`t187ap07`）。
+- 每日由 `scripts/collect_financial_statements.py --latest-due` 抓最近已到期的季度。正式基本面只用已驗證的官方資料。
+- 實測覆蓋：2026 Q2 為 298／300；`3718.TWO` 兩張表期間未驗證。
 
 ## 公司基本資料
 
-- **來源**：TWSE／TPEx `t187ap03`，含公司與產業分類。
-- **入口**：`scripts/collect_sector_classification.py`，每日保存候選。
-- **使用**：正式決策仍讀已驗證的 `data/sector_classification.json`。
+- 來源：證交所／櫃買中心公司資料（含產業分類）。每日由 `scripts/collect_sector_classification.py` 保存候選。
+- 正式決策仍讀已驗證的 `data/sector_classification.json`，候選不會直接生效。
 
 ## 多季基本面候選
 
-- **來源**：FinMind `TaiwanStockFinancialStatements`、`TaiwanStockBalanceSheet`、`TaiwanStockCashFlowsStatement`。
-- **入口**：`scripts/collect_supplemental_sources.py finmind`。`./start.sh data` 每日逐股更新。
-- **實測覆蓋**：三張表各 149／150；`3718.TWO` 為空結果。
-- **限制**：
-  - `date` 是財報期間，不是發布時間。
-  - 尚未接入 Snapshot 或歷史回測。
+- 來源：FinMind 的損益表、資產負債表、現金流量表。`./start.sh data` 與每日流程逐股更新；財報只在公布區間內變動，所以平常只補最近兩季，由 `scripts/finmind_schedule.py` 決定當天要不要抓、從哪天起抓。
+- 實測覆蓋：三張表各 149／150；`3718.TWO` 為空。
+- 目前實際用到的部分：
+  - 現金流量表：與官方累計稅前淨利相符才轉成 Snapshot 文件（`scripts/collect_cash_flow.py`），進基本面分析。
+  - 單季損益：用來補去年同期累計，需手動執行[基本面缺口補抓](fundamental_data_repair.md)。
+- 限制：FinMind 的 `date` 是財報期間，不是發布時間；其餘候選資料尚未接入 Snapshot 或歷史回測。
 
-## 個股新聞線索
+## 個股新聞
 
-- **來源**：FinMind `TaiwanStockNews`，含股票代號、標題、原媒體、連結、來源時間字串。
-- **入口**：`scripts/collect_supplemental_sources.py finmind-news`。平日 20:40 執行，與 20:00 財報排程錯開，且在 21:00 決策之前。每日決策在建 Snapshot 前會檢查當天（台北日期）逐股成功擷取是否少於交易池，不足就補抓一次（上限 15 分鐘）；補抓失敗只記入 `pipeline.json` 的 `company_news`，不中止決策，事件分析師照舊只看重大訊息。
-- **保存方式**：收集時存 `license_status=unverified` 的候選，核准狀態另存於 `company_news_source_reviews`。
-  - 來源時間沒有時區，所以 `published_at` 留空。
-  - `available_at` 為第一次抓到的時間。
-- **核准**：`cli/company_news.py review --database var/etf_agent.db --status approved|unverified|restricted --evidence "..."` 抓取 FinMind 規範頁原文與 SHA-256 後保存；只對保存之後的決策截止時間生效，之後的 `restricted` 會取代。使用者已於 2026-10-25 自行判斷核准（僅標題、內部研究、不轉載，不是媒體書面同意），但**指令尚未執行**。見[來源核對](source_audit/2026-10-25_finmind_stock_news.md)。
-- **使用界線**：只進每日決策的事件分析師（`company_news_input`，事件報告 2.3），不進全市場情緒與回測。
-  - 媒體白名單 `company_news_publishers_v1` 依連結網域判斷，只收正規新聞媒體；CMoney 貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收。
-  - 視窗只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；排程中斷時輸出空清單，不拿舊聞補。`latest_fetch_at` 取 `raw_payloads` 的實際抓取時間，空回應與全部重複的回應也算一批。
-  - 規則細節見[事件研究整合](integrated_event_analysis.md#事件報告-23已核准個股新聞)。
+### 是什麼
 
-**仍有的限制**
+FinMind 個股新聞，含股票代號、標題、原媒體、連結與來源時間字串。它只幫「事件分析師」判斷個別公司有沒有重大事件，**不進全市場情緒，也不進回測**。
 
-| 項目 | 說明 |
+### 一天怎麼跑
+
+1. 平日 20:40 排程執行 `scripts/run_finmind_news.sh`（即 `finmind-news`），與 20:00 財報排程錯開，避免同一小時合計約 600 次請求耗盡免費額度。
+2. 21:00 決策建立 Snapshot 前，檢查當天逐股成功擷取是否少於交易池，不足就補抓一次（上限 15 分鐘）。補抓失敗只記錄，不中止決策，事件分析師照舊只看重大訊息。
+
+### 保存與使用規則
+
+| 項目 | 規則 |
 | --- | --- |
-| 授權 | 新聞含多家媒體；FinMind 服務使用權不等於原媒體再利用授權，核准是使用者自行承擔的判斷 |
-| 時間 | 新聞 `date` 沒有時區，只以第一次抓到的時間判斷可得性 |
-| 完整性 | 以假設已核准試算 10-20～10-23，每日約 80～100 則、約 40 檔；10-23 那批資料庫只有 82 筆、39 檔（白名單內 17 筆），看起來不完整 |
+| 授權 | 收集時一律先存「未核准」候選；核准狀態另存。核准指令 `cli/company_news.py review ... --status approved\|unverified\|restricted`，會抓 FinMind 規範頁原文與 SHA-256 存證，只對存證之後的決策截止時間生效，之後的 `restricted` 會取代前面的核准 |
+| 核准現況 | 使用者已核准（2026-10-25、2026-10-27 各一筆，資料庫可查）：只用標題、內部研究、不轉載，這是使用者自行判斷，不是媒體書面同意。依據見[來源核對](source_audit/2026-10-25_finmind_stock_news.md) |
+| 時間 | 來源時間沒有時區，所以發布時間留空，可得時間是第一次抓到的時間 |
+| 媒體 | 只收正規新聞媒體（依連結網域白名單）；CMoney 貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收 |
+| 視窗 | 只取決策截止前最後一批抓取（該批抓取時間往前 12 小時，且不早於截止前 3 天）；排程中斷就輸出空清單，不拿舊聞補。空回應與全部重複的回應也算一批 |
 
-**實測覆蓋**：
+事件報告怎麼使用，見[事件研究整合](integrated_event_analysis.md#事件報告-23已核准個股新聞)。
 
-| 項目 | 數量 |
-| --- | --- |
-| 查詢股票 | 150 檔各一次 |
-| 有線索 / 空結果 | 116 / 34 檔 |
-| 保存筆數 | 1,004 |
+### 已知限制
 
-僅為候選覆蓋，不代表新聞完整。
+- 授權：FinMind 服務使用權不等於原媒體的再利用授權，核准是使用者自行承擔的判斷。
+- 完整性：假設已核准試算 10-20～10-23，每日約 80～100 則、約 40 檔；10-23 那批資料庫只有 82 筆、39 檔（白名單內 17 筆），看起來不完整。
+- 實測覆蓋（候選階段，不代表新聞完整）：查詢 150 檔、116 檔有線索、34 檔空結果、共 1,004 筆。
 
 ## 正式帳本價量
+
+帳本用官方價量結算：主辦方要求以交易所前日收盤價推導委託股數，以當日成交金額 ÷ 成交股數結算。
 
 ### 來源
 
 | 範圍 | 來源 |
 | --- | --- |
-| 當日全市場（上市） | TWSE `STOCK_DAY_ALL`。全市場端點延遲時，補 `exchangeReport/STOCK_DAY` |
-| 當日全市場（上櫃） | TPEx `tpex_mainboard_quotes` |
-| 歷史月行情（上市） | TWSE `STOCK_DAY` |
-| 歷史月行情（上櫃） | TPEx `afterTrading/tradingStock`（`config/data_sources.json` 的 `tpex_url`，來源代碼 `TPEX_TRADING_STOCK`）。成交張數、仟元換算為股、元 |
-| 待結算的歷史上櫃缺口 | TPEx `afterTrading/dailyQuotes`，指定日期，原始股數／元 |
+| 當日全市場（上市） | 證交所 `STOCK_DAY_ALL`；延遲時補 `exchangeReport/STOCK_DAY` |
+| 當日全市場（上櫃） | 櫃買中心 `tpex_mainboard_quotes` |
+| 歷史月行情（上市） | 證交所 `STOCK_DAY` |
+| 歷史月行情（上櫃） | 櫃買中心 `afterTrading/tradingStock`（網址設定在 `config/data_sources.json`）；成交張數、仟元換算為股、元 |
+| 待結算的歷史上櫃缺口 | 櫃買中心 `afterTrading/dailyQuotes`，指定日期，原始股數／元 |
 
-### 入口
+### 誰在抓
 
-- `scripts/collect_latest_prices.py`、`scripts/collect_official_history.py`：僅 `./start.sh daily` 執行。
-- `scripts/repair_pending_tpex_close.py`：歷史上櫃的帳本缺口。
+- `scripts/collect_latest_prices.py`、`scripts/collect_official_history.py`：只有 `./start.sh daily` 執行。
+- `scripts/repair_pending_tpex_close.py`：補歷史上櫃的帳本缺口。
 
-### 節流與熔斷
+### 怎麼避免被來源封鎖
 
 個股月行情逐檔、逐月請求，所有執行緒共用同一個節流器：
 
-- 每次請求至少間隔 `min_request_interval_seconds`（預設 2 秒）。
-- 遇到 HTTP 308／403／429／503，視為限流。全體依 `throttle_backoff_seconds`（30、120、300 秒）退避。
-- 退避用盡仍被限流，即熔斷並停止後續請求。缺口留待下次補抓。
+- 每次請求至少間隔 2 秒（`config/data_sources.json` 可調）。
+- 遇到 HTTP 308／403／429／503 視為限流，全體依 30、120、300 秒退避。
+- 退避用盡仍被限流就停止後續請求，缺口留到下次補抓。
 
 ### 除權息標記
 
-- TWSE：漲跌欄的 `X` 標記。
-- TPEx：漲跌欄**沒有** X 標記。`ex_rights_marker` 以參考價（收盤 − 漲跌）不等於前一交易日收盤來推導。
-- 月內第一列沒有前一日可比，標記保持 `NULL`（未知），不猜測。
+- 上市：直接用漲跌欄的 `X`。
+- 上櫃：漲跌欄沒有 `X`，改以「參考價（收盤 − 漲跌）不等於前一交易日收盤」推導。
+- 月內第一列沒有前一日可比，標記維持未知，不猜。
 
-### 使用界線
+### 缺資料時
 
-- 主辦方要求：以交易所前日收盤價推導委託股數，以當日成交金額 ÷ 股數結算。
-- 歷史補抓保留原始回應、實際抓取時間與來源。
-- 缺官方價量時等待，**不以 Yahoo 代替**。
+缺官方價量就等待，**不以 Yahoo 代替**。歷史補抓保留原始回應、實際抓取時間與來源。
 
 ## 基準標的
 
-- **用途**：讓虛擬帳戶績效與「0050 買入持有」、「150 檔交易池等權買入持有」比較（儀表板「與基準比較」、`cli/benchmark.py compare`）。口徑見 [benchmark/README.md](../src/etf_agent/benchmark/README.md)：同本金、開帳後第一個可成交交易日以官方成交均價整張買進、同一套費稅（`config/decision_rules.json`）、官方未還原收盤價估值、不計股利。
-- **來源**：`config/benchmarks.json` 列出基準與 `license_status`。0050 用與正式帳本價量相同的證交所個股日成交資訊端點（`TWSE_STOCK_DAY`，`config/data_sources.json` 的 `historical_daily.twse_url`），授權沿用「正式帳本價量」的核准；150 檔等權直接用交易池既有官方價量。2026-10-23 前資料庫只有 0050 的一筆 `TWSE_STOCK_DAY_ALL` 列（早期全市場抓取殘留），須以 `cli/benchmark.py collect` 補抓。
-- **不用 Yahoo**：授權只供研究，且沒有成交金額，算不出與帳本同口徑的成交均價；設定成 `YAHOO_FINANCE` 來源或非 `approved` 的基準一律顯示 unavailable。
-- **不污染交易池**：收集時以 `HistoricalPriceCollector(in_competition_universe=False)` 保存（`YFinanceHistoryCollector` 有同樣開關），`instruments.in_competition_universe` 維持 0；`SnapshotRepository`、交易池驗證、`analysis_daily_prices` 與 `prices_current` 都只看交易池成員，不會因此多一檔。帳本結算的 `OfficialCloseMarket` 只要求所需標的存在，多出的基準列不影響。
-- **時點**：比較只採用 `fetched_at ≤ as_of` 且收盤 ≤ as_of 的官方日線版本；`collect` 補抓的歷史列以實際抓取時間為可得時間，不回填到更早的 as-of。
-- **限制**：等權基準每檔預算為本金 ÷ 150，股價高於預算（整張買不起）的股票留現金並列在 `unaffordable_symbols`；基準不計現金股利與配股（帳本亦只在提供公司行動時入帳）。
+### 是什麼
+
+讓虛擬帳戶績效能和兩條基準比較：「0050 買入持有」與「150 檔交易池等權買入持有」（儀表板「與基準比較」、`./start.sh benchmark compare`）。
+
+口徑見 [benchmark/README.md](../src/etf_agent/benchmark/README.md)：同本金、開帳後第一個可成交日以官方成交均價整張買進、同一套費稅、以官方未還原收盤價估值、不計股利。
+
+### 規則
+
+- 來源：`config/benchmarks.json` 列出基準與授權狀態。0050 用與正式帳本相同的證交所個股日成交資訊端點，授權沿用「正式帳本價量」的核准；等權基準直接用交易池既有官方價量。
+- 不用 Yahoo：授權只供研究，且沒有成交金額，算不出與帳本同口徑的均價。基準若設成 Yahoo 或非核准狀態，一律顯示 unavailable。
+- 補抓：2026-10-23 前資料庫只有 0050 一筆全市場抓取殘留，須執行 `./start.sh benchmark collect` 補抓；`./start.sh daily` 會在帳本結算前補抓。
+- 不污染交易池：基準以「不屬於交易池」的標記保存，交易池驗證、分析用價格與當日價格查詢都只看交易池成員，不會因此多一檔。
+- 時點：比較只採用「抓取時間與收盤都不晚於 as-of」的官方日線版本；補抓的歷史列以實際抓取時間為可得時間，不回填。
+- 限制：等權基準每檔預算為本金 ÷ 150，整張買不起的股票留現金並列在 `unaffordable_symbols`；基準不計現金股利與配股。
 
 ## 交易限制與日曆
 
-- **來源**：已核准的政府開放 CSV × 7、TWSE 開休市日期表。
-- **入口**：`scripts/run_daily_pipeline.py` 的來源保存與驗證。
-- **使用**：正式風控與 T+2 交割的必要輸入。缺漏或過期時 fail-closed。
+- 來源：已核准的政府開放 CSV 七份、證交所開休市日期表。
+- 由 `scripts/run_daily_pipeline.py` 保存並驗證，是正式風控與 T+2 交割的必要輸入。缺漏或過期就停止（fail-closed）。
 
 ## 交易池
 
-- **來源**：主辦方名單，整理成 `data/official_universe.csv`。
-- **入口**：`data/universe.py` 驗證 150 檔。
-- **性質**：一次性的版本化輸入，不是每日網路擷取。
+- 來源：主辦方名單，整理成 `data/official_universe.csv`，由 `data/universe.py` 驗證為 150 檔。
+- 一次性的版本化輸入，不是每日網路擷取。
 
 ## 執行與憑證
 
 - `./start.sh data` 只抓研究日線與公司資料，不執行決策或帳本。
-- FinMind Token 從執行環境或本機 `.env` 載入。`.env` 權限為 600，且被 Git 忽略。
-- 直接執行 CLI 時，須自行提供 `FINMIND_TOKEN` 環境變數。
-- 個股新聞排程與財報排程分開，避免兩者同一小時合計約 600 次請求，耗盡免費額度。
+- FinMind Token 從環境變數、本機 `.env`（權限 600、被 Git 忽略）或 macOS 鑰匙圈載入；直接執行 CLI 時須自行提供 `FINMIND_TOKEN`。
+- 個股新聞與財報排程分開，原因見上。
 
 ## 已移除的來源
 
-台糖 RSS 與 150 檔新聞需求無關，已從每日擷取移除。既有的原始回應與候選資料保留，供封存稽核。
+台糖 RSS 與 150 檔新聞需求無關，已從每日擷取移除；既有原始回應保留供稽核。
 
-## 原則
+## 尚未接入
 
-金融判斷須區分：官方事實、新聞線索、情緒、交易決策。
-
-## 尚未實作
-
-- 多季基本面候選（FinMind 三張財報）尚未接入 Snapshot 或歷史回測。
-- 個股新聞的核對指令尚未執行；執行前每日決策不讀個股新聞。個股新聞仍缺發布時間時區，也沒有接入回測。
+- FinMind 多季財報候選尚未進 Snapshot 或歷史回測（只有現金流與手動補抓的去年同期累計會被使用）。
+- 個股新聞沒有發布時間時區，也沒有接入回測。
 
 ## 來源依據
 

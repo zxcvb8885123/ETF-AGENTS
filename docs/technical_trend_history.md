@@ -1,82 +1,70 @@
-# 技術分析的整段歷史輸入
+# 技術分析的歷史輸入
 
-## 用途與範圍
+## 這是什麼
 
-`build_analyst_brief(..., "technical")` 提供整段封存行情，讓技術分析師沿時間判讀價格與均線結構。
+技術分析師要判斷每檔股票目前是「上升、下跌還是盤整」。為了讓它看到價格怎麼走到現在，程式會替每檔股票準備一份歷史行情與均線，放進它的任務簡報。
 
-- 只輸出「上升／下跌／盤整」的市場狀態解讀，不執行買賣、排名或配置。
-- 以當期 `momentum` 核對目前位置。
-- 只有技術分析師收到 `trend_history`；其他三位分析師不會。
-- 既有 MomentumResult、AnalystReport 契約與舊封存均不變。
+- 只有技術分析師收到；其他分析師不會。
+- 分析師只輸出趨勢判斷，不買賣、不排名、不配置。
+- 均線等數字全由程式計算，模型不自己算。
+- 程式在 `src/etf_agent/decision/trend_history.py`。
 
-## 運作方式
+## 一天怎麼跑
 
 ```mermaid
 flowchart LR
-  A[DecisionInputBundle.price_series<br/>已驗證] --> B[TechnicalTrendHistoryTools]
-  B --> C[trend_history 1.0]
-  C --> D[技術分析師 brief]
-  A --> E[TechnicalTrendHistoryValidator<br/>以原始 bundle 重建]
-  C --> E
+  A[已驗證的決策輸入行情] --> B[程式算均線並整理歷史]
+  B --> C[技術分析師簡報]
+  A --> D[驗證器以原始行情重建]
+  B --> D
 ```
 
-- 由程式直接建立，不經模型補值。
-- Validator 重建全部內容；重簽 hash 後的改值、改日期、股票錯配、少列資料仍不通過。
-- cutoff 後行情、缺時區、原始序列 hash 不一致，由 DecisionContext 拒絕。
+- 驗證器從原始行情重建全部內容。即使有人改值後重算雜湊、改日期、搞錯股票或少列資料，都會被拒絕。
+- 截止後的行情、缺時區、原始序列雜湊不一致，在建立決策脈絡時就被拒絕。
 
-## 契約與規則
-
-### `trend_history` 欄位
+## 歷史輸入長什麼樣
 
 | 欄位 | 意義 |
 | --- | --- |
-| `schema_version` | 歷史輸入版本 `1.0` |
-| `symbol`、`snapshot_id`、`decision_cutoff`、`bundle_hash` | 股票、快照、含時區截止時間、輸入版本 |
-| `source_series_sha256`、`evidence_ids` | 原始行情序列雜湊與已驗證來源證據 |
-| `start_date`、`end_date`、`observation_count` | 視窗首末日期與筆數 |
-| `rows` | 全部已提供的觀測，不截斷、不選樣 |
-| `rows[].trade_date`、`available_at` | 行情日期與當時可得時間 |
-| `rows[].close`、`high`、`low`、`volume` | 來源價格與成交量 |
-| `rows[].ma20`、`ma60` | 只用該日及之前的觀測計算，六位小數；暖機不足為 `null` |
-| `content_sha256` | 整份輸入的 canonical hash |
+| 股票、快照、決策截止時間、輸入版本雜湊 | 對應哪檔、哪份資料 |
+| 起訖日期、筆數 | 視窗範圍（是輸入收錄的整段視窗，不是上市以來全部歷史） |
+| 每日列 | 日期、當時可得時間、收盤、最高、最低、成交量、20 日與 60 日均線 |
+| 證據編號、內容雜湊 | 可追溯到來源，可重算 |
 
-### 「完整」的定義
+- 均線只用該日與之前的資料，六位小數；資料不足以算均線時為空。不合成缺漏的交易日。
+- 價格沿用決策輸入選定的分析價格版本，不混入未調整價格。
+- 歷史的可得時間若來自重建，必須揭露限制。
 
-- 指 bundle 收錄的整段視窗，不是股票全部上市歷史。
-- 均線以已收錄的觀測數計算，不合成缺漏交易日。
-- 價格沿用 DecisionInputBuilder 選定的分析價格版本，不混入未調整價格。
-- 歷史 `available_at` 若來自重建，須揭露重建限制。
+## 兩種版本
 
-### 模型分工
+| 版本 | 內容 | 現況 |
+| --- | --- | --- |
+| 完整版（1.0） | 全部觀測逐日列出，不截斷 | 驗證器完整支援，是摘要版的重建基礎；每日技術分析師簡報目前不直接使用 |
+| 摘要版（1.1-summary） | 固定 12 個錨點、收盤最高與最低、最大量、最後 5 筆；去重後依日期排序。筆數仍是完整歷史筆數，只有列是抽樣 | 目前每日技術分析師簡報實際使用 |
+
+- 摘要版可由驗證器從原始行情重算。
+- 摘要版是為了縮短簡報；改用摘要後，同一 Snapshot 的 150 檔中曾有 12 檔方向改變（試驗證據封存在 `artifacts/archive/experiments/technical_prompt_trials/`）。
+- 技術閘門（`technical_gate`）啟用時，趨勢一致的股票只附動能欄位、不附歷史；其餘附歷史。
+
+## 模型與程式的分工
 
 | 模型負責 | 模型不做 |
 | --- | --- |
-| 沿時間解讀主趨勢、回檔或反彈是否破壞結構 | 自行產生均線斜率、持續天數、報酬率等數字 |
-| 主要尺度無方向時判為盤整；資料不足標 `unknown` | 強制保持昨日標籤 |
+| 沿時間解讀主趨勢；回檔或反彈是否破壞結構 | 自己產生均線斜率、持續天數、報酬率等數字 |
+| 主要尺度沒方向就判盤整；資料不足標「不明」 | 為了一致而硬沿用昨天的標籤 |
 
 - 單日動能或一次穿越均線，不能取代歷史判讀。
-- 歷史路徑是事實；趨勢分類與延續性是推論，不保證未來方向或績效。
+- 價格路徑是事實；趨勢分類與延續性是推論，不保證未來方向。加入歷史輸入也不代表分類有客觀真值。
 
-## 使用方式
+## 測試涵蓋
 
-- 每日流程使用正式 builder，自動帶入 `trend_history`。
-- 驗證：`TechnicalTrendHistoryValidator` 以原始 bundle 重算。
-- 測試涵蓋：逐日均線暖機與邊界、完整行情覆蓋與短視窗、技術獨有輸入、重簽 hash 竄改、股票錯配、cutoff 後資料與缺時區、來源版本衝突。
-- 歷史模型試跑封存於 `artifacts/archive/experiments/technical_prompt_trials/full-path-20261002/`，與先前「當日摘要版」分開。
+逐日均線暖機與邊界、完整行情覆蓋與短視窗、技術獨有輸入、改值重簽雜湊、股票錯配、截止後資料與缺時區、來源版本衝突（`tests/research/test_technical_trend_history.py`）。
 
-## 限制與注意事項
+## 附錄：名稱對照
 
-- 加入歷史輸入不代表分類有客觀真值。
-- 模型試跑只執行技術分析，不含後續交易與風險 Agent。
-
-## 尚未實作
-
-### 摘要版 `1.1-summary`（研究試驗，未接入）
-
-`TechnicalTrendHistoryTools.summary_for_symbol()` 從完整、同 Snapshot 的 `1.0` 歷史重建：
-
-- 固定 12 個錨點、收盤極值、最大量、最後 5 筆；去重後依日期排序。
-- `observation_count` 仍為完整歷史筆數，`rows` 只是抽樣。
-- `TechnicalTrendHistoryValidator.validate_summary` 可從原始行情重算。
-- 同一 Snapshot 的 150 檔中有 12 檔方向因摘要而改變，待審查證據後再決定是否接入。
-- 正式每日 brief 仍用 `for_symbol()` 的完整序列。
+| 白話說明 | 程式名稱 |
+| --- | --- |
+| 歷史輸入工具 | `TechnicalTrendHistoryTools`（完整版 `for_symbol`、摘要版 `summary_for_symbol`） |
+| 驗證器 | `TechnicalTrendHistoryValidator`（摘要版用 `validate_summary`） |
+| 欄位名稱 | 簡報中的 `trend_history` |
+| 技術閘門 | `technical_gate` |
