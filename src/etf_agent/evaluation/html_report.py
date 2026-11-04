@@ -220,24 +220,29 @@ def _footer(sha256: Optional[str], verify_command: str, note: str = "") -> str:
 
 
 # ---------------------------------------------------------------- replay
+_REPLAY_STATUS = {"pending_execution": "等收盤價", "complete": "完成", "executed": "完成"}
+
+
 def render_replay_html(report: Mapping[str, object]) -> str:
     metrics = report.get("metrics") or {}
     template = (report.get("provenance") or {}).get("policy_template") or {}
     inputs = report.get("inputs") or {}
     replay_id = report.get("replay_id", "未封存")
-    lead = "%s 策略樣板 <code>%s</code>（content_sha256 <code>%s</code>）；%d 個 Decision run；as_of %s；狀態 %s。不呼叫 Agent，只重算確定性程式。" % (
-        _notice(report), esc(template.get("policy_id")), esc(template.get("content_sha256")), len(inputs.get("run_ids") or []), esc(inputs.get("as_of")), esc(report.get("status")))
+    lead = ""
     sections: List[str] = []
+    done = "已完成" if report.get("status") == "complete" else "還有成交日在等收盤價，結果先算到目前為止"
+    sections.append("<h2>目前結論</h2><p>用策略設定 %s，重算 %d 個決策日（AI 當時的買賣意見不變，只重算程式配置的部分）。%s。</p>" % (
+        esc(template.get("policy_id")), len(inputs.get("run_ids") or []), done))
     annualized = metrics.get("annualized_return") or {}
     sharpe = metrics.get("sharpe") or {}
     sections.append("<h2>績效</h2>" + _table(("項目", "數值"), [
-        [("起始／期末 NAV", False), ("%s ／ %s" % (_text(metrics.get("start_nav")), _text(metrics.get("end_nav"))), True)],
+        [("帳戶起始／期末淨值", False), ("%s ／ %s" % (_text(metrics.get("start_nav")), _text(metrics.get("end_nav"))), True)],
         [("完成成交日", False), (esc(metrics.get("trading_days")), True)],
         [("總報酬", False), (_pct(metrics.get("total_return")), True)],
         [("年化報酬", False), ("%s%s" % (_pct(annualized.get("value")), "" if annualized.get("reliable") else "（樣本不足，不可靠）") if annualized.get("status") == "available"
                                else "無（%s）" % esc(annualized.get("reason")), True)],
         [("最大回撤", False), (_pct(metrics.get("max_drawdown")), True)],
-        [("Sharpe", False), (esc(sharpe.get("value")) if sharpe.get("status") == "available" else "unavailable（%s）" % esc(sharpe.get("reason")), True)],
+        [("夏普值（報酬相對波動）", False), (esc(sharpe.get("value")) if sharpe.get("status") == "available" else "無（%s）" % esc(sharpe.get("reason")), True)],
         [("換手率", False), (_pct(metrics.get("turnover_rate")), True)],
         [("總費稅", False), (_text(metrics.get("total_fees_and_taxes")), True)],
         [("成交筆數", False), (esc(metrics.get("fill_count")), True)],
@@ -245,7 +250,7 @@ def render_replay_html(report: Mapping[str, object]) -> str:
     if int(metrics.get("trading_days") or 0) < 20:
         sections.append("<p class=\"notice\">只有 %s 個成交日：以上數字沒有統計意義，只證明回放流程可跑。</p>" % esc(metrics.get("trading_days")))
     points = [(str(row.get("trade_date")), value) for row in report.get("nav_series") or [] for value in [_decimal(row.get("nav"))] if value is not None]
-    sections.append("<h2>NAV</h2>" + line_chart_svg(points, "日終 NAV"))
+    sections.append("<h2>每日淨值</h2>" + line_chart_svg(points, "每日淨值"))
     day_rows = []
     for day in report.get("days") or []:
         execution = day.get("execution") or {}
@@ -254,34 +259,27 @@ def render_replay_html(report: Mapping[str, object]) -> str:
         if policy.get("stance_raised_to_floor"):
             stance += "（回撤下限提高自 %s）" % esc(policy.get("archived_cash_stance"))
         day_rows.append([
-            (esc(day.get("index")), True), (_text(day.get("run_id"), "（缺日）"), False), (_text(day.get("trade_date"), "待官方價格"), False),
-            (esc(day.get("status")), False), (_text(day.get("decision_status"), "-"), False), (stance, False),
+            (esc(day.get("index")), True), (_text(day.get("trade_date"), "待官方價格"), False),
+            (_REPLAY_STATUS.get(str(day.get("status")), esc(day.get("status"))), False), (_text(day.get("decision_status"), "-"), False), (stance, False),
             (esc(len(day.get("orders") or [])), True), (esc(len(execution.get("fills") or [])), True),
             (esc(len(execution.get("unfilled_orders") or [])), True), (_text((day.get("close") or {}).get("nav"), "-"), True),
         ])
-    sections.append("<h2>逐日</h2>" + _table(("#", "run", "成交日", "狀態", "決策", "現金姿態", "訂單", "成交", "未成交", "日終 NAV"), day_rows))
+    sections.append("<h2>逐日結果</h2>" + _table(("第幾天", "成交日", "狀態", "決策", "現金姿態", "訂單", "成交", "未成交", "日終淨值"), day_rows))
     notes = []
     for day in report.get("days") or []:
         if day.get("pending_reason"):
-            notes.append("第 %s 天（%s）：成交待定：%s" % (day.get("index"), day.get("run_id") or "缺日", day["pending_reason"]))
+            notes.append("第 %s 天：還沒成交：%s" % (day.get("index"), day["pending_reason"]))
         if (day.get("guard") or {}).get("failed_rules"):
-            notes.append("第 %s 天（%s）：Guard 未通過：%s（回放不重現風險 Agent 修正，當日不下單）" % (
-                day.get("index"), day.get("run_id") or "缺日", "、".join(str(rule) for rule in day["guard"]["failed_rules"])))
+            notes.append("第 %s 天：風控檢查未通過：%s（重算不重現風險 Agent 的修正，當日不下單）" % (
+                day.get("index"), "、".join(str(rule) for rule in day["guard"]["failed_rules"])))
         if (day.get("policy") or {}).get("available_at_overridden"):
-            notes.append("第 %s 天（%s）：策略樣板版本晚於該日 cutoff，回放把 available_at 提前到 cutoff" % (day.get("index"), day.get("run_id") or "缺日"))
+            notes.append("第 %s 天：策略設定的版本比當天決策晚，重算時視為當天已生效" % day.get("index"))
     if report.get("not_replayed_run_ids"):
-        notes.append("之後未回放的 run：%s" % "、".join(str(item) for item in report["not_replayed_run_ids"]))
+        notes.append("之後還沒重算的決策：%d 個" % len(report["not_replayed_run_ids"]))
     if notes:
         sections.append("<h3>備註</h3>" + _list(notes))
-    runs = []
-    for item in (report.get("provenance") or {}).get("runs") or []:
-        runs.append([(esc(item.get("run_id")), False), (esc(item.get("decision_cutoff")), False), (esc(item.get("session_day")), False),
-                     (esc(item.get("session_day_basis")), False), ("<code>%s</code>" % esc(item.get("manifest_sha256")), False),
-                     (esc("、".join(str(x) for x in item.get("superseded_run_ids") or [])) or "-", False)])
-    sections.append("<h2>使用的 Decision run</h2>" + _table(("run", "cutoff", "目標時段日", "依據", "manifest", "同日較早略過"), runs))
     sections.append("<h2>限制</h2>" + _list(report.get("limitations") or []))
-    return _page("便宜版回測：%s" % replay_id, lead, sections,
-                 _footer(report.get("content_sha256"), "cli/policy_replay.py verify --replay-id %s" % replay_id))
+    return _page("策略重算報告：%s" % _taipei_date(inputs.get("as_of"), replay_id), lead, sections, "")
 
 
 # ---------------------------------------------------------------- grid
@@ -436,10 +434,16 @@ def _summary_table(summary: Mapping[str, object]) -> str:
 def render_eval_html(report: Mapping[str, object]) -> str:
     overall = report.get("overall") or {}
     eval_id = report.get("eval_id", "未知")
-    lead = "%s 評測集 %s；每份重跑 %s 次；範圍：%s。共 %s 次，失敗 %s 次；估算用量 $%s。「相同」只表示結論一樣，不代表對錯。" % (
-        _notice(report), esc(report.get("suite")), esc(report.get("repeats")), "只到分析師" if report.get("stop_after") == "analysts" else "完整決策鏈",
-        esc(overall.get("runs")), esc(overall.get("failed_runs")), esc(overall.get("estimated_usage_usd")))
+    lead = ""
     sections: List[str] = []
+    sections.append("<h2>評測概況</h2>" + _table(("項目", "內容"), [
+        [("評測集", False), (esc(report.get("suite")), False)],
+        [("每份考卷重跑", False), ("%s 次" % esc(report.get("repeats")), False)],
+        [("範圍", False), ("只到分析師" if report.get("stop_after") == "analysts" else "完整決策鏈", False)],
+        [("總共跑了", False), ("%s 次，失敗 %s 次" % (esc(overall.get("runs")), esc(overall.get("failed_runs"))), False)],
+        [("估算用量", False), ("$%s" % esc(overall.get("estimated_usage_usd")), False)],
+        [("注意", False), ("「相同」只表示結論一樣，不代表對錯", False)],
+    ]))
     versus = overall.get("versus_reference") or {}
     stability = overall.get("stability") or {}
     bars = [(label, _decimal((versus.get(name) or {}).get("mean_agreement")), _decimal((stability.get(name) or {}).get("mean_agreement")))
@@ -461,9 +465,9 @@ def render_eval_html(report: Mapping[str, object]) -> str:
                 answer_rows.append([(esc(horizon), True), (label, False), (esc(_EVAL_LABELS.get(name, name)), False),
                                     (esc(row.get("complete_days")), True), (esc(row.get("n")), True), (rate, True)])
     if not answer_rows:
-        answer_rows.append([("-", True), ("-", False), ("還沒有任何考卷的股價到齊", False), ("0", True), ("0", True), ("待答案", True)])
+        answer_rows.append([("-", True), ("-", False), ("還沒有任何考卷的股價到齊", False), ("0", True), ("0", True), ("等股價", True)])
     sections.append("<h2>準不準（之後的實際股價）</h2><p>看好＝分析師正面、交易 buy／add、買單；看壞＝負面、trim／exit、賣單。命中＝看好的贏過交易池平均、看壞的輸給平均（官方成交均價）。</p>"
-                    + _table(("天數", "對象", "項目", "完整決策日", "筆數", "命中率"), answer_rows))
+                    + _table(("看多久之後（天）", "對象", "項目", "完整決策日", "筆數", "命中率"), answer_rows))
     pending = []
     for case in answers.get("cases") or []:
         items = ["%s 日：%s" % (h, item.get("status")) for h, item in (case.get("horizons") or {}).items() if item.get("status") != "complete"]
@@ -487,6 +491,4 @@ def render_eval_html(report: Mapping[str, object]) -> str:
     sections.append("<h2>每份考卷</h2>" + "".join(case_sections))
     if report.get("resumed_at"):
         sections.append("<p class=\"notice\">本評測於 %s 續跑；只重跑未完成卷次，已完成卷次沿用原結果。</p>" % esc(report["resumed_at"]))
-    body = {key: value for key, value in report.items() if key != "generated_at"}
-    return _page("Agent 評測報告：%s" % eval_id, lead, sections,
-                 _footer(canonical_sha256(body), "cli/agent_eval.py report --eval-id %s" % eval_id, "此雜湊是 report.json（不含 generated_at）的 canonical SHA-256。"))
+    return _page("評測報告：%s" % _taipei_date(report.get("generated_at"), eval_id), lead, sections, "")

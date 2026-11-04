@@ -326,9 +326,9 @@ class HtmlReportTests(GridWorld):
         page = render_replay_html(report)
         self.assert_self_contained(page)
         self.assertIn("無圖", page)
-        self.assertIn("&lt;run&gt;", page)
-        self.assertNotIn("<run>", page)
-        self.assertIn("verify --replay-id replay-&lt;x&gt;", page)
+        self.assertIn("&lt;價格&gt;", page)
+        self.assertNotIn("<價格>", page)
+        self.assertNotIn("verify --replay-id", page)
 
     def test_eval_html_renders_without_answers(self):
         report = {"eval_id": "eval-<1>", "suite": "s", "repeats": 1, "stop_after": "full", "generated_at": "now",
@@ -341,7 +341,7 @@ class HtmlReportTests(GridWorld):
         self.assert_self_contained(page)
         self.assertIn("&lt;case&gt;", page)
         self.assertIn("還沒有任何考卷的股價到齊", page)
-        self.assertIn("report --eval-id eval-&lt;1&gt;", page)
+        self.assertNotIn("report --eval-id", page)
 
     def test_charts_fail_closed_without_points(self):
         self.assertIn("無圖", line_chart_svg([], "NAV"))
