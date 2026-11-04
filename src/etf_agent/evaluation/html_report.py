@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -42,7 +43,7 @@ th { background: var(--soft); color: var(--muted); font-weight: 600; white-space
 tbody tr:nth-child(even) td { background: #fafbfd; }
 tbody tr:hover td { background: #eef3fc; }
 tbody tr:last-child td { border-bottom: 0; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 8px 0 14px; font-size: .9rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
 dt { color: var(--muted); }
 dd { margin: 0; word-break: break-all; }
@@ -99,8 +100,8 @@ def _page(title: str, lead: str, sections: Iterable[str], footer: str) -> str:
         "<!DOCTYPE html>\n<html lang=\"zh-Hant\"><head><meta charset=\"utf-8\">"
         "<meta http-equiv=\"Content-Security-Policy\" content=\"%s\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>%s</title><style>%s</style></head><body><header class=\"hero\"><div class=\"inner\"><h1>%s</h1><p class=\"lead\">%s</p></div></header><main>%s<footer>%s</footer></main></body></html>\n"
-        % (CSP, esc(title), _STYLE, esc(title), lead, "".join(sections), footer)
+        "<title>%s</title><style>%s</style></head><body><header class=\"hero\"><div class=\"inner\"><h1>%s</h1>%s</div></header><main>%s%s</main></body></html>\n"
+        % (CSP, esc(title), _STYLE, esc(title), ("<p class=\"lead\">%s</p>" % lead) if lead else "", "".join(sections), ("<footer>%s</footer>" % footer) if footer else "")
     )
 
 
@@ -121,7 +122,9 @@ def _chips(pairs: Sequence[Tuple[str, str]]) -> str:
 
 def _table(headers: Sequence[str], rows: Sequence[Sequence[Tuple[str, bool]]]) -> str:
     """rows 的每格是 (已跳脫文字, 是否數字靠右)。"""
-    head = "".join("<th>%s</th>" % esc(header) for header in headers)
+    # 表頭對齊該欄內容：數字欄的表頭也靠右，否則標題與數字會錯開。
+    numeric_columns = [any(len(row) > index and row[index][1] for row in rows) for index in range(len(headers))]
+    head = "".join("<th%s>%s</th>" % (" class=\"num\"" if numeric_columns[index] else "", esc(header)) for index, header in enumerate(headers))
     body = "".join(
         "<tr>%s</tr>" % "".join("<td%s>%s</td>" % (" class=\"num\"" if numeric else "", _tint(text) if numeric else text) for text, numeric in row) for row in rows)
     return "<div class=\"tablewrap\"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>" % (head, body)
@@ -286,93 +289,131 @@ _GROUP_LABELS = {"by_conviction": "信心等級（buy／add）", "by_intent": "�
                  "by_bear_strength": "空頭強度", "by_net_strength": "多空強度差（多－空）"}
 
 
+_STATUS_TEXT = {"ok": "樣本足夠", "insufficient_sample": "樣本不足",
+                "exit_price_pending": "還沒到期（等收盤價）", "pending": "還沒到期（等收盤價）",
+                "available": "有資料", "unavailable": "沒有資料", "ex_rights": "除權息，略過"}
+
+
+def _status_text(value: object) -> str:
+    return esc(_STATUS_TEXT.get(str(value), value))
+
+
 def _beat_text(beat: Mapping[str, object]) -> str:
     if not beat or beat.get("rate") is None:
         return "無"
     return "%s（%s／%s，持平 %s）" % (_pct(beat.get("rate")), esc(beat.get("wins")), esc(beat.get("n")), esc(beat.get("ties")))
 
 
+
+def _taipei_date(as_of: object, fallback: object) -> str:
+    """報告標題用的台北日期；解析不了就用原編號。"""
+    try:
+        parsed = datetime.fromisoformat(str(as_of).replace("Z", "+00:00"))
+        return parsed.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return str(fallback)
+
+def _hkey(h: object) -> int:
+    return int(h) if str(h).isdigit() else 0
+
+
+def _mean(values: Sequence[Decimal]) -> Optional[Decimal]:
+    return sum(values, Decimal(0)) / len(values) if values else None
+
+
 def render_grid_html(grid: Mapping[str, object]) -> str:
+    """回測報告：先給結論，再給逐日結果；細節收合。買進股平均是本頁對 JSON 列的簡單平均，數字仍以 JSON 為準。"""
     inputs = grid.get("inputs") or {}
     provenance = grid.get("provenance") or {}
     grid_id = grid.get("grid_id", "未封存")
-    lead = "%s %d 個決策日、%d 列（run × symbol）；基準 <code>%s</code>；as_of %s；provenance_class <code>%s</code>。零 token，只讀已封存 Decision run 與官方成交均價。" % (
-        _notice(grid), len(grid.get("days") or []), len(grid.get("rows") or []), esc(inputs.get("benchmark")), esc(inputs.get("as_of")), esc(provenance.get("provenance_class")))
+    required = esc(provenance.get("required_decision_days"))
+    days = grid.get("days") or []
+    rows = grid.get("rows") or []
+    horizons = sorted((grid.get("horizons") or {}).items(), key=lambda pair: _hkey(pair[0]))
+    horizon_names = [name for name, _ in horizons]
+    benchmark = esc(inputs.get("benchmark"))
     sections: List[str] = []
-    sections.append("<h2>口徑</h2>" + _kv([
-        ("成交價", esc(provenance.get("price_basis"))), ("日曆", esc(provenance.get("calendar_basis"))),
-        ("最少完整決策日", esc(provenance.get("required_decision_days"))), ("單日最低覆蓋", esc(provenance.get("min_day_coverage"))),
-        ("超額（池）", "個股報酬 − 同日交易池平均"), ("超額（基準）", "個股報酬 − 基準 ETF 同窗口報酬；基準缺列或除權息的日子留空"),
-        ("贏過比例", "超額 &gt; 0 的筆數 ÷ 超額 ≠ 0 的筆數；剛好 0 另計持平"),
-    ]))
-    for horizon, entry in sorted((grid.get("horizons") or {}).items(), key=lambda pair: int(pair[0]) if str(pair[0]).isdigit() else 0):
-        sections.append("<h2>%s 日</h2>" % esc(horizon))
-        bench_days = entry.get("benchmark_days") or {}
-        sections.append(_chips([
-            ("狀態", esc(entry.get("status"))), ("完整決策日", esc(entry.get("complete_days"))), ("筆數", esc(entry.get("n_obs"))),
-            ("排除（無價／除權息）", "%s／%s" % (esc((entry.get("excluded_obs") or {}).get("no_price")), esc((entry.get("excluded_obs") or {}).get("ex_rights")))),
-            ("基準可用／缺列／除權息", "%s／%s／%s" % (esc(bench_days.get("available")), esc(bench_days.get("unavailable")), esc(bench_days.get("ex_rights")))),
-            ("待答案", esc("、".join("%s：%s" % pair for pair in sorted((entry.get("pending_days") or {}).items()))) or "無"),
-        ]))
+
+    # 1. 結論
+    ready = [name for name, entry in horizons if entry.get("status") == "ok"]
+    if ready:
+        verdict = "有 %s 日的資料已達標，可看下面的分組平均。" % "、".join(esc(name) for name in ready)
+    else:
+        verdict = "資料還太少（每個期間至少要 %s 個決策日到期），先不下結論，只看下面的逐日結果。" % required
+    sections.append("<h2>目前結論</h2><p>共 %d 個決策日、%d 筆（每天 × 每檔股票）。%s</p>" % (len(days), len(rows), verdict))
+
+    # 2. 各期間進度
+    progress = []
+    for name, entry in horizons:
+        pending = sorted((entry.get("pending_days") or {}).keys())
+        progress.append([(esc("%s 個交易日後" % name), False), (esc(entry.get("complete_days")), True),
+                         (esc(len(pending)), True), (esc(required), True), (_status_text(entry.get("status")), False)])
+    sections.append("<h2>各期間進度</h2><p>決策後過了多久才算結果。已到期的決策日要達到門檻，才會給平均與勝率。</p>" + _table(
+        ("看多久之後", "已到期（天）", "還沒到期（天）", "需要（天）", "結論"), progress))
+
+    # 3. 買進的股票 vs 交易池 vs 基準（逐日）
+    for name in horizon_names:
+        table_rows = []
+        for day in days:
+            cell = (day.get("horizons") or {}).get(name) or {}
+            if cell.get("status") != "complete":
+                continue
+            bought = [_decimal(row["horizons"][name].get("return")) for row in rows
+                      if row.get("entry_day") == day.get("entry_day") and row.get("intent") in ("buy", "add")
+                      and (row.get("horizons") or {}).get(name, {}).get("status") == "complete"]
+            bought = [value for value in bought if value is not None]
+            average = _mean(bought)
+            pool = _decimal(cell.get("pool_mean"))
+            table_rows.append([
+                (esc(day.get("entry_day")), False), (esc(cell.get("exit_day")), False), (esc(len(bought)), True),
+                (_pct(average) if average is not None else "—", True), (_pct(pool) if pool is not None else "—", True),
+                (_pct(cell.get("benchmark_return")) if cell.get("benchmark_status") == "available" else "—", True),
+                (_pct(average - pool) if average is not None and pool is not None else "—", True)])
+        if table_rows:
+            sections.append("<h2>AI 買進的股票，%s 個交易日後</h2>" % esc(name) + _table(
+                ("決策日", "結算日", "買進檔數", "買進股平均報酬", "交易池平均", benchmark, "買進股 − 池平均"), table_rows))
+
+    # 4. 達標期間的分組平均
+    for name, entry in horizons:
         if entry.get("status") != "ok":
-            sections.append("<p class=\"notice\">完整決策日 %s 少於 %s：只給天數與筆數，不給平均與贏過比例。</p>" % (
-                esc(entry.get("complete_days")), esc(provenance.get("required_decision_days"))))
             continue
         conviction = entry.get("by_conviction") or {}
-        sections.append(bar_chart_svg(
-            [(name, _decimal(row.get("mean_excess_vs_pool")), _decimal(row.get("mean_excess_vs_benchmark"))) for name, row in conviction.items()],
-            "%s 日：信心等級的平均超額" % horizon))
+        sections.append("<h2>決策後 %s 個交易日：分組平均</h2>" % esc(name) + bar_chart_svg(
+            [(label, _decimal(row.get("mean_excess_vs_pool")), _decimal(row.get("mean_excess_vs_benchmark"))) for label, row in conviction.items()],
+            "決策後 %s 日：各信心等級的平均超額" % name))
         for key, label in _GROUP_LABELS.items():
-            groups = entry.get(key) or {}
-            rows = []
-            for name, row in groups.items():
-                rows.append([(esc(name), False), (esc(row.get("n_obs")), True), (_pct(row.get("mean_return")), True),
-                             (_pct(row.get("mean_excess_vs_pool")), True), (_beat_text(row.get("beat_pool") or {}), True),
-                             (esc(row.get("n_obs_benchmark")), True), (_pct(row.get("mean_excess_vs_benchmark")), True),
-                             (_beat_text(row.get("beat_benchmark") or {}), True)])
-            block = _table(("等級", "筆數", "平均報酬", "平均超額（池）", "贏過池", "筆數（基準）", "平均超額（基準）", "贏過基準"), rows)
-            if key in ("by_conviction", "by_intent"):
-                sections.append("<h3>%s</h3>" % esc(label) + block)
-            else:
-                sections.append("<details><summary>%s（展開）</summary>%s</details>" % (esc(label), block))
-    day_rows = []
-    for day in grid.get("days") or []:
-        cells = [(esc(day.get("entry_day")), False), (esc(day.get("run_id")), False), (esc(day.get("n_items")), True)]
-        for horizon in sorted((day.get("horizons") or {}), key=lambda h: int(h) if str(h).isdigit() else 0):
-            cell = day["horizons"][horizon] or {}
-            if cell.get("status") == "complete":
-                cells.append(("→%s 池 %s；基準 %s（%s）" % (esc(cell.get("exit_day")), _pct(cell.get("pool_mean")),
-                                                       _pct(cell.get("benchmark_return")), esc(cell.get("benchmark_status"))), False))
-            else:
-                cells.append((esc(cell.get("status")), False))
-        day_rows.append(cells)
-    horizon_names = sorted({h for day in grid.get("days") or [] for h in (day.get("horizons") or {})}, key=lambda h: int(h) if str(h).isdigit() else 0)
-    sections.append("<h2>決策日</h2>" + _table(("成交日 T", "run", "股票數", *("%s 日" % esc(h) for h in horizon_names)), day_rows))
-    row_cells = []
-    for row in grid.get("rows") or []:
-        cells = [(esc(row.get("entry_day")), False), (esc(row.get("symbol")), False), (esc(row.get("intent")), False),
-                 (_text(row.get("conviction"), "-"), False), ("%s／%s（%s）" % (esc(row.get("bull_strength")), esc(row.get("bear_strength")), esc(row.get("net_strength"))), False)]
-        for horizon in horizon_names:
-            cell = (row.get("horizons") or {}).get(horizon) or {}
-            if cell.get("status") == "complete":
-                cells.append(("%s｜池 %s｜基準 %s" % (_pct(cell.get("return")), _pct(cell.get("excess_vs_pool")),
-                                                   _pct(cell.get("excess_vs_benchmark")) if cell.get("excess_vs_benchmark") is not None else "無"), True))
-            else:
-                cells.append((esc(cell.get("status")), False))
-        row_cells.append(cells)
-    sections.append("<h2>每筆決策</h2><details><summary>展開 %d 列（報酬｜超額對池｜超額對基準）</summary>%s</details>" % (
-        len(row_cells), _table(("成交日 T", "股票", "意圖", "信心", "多／空（差）", *("%s 日" % esc(h) for h in horizon_names)), row_cells)))
-    runs = [[(esc(item.get("run_id")), False), (esc(item.get("decision_cutoff")), False), (esc(item.get("entry_day")), False),
-             ("<code>%s</code>" % esc(item.get("manifest_sha256")), False), (esc("、".join(str(x) for x in item.get("superseded_run_ids") or [])) or "-", False)]
-            for item in provenance.get("runs") or []]
-    sections.append("<h2>使用的 Decision run</h2>" + _table(("run", "cutoff", "成交日 T", "manifest", "同日較早略過"), runs))
-    selection = provenance.get("selection") or {}
-    extras = ["cutoff 後尚無官方交易日：%s" % ("、".join(selection.get("entry_day_unresolved") or []) or "無"),
-              "範圍外的決策日：%s" % ("、".join(selection.get("out_of_range_entry_days") or []) or "無"),
-              *("未納入 %s：%s" % (item.get("run_id"), item.get("reason")) for item in selection.get("skipped") or [])]
-    sections.append("<h3>挑選紀錄</h3>" + _list(extras))
-    sections.append("<h2>限制</h2>" + _list(grid.get("limitations") or []))
-    return _page("回測格子：%s" % grid_id, lead, sections, _footer(grid.get("content_sha256"), "cli/agent_eval.py grid-verify --grid-id %s" % grid_id))
+            group_rows = [[(esc(group), False), (esc(row.get("n_obs")), True), (_pct(row.get("mean_return")), True),
+                           (_pct(row.get("mean_excess_vs_pool")), True), (_beat_text(row.get("beat_pool") or {}), True),
+                           (_pct(row.get("mean_excess_vs_benchmark")), True), (_beat_text(row.get("beat_benchmark") or {}), True)]
+                          for group, row in (entry.get(key) or {}).items()]
+            block = _table(("分類", "筆數", "平均報酬", "比池平均多／少", "贏過池的比例", "比基準多／少", "贏過基準的比例"), group_rows)
+            sections.append(("<h3>%s</h3>" % esc(label) + block) if key in ("by_conviction", "by_intent")
+                            else "<details><summary>%s（展開）</summary>%s</details>" % (esc(label), block))
+
+    # 5. 每檔明細（收合）
+    detail = []
+    for row in rows:
+        cells = [(esc(row.get("entry_day")), False), (esc(row.get("symbol")), False), (esc(row.get("intent")), False), (_text(row.get("conviction"), "-"), False)]
+        for name in horizon_names:
+            cell = (row.get("horizons") or {}).get(name) or {}
+            cells.append((_pct(cell.get("return")) if cell.get("status") == "complete" else "—", True))
+        detail.append(cells)
+    sections.append("<h2>每檔股票明細</h2><details><summary>展開 %d 列</summary>%s</details>" % (
+        len(detail), _table(("決策日", "股票", "意圖", "信心", *("%s 日後報酬" % esc(name) for name in horizon_names)), detail)))
+
+    # 6. 怎麼讀（收合）與限制
+    sections.append("<h2>怎麼讀這份報告</h2><details><summary>展開</summary>" + _table(("名詞", "意思"), [
+        [("買進股平均報酬", False), ("AI 決定買進或加碼的股票，在決策後那段時間的平均報酬", False)],
+        [("交易池平均", False), ("同一天 150 檔候選股的平均報酬，當作「隨便買」的比較對象", False)],
+        [(benchmark, False), ("同一段時間買 %s 的報酬" % benchmark, False)],
+        [("買進股 − 池平均", False), ("大於 0 代表 AI 看好的股票比隨便買好", False)],
+        [("需要（天）", False), ("至少要這麼多個決策日到期才給平均與勝率，避免用太少資料誤導", False)],
+        [("注意", False), ("這只是用過去存檔的決策重算，不能證明 AI 判斷準不準；只有比賽期間的即時紀錄才算證據", False)],
+    ]) + "</details>")
+    skipped = [("未納入 %s：%s" % (item.get("run_id"), item.get("reason"))) for item in (provenance.get("selection") or {}).get("skipped") or []]
+    if skipped:
+        sections.append("<h3>未納入的決策</h3>" + _list(skipped))
+    return _page("回測報告：%s" % _taipei_date(inputs.get("as_of"), grid_id), "", sections, "")
 
 
 # ---------------------------------------------------------------- agent evaluation

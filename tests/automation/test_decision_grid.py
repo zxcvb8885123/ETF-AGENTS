@@ -234,7 +234,7 @@ class SaveAndVerifyTests(GridWorld):
         self.assertEqual(grid["evidence_grade"], "replay_reference_only")  # 對舊日期的重算，不是前瞻驗證
         html_path = run_dir.parent / "grid-test.html"
         self.assertTrue(html_path.exists())
-        self.assertIn("不構成對 LLM 判斷的前瞻驗證", html_path.read_text(encoding="utf-8"))
+        self.assertIn("回測報告：", html_path.read_text(encoding="utf-8"))
         manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(manifest["artifacts"]), ["grid"])
         result = verify_grid(self.tmp, grid_id)
@@ -298,8 +298,8 @@ class HtmlReportTests(GridWorld):
         self.assert_self_contained(page)
         self.assertNotIn("<img", page)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;&quot; onload=&quot;x", page)
-        self.assertIn("grid-verify --grid-id grid-x", page)
-        self.assertIn(body["content_sha256"], page)
+        self.assertNotIn("grid-verify", page)
+        self.assertNotIn(body["content_sha256"], page)
         self.assertIn("<svg", page)
         self.assertIn("信心等級", page)
 
@@ -307,7 +307,7 @@ class HtmlReportTests(GridWorld):
         self.build_world(2)
         page = render_grid_html(dict(self.grid(), grid_id="grid-small"))
         self.assert_self_contained(page)
-        self.assertIn("少於", page)
+        self.assertIn("先不下結論", page)
         self.assertNotIn("<svg", page)
 
     def test_replay_html_handles_empty_nav_and_escapes(self):
