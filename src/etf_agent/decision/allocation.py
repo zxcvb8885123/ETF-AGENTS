@@ -25,7 +25,7 @@ from .momentum import MomentumEngine
 from .sizing import (
     BUY_GAP_RESERVE, CASH_BUFFER_FLOOR, CASH_CEILING_FIX, CASH_FIT_ORDER, CONVICTION_LEVELS, FORCED_SWAP_CONFIRMATION,
     LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, SECTOR_FIT, SIZING_METHOD, STOCK_LIMIT_HEADROOM, TURNOVER_FIT, breadth_target,
-    buy_gap_reserve_rate, cash_fit_min_fill_ratio, conviction_weights, drawdown_derisk_fraction, reentry_blocked_symbols,
+    buy_gap_reserve_rate, cash_fit_min_fill_ratio, conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, reentry_blocked_symbols,
     validate_position_sizing,
 )
 
@@ -506,6 +506,19 @@ class AllocationOrderEngine:
             for symbol in sorted(intents)
             if intents[symbol] in {"buy", "add"} and symbol not in excluded
         ]
+        # drawdown_derisk v3：被減碼的持股不再是本次加碼候選，減碼後的股數就是上限；否則下面的
+        # `desired = max(current, desired)` 會把交易 Agent 標 add 的同一檔加回原持股，留下減碼旗標卻沒有賣單。
+        # 在名額與預算配置前就排除，減碼後的持股才會算進 held_outside、也不占換股名額。v1／v2 的舊 run 維持原重建行為。
+        if drawdown_derisk_v3(self.policy.get("position_sizing") or {}):
+            derisked = {str(flag["symbol"]) for flag in derisk_flags}
+            for symbol in candidates:
+                if symbol in derisked:
+                    constraint_flags.append({
+                        "symbol": symbol, "code": "RISK_DRAWDOWN",
+                        "detail": "防守姿態回撤減碼後的持股不再是本次加碼候選：減碼後的股數為上限，由程式不建立買單"
+                                  "（交易 Agent 的意圖未被改寫）",
+                    })
+            candidates = [symbol for symbol in candidates if symbol not in derisked]
         # 受限標的在分配資金前就排除，避免占用預算；否則 Guard 的 TRADABLE 會否決整份決策。
         for symbol in candidates:
             if symbol in untradable:
@@ -752,8 +765,10 @@ class AllocationOrderEngine:
         cap = hard_max if target is None else min(hard_max, max(target, int(self.policy["min_positions"])))
         held_count = len(current)
         released = max(0, held_count - len(active_symbols))
-        free = max(0, cap - held_count) + min(released, int(rotation["max_swaps_per_run"]))
-        need = min(len(wanted) - free, int(forced["max_swaps_per_run"]))
+        rotation_cap = int(rotation["max_swaps_per_run"])
+        free = max(0, cap - held_count) + min(released, rotation_cap)
+        # 換出會在後面的名額配對中被 rotation 的換股上限限制；換出數不得超過剩餘換股名額，否則變成只賣不換。
+        need = min(len(wanted) - free, int(forced["max_swaps_per_run"]), max(0, rotation_cap - min(released, rotation_cap)))
         if confirmation:
             need = min(need, len(active_symbols) - int(self.policy["min_positions"]))
         if need <= 0:
@@ -1337,7 +1352,8 @@ class AllocationOrderEngine:
         （cash_buffer_rate × NAV），由程式依（ATR14 高→低、信心低→高、代號）把持股按整張減碼到目標現金，一次最多賣出
         NAV × max_derisk_fraction；每檔記 RISK_DRAWDOWN，訂單意圖由程式標 trim／exit，不改寫交易 Agent 的意圖。
         不動不可交易、被留住的 exit、交易 Agent 已標 exit／trim 的持股；持股數不低於 min_positions（必要時留一張）。
-        省略閘門的舊 run 維持「防守姿態只停止買進、不降曝險」的原行為。"""
+        版本：v1 整張進位可超過單次上限；v2 進位不得超過；v3 另由 ``_run`` 把被減碼的持股排除在本次加碼候選外
+        （減碼後的股數為上限，交易 Agent 標 add 也不加回）。省略閘門的舊 run 維持「防守姿態只停止買進、不降曝險」的原行為。"""
         sizing = self.policy.get("position_sizing") or {}
         fraction = drawdown_derisk_fraction(sizing)
         if fraction is None or sizing.get("cash_stance") != "defensive":
@@ -1354,7 +1370,10 @@ class AllocationOrderEngine:
         shortfall = marked_nav * effective["cash_buffer_rate"] - projected_cash  # type: ignore[operator]
         if shortfall <= 0:
             return []
-        remaining = min(shortfall, marked_nav * fraction)
+        # 現金缺口可整張進位補足，但單次減碼總額（NAV × fraction）是硬上限：進位後不得超過剩餘預算。
+        budget_capped = drawdown_derisk_v2(sizing)  # v1 的舊 run 維持進位可超過上限的原行為
+        hard_budget = marked_nav * fraction
+        remaining = min(shortfall, hard_budget)
         tiers = sizing.get("conviction_by_symbol") or {}
         atr = self._atr_pct()
         minimum = int(self.policy["min_positions"])
@@ -1376,7 +1395,12 @@ class AllocationOrderEngine:
             if remaining <= 0:
                 break
             held_lots = target_shares[symbol] // lot
-            lots = min(int((remaining / (self.prices[symbol] * lot)).to_integral_value(rounding=ROUND_CEILING)), held_lots)
+            lot_value = self.prices[symbol] * lot
+            lots = min(
+                int((remaining / lot_value).to_integral_value(rounding=ROUND_CEILING)),
+                int((hard_budget / lot_value).to_integral_value(rounding=ROUND_FLOOR)) if budget_capped else held_lots,
+                held_lots,
+            )
             if lots >= held_lots and count <= minimum:
                 lots = held_lots - 1
             if lots <= 0:
@@ -1389,6 +1413,7 @@ class AllocationOrderEngine:
                 count -= 1
             order_intents[symbol] = "exit" if target_shares[symbol] == 0 else "trim"
             remaining -= proceeds
+            hard_budget -= lots * lot_value
             flags.append({
                 "symbol": symbol, "code": "RISK_DRAWDOWN",
                 "detail": "防守姿態回撤減碼：現金低於 %s 的姿態緩衝，由程式依 ATR14 由高到低減碼，股數由 %d 降為 %d"

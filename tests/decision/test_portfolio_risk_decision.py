@@ -910,6 +910,45 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             self.assertEqual(len(list((root / "runs").glob("*/cli-run/manifest.json"))), 1)
 
 
+class PriceEvidenceTimeTests(unittest.TestCase):
+    """行情證據時間與執行價成組驗證：雜湊重算正確也不能讓來源時間錯置或來源缺失通過。"""
+
+    def mutated(self, mutate):
+        from etf_agent.decision import DecisionInputValidator, canonical_sha256
+
+        bundle, *_ = valid_inputs()
+        mutate(bundle["snapshot"])
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        return DecisionInputValidator(bundle).validate()
+
+    def test_baseline_has_no_errors(self):
+        self.assertEqual(self.mutated(lambda snapshot: None), [])
+
+    def test_price_evidence_fetched_after_cutoff_is_rejected(self):
+        def mutate(snapshot):
+            row = snapshot["latest_prices"][0]
+            for item in snapshot["source_evidence"]:
+                if item["evidence_id"] == row["source_evidence_id"]:
+                    item["fetched_at"] = "2099-01-01T00:00:00+00:00"
+        self.assertTrue(any("晚於 decision_cutoff" in error for error in self.mutated(mutate)))
+
+    def test_unapproved_or_missing_execution_source_is_rejected(self):
+        def unapproved(snapshot):
+            row = snapshot["latest_prices"][0]
+            row["execution_close_price"] = row["close_price"]
+            row["execution_price_source"] = "UNAPPROVED"
+            row["execution_source_evidence_id"] = row["source_evidence_id"]
+        self.assertTrue(any("執行價來源" in error for error in self.mutated(unapproved)))
+
+        def missing_evidence(snapshot):
+            row = snapshot["latest_prices"][0]
+            row["execution_close_price"] = row["close_price"]
+            row["execution_price_source"] = "TWSE_STOCK_DAY"
+            row["execution_source_evidence_id"] = "price:does-not-exist"
+        self.assertTrue(any("執行價引用不存在" in error for error in self.mutated(missing_evidence)))
+
+
 class GuardTradingStatusPairTests(unittest.TestCase):
     """交易狀態包與可交易性評估必須成對；只缺其一或 Snapshot 只有計數時，Guard 建構階段（DecisionInputBundle 驗證）就拒絕，
     不會走到 fixture 清單分支而在迭代計數時丟 TypeError。"""

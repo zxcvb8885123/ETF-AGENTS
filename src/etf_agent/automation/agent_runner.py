@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import json
 import math
 import os
@@ -108,9 +109,19 @@ def _secret_values(project_root: Path) -> list[str]:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
-            value = line.split("=", 1)[1].strip().strip("'\"")
-            if len(value) >= _MIN_SECRET_LENGTH:
-                values.append(value)
+            raw = line.split("=", 1)[1].strip()
+            candidates = {raw.strip("'\"")}
+            if raw[:1] in ("'", '"'):
+                # 帶引號的值：取到對應的結尾引號，後面的行尾註解不算值。
+                end = raw.find(raw[0], 1)
+                if end > 0:
+                    candidates.add(raw[1:end])
+            else:
+                # 未加引號：空白後的 # 是行尾註解。
+                candidates.add(re.split(r"\s+#", raw, maxsplit=1)[0].strip())
+            for value in candidates:
+                if len(value) >= _MIN_SECRET_LENGTH:
+                    values.append(value)
     return values
 
 

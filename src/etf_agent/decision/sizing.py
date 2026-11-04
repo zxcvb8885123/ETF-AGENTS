@@ -97,7 +97,13 @@ REENTRY_COOLDOWN_FIELDS = {"version", "days", "blocked_symbols", "source_run_ids
 # 2026-11-03 後新增（drawdown_derisk 版本閘門）：現金姿態為 defensive 時由程式依 ATR14 由高到低、信心低到高把持股減碼到
 # 姿態現金緩衝（RISK_DRAWDOWN，一次最多 NAV × max_derisk_fraction，預設 0.25）；配置預算 ≤ 0 時旗標改為 CASH_BUFFER；
 # drawdown_control 另需 release_neutral_below／release_defensive_below 兩個解除門檻（hysteresis）。省略此欄位的舊 run 不減碼。
+# v2（2026-11-04，只由人設定）：整張進位不得超過單次減碼硬上限。
+# v3：v2 再加「被減碼的持股不再是本次加碼候選」——減碼後的股數是上限，交易 Agent 標 add 的同一檔不得加回
+#（v1／v2 會加回原持股，留下 RISK_DRAWDOWN 旗標卻沒有賣單）。v1 維持原重建行為。
 DRAWDOWN_DERISK_VERSION = "v1"
+DRAWDOWN_DERISK_VERSION_V2 = "v2"
+DRAWDOWN_DERISK_VERSION_V3 = "v3"
+DRAWDOWN_DERISK_VERSIONS = (DRAWDOWN_DERISK_VERSION, DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3)
 DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction"}
 DRAWDOWN_DERISK_FRACTION = Decimal("0.25")
 
@@ -210,8 +216,8 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
             errors.append("position_sizing.drawdown_derisk 必須是物件")
         else:
             reject_unknown_fields(derisk, DRAWDOWN_DERISK_FIELDS, "position_sizing.drawdown_derisk", errors)
-            if derisk.get("version") != DRAWDOWN_DERISK_VERSION:
-                errors.append("position_sizing.drawdown_derisk.version 只允許 %s" % DRAWDOWN_DERISK_VERSION)
+            if derisk.get("version") not in DRAWDOWN_DERISK_VERSIONS:
+                errors.append("position_sizing.drawdown_derisk.version 只允許 %s" % "／".join(DRAWDOWN_DERISK_VERSIONS))
             if "max_derisk_fraction" in derisk:
                 try:
                     fraction = decimal_value(derisk["max_derisk_fraction"], "position_sizing.drawdown_derisk.max_derisk_fraction")
@@ -266,6 +272,18 @@ def drawdown_derisk_fraction(sizing: Mapping[str, object]) -> Optional[Decimal]:
     if "max_derisk_fraction" in derisk:
         return decimal_value(derisk["max_derisk_fraction"], "position_sizing.drawdown_derisk.max_derisk_fraction")
     return DRAWDOWN_DERISK_FRACTION
+
+
+def drawdown_derisk_v2(sizing: Mapping[str, object]) -> bool:
+    """drawdown_derisk 為 v2 以上（整張進位不得超過單次減碼硬上限）；v1 或沒有閘門回 False。"""
+    derisk = sizing.get("drawdown_derisk")
+    return isinstance(derisk, Mapping) and derisk.get("version") in (DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3)
+
+
+def drawdown_derisk_v3(sizing: Mapping[str, object]) -> bool:
+    """drawdown_derisk 為 v3（減碼後股數為上限，同檔 add 不得加回）；其餘回 False。"""
+    derisk = sizing.get("drawdown_derisk")
+    return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V3
 
 
 def reentry_blocked_symbols(sizing: Mapping[str, object]) -> Optional[List[str]]:

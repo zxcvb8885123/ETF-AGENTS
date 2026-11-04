@@ -8,7 +8,8 @@
 - 該 run 最終 ``decision.orders`` 中 ``side=sell`` 且訂單意圖為 ``exit``／``forced_exit``（含程式強制換股、風控減至零）的股票。
 
 這是決策層的出場紀錄（不是帳本實際成交）；主辦方作廢整批時該股仍在冷卻名單內，屬保守方向。
-找不到決策庫或沒有符合的 run 時綁空名單，不是錯誤。
+沒有決策庫或沒有符合的 run 時綁空名單，不是錯誤（已驗證無歷史）；但 run 存在而 decision.json 損壞、時間無效或
+manifest 驗證失敗時一律拒絕（歷史無法驗證不等於沒有出場紀錄，否則冷卻會被悄悄解除）。
 """
 
 from __future__ import annotations
@@ -40,12 +41,16 @@ def recent_exit_symbols(repository_root: Optional[Path], bundle: Mapping[str, ob
     run_ids: set = set()
     for run_dir in list_run_dirs(Path(repository_root)):
         decision = _read_run_json(run_dir, "decision")
-        if decision is None or decision.get("status") != "approved":
+        if decision is None:
+            if (run_dir / "decision.json").exists():
+                raise DecisionToolError("再進場冷卻無法讀取決策庫 run 的 decision.json：%s" % run_dir.name)
+            continue  # 尚未產出 decision 的未完成 run 不構成出場紀錄。
+        if decision.get("status") != "approved":
             continue
         try:
             prior_cutoff = parse_time(decision.get("decision_cutoff"), "decision_cutoff")
-        except DecisionToolError:
-            continue
+        except DecisionToolError as error:
+            raise DecisionToolError("再進場冷卻遇到 cutoff 無效的 approved run %s：%s" % (run_dir.name, error)) from error
         if prior_cutoff >= cutoff:
             continue
         prior_bundle = _read_run_json(run_dir, "decision_input")
@@ -59,6 +64,9 @@ def recent_exit_symbols(repository_root: Optional[Path], bundle: Mapping[str, ob
             continue
         if not (prior_session < session_start and session_start - prior_session <= timedelta(days=days)):
             continue
+        from .finalization import DecisionRepository  # 延後匯入：finalization 也匯入本模組鏈。
+
+        DecisionRepository(Path(repository_root)).verify(run_dir.name)  # manifest 不符即拒絕，不默默略過。
         exited = {
             str(order.get("symbol", "")).upper()
             for order in decision.get("orders", [])

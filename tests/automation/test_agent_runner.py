@@ -181,6 +181,15 @@ class SensitiveReadTests(unittest.TestCase):
             self.assertNotIn("tok-abcdef123456", str(raised.exception))
             reject_secret_leak("trader_b0", {"rationale": "持股 501 張"}, root)
 
+    def test_env_values_with_trailing_comments_are_still_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text(
+                "TOKEN_A=abcdefgh12345678 # 行尾註解\nTOKEN_B='quoted-abcdef1234' # 註解\n", encoding="utf-8")
+            for leaked in ("abcdefgh12345678", "quoted-abcdef1234"):
+                with self.assertRaises(DailyPipelineError):
+                    reject_secret_leak("trader_b0", {"rationale": "洩漏 " + leaked}, root)
+
     def test_env_variants_are_scanned_for_leaks(self):
         from etf_agent.automation.agent_runner import scrub_secrets
 

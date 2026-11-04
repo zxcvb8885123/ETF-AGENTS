@@ -48,6 +48,8 @@ def day_bundle(cutoff, trade_date, price_2330, price_2317):
     for row in snapshot["latest_prices"]:
         price = prices[row["symbol"]]
         row.update(trade_date=trade_date, close_price=price, analysis_close_price=price, execution_close_price=price)
+        # 執行價必須成組：官方來源加上存在於 source_evidence 的證據（輸入驗證會核對）。
+        row.update(execution_price_source="TWSE_STOCK_DAY", execution_source_evidence_id=row["source_evidence_id"])
     target = date.fromisoformat(trade_date)
     for series in bundle["price_series"]:
         bars = series["bars"]
