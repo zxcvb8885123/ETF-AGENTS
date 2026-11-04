@@ -74,7 +74,7 @@ class AgentEvaluationTests(unittest.TestCase):
         self.assertIn("Content-Security-Policy", page)
         for forbidden in ("<script", "http://", "https://", "url(", "<link", "<iframe"):
             self.assertNotIn(forbidden, page)
-        self.assertIn(manifest["eval_id"], page)
+        self.assertIn("評測報告：", page)
 
     def test_resume_reruns_only_unfinished_repeats_and_reuses_validated_outputs(self):
         suite = build_suite(self.root, "fixture")

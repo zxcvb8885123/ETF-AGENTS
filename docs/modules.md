@@ -1,10 +1,40 @@
 # 模組總覽
 
-`src/etf_agent/` 下 15 個子套件的職責、相依關係與各自 README 的索引。每日決策鏈的流程與契約見 [architecture.md](architecture.md)；開發規則見 [AGENTS.md](../AGENTS.md)。
+`src/etf_agent/` 底下有 17 個套件。這份文件說明每個套件做什麼、誰依賴誰、改動時要注意什麼。每日決策流程見[每日決策架構](architecture.md)，開發規則見 [AGENTS.md](../AGENTS.md)。
 
-## 依賴圖
+## 套件分工
 
-箭頭 `A --> B` 表示 A 的程式 import B（含函式內的延遲 import；以 AST 掃描 `src/etf_agent/` 全部 `.py` 的結果為準）。為避免版面雜亂，圖中省略對 `core` 的箭頭：除 `dashboard` 外，其餘 13 個子套件都 import `core`，`core` 本身不依賴其他子套件。
+| 套件 | 做什麼 | 說明文件 | 主要入口 |
+| --- | --- | --- | --- |
+| `core` | 共用基礎：雜湊、時間、數值、不可變封存 | [core](../src/etf_agent/core/README.md) | 被所有套件使用 |
+| `data` | 收集並版本化行情與公司資料，建立研究快照 | [data](../src/etf_agent/data/README.md) | `cli/data_agent.py`、`scripts/collect_*.py` |
+| `fundamentals` | 由財報確定性計算基本面指標並驗證 | [fundamentals](../src/etf_agent/fundamentals/README.md) | `cli/fundamental_research.py` |
+| `perception` | 市場情緒、全市場新聞、個股新聞、恐懼貪婪指標、隔夜背景 | [perception](../src/etf_agent/perception/README.md) | `cli/market_news.py`、`cli/market_fear_greed.py`、`cli/company_news.py`、`cli/overnight_market.py` |
+| `research` | 獨立的事件研究（四個子 Agent 辯論）與跨市場離線研究，不在每日決策鏈 | [research](../src/etf_agent/research/README.md) | `cli/event_research.py` |
+| `reporting` | 研究報告：整合已驗證結果並重建驗證 | [reporting](../src/etf_agent/reporting/README.md) | `cli/research_report.py` |
+| `decision` | 分析團隊、多空研究、交易、配置、風控與最終決策封存 | [decision](../src/etf_agent/decision/README.md) | `cli/portfolio_decision.py` |
+| `automation` | 每日決策鏈編排：呼叫子 Agent、重試、分批合併 | [automation](../src/etf_agent/automation/README.md) | `scripts/run_daily_pipeline.py`（`./start.sh run`） |
+| `decision_delivery` | 風控後的中文報告與 latest 索引 | [decision_delivery](../src/etf_agent/decision_delivery/README.md) | `cli/decision_delivery.py` |
+| `competition` | D-Plan 整理、匯出、備援候選 | [competition](../src/etf_agent/competition/README.md) | `cli/dplan.py` |
+| `ledger` | 整張成交模擬與現金帳務 | [ledger](../src/etf_agent/ledger/README.md) | 由 `virtual_account` 使用 |
+| `virtual_account` | 虛擬帳戶開帳、每日快照、結算 | [virtual_account](../src/etf_agent/virtual_account/README.md) | `cli/virtual_account.py` |
+| `dashboard` | 唯讀績效儀表板 | [dashboard](../src/etf_agent/dashboard/README.md) | `cli/dashboard.py`（`./start.sh`） |
+| `benchmark` | 帳戶對 0050、交易池等權買入持有的基準比較 | [benchmark](../src/etf_agent/benchmark/README.md) | `cli/benchmark.py` |
+| `calibration` | 校準旁觀者：事後檢查信心等級準不準 | [calibration](../src/etf_agent/calibration/README.md) | `cli/calibration.py` |
+| `evaluation` | Agent 評測、多日回放與回測格子 | [evaluation](../src/etf_agent/evaluation/README.md) | `cli/agent_eval.py`、`cli/policy_replay.py` |
+| `strategy_reflection` | 每週策略反思：提出調整建議，驗證後才改設定 | [strategy_reflection](../src/etf_agent/strategy_reflection/README.md) | `cli/strategy_reflection.py` |
+
+## 分層：誰可以做什麼
+
+- 基礎層（`core`）：與市場無關。
+- 資料與研究輸入層（`data`、`fundamentals`、`perception`、`research`、`reporting`）：只提供事實、來源證據與驗證，不產生權重或訂單。
+- 決策層（`decision`、`automation`）：程式負責所有數字；子 Agent 只輸出解讀、論點、意圖與信心等級。
+- 決策之後（`decision_delivery`、`competition`、`virtual_account`、`ledger`、`dashboard`、`benchmark`）：交付、模擬帳務、呈現與比較。不自動下單或送件，基準比較也不回饋到決策。
+- 旁觀者（`calibration`、`evaluation`、`strategy_reflection`）：事後檢查與提出建議，不在每日決策鏈上。`decision/`、`automation/` 不得匯入 `strategy_reflection`，也不得匯入 `evaluation` 的回測格子與 HTML 報告。
+
+## 誰依賴誰
+
+箭頭 `A --> B` 表示 A 的程式有匯入 B（含函式內延遲匯入，以掃描 `src/etf_agent/` 的結果為準）。為了版面乾淨，省略所有指向 `core` 的箭頭；除 `core` 本身外，每個套件都依賴它（`dashboard` 只透過其他套件間接使用）。
 
 ```mermaid
 flowchart TD
@@ -14,12 +44,13 @@ flowchart TD
     automation --> research
     automation --> virtual_account
 
+    competition --> data
     competition --> decision
     competition --> virtual_account
 
+    dashboard --> benchmark
     dashboard --> decision
     dashboard --> virtual_account
-    dashboard --> benchmark
 
     benchmark --> dashboard
     benchmark --> data
@@ -33,54 +64,51 @@ flowchart TD
 
     decision_delivery --> competition
     decision_delivery --> decision
+    decision_delivery --> virtual_account
 
     perception --> data
     perception --> decision
 
+    research --> calibration
     research --> data
+    research --> perception
 
+    virtual_account --> competition
     virtual_account --> data
     virtual_account --> decision
     virtual_account --> ledger
 
-    core["core（被除 dashboard 外的所有套件引用）"]
-    reporting["reporting（只依賴 core）"]
+    calibration --> virtual_account
+
+    evaluation --> calibration
+    evaluation --> data
+    evaluation --> decision
+    evaluation --> ledger
+    evaluation --> virtual_account
+
+    strategy_reflection --> automation
+    strategy_reflection --> benchmark
+    strategy_reflection --> calibration
+    strategy_reflection --> data
+    strategy_reflection --> decision
+    strategy_reflection --> evaluation
+    strategy_reflection --> virtual_account
 ```
 
-說明：
+需要小心的地方：
 
-- `decision` 與 `perception` 互相 import：`decision`（`analysts.py`、`input_validator.py`、`market_scope.py`）用 `perception`。
-- `perception.market_news.service` 與 `perception.market_fear_greed.service` 用 `decision.contracts.decision_bundle_sha256`；改動這兩個套件時需檢查循環 import。
-- `data`、`fundamentals`、`ledger`、`reporting` 只依賴 `core`。
-- `reporting` 沒有其他子套件 import，圖中以獨立節點表示。
-- `reporting` 的輸入 artifact 由 CLI 以檔案傳入。
-- `dashboard.app` 以函式內延遲 import 使用 `benchmark`，`benchmark.service` 則 import `dashboard.performance` 取帳戶 NAV 序列；`dashboard/__init__.py` 不 import `app`，因此沒有循環。
+- `decision` 與 `perception` 互相匯入；改動這兩個套件時要檢查有沒有循環匯入。
+- `benchmark` 與 `dashboard` 也互相匯入，但 `dashboard` 是在函式內才匯入 `benchmark`，所以沒有循環。
+- `virtual_account` 與 `competition` 之間也有互相匯入，改動時同樣先確認匯入順序。
+- `data`、`fundamentals`、`ledger`、`reporting` 只依賴 `core`；`reporting` 的輸入檔由命令列以檔案傳入。
 
-## 各套件 README
+## 每日資料與產物怎麼流動
 
-| 套件 | 職責（一句話） | README | 主要入口 |
-| --- | --- | --- | --- |
-| `core` | 雜湊、時間、Decimal、不可變 run 封存與 run 佈局等共用基礎 | [core/README.md](../src/etf_agent/core/README.md) | 被所有套件引用 |
-| `data` | 行情與公司資料收集、版本化、交易狀態與日曆、`ResearchSnapshot` | [data/README.md](../src/etf_agent/data/README.md) | `cli/data_agent.py`、`scripts/collect_*.py` |
-| `fundamentals` | 由 Snapshot 財報確定性計算基本面指標並驗證 | [fundamentals/README.md](../src/etf_agent/fundamentals/README.md) | `cli/fundamental_research.py` |
-| `perception` | 市場情緒、新聞候選核對、全市場新聞、恐懼貪婪指標與個股新聞（`company_news/`，只進公司事件） | [perception/README.md](../src/etf_agent/perception/README.md) | `cli/sentiment_research.py`、`cli/news_sentiment.py`、`cli/market_news.py`、`cli/market_fear_greed.py`、`cli/company_news.py` |
-| `research` | Event Research Agent（獨立研究與舊封存），四子 Agent 辯論驗證 | [research/README.md](../src/etf_agent/research/README.md) | `cli/event_research.py` |
-| `reporting` | Research Report V0：同源 JSON／Markdown 與重建驗證 | [reporting/README.md](../src/etf_agent/reporting/README.md) | `cli/research_report.py` |
-| `decision` | 分析團隊、多空研究、交易、配置、風控與最終決策封存 | [decision/README.md](../src/etf_agent/decision/README.md) | `cli/portfolio_decision.py` |
-| `automation` | 每日決策鏈編排、子 Agent runner、分批合併與預檢 | [automation/README.md](../src/etf_agent/automation/README.md) | `scripts/run_daily_pipeline.py`（`./start.sh run`） |
-| `decision_delivery` | 風控後中文 JSON／Markdown 最終交付與 latest 索引 | [decision_delivery/README.md](../src/etf_agent/decision_delivery/README.md) | `cli/decision_delivery.py` |
-| `competition` | D-Plan v4.3 context 整理、候選匯出與本地驗證 | [competition/README.md](../src/etf_agent/competition/README.md) | `cli/dplan.py` |
-| `ledger` | 整張成交模擬與交易日現金帳務 | [ledger/README.md](../src/etf_agent/ledger/README.md) | 由 `virtual_account` 使用 |
-| `virtual_account` | 虛擬帳戶初始化、每日快照、結算與決策套用 | [virtual_account/README.md](../src/etf_agent/virtual_account/README.md) | `cli/virtual_account.py` |
-| `evaluation` | Agent 評測（資料抓齊率、評測集重跑與斷點續跑、一致度／穩定度）、零 token 的多日 Policy 回放與回測格子（run × symbol，對交易池平均與對 0050.TW 兩種超額報酬並列）、一頁自包含 HTML 報告；不入決策鏈，`decision/`、`automation/`、`strategy_reflection/` 不得匯入 `grid`／`html_report` | [evaluation/README.md](../src/etf_agent/evaluation/README.md) | `cli/agent_eval.py`、`cli/policy_replay.py` |
-| `dashboard` | 唯讀績效儀表板（FastAPI），含 `/api/benchmarks` | [dashboard/README.md](../src/etf_agent/dashboard/README.md) | `cli/dashboard.py`（`./start.sh`） |
-| `benchmark` | 帳戶對 0050／交易池等權買入持有的基準比較：同本金、同費稅、官方成交均價買進、官方收盤價估值、as-of 版本 | [benchmark/README.md](../src/etf_agent/benchmark/README.md) | `cli/benchmark.py`、`cli/dashboard.py` |
-
-## 每日資料與決策流向
+這張圖畫的是資料與檔案的流向，跟上面的匯入圖不同。
 
 ```mermaid
 flowchart LR
-    data[(data<br/>var/etf_agent.db<br/>ResearchSnapshot)] --> automation
+    data[(data<br/>資料庫與研究快照)] --> automation
     perception -. 選配 .-> automation
     automation --> decision
     decision --> store[(artifacts/decisions)]
@@ -94,14 +122,6 @@ flowchart LR
     competition --> dplan[(artifacts/competition_d_plan)]
 ```
 
-- 此圖是資料與產物的流向，與上方 import 圖不同。
-- 例：帳本快照由 `virtual_account` 產生後提供給 `automation` 與 `decision` 作為輸入，import 方向則是 `automation --> virtual_account`。
+例：帳本快照由 `virtual_account` 產生後，交給 `automation` 當決策輸入（資料流向），而匯入方向是 `automation` 匯入 `virtual_account`。
 
-## 分層與邊界
-
-- `core`：與市場無關的基礎。
-- `data`、`fundamentals`、`perception`、`research`、`reporting`：資料與研究輸入，只提供事實、來源證據與驗證，不產生權重或訂單。
-- `decision`、`automation`：決策與編排；確定性程式負責數字，子 Agent 只輸出解讀、論點、意圖與信心等級。
-- `decision_delivery`、`competition`、`virtual_account`、`ledger`、`dashboard`、`benchmark`：決策之後的交付、模擬帳務、呈現與基準比較；不自動下單或送件，基準比較也不回饋到決策。
-
-新增或調整套件邊界、契約或開發順序時，同步更新本文件、[README.md](../README.md) 與相關 `docs/`。
+新增或調整套件邊界時，同步更新本文件、[根目錄 README](../README.md) 與相關 `docs/`。

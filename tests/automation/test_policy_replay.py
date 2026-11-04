@@ -156,7 +156,7 @@ class PolicyReplayTests(unittest.TestCase):
         page = (run_dir.parent / "replay-test.html").read_text(encoding="utf-8")
         self.assertIn("Content-Security-Policy", page)
         self.assertNotIn("<script", page)
-        self.assertIn(report["content_sha256"], page)
+        self.assertIn("策略重算報告：", page)
         self.assertTrue((run_dir / "d01_proposal.json").exists())
         result = verify_replay(self.root, replay_id)
         self.assertTrue(result["valid"], result["errors"])

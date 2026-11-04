@@ -234,7 +234,7 @@ class SaveAndVerifyTests(GridWorld):
         self.assertEqual(grid["evidence_grade"], "replay_reference_only")  # 對舊日期的重算，不是前瞻驗證
         html_path = run_dir.parent / "grid-test.html"
         self.assertTrue(html_path.exists())
-        self.assertIn("不構成對 LLM 判斷的前瞻驗證", html_path.read_text(encoding="utf-8"))
+        self.assertIn("回測報告：", html_path.read_text(encoding="utf-8"))
         manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(manifest["artifacts"]), ["grid"])
         result = verify_grid(self.tmp, grid_id)
@@ -298,8 +298,8 @@ class HtmlReportTests(GridWorld):
         self.assert_self_contained(page)
         self.assertNotIn("<img", page)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;&quot; onload=&quot;x", page)
-        self.assertIn("grid-verify --grid-id grid-x", page)
-        self.assertIn(body["content_sha256"], page)
+        self.assertNotIn("grid-verify", page)
+        self.assertNotIn(body["content_sha256"], page)
         self.assertIn("<svg", page)
         self.assertIn("信心等級", page)
 
@@ -307,7 +307,7 @@ class HtmlReportTests(GridWorld):
         self.build_world(2)
         page = render_grid_html(dict(self.grid(), grid_id="grid-small"))
         self.assert_self_contained(page)
-        self.assertIn("少於", page)
+        self.assertIn("先不下結論", page)
         self.assertNotIn("<svg", page)
 
     def test_replay_html_handles_empty_nav_and_escapes(self):
@@ -326,9 +326,9 @@ class HtmlReportTests(GridWorld):
         page = render_replay_html(report)
         self.assert_self_contained(page)
         self.assertIn("無圖", page)
-        self.assertIn("&lt;run&gt;", page)
-        self.assertNotIn("<run>", page)
-        self.assertIn("verify --replay-id replay-&lt;x&gt;", page)
+        self.assertIn("&lt;價格&gt;", page)
+        self.assertNotIn("<價格>", page)
+        self.assertNotIn("verify --replay-id", page)
 
     def test_eval_html_renders_without_answers(self):
         report = {"eval_id": "eval-<1>", "suite": "s", "repeats": 1, "stop_after": "full", "generated_at": "now",
@@ -341,7 +341,7 @@ class HtmlReportTests(GridWorld):
         self.assert_self_contained(page)
         self.assertIn("&lt;case&gt;", page)
         self.assertIn("還沒有任何考卷的股價到齊", page)
-        self.assertIn("report --eval-id eval-&lt;1&gt;", page)
+        self.assertNotIn("report --eval-id", page)
 
     def test_charts_fail_closed_without_points(self):
         self.assertIn("無圖", line_chart_svg([], "NAV"))

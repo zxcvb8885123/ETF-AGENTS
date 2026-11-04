@@ -14,7 +14,7 @@
 
 「相同」只表示和當時那次一樣，不代表對錯。答案隨時間自己長出來：價格沒到齊的 horizon 標 pending，之後再跑 `report` 就會更新。回放、格子與評測報告旁各有一頁自包含 HTML（衍生品，不進 manifest）。
 
-**證據等級**：回放、格子與評測重跑都只是對舊日期的重算——回放固定已封存的 Agent 意圖重算確定性配置，重跑讓模型重看它可能已在訓練資料裡看過的日期——不構成對 LLM 判斷的前瞻驗證。所有這類報告的 JSON 帶 `evidence_grade: "replay_reference_only"`，Markdown／HTML 首段固定寫「僅供參考：回放使用已封存的 Agent 意圖，不構成對 LLM 判斷的前瞻驗證；只有比賽期間的即時紀錄才算證據」（常數在 `calibration.contracts.REPLAY_NOTICE`）。舊封存報告沒有這兩個欄位，`verify` 不比對它們。
+**證據等級**：回放、格子與評測重跑都只是對舊日期的重算——回放固定已封存的 Agent 意圖重算確定性配置，重跑讓模型重看它可能已在訓練資料裡看過的日期——不構成對 LLM 判斷的前瞻驗證。所有這類報告的 JSON 帶 `evidence_grade: "replay_reference_only"`，Markdown 首段固定寫「僅供參考：回放使用已封存的 Agent 意圖，不構成對 LLM 判斷的前瞻驗證；只有比賽期間的即時紀錄才算證據」（常數在 `calibration.contracts.REPLAY_NOTICE`）。舊封存報告沒有這兩個欄位，`verify` 不比對它們。
 
 ## 檔案清單
 
@@ -88,7 +88,7 @@
 
 ## 一頁 HTML 報告
 
-`save_replay`、`save_grid` 與 `evaluate` 會在 JSON 旁寫 `<replay_id>.html`、`<grid_id>.html`、`report.html`：純標準庫產生，inline SVG（NAV 折線、分組平均超額長條）與 inline style，不含 script、外連資源、`url(`、`<link>`、`<iframe>`，頁首帶 CSP meta（`default-src 'none'`），所有來自 JSON 的文字一律 `html.escape`。它只排版、不重算：NAV 少於兩點或沒有可畫的分組平均時顯示「無圖」；頁尾印 JSON 的 `content_sha256` 與重算驗證指令。HTML 是衍生品，寫在不可變 run 目錄**旁邊**、不進 manifest，可隨時由 JSON 重新產生。
+`save_replay`、`save_grid` 與 `evaluate` 會在 JSON 旁寫 `<replay_id>.html`、`<grid_id>.html`、`report.html`：純標準庫產生，inline SVG（NAV 折線、分組平均超額長條）與 inline style，不含 script、外連資源、`url(`、`<link>`、`<iframe>`，頁首帶 CSP meta（`default-src 'none'`），所有來自 JSON 的文字一律 `html.escape`。它只排版、不重算：NAV 少於兩點或沒有可畫的分組平均時顯示「無圖」；三種 HTML（回測格子、策略重算、評測）為了好讀，都不附頁尾指紋與重算指令、也不放提醒首段，標題用報告日期；回測格子的提醒改為「怎麼讀這份報告」的一條說明（驗證請用 JSON 與 CLI 的 verify）。HTML 是衍生品，寫在不可變 run 目錄**旁邊**、不進 manifest，可隨時由 JSON 重新產生。
 
 ## 便宜版回測（多日 Policy 回放，零 token）
 

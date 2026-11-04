@@ -8,6 +8,7 @@
 import argparse
 import json
 import sys
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -35,24 +36,54 @@ def _pct(value: Optional[str]) -> str:
     return "—" if value is None else "%+.2f%%" % (float(value) * 100)
 
 
+def _width(text: str) -> int:
+    """終端機顯示寬度：中文字與全形符號佔 2 格。"""
+    return sum(2 if unicodedata.east_asian_width(char) in ("W", "F") else 1 for char in text)
+
+
+def _pad(text: str, width: int, right: bool = False) -> str:
+    gap = " " * max(width - _width(text), 0)
+    return gap + text if right else text + gap
+
+
+def _nav(value: Optional[str]) -> str:
+    try:
+        return "{:,.0f}".format(float(value))
+    except (TypeError, ValueError):
+        return "—"
+
+
 def _table(result: dict) -> str:
-    lines = ["帳戶 %s｜as-of %s｜起始日 %s｜交易日 %d" % (result["account_id"], result["as_of"], result.get("start_date") or "—", result["trading_days"])]
+    headers = ("項目", "最新交易日", "NAV", "累積報酬", "超額報酬", "最大回撤", "相對回撤")
     account = result["account"]
-    lines.append("%-22s %-12s %18s %10s %10s %10s %10s" % ("項目", "最新交易日", "NAV", "累積報酬", "超額報酬", "最大回撤", "相對回撤"))
-    lines.append("%-22s %-12s %18s %10s %10s %10s %10s" % ("帳戶", account["latest_trade_date"], account["nav"], _pct(account["cumulative_return"]), "—", _pct(account["max_drawdown"]), "—"))
+    rows = [("帳戶", account["latest_trade_date"], _nav(account["nav"]), _pct(account["cumulative_return"]), "—", _pct(account["max_drawdown"]), "—")]
+    notes = []
     for item in result["benchmarks"]:
         if item["status"] != "ok":
-            lines.append("%-22s unavailable：%s" % (item["label"], item["reason"]))
+            rows.append((item["label"], "unavailable", "—", "—", "—", "—", "—"))
+            notes.append("%s unavailable：%s" % (item["label"], item["reason"]))
             continue
         latest = item["latest"] or {}
         comparison = item.get("comparison") or {}
-        lines.append("%-22s %-12s %18s %10s %10s %10s %10s" % (
-            item["label"], latest.get("trade_date", "—"), latest.get("nav", "—"), _pct(latest.get("cumulative_return")),
+        rows.append((
+            item["label"], latest.get("trade_date", "—"), _nav(latest.get("nav")), _pct(latest.get("cumulative_return")),
             _pct(comparison.get("excess_return")), _pct(item["max_drawdown"]), _pct(comparison.get("relative_drawdown"))))
         if comparison.get("status") == "ok":
-            lines.append("    超額報酬與相對回撤取雙方都有估值的 %s（%d 個對齊點）" % (comparison["trade_date"], comparison["aligned_days"]))
+            notes.append("%s：超額報酬與相對回撤取雙方都有估值的 %s（%d 個對齊點）" % (item["label"], comparison["trade_date"], comparison["aligned_days"]))
         else:
-            lines.append("    超額報酬 unavailable：%s" % comparison.get("reason"))
+            notes.append("%s：超額報酬 unavailable：%s" % (item["label"], comparison.get("reason")))
+    widths = [max(_width(row[i]) for row in [headers] + rows) for i in range(len(headers))]
+
+    def render(row) -> str:
+        return "  ".join(_pad(cell, widths[i], right=i >= 2) for i, cell in enumerate(row))
+
+    lines = ["帳戶 %s｜as-of %s｜起始日 %s｜交易日 %d" % (result["account_id"], result["as_of"], result.get("start_date") or "—", result["trading_days"]), ""]
+    lines.append(render(headers))
+    lines.append("  ".join("-" * width for width in widths))
+    lines.extend(render(row) for row in rows)
+    if notes:
+        lines.append("")
+        lines.extend("註：" + note for note in notes)
     return "\n".join(lines)
 
 
