@@ -32,6 +32,12 @@ def history_start(today: date, years: int) -> date:
     return date(today.year - years, 1, 1)
 
 
+def recent_update_start(today: date) -> date:
+    """日常更新的起日：涵蓋最近兩個季末（財報期別），歷史早已補過，不必每天重抓一年多。"""
+    anchor = today - timedelta(days=150)
+    return date(anchor.year, 3 * ((anchor.month - 1) // 3) + 1, 1)
+
+
 def load_state(path: Path) -> Dict[str, Dict[str, str]]:
     try:
         state = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -61,7 +67,7 @@ def plan(state: Dict[str, Dict[str, str]], dataset: str, today: date, *,
     if in_filing_window(today):
         if last_done >= today:
             return {"action": "skip", "start": None, "reason": "今天已更新過"}
-        return {"action": "update", "start": date(today.year - 1, 1, 1).isoformat(), "reason": "財報公布區間內"}
+        return {"action": "update", "start": recent_update_start(today).isoformat(), "reason": "財報公布區間內（只更新最近兩季）"}
     return {"action": "skip", "start": None, "reason": "不在財報公布區間"}
 
 

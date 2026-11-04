@@ -7,6 +7,8 @@ import math
 import os
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Protocol, Sequence, Tuple
@@ -200,7 +202,7 @@ class ClaudeAgentRunner:
     def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
         command = [
             self.executable, "-p", task.prompt,
-            "--output-format", "json",
+            "--output-format", "stream-json", "--verbose",
             "--json-schema", json.dumps(task.schema, ensure_ascii=False),
             "--tools", "Read",
             "--strict-mcp-config",  # 不載入使用者的 MCP 外掛；每次呼叫約少 4 萬 token 的固定開銷
@@ -210,10 +212,10 @@ class ClaudeAgentRunner:
         ]
         if self.model:
             command += ["--model", self.model]
+        trace_path = self.project_root / "var" / "logs" / "agent_trace" / run_dir.name / ("%s.jsonl" % task.name)
         try:
-            completed = subprocess.run(
-                command, cwd=self.project_root, capture_output=True, text=True,
-                timeout=self.timeout_seconds, check=False,
+            completed = _run_claude_streaming(
+                command, self.project_root, self.timeout_seconds, trace_path, self.project_root,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise TransientAgentError("%s Agent 執行失敗：%s" % (task.name, error)) from error
@@ -231,6 +233,91 @@ class ClaudeAgentRunner:
                 task.name, completed.returncode, scrub_secrets(str(payload.get("result"))[:500], self.project_root)))
         reject_secret_leak(task.name, output, self.project_root)
         return AgentCall(task.name, 0, output, float(payload.get("total_cost_usd") or 0.0), _claude_usage_tokens(payload))
+
+
+def _trace_summary(event: Mapping[str, object], elapsed: float) -> Dict[str, object]:
+    """把串流事件縮成一行：只留類型、時間與工具名稱／限流資訊，不存模型文字或讀到的內容。"""
+    row: Dict[str, object] = {"t": round(elapsed, 1), "type": event.get("type")}
+    if event.get("subtype"):
+        row["subtype"] = event.get("subtype")
+    if event.get("type") == "system" and event.get("subtype") == "thinking_tokens":
+        row["estimated_tokens"] = event.get("estimated_tokens")
+    if event.get("type") == "rate_limit_event":
+        row["rate_limit_info"] = event.get("rate_limit_info")
+    message = event.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), list):
+        tools = []
+        for block in message["content"]:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
+                tools.append({"name": block.get("name"), "file": tool_input.get("file_path")})
+        if tools:
+            row["tools"] = tools
+    if event.get("type") == "result":
+        row["duration_api_ms"] = event.get("duration_api_ms")
+        row["is_error"] = event.get("is_error")
+    return row
+
+
+def _run_claude_streaming(
+    command: Sequence[str], cwd: Path, timeout: int, trace_path: Path, project_root: Path,
+) -> "subprocess.CompletedProcess[str]":
+    """以串流模式執行 ``claude -p``，邊跑邊把事件摘要寫進 ``trace_path``（本機除錯用，失敗不影響流程）。
+
+    回傳的 ``stdout`` 是最後一個 ``result`` 事件的原文（與 ``--output-format json`` 的輸出同形），
+    沒有 result 事件時為空字串，由呼叫端依原規則 fail-closed。逾時會終止子程序並拋出 ``TimeoutExpired``。
+    """
+    started = time.monotonic()
+    trace_file = None
+    try:
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_file = trace_path.open("w", encoding="utf-8")
+    except OSError:
+        trace_file = None
+    process = subprocess.Popen(
+        list(command), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    result_line = {"text": ""}
+    stderr_chunks: list[str] = []
+
+    def read_stdout() -> None:
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "result":
+                result_line["text"] = line
+            if trace_file is not None:
+                try:
+                    trace_file.write(scrub_secrets(json.dumps(_trace_summary(event, time.monotonic() - started), ensure_ascii=False), project_root) + "\n")
+                    trace_file.flush()
+                except (OSError, ValueError):
+                    pass
+
+    def read_stderr() -> None:
+        stderr_chunks.append(process.stderr.read())
+
+    threads = [threading.Thread(target=read_stdout, daemon=True), threading.Thread(target=read_stderr, daemon=True)]
+    for thread in threads:
+        thread.start()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        for thread in threads:
+            thread.join(timeout=5)
+        if trace_file is not None:
+            trace_file.close()
+    return subprocess.CompletedProcess(list(command), process.returncode, result_line["text"], "".join(stderr_chunks))
 
 
 def _claude_usage_tokens(payload: Dict[str, object]) -> Optional[Dict[str, int]]:
