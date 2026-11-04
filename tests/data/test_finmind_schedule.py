@@ -23,7 +23,8 @@ class FinMindScheduleTests(unittest.TestCase):
     def test_after_backfill_only_updates_inside_window_once_a_day(self):
         state = {self.DATASET: {"backfilled_from": "2023-01-01", "last_done": "2026-10-21"}}
         self.assertEqual(plan(state, self.DATASET, date(2026, 10, 22))["action"], "update")
-        self.assertEqual(plan(state, self.DATASET, date(2026, 10, 22))["start"], "2025-01-01")
+        self.assertEqual(plan(state, self.DATASET, date(2026, 10, 22))["start"], "2026-04-01")
+        self.assertEqual(plan(state, self.DATASET, date(2027, 2, 20))["start"], "2026-07-01")
         self.assertEqual(plan(state, self.DATASET, date(2026, 12, 1))["action"], "skip")
         state[self.DATASET]["last_done"] = "2026-10-22"
         self.assertEqual(plan(state, self.DATASET, date(2026, 10, 22))["action"], "skip")
