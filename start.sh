@@ -37,11 +37,13 @@ if [ "$#" -gt 0 ]; then
 fi
 
 usage() {
-  echo "用法：./start.sh [dashboard|auto|run|status|daily|check|data|official|all]"
+  echo "用法：./start.sh [dashboard|auto|run|status|benchmark|backtest|daily|check|data|official|all]"
   echo "  dashboard 看帳戶與績效（預設；首次建立虛擬帳戶）"
   echo "  auto      更新行情與研究資料，不建立快照或推進帳本"
   echo "  run       完整每日分析與決策，可接 --agent-cli、--research-agent-cli 等原有參數"
   echo "  status    查看既有資料狀態，可接 --database 路徑"
+  echo "  benchmark 基準比較：benchmark collect 補抓 0050 行情；benchmark compare 比較帳戶與基準"
+  echo "  backtest  回測（不呼叫 Agent）：backtest 或 backtest grid 看買進股票有沒有贏基準；backtest replay 換策略重算；backtest report --eval-id 編號"
   echo "  daily     只更新資料、建立快照與準備帳本，不執行決策 Agent"
   echo "  check     檢查 Docker 環境與執行測試"
   echo "  data      auto 的相容別名"
@@ -55,13 +57,43 @@ case "$MODE" in
     usage
     exit 0
     ;;
-  run|status)
+  run|status|benchmark|backtest)
     if [ ! -x "$PROJECT_DIR/.venv/bin/python" ]; then
       echo "找不到專案 Python 環境，請先以 Python 3.12 建立：uv python install 3.12，再執行 \"\$(uv python find 3.12)\" -m venv .venv，然後執行 .venv/bin/python -m pip install -r requirements.txt。" >&2
       exit 1
     fi
     if [ "$MODE" = "run" ]; then
       exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/run_daily_pipeline.py" "$@"
+    fi
+    if [ "$MODE" = "backtest" ]; then
+      # 回測都只重算已封存的決策、不呼叫 Agent；結果與 HTML 存在 artifacts/evaluation/ 或 artifacts/replays/ 下。
+      SUB=${1:-grid}
+      if [ "$#" -gt 0 ]; then shift; fi
+      case "$SUB" in
+        grid)
+          OUT=$("$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/cli/agent_eval.py" grid "$@") || { echo "$OUT"; exit 1; }
+          echo "$OUT" | sed -n 's/^  "html": "\(.*\)"$/回測 HTML：\1/p'
+          ;;
+        replay)
+          exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/cli/policy_replay.py" run "$@"
+          ;;
+        report)
+          exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/cli/agent_eval.py" report "$@"
+          ;;
+        *)
+          echo "用法：./start.sh backtest [grid|replay|report] [參數]" >&2
+          exit 2
+          ;;
+      esac
+      exit 0
+    fi
+    if [ "$MODE" = "benchmark" ]; then
+      # collect 會寫資料庫，與其他抓資料模式一樣先取得資料抓取鎖；compare 唯讀。
+      if [ "${1:-}" = "collect" ] && [ -z "${ETF_DATA_LOCK_HELD:-}" ]; then
+        ETF_DATA_LOCK_HELD=1 exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/with_data_lock.py" -- \
+          "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/cli/benchmark.py" --database var/etf_agent.db "$@"
+      fi
+      exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/cli/benchmark.py" --database var/etf_agent.db "$@"
     fi
     exec "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/data_status.py" "$@"
     ;;
