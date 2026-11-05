@@ -31,7 +31,8 @@ class DesignGuardTests(unittest.TestCase):
         self.assertEqual(self.sizing.get("held_add_priority"), "v1")
         self.assertIn("held_add_priority", FORBIDDEN_PREFIXES)
         self.assertNotIn("held_add_priority", KNOBS)
-        for gate in ("method", "stock_weight_fit", "rotation.version", "selection_ranking"):
+        for gate in ("method", "stock_weight_fit", "rotation.version", "selection_ranking",
+                     "high_conviction_cash_floor", "limit_scaled_conviction", "cash_ratio_range", "cash_grade"):
             self.assertIn(gate, FORBIDDEN_PREFIXES, gate)
 
     def test_bull_bear_single_round_isolation_is_still_enforced(self):

@@ -27,6 +27,7 @@ from etf_agent.decision import (  # noqa: E402
     DecisionToolError,
     PortfolioDecisionApplicationService,
 )
+from etf_agent.decision.sizing import cash_ratio_gate  # noqa: E402
 from etf_agent.virtual_account import ledger_nav_history_provider  # noqa: E402
 
 
@@ -118,6 +119,9 @@ class PortfolioDecisionApplication:
                 )
                 self.emit({"ok": True, "data": result, "output": str(args.output) if args.output else None})
                 return 0
+            if args.command in {"finalize", "validate-decision"}:
+                # cash_ratio_range 的前次比例來自前次決策時，重建以決策庫重讀前次 run；沒有閘門的舊 run 不讀（見 decision_repository_for）。
+                service.decision_repository = self.decision_repository_for(args)
             if args.command == "finalize":
                 result = service.finalize_file(
                     args.momentum, args.debate, args.intent, args.policy, args.proposal, args.scenario,
@@ -176,6 +180,21 @@ class PortfolioDecisionApplication:
             self.emit({"ok": False, "error": str(error)})
             return 1
 
+    def decision_repository_for(self, args) -> Optional[Path]:
+        """finalize／validate-decision 用的決策庫：明確指定 --decision-repository 時用它；未指定時只有 policy 帶
+        cash_ratio_range（版本閘門）才用預設 artifacts/decisions，沒有閘門的舊 run 維持不讀決策庫（前次決策背景只驗
+        內部一致性），重建結果與舊版逐位元相同。policy 讀不到時回 None，交給後續讀檔報錯。"""
+        if args.decision_repository is not None:
+            return args.decision_repository
+        try:
+            policy = json.loads(Path(args.policy).read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            return None
+        sizing = policy.get("position_sizing") if isinstance(policy, dict) else None
+        if isinstance(sizing, dict) and cash_ratio_gate(sizing) is not None:
+            return self.root / "artifacts" / "decisions"
+        return None
+
     def build_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument(
@@ -190,6 +209,12 @@ class PortfolioDecisionApplication:
         parser.add_argument(
             "--ledger-repository", type=Path, default=self.root / "artifacts" / "ledger",
             help="虛擬帳戶帳本根目錄；policy 的 drawdown_control 含 history_ref 時，重建驗證由此讀 NAV 歷史（缺帳本即拒絕）",
+        )
+        parser.add_argument(
+            "--decision-repository", type=Path, default=None,
+            help="決策庫根目錄（finalize／validate-decision 用）；policy 有 cash_ratio_range 且前次比例來自前次決策時，"
+                 "重建由此重讀前次 run（讀不到即拒絕）。未指定時：有此閘門用 artifacts/decisions，沒有閘門的舊 run 不讀決策庫。"
+                 "save-run 以自己的 --repository（保存目的地）重建，不讀此參數",
         )
         commands = parser.add_subparsers(dest="command", required=True)
         build_input = commands.add_parser(

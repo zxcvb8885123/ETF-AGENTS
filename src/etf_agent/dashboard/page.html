@@ -163,7 +163,7 @@ function renderChart(history, benchmarks) {
   const lines = series.map((s, i) => {
     const color = i === 0 ? accountColor : s.color;
     const pts = s.points.map(p => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
-    const dots = i === 0 && s.points.length <= 40 ? s.points.map(p => `<circle cx="${x(p[0]).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="3.5" fill="var(--card)" stroke="${color}" stroke-width="2"/>`).join("") : "";
+    const dots = s.points.length <= 40 ? s.points.map(p => `<circle cx="${x(p[0]).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="3.5" fill="var(--card)" stroke="${color}" stroke-width="2"/>`).join("") : "";
     return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${i === 0 ? 2.5 : 2.25}" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="${s.dash}"/>${dots}`;
   }).join("");
   const endLabel = series.map((s, i) => {

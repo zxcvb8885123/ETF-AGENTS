@@ -8,6 +8,8 @@ import copy
 import json
 import tempfile
 import unittest
+from etf_agent.decision.finalization import DecisionRepository
+from etf_agent.decision.fields import DecisionToolError
 from decimal import Decimal
 from pathlib import Path
 
@@ -91,7 +93,7 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertEqual(sizing["sector_fit"], SECTOR_FIT)
         self.assertEqual(sizing["turnover_fit"], TURNOVER_FIT)
         self.assertEqual(sizing["reentry_cooldown"], {"version": "v1", "days": 3})
-        self.assertEqual(sizing["drawdown_derisk"], DERISK)
+        self.assertEqual(sizing["drawdown_derisk"], {**DERISK, "version": "v3"})
         self.assertEqual(Decimal(DERISK["max_derisk_fraction"]), DRAWDOWN_DERISK_FRACTION)
         self.assertEqual(sizing["rotation"]["forced_swap"]["confirmation"], FORCED_SWAP_CONFIRMATION)
         self.assertEqual(policy["drawdown_control"], CONTROL)
@@ -114,7 +116,7 @@ class ProductionConfigTests(unittest.TestCase):
                     {"reentry_cooldown": {"version": "v2", "days": 3}},
                     {"reentry_cooldown": {"version": "v1", "days": 3, "blocked_symbols": ["2317.TW"]}},
                     {"reentry_cooldown": {"version": "v1", "days": 3, "blocked_symbols": ["b", "a"], "source_run_ids": []}},
-                    {"drawdown_derisk": {"version": "v2"}},
+                    {"drawdown_derisk": {"version": "v4"}},
                     {"drawdown_derisk": {"version": "v1", "max_derisk_fraction": "0"}},
                     {"drawdown_derisk": {"version": "v1", "max_derisk_fraction": "1.5"}},
                     {"drawdown_derisk": {"version": "v1", "extra": 1}}):
@@ -293,7 +295,7 @@ class TurnoverFitTests(unittest.TestCase):
 class ForcedSwapConfirmationTests(unittest.TestCase):
     """滿檔（max_positions=1，min_positions=0）、2330 續抱且在 broken 名單、2317 新買 high。"""
 
-    def proposal(self, adopt_bear, confirmation=True, max_turnover="1", turnover_fit=False, min_positions=0):
+    def proposal(self, adopt_bear, confirmation=True, max_turnover="1", turnover_fit=False, min_positions=0, rotation_max=3):
         from test_team_chain import tradable_bundle
         from test_trader import items as trade_items
 
@@ -319,7 +321,7 @@ class ForcedSwapConfirmationTests(unittest.TestCase):
                   "verdicts_ref": {"verdicts_id": "v-1", "as_of": "2026-10-30T11:30:00Z", "sha256": "a" * 64}}
         if confirmation:
             forced["confirmation"] = FORCED_SWAP_CONFIRMATION
-        policy["position_sizing"]["rotation"] = {"version": ROTATION_VERSION, "max_swaps_per_run": 3,
+        policy["position_sizing"]["rotation"] = {"version": ROTATION_VERSION, "max_swaps_per_run": rotation_max,
                                                  "min_new_conviction": "low", "forced_swap": forced}
         if turnover_fit:
             policy["position_sizing"]["turnover_fit"] = TURNOVER_FIT
@@ -333,6 +335,12 @@ class ForcedSwapConfirmationTests(unittest.TestCase):
         body = AllocationOrderEngine(bundle, policy).run(intent)
         self.assertEqual(ProposalValidator(bundle, policy, intent).validate(body), [])
         return bundle, policy, body
+
+    def test_forced_swap_never_sells_without_a_replacement_slot(self):
+        # rotation 換股上限為 0 時沒有新股名額：強制換出不得變成只賣不換。
+        _, _, body = self.proposal(True, rotation_max=0)
+        self.assertNotIn(("2330.TW", "RISK_FORCED_SWAP"), flags(body))
+        self.assertNotIn(("2330.TW", "sell"), orders(body))
 
     def ranked_victim_case(self, victim_prices, confirmation=True, adopted_bear=None, min_positions=20):
         """以通過驗證的真實 engine fixture 測 21 檔滿檔；只替 private method 所需的持股／行情擴成競賽規模。"""
@@ -600,11 +608,25 @@ class ReentryCooldownTests(unittest.TestCase):
     def archive(self, run_id, day, start, cutoff, orders_, status="approved", account_id="account-1"):
         run = self.root / day / run_id
         run.mkdir(parents=True)
-        (run / "decision.json").write_text(json.dumps({"status": status, "decision_cutoff": cutoff, "orders": orders_}), encoding="utf-8")
-        (run / "decision_input.json").write_text(json.dumps({
-            "decision_cutoff": cutoff, "account_snapshot": {"account_id": account_id},
-            "trading_status_bundle": {"target_session": {"start": start}},
-        }), encoding="utf-8")
+        artifacts = {
+            "decision": {"status": status, "decision_cutoff": cutoff, "orders": orders_},
+            "decision_input": {
+                "decision_cutoff": cutoff, "account_snapshot": {"account_id": account_id},
+                "trading_status_bundle": {"target_session": {"start": start}},
+            },
+        }
+        for name, payload in artifacts.items():
+            (run / ("%s.json" % name)).write_text(json.dumps(payload), encoding="utf-8")
+        # 冷卻名單會以 manifest 驗證來源 run，fixture 也要封存合法 manifest。
+        manifest = DecisionRepository(self.root).build_manifest(run_id, artifacts)
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    def test_corrupted_history_is_rejected_instead_of_silently_clearing_the_cooldown(self):
+        self.archive("run-bad", "2026-09-19", "2026-09-19T01:00:00+00:00", "2026-09-18T12:00:00+00:00",
+                     [{"symbol": "2317.TW", "side": "sell", "intent": "exit"}])
+        (self.root / "2026-09-19" / "run-bad" / "decision.json").write_text("{壞掉", encoding="utf-8")
+        with self.assertRaises(DecisionToolError):
+            recent_exit_symbols(self.root, self.session_bundle, 3)
 
     def test_recent_exits_are_collected_from_approved_runs_within_the_window(self):
         exit_order = [{"symbol": "2317.TW", "side": "sell", "intent": "exit"}, {"symbol": "2330.TW", "side": "sell", "intent": "trim"}]
@@ -730,7 +752,7 @@ class DrawdownHysteresisTests(unittest.TestCase):
 
 
 class DrawdownDeriskTests(unittest.TestCase):
-    def inputs(self, cash, shares_2330, stance="defensive", derisk=True, fraction="0.25"):
+    def inputs(self, cash, shares_2330, stance="defensive", derisk=True, fraction="0.25", held_intent="hold", version="v1"):
         bundle, intent, stance_obj, policy = sized_inputs("medium", "low", stance)
         bundle = account(bundle, cash, shares_2330)
         # fixture 只有一檔持股：放寬單股上限，否則 RISK_STOCK_WEIGHT 會先減碼，測不到回撤減碼本身。
@@ -741,12 +763,13 @@ class DrawdownDeriskTests(unittest.TestCase):
         policy["liquidity_fill_rate"] = "1"
         policy["max_turnover_rate"] = "1"
         # 2330 續抱（不是 add），減碼對象才是「交易 Agent 沒有要賣的持股」。
-        items = [dict(item, intent="hold", conviction=None, adopted_claim_ids=["bull-2330-1"], rejected_claim_ids=["bear-2330-1"])
+        items = [dict(item, intent=held_intent, conviction=("medium" if held_intent == "add" else None),
+                      adopted_claim_ids=["bull-2330-1"], rejected_claim_ids=["bear-2330-1"])
                  if item["symbol"] == "2330.TW" else item for item in intent["items"]]
         _, _, debate, _, _, _, _, _ = chain_inputs(copy.deepcopy(bundle))
         intent = seal_trade_decision(trade_decision_envelope(bundle, debate, "trade-1"), items)
         if derisk:
-            policy["position_sizing"]["drawdown_derisk"] = {"version": "v1", "max_derisk_fraction": fraction}
+            policy["position_sizing"]["drawdown_derisk"] = {"version": version, "max_derisk_fraction": fraction}
             policy["drawdown_control"] = dict(CONTROL)
             policy = bind_drawdown(policy, bundle, [])  # 沒有更高的歷史點：回撤 0，下限 aggressive，姿態仍可由風險 Agent 選 defensive
         policy["content_sha256"] = decision_policy_sha256(policy)
@@ -766,6 +789,47 @@ class DrawdownDeriskTests(unittest.TestCase):
         self.assertGreaterEqual(Decimal(body["allocation_proposal"]["cash_weight"]), Decimal("0.20"))
         self.assertNotIn(("2317.TW", "buy"), orders(body))  # 減碼收入不拿去買替補
         self.assertTrue(guard(bundle, policy, body)["passed"])
+
+    def test_derisk_v3_is_not_undone_by_an_add_intent(self):
+        # v3：防守減碼後，交易 Agent 對同一檔標 add 也不得把股數加回原持股（否則旗標與訂單矛盾）；
+        # 減碼後的持股不再是加碼候選，由程式留下第二個 RISK_DRAWDOWN 旗標說明不建立買單，意圖仍是 add。
+        bundle, policy, body = self.inputs("100000", 5000, held_intent="add", version="v3")
+        sell = orders(body)[("2330.TW", "sell")]
+        self.assertEqual((sell["shares"], sell["intent"]), (1000, "trim"))
+        self.assertNotIn(("2330.TW", "buy"), orders(body))
+        derisk_flags = [flag for flag in body["constraint_flags"] if (flag["symbol"], flag["code"]) == ("2330.TW", "RISK_DRAWDOWN")]
+        self.assertEqual(len(derisk_flags), 2)
+        self.assertIn("不再是本次加碼候選", derisk_flags[1]["detail"])
+        self.assertEqual(next(p for p in body["allocation_proposal"]["positions"] if p["symbol"] == "2330.TW")["intent"], "add")
+        self.assertGreaterEqual(Decimal(body["allocation_proposal"]["cash_weight"]), Decimal("0.20"))
+        self.assertTrue(guard(bundle, policy, body)["passed"])
+
+    def test_derisk_v3_matches_v2_when_the_derisked_position_is_not_an_add(self):
+        # 沒有同檔 add 時，v3 與 v2 的訂單與旗標逐位元相同。
+        v2 = self.inputs("100000", 5000, version="v2")[2]
+        v3 = self.inputs("100000", 5000, version="v3")[2]
+        self.assertEqual(v3["order_proposal"]["orders"], v2["order_proposal"]["orders"])
+        self.assertEqual(v3["constraint_flags"], v2["constraint_flags"])
+
+    def test_derisk_v1_and_v2_let_an_add_restore_the_position(self):
+        # v1／v2（舊封存 run）：同檔 add 會把股數加回原持股，沒有賣單卻留下 RISK_DRAWDOWN 旗標；重建行為必須逐位元維持。
+        for version in ("v1", "v2"):
+            with self.subTest(version=version):
+                _, _, body = self.inputs("100000", 5000, held_intent="add", version=version)
+                self.assertNotIn(("2330.TW", "sell"), orders(body))
+                self.assertNotIn(("2330.TW", "buy"), orders(body))
+                self.assertIn(("2330.TW", "RISK_DRAWDOWN"), flags(body))
+                self.assertLess(Decimal(body["allocation_proposal"]["cash_weight"]), Decimal("0.20"))
+
+    def test_derisk_v1_keeps_the_legacy_rebuild_behaviour(self):
+        # v1（舊封存 run）：add 會把股數加回、進位可超過上限；重建行為不得因修正而改變。
+        _, _, body = self.inputs("0", 10000, fraction="0.11")
+        self.assertEqual(orders(body)[("2330.TW", "sell")]["shares"], 2000)
+
+    def test_derisk_rounding_up_never_exceeds_the_hard_budget(self):
+        # 上限 11% NAV（約 18 萬）只容納 1 張（約 16.4 萬）；缺口進位成 2 張會超過上限，必須停在 1 張。
+        _, _, body = self.inputs("0", 10000, fraction="0.11", version="v2")
+        self.assertEqual(orders(body)[("2330.TW", "sell")]["shares"], 1000)
 
     def test_derisk_is_capped_by_max_fraction_and_never_empties_the_last_position(self):
         _, _, body = self.inputs("0", 10000)  # 缺口 32.8 萬，上限 25% = 41 萬 → 2 張

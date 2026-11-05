@@ -26,7 +26,7 @@
 | 分析師 | 逐檔給看法與有證據的發現；全市場情緒只整體給一次 | 算技術指標與財務比率、分批、檢查全部股票都有覆蓋；沒有可用來源時情緒直接標「無資料」 |
 | 多空研究員 | 逐檔提出有證據的論點與強度 | 確認兩方讀同一份輸入、引用的證據屬於該股票、全池都有覆蓋 |
 | 交易 | 把每個多空論點明確採納或否決，給買賣意圖與信心（高／中／低） | 確認每個論點剛好處理一次、沒有新增事實；算權重與張數 |
-| 風險 | 配置前給現金姿態（積極／中性／防守）與持股廣度（集中／平衡／分散） | 算回撤下限、費稅、現金、壓力情境；比賽硬規則不過就拒絕，修正最多 3 次 |
+| 風險 | 配置前給現金姿態（積極／中性／防守）與持股廣度（集中／平衡／分散）；開啟 `cash_ratio_range` 時另給姿態內子等級（低／中／高） | 算回撤下限、費稅、現金、壓力情境；比賽硬規則不過就拒絕，修正最多 3 次 |
 
 ### 持股檔數與入選順序
 
@@ -82,9 +82,15 @@
 | 換手超過 30% | 依信心低到高、ATR 高到低縮減買單；賣單本身就超過時留住出場持股 |
 | 出場後 3 日內 | 不得再買回未持有的新股（已持有的加碼不受影響） |
 | Active Share 低於 15% | 取消與最低那檔必備主動型 ETF 重疊最多的買進候選，最多重算 3 次，不賣既有持股 |
-| 防守姿態 | 現金仍低於 20% 時，程式依 ATR 把持股減碼到緩衝，單次最多賣 NAV 的 25% |
+| 防守姿態 | 現金仍低於姿態緩衝（目前 20%；開啟 `cash_ratio_range` 時為所選子等級的比例）時，程式依 ATR 把持股減碼到緩衝，單次最多賣 NAV 的 25%。`drawdown_derisk` 版本：v1 整張進位可超過單次上限、同檔 add 會把股數加回（留下減碼旗標卻沒有賣單）；v2 進位不得超過上限；v3 另把被減碼的持股排除在本次加碼候選外，減碼後的股數就是上限，交易 Agent 標 add 也不加回、不建買單（再留一個 `RISK_DRAWDOWN` 旗標說明）。開啟 `high_conviction_cash_floor` 時觸發與目標改為緩衝 × floor_ratio（須 v3）。舊版本的決策逐位元維持原重建 |
 
 現金緩衝：現金已低於姿態緩衝時，緩衝只擋買單動用原有現金，不擋用本次賣出收入買的替補，避免出場釋出的名額流失。
+
+三個 2026-11-05 新增、**目前正式設定未開啟**的版本閘門（只在 Policy 帶欄位時生效，舊 Policy／舊 run 逐位元不變；計劃見 [`cash_buffer_high_conviction_plan.md`](cash_buffer_high_conviction_plan.md)、[`limit_aware_conviction_weights_plan.md`](limit_aware_conviction_weights_plan.md)、[`agent_cash_ratio_range_plan.md`](agent_cash_ratio_range_plan.md)）：
+
+- 高信心現金下限 `high_conviction_cash_floor`（`floor_ratio`，建議 0.75）：高信心買單可動用原有現金到「姿態緩衝 × floor_ratio」（防守 15%、中性 7.5%、積極 2.25%），中低信心仍只能用賣款；防守減碼的觸發與目標同改為這條線（帶狀防守，避免隔日來回交易）；當日觸發減碼時不套用。動用時記 `RISK_CASH_SOFT_FLOOR`。份額預算不變。
+- 高信心份額下限 `limit_scaled_conviction`（`alpha`，由人設定，建議 0.6）：高信心的目標份額至少為 alpha × 該股單股上限（台積電 25% → 15%，一般股 10% → 6%），預算足夠時高信心不因別檔被抬高而少於原式份額，必要份額總和超過預算時依入選名次填到用完；其餘照原式，`volatility_exponent` 為 0 時中信心不高於最小的高信心、低信心不高於最小的中信心，分不完的預算留作現金。兩者同時開啟時，名次第一的高信心股會先用掉高信心可動用的現金。
+- 姿態內現金子等級 `cash_ratio_range`（`{version: v1, grid, max_daily_raise}`，第一階段；與 `high_conviction_cash_floor` 互斥，有 `drawdown_derisk` 時須 v3）：風險 Agent 除了姿態另選 `cash_grade`（lower／middle／upper，仍是列舉），現金比例 = `grid[姿態][子等級]`，取代三段階梯（建議格點：積極 3／5／8%、中性 8／10／13%、防守 15／18／21%；每點不高於 22%、姿態內相鄰差距不大於單日上限、姿態間不重疊）。單日只限制現金拉高：今日可選格點 ≤ max(該姿態最低格點, 前次比例 + `max_daily_raise`，建議 3pp)，往下不限；轉防守當天只到 15%，回撤強制防守也不放寬。前次比例由程式依前次決策的挑選規則綁進 Policy 的 `anchor`（前次 run 最終的現金緩衝；沒有前次 run 時為本次起始現金比例），只給風險 Agent 當背景、不可引用。超出一律退回重答（修正循環用盡即停止），不夾到邊界；修正循環的 `increase_cash_buffer` 也不得高於今日可選的最高格點。防守減碼目標就是所選比例。重建時以決策庫重讀前次 run 重算 anchor，沒有決策庫即拒絕。11-05 07:00 封存重放（`replay_reference_only`）：防守 lower 15% 時 6446 買 35,000 股、middle 18% 時 6446 仍被 `RISK_CASH_FIT` 取消。
 
 這些規則多數由「版本閘門」控制：只由人在 `config/decision_policy.json` 開啟，策略反思不得改；沒有該欄位的舊決策逐位元維持原本的重建結果。逐項名稱見附錄。
 
@@ -257,6 +263,9 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 新股只能用出場空出的名額 | `held_add_priority`、`rotation` |
 | 強制換股、須有本次空頭論點 | `rotation.forced_swap`、`forced_swap.confirmation`、旗標 `RISK_FORCED_SWAP`、`RISK_FORCED_SWAP_UNCONFIRMED` |
 | 現金緩衝下限 | `cash_buffer_floor` |
+| 高信心可動用部分緩衝、減碼補到同一條線（未開啟） | `high_conviction_cash_floor`（`floor_ratio`）、旗標 `RISK_CASH_SOFT_FLOOR` |
+| 高信心份額至少為單股上限的 alpha 倍（未開啟） | `limit_scaled_conviction`（`alpha`） |
+| 姿態內現金子等級與單日上限（未開啟） | `cash_ratio_range`（`grid`、`max_daily_raise`、pipeline 綁定的 `anchor`）、`cash_grade` |
 | 現金不足依信心分錢、零頭取消 | `cash_fit_order`、旗標 `RISK_CASH_FIT` |
 | 現金逼近 25% 時留住出場 | `cash_ceiling_fix`、旗標 `RISK_CASH_CEILING` |
 | 有買單股票留 3% 上限空間 | `stock_limit_headroom` |

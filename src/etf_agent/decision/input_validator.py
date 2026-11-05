@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 from etf_agent.core import canonical_sha256, content_sha256
+from etf_agent.data.price_finality import OFFICIAL_PRICE_SOURCES
 from etf_agent.data.trading_status import TradingStatusBundleValidator
 from etf_agent.perception import (
     MarketPerceptionResultValidator,
@@ -313,6 +314,26 @@ class DecisionInputValidator:
             for item in self.snapshot.get("source_evidence", [])
             if isinstance(item, Mapping) and item.get("evidence_id")
         }
+        evidence_by_id = {
+            str(item.get("evidence_id")): item
+            for item in self.snapshot.get("source_evidence", [])
+            if isinstance(item, Mapping) and item.get("evidence_id")
+        }
+
+        def check_evidence_time(evidence_id: str, label: str) -> None:
+            # 行情證據的抓取時間與內容時間不得晚於 cutoff；雜湊正確不代表時間可信。
+            item = evidence_by_id.get(evidence_id)
+            if item is None or self.cutoff is None:
+                return
+            for field in ("fetched_at", "content_as_of"):
+                if item.get(field) is None:
+                    continue
+                try:
+                    if parse_time(item.get(field), "%s.%s" % (label, field)) > self.cutoff:
+                        errors.append("%s 的證據 %s 晚於 decision_cutoff" % (label, field))
+                except DecisionToolError as error:
+                    errors.append(str(error))
+
         for index, row in enumerate(prices):
             if not isinstance(row, Mapping):
                 errors.append("snapshot.latest_prices[%d] 必須是物件" % index)
@@ -351,6 +372,22 @@ class DecisionInputValidator:
                 errors.append(
                     "snapshot.latest_prices[%d] 引用不存在：%s" % (index, evidence_id)
                 )
+            else:
+                check_evidence_time(evidence_id, "snapshot.latest_prices[%d]" % index)
+            # 執行價欄位成組驗證；舊 bundle 沒有 execution_close_price 時維持原行為。
+            if row.get("execution_close_price") is not None:
+                execution_evidence = str(row.get("execution_source_evidence_id") or "")
+                execution_source = str(row.get("execution_price_source") or "").strip()
+                if execution_source.upper() not in OFFICIAL_PRICE_SOURCES:
+                    errors.append("snapshot.latest_prices[%d] 執行價來源缺少或未核准" % index)
+                if not execution_evidence:
+                    errors.append("snapshot.latest_prices[%d] 執行價缺少來源證據" % index)
+                elif execution_evidence not in known_evidence:
+                    errors.append(
+                        "snapshot.latest_prices[%d] 執行價引用不存在的證據：%s" % (index, execution_evidence)
+                    )
+                else:
+                    check_evidence_time(execution_evidence, "snapshot.latest_prices[%d].execution" % index)
             if symbol in universe:
                 errors.append("Snapshot 最新行情股票不得重複：%s" % symbol)
             universe.add(symbol)

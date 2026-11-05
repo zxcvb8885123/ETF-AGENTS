@@ -7,7 +7,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set
 
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
-from .sizing import SECTOR_FIT
+from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate
 from .contracts import (
     DECISION_SCHEMA_VERSION,
     DecisionContext,
@@ -74,6 +74,9 @@ def sector_exposure(proposal: Mapping[str, object], policy: Mapping[str, object]
     }
 
 
+# 修正循環 increase_cash_buffer 在競賽現金上限（policy 的 cash_weight_ceiling）之下必須保留的邊際：值須 ≤ 上限 − 邊際。
+# 整張取整與現金分配會讓實際現金高於緩衝（例：起始現金約 21%、緩衝 0.24 時現金到 25.12% 被 Guard 拒絕）。
+CASH_BUFFER_CEILING_MARGIN = Decimal("0.03")
 LIQUIDITY_PARTICIPATION_WARNING = Decimal("0.10")  # 委託股數超過 20 日均量一成即標示，供審查判斷，不是硬性規則
 
 
@@ -726,6 +729,28 @@ class RiskReviewValidator:
                 current = decimal_value(effective.get(field), "effective_policy.%s" % field)
                 if action_type == "increase_cash_buffer" and value < current:
                     errors.append("%s 不得降低現金緩衝" % prefix)
+                if action_type == "increase_cash_buffer":
+                    # 緩衝接近或達到競賽現金上限時，整張取整會讓修正後提案被 Guard 的 CASH_WEIGHT 拒絕，且之後不得再降低
+                    # 緩衝；在審查驗證就拒絕，讓修正循環回饋給風險 Agent 改值。上限取 policy（綁定 rules.cash_weight_must_be_below），
+                    # 並保留 CASH_BUFFER_CEILING_MARGIN 邊際。
+                    ceiling = decimal_value(self.policy.get("cash_weight_ceiling"), "cash_weight_ceiling")
+                    maximum = ceiling - CASH_BUFFER_CEILING_MARGIN
+                    if value > maximum:
+                        errors.append(
+                            "%s.value 不得高於 %s（競賽現金上限 cash_weight_ceiling %s 減邊際 %s；整張取整會讓現金高於緩衝）"
+                            % (prefix, maximum, self.policy.get("cash_weight_ceiling"), CASH_BUFFER_CEILING_MARGIN)
+                        )
+                gate = cash_ratio_gate(self.policy.get("position_sizing") or {})
+                if action_type == "increase_cash_buffer" and gate is not None:
+                    # cash_ratio_range（版本閘門）：修正循環同樣受今日可選格點的最高值約束，且為兩位小數（1pp）。
+                    stance = (self.policy.get("position_sizing") or {}).get("cash_stance")
+                    allowed = allowed_cash_grades(gate).get(str(stance), [])
+                    top = cash_grade_grid(gate)[str(stance)][allowed[-1]] if allowed else Decimal("0")
+                    if value > top or value != value.quantize(Decimal("0.01")):
+                        errors.append(
+                            "%s 在 cash_ratio_range 下不得高於 %s 今日可選格點的最高值 %s，且必須是兩位小數"
+                            % (prefix, stance, top)
+                        )
                 if action_type != "increase_cash_buffer" and value > current:
                     errors.append("%s 不得提高風險上限" % prefix)
             except DecisionToolError as error:

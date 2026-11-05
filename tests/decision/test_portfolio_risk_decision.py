@@ -910,6 +910,45 @@ class PortfolioRiskDecisionTests(unittest.TestCase):
             self.assertEqual(len(list((root / "runs").glob("*/cli-run/manifest.json"))), 1)
 
 
+class PriceEvidenceTimeTests(unittest.TestCase):
+    """行情證據時間與執行價成組驗證：雜湊重算正確也不能讓來源時間錯置或來源缺失通過。"""
+
+    def mutated(self, mutate):
+        from etf_agent.decision import DecisionInputValidator, canonical_sha256
+
+        bundle, *_ = valid_inputs()
+        mutate(bundle["snapshot"])
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        return DecisionInputValidator(bundle).validate()
+
+    def test_baseline_has_no_errors(self):
+        self.assertEqual(self.mutated(lambda snapshot: None), [])
+
+    def test_price_evidence_fetched_after_cutoff_is_rejected(self):
+        def mutate(snapshot):
+            row = snapshot["latest_prices"][0]
+            for item in snapshot["source_evidence"]:
+                if item["evidence_id"] == row["source_evidence_id"]:
+                    item["fetched_at"] = "2099-01-01T00:00:00+00:00"
+        self.assertTrue(any("晚於 decision_cutoff" in error for error in self.mutated(mutate)))
+
+    def test_unapproved_or_missing_execution_source_is_rejected(self):
+        def unapproved(snapshot):
+            row = snapshot["latest_prices"][0]
+            row["execution_close_price"] = row["close_price"]
+            row["execution_price_source"] = "UNAPPROVED"
+            row["execution_source_evidence_id"] = row["source_evidence_id"]
+        self.assertTrue(any("執行價來源" in error for error in self.mutated(unapproved)))
+
+        def missing_evidence(snapshot):
+            row = snapshot["latest_prices"][0]
+            row["execution_close_price"] = row["close_price"]
+            row["execution_price_source"] = "TWSE_STOCK_DAY"
+            row["execution_source_evidence_id"] = "price:does-not-exist"
+        self.assertTrue(any("執行價引用不存在" in error for error in self.mutated(missing_evidence)))
+
+
 class GuardTradingStatusPairTests(unittest.TestCase):
     """交易狀態包與可交易性評估必須成對；只缺其一或 Snapshot 只有計數時，Guard 建構階段（DecisionInputBundle 驗證）就拒絕，
     不會走到 fixture 清單分支而在迭代計數時丟 TypeError。"""
@@ -1017,6 +1056,23 @@ class RevisionActionFieldTests(unittest.TestCase):
     def test_policy_action_rejects_empty_value(self):
         errors = self.validate([{"type": "increase_cash_buffer", "symbol": "", "value": "", "reason": "缺數值。"}])
         self.assertTrue(any("value" in error for error in errors), errors)
+
+    def test_increase_cash_buffer_must_leave_margin_below_cash_weight_ceiling(self):
+        """緩衝接近或達到競賽現金上限時，整張取整與現金分配會讓現金高於緩衝而被 Guard 的 CASH_WEIGHT 拒絕，且之後的修正
+        不得再降低緩衝；在審查驗證就拒絕，值必須 ≤ cash_weight_ceiling − 邊際。上限取 policy（fixture 為 0.90，邊際 0.03）。"""
+        from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
+
+        self.assertEqual(self.settings["cash_weight_ceiling"], "0.90")
+        self.assertEqual(CASH_BUFFER_CEILING_MARGIN, Decimal("0.03"))
+        self.assertEqual(
+            self.validate([{"type": "increase_cash_buffer", "value": "0.87", "reason": "提高緩衝。"}]), []
+        )
+        for value in ("0.8701", "0.88", "0.89", "0.90", "0.95", "1"):
+            errors = self.validate([{"type": "increase_cash_buffer", "value": value, "reason": "提高緩衝。"}])
+            self.assertTrue(
+                any("競賽現金上限" in error and "0.90" in error and "0.03" in error and "0.87" in error for error in errors),
+                (value, errors),
+            )
 
     def test_schema_allows_empty_symbol_and_value(self):
         """修正前 symbol／value 套用 minLength 1，與「不適用者填空字串」的指示互相矛盾。"""

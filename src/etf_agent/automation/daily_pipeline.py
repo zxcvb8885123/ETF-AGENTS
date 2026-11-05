@@ -35,6 +35,7 @@ from etf_agent.decision import (
     revision_effects,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
+from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
@@ -248,7 +249,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         service = PortfolioDecisionApplicationService
         # 本次 policy 的 history_ref 由同一份 nav_history 綁定；重建驗證以它回應 head_run_id，其餘仍由 Validator 重算比對。
         history_provider = _history_provider(nav_history)
-        decision = service(bundle, nav_history_provider=history_provider)
+        decision = service(bundle, nav_history_provider=history_provider, decision_repository=self.decision_repository)
 
         self.log("[decision 2] 計算動能")
         momentum = MomentumEngine(bundle).run()
@@ -281,6 +282,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         base_policy = bind_forced_swap(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
         # 出場冷卻名單由決策庫確定性取得並綁進 policy；重建驗證只讀 policy，不重掃決策庫。
         base_policy = bind_reentry_cooldown(base_policy, self.decision_repository, bundle)
+        # 前次決策背景先載入（只給交易 Agent）：cash_ratio_range 的前次現金比例必須取自同一個前次 run。
+        prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
+        # 姿態內現金子等級（版本閘門）：前次現金比例 anchor 由程式綁進 policy，只給風險 Agent 當背景；沒有閘門原樣不變。
+        base_policy = bind_cash_ratio_anchor(base_policy, bundle, self.decision_repository, prior_context)
         base_policy["content_sha256"] = decision_policy_sha256(base_policy)
         # 沒有 rotation 的樣板一律不建名額脈絡，team_inputs 維持 2.2、brief 與舊版逐位相同。
         slots = (
@@ -297,7 +302,6 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self.save_artifact("position_review", position_review)
 
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
-        prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
         with self._timed("trader"):
             trade = self.run_trader(
                 bundle, momentum, analysts, debate, decision_run_id, prior_context, slots, position_review
@@ -317,7 +321,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         with self._timed("cash_stance"):
             stance = self.run_cash_stance(bundle, momentum, analysts, base_policy.get("drawdown_control"),
                                           (base_policy.get("position_sizing") or {}).get("positions_by_breadth"),
-                                          (base_policy.get("position_sizing") or {}).get("cash_buffer_by_stance"))
+                                          (base_policy.get("position_sizing") or {}).get("cash_buffer_by_stance"),
+                                          (base_policy.get("position_sizing") or {}).get("high_conviction_cash_floor"),
+                                          (base_policy.get("position_sizing") or {}).get("cash_ratio_range"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
@@ -328,6 +334,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         self.save_artifact("policy", policy)
         result.cash_stance = str(stance["level"])
         result.position_breadth = stance.get("breadth")
+        if "cash_grade" in stance:
+            self.log("  [現金子等級] %s／%s，現金比例 %s（前次比例 %s）" % (
+                stance["level"], stance["cash_grade"], policy["cash_buffer_rate"],
+                policy["position_sizing"]["cash_ratio_range"]["anchor"]["ratio"]))
 
         self.log("[decision 7] 配置、情境、Guard 與風險審查（最多 %d 次修正）" % int(policy["max_revisions"]))
         review_started = time.monotonic()

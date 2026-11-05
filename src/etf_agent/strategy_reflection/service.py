@@ -39,7 +39,9 @@ from .contracts import (
     TRIAL_DAYS, TRIAL_MAX_CALENDAR_DAYS, VERIFICATION_OBSERVE, ReflectionError,
 )
 from .repository import ReflectionRepository, atomic_write_json
-from .tools import apply_proposals, check_proposal, knob_risk_directions, non_risk_reducing, validate_template
+from .tools import (
+    apply_proposals, check_proposal, gated_cash_buffer_knobs, knob_risk_directions, non_risk_reducing, validate_template,
+)
 from .trial import (
     consecutive_reverts, evaluate_trial, excess_series, extensions, open_trial, trial_verification,
 )
@@ -432,6 +434,7 @@ def apply_reflection(
         return {"applied": False, "reason": "沒有提案"}
     candidate = apply_proposals(template, reflection["proposals"], rules)  # type: ignore[arg-type]
     blocked = non_risk_reducing(reflection["proposals"])  # type: ignore[arg-type]
+    blocked.update(gated_cash_buffer_knobs(template, reflection["proposals"]))  # type: ignore[arg-type]
     if blocked and not allow_risk_increase:
         _record_needs_human(repository, reflection_id, blocked, now)
         return {"applied": False, "needs_human": True, "risk_direction": blocked,

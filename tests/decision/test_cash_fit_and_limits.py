@@ -119,7 +119,8 @@ class ProductionConfigTests(unittest.TestCase):
 
     def test_gates_are_forbidden_for_strategy_reflection(self):
         for field in ("cash_fit_order", "cash_fit_min_fill_ratio", "cash_ceiling_fix", "stock_limit_headroom",
-                      "buy_gap_reserve", "buy_gap_reserve_rate", "insufficient_funds_policy"):
+                      "buy_gap_reserve", "buy_gap_reserve_rate", "insufficient_funds_policy",
+                      "high_conviction_cash_floor", "limit_scaled_conviction", "cash_ratio_range", "cash_grade"):
             self.assertTrue(any(field == p or field.startswith(p) for p in FORBIDDEN_PREFIXES), field)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import json
 import math
 import os
@@ -108,9 +109,19 @@ def _secret_values(project_root: Path) -> list[str]:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
-            value = line.split("=", 1)[1].strip().strip("'\"")
-            if len(value) >= _MIN_SECRET_LENGTH:
-                values.append(value)
+            raw = line.split("=", 1)[1].strip()
+            candidates = {raw.strip("'\"")}
+            if raw[:1] in ("'", '"'):
+                # 帶引號的值：取到對應的結尾引號，後面的行尾註解不算值。
+                end = raw.find(raw[0], 1)
+                if end > 0:
+                    candidates.add(raw[1:end])
+            else:
+                # 未加引號：空白後的 # 是行尾註解。
+                candidates.add(re.split(r"\s+#", raw, maxsplit=1)[0].strip())
+            for value in candidates:
+                if len(value) >= _MIN_SECRET_LENGTH:
+                    values.append(value)
     return values
 
 
@@ -347,12 +358,30 @@ def _claude_usage_tokens(payload: Dict[str, object]) -> Optional[Dict[str, int]]
     return {name: value for name, value in fields.items() if value is not None} or None
 
 
+def _last_agent_message(stdout: str) -> str:
+    """從 ``codex exec --json`` 的 JSONL 標準輸出取最後一則 agent_message 文字；找不到即拋 ValueError。"""
+    message = None
+    for line in (stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        item = event.get("item") if isinstance(event, dict) else None
+        if event.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
+            if isinstance(item.get("text"), str):
+                message = item["text"]
+    if message is None:
+        raise ValueError("標準輸出沒有 agent_message")
+    return message
+
+
 class CodexAgentRunner:
     """以唯讀 ``codex exec`` 取得符合 JSON Schema 的單次研究輸出。
 
     Codex 沙箱只擋寫、不擋讀，無法強制 ``deny_reads``。任務帶 ``deny_reads``（例如多空研究員互相隔離）時，
     只有呼叫端宣告 ``stage_isolated``（研究階段輸出暫存：同儕輸出在階段結束前不存在於磁碟）才啟動，否則拒絕、不重試。
-    這是時序隔離、不是權限隔離：Codex 仍可讀整個專案（含舊 run 的多空輸出）。"""
+    這是時序隔離、不是權限隔離：Codex 仍可讀整個專案（含舊 run 的多空輸出）。
+    隔離任務的回覆只走標準輸出（``--json``），不寫 ``--output-last-message`` 檔，避免同機並行的同儕任務在系統暫存區讀到。"""
 
     enforces_deny_reads = False
 
@@ -378,14 +407,13 @@ class CodexAgentRunner:
             schema_path = Path(temporary) / "schema.json"
             output_path = Path(temporary) / "output.json"
             schema_path.write_text(json.dumps(task.schema, ensure_ascii=False), encoding="utf-8")
-            command = [
-                self.executable, "exec", "--sandbox", "read-only",
-                "--output-schema", str(schema_path),
-                "--output-last-message", str(output_path),
-            ]
+            command = [self.executable, "exec", "--sandbox", "read-only", "--output-schema", str(schema_path)]
             if task.deny_reads:
-                # 隔離任務不把 session 紀錄寫到磁碟，避免同儕的 Codex 讀到這次的完整輸出。
-                command.append("--ephemeral")
+                # 隔離任務不把 session 紀錄寫到磁碟，避免同儕的 Codex 讀到這次的完整輸出；
+                # 也不用 --output-last-message 落地，改由 --json 的標準輸出（只在記憶體）取最後一則回覆。
+                command += ["--ephemeral", "--json"]
+            else:
+                command += ["--output-last-message", str(output_path)]
             if self.model:
                 command += ["--model", self.model]
             command += ["-"]
@@ -402,8 +430,11 @@ class CodexAgentRunner:
                     (task.name, completed.returncode, scrub_secrets(completed.stderr[-500:], self.project_root))
                 )
             try:
-                output = json.loads(output_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as error:
+                if task.deny_reads:
+                    output = json.loads(_last_agent_message(completed.stdout))
+                else:
+                    output = json.loads(output_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
                 raise TransientAgentError("%s Codex Agent 未產生有效 JSON：%s" % (task.name, error)) from error
             if not isinstance(output, dict):
                 raise TransientAgentError("%s Codex Agent 輸出不是物件" % task.name)

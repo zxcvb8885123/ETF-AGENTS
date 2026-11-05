@@ -52,7 +52,7 @@
       "days": 3
     },
     "drawdown_derisk": {
-      "version": "v1",
+      "version": "v3",
       "max_derisk_fraction": "0.25"
     },
     "rotation": {

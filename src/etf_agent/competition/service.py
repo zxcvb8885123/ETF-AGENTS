@@ -244,6 +244,7 @@ class DPlanExportService:
             official_nav=datapack.get("nav_tradable") if matched else None,
             official_prices=datapack.get("close_prices") if matched else None,
             nav_history_provider=ledger_nav_history_provider(self.root / "artifacts" / "ledger", artifacts.get("decision_input", {})),
+            decision_repository=decision_repository,
         )
         if matched:
             oversell = check_sells(plan["orders"], datapack["sellable_shares"])

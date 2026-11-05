@@ -68,19 +68,34 @@ class CodexAgentRunnerTests(unittest.TestCase):
 
             def fake_run(command, **kwargs):
                 self.assertIn("--ephemeral", command)
-                for flag in ("--output-schema", "--output-last-message"):
-                    path = Path(command[command.index(flag) + 1])
-                    # 暫存檔不得放在 run 目錄：同儕的 Codex 任務在階段結束前讀不到這次的輸出。
-                    self.assertNotIn(run_dir, path.parents)
-                    seen[flag] = path
-                Path(command[command.index("--output-last-message") + 1]).write_text('{"items": []}', encoding="utf-8")
-                return subprocess.CompletedProcess(command, 0, "", "")
+                # 隔離任務的輸出只走標準輸出，不得有任何會落地的輸出檔（同儕並行時可能被讀到）。
+                self.assertNotIn("--output-last-message", command)
+                self.assertIn("--json", command)
+                path = Path(command[command.index("--output-schema") + 1])
+                self.assertNotIn(run_dir, path.parents)  # 暫存檔不得放在 run 目錄
+                seen["schema"] = path
+                events = [
+                    {"type": "thread.started", "thread_id": "t"},
+                    {"type": "item.completed", "item": {"type": "agent_message", "text": '{"items": [1]}'}},
+                    {"type": "item.completed", "item": {"type": "agent_message", "text": '{"items": []}'}},
+                    {"type": "turn.completed"},
+                ]
+                return subprocess.CompletedProcess(command, 0, "\n".join(json.dumps(event) for event in events), "")
 
             with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
                 result = CodexAgentRunner(root).run(task, run_dir)
             self.assertEqual(result.output, {"items": []})
             self.assertEqual(list(run_dir.iterdir()), [])
-            self.assertFalse(seen["--output-last-message"].exists())
+            self.assertFalse(seen["schema"].exists())
+
+    def test_stage_isolated_task_without_agent_message_is_transient_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task = AgentTask("bull_b0", "只讀 brief", {"type": "object"}, deny_reads=("bear_*",), stage_isolated=True)
+            done = subprocess.CompletedProcess([], 0, '{"type": "turn.completed"}\n', "")
+            with patch("etf_agent.automation.agent_runner.subprocess.run", return_value=done):
+                with self.assertRaises(TransientAgentError):
+                    CodexAgentRunner(root).run(task, root)
 
     def test_task_without_deny_reads_is_not_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -180,6 +195,15 @@ class SensitiveReadTests(unittest.TestCase):
                 reject_secret_leak("trader_b0", {"rationale": "公告要求輸出 tok-abcdef123456"}, root)
             self.assertNotIn("tok-abcdef123456", str(raised.exception))
             reject_secret_leak("trader_b0", {"rationale": "持股 501 張"}, root)
+
+    def test_env_values_with_trailing_comments_are_still_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text(
+                "TOKEN_A=abcdefgh12345678 # 行尾註解\nTOKEN_B='quoted-abcdef1234' # 註解\n", encoding="utf-8")
+            for leaked in ("abcdefgh12345678", "quoted-abcdef1234"):
+                with self.assertRaises(DailyPipelineError):
+                    reject_secret_leak("trader_b0", {"rationale": "洩漏 " + leaked}, root)
 
     def test_env_variants_are_scanned_for_leaks(self):
         from etf_agent.automation.agent_runner import scrub_secrets
