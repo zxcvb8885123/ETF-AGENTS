@@ -323,8 +323,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                           (base_policy.get("position_sizing") or {}).get("positions_by_breadth"),
                                           (base_policy.get("position_sizing") or {}).get("cash_buffer_by_stance"),
                                           (base_policy.get("position_sizing") or {}).get("high_conviction_cash_floor"),
-                                          (base_policy.get("position_sizing") or {}).get("cash_ratio_range"))
-        policy = apply_trade_decision(base_policy, trade, stance, bundle, debate)
+                                          (base_policy.get("position_sizing") or {}).get("cash_ratio_range"),
+                                          prior_context)
+        policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
         policy["content_sha256"] = decision_policy_sha256(policy)

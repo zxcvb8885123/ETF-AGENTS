@@ -360,7 +360,7 @@ class DecisionFinalizer:
         sizing = self.policy.get("position_sizing")
         # cash_ratio_range（版本閘門）：現金姿態另含 cash_grade，必須在 policy 綁定的 anchor 算出的今日可選格點內。
         gate = cash_ratio_gate(sizing) if isinstance(sizing, Mapping) else None
-        validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate)
+        validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate, prior_context=prior)
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {

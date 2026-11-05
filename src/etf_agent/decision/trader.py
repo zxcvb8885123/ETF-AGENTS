@@ -236,14 +236,19 @@ def apply_trade_decision(
     cash_stance: Mapping[str, object],
     bundle: Mapping[str, object],
     debate: Optional[Mapping[str, object]] = None,
+    prior_context: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
-    """把交易 Agent 的信心等級與風險 Agent 的現金姿態（與持股廣度）綁進新版 policy；呼叫端重新封存驗證。"""
+    """把交易 Agent 的信心等級與風險 Agent 的現金姿態（與持股廣度）綁進新版 policy；呼叫端重新封存驗證。
+
+    ``prior_context`` 是本次的前次決策背景；cash_ratio_range 啟用時用來拒絕理由引用前次 decision_id。"""
     # cash_ratio_range（版本閘門）：風險 Agent 另給 cash_grade，現金比例由 grid 對應；沒有閘門時驗證與舊版逐位相同。
     gate = cash_ratio_gate(policy.get("position_sizing") or {})
     if gate is not None and "anchor" not in gate:
         raise DecisionToolError("position_sizing.cash_ratio_range 尚未綁定 anchor（前次現金比例）")
     stance_errors: List[str] = []
-    validate_cash_stance(DecisionContext(bundle), cash_stance, "cash_stance", stance_errors, cash_ratio_range=gate)
+    validate_cash_stance(
+        DecisionContext(bundle), cash_stance, "cash_stance", stance_errors, cash_ratio_range=gate, prior_context=prior_context
+    )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))
     sizing = policy.get("position_sizing")

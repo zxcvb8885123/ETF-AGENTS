@@ -1,6 +1,6 @@
 # core｜共用基礎工具
 
-提供所有 Agent 共用、不依賴任何外部 Provider 的基礎函式：Canonical JSON 與內容雜湊、含時區的時間解析、有限 Decimal 解析、不可變 run 封存，以及依台北日期分資料夾的 run 佈局。Validator 在不同 Agent 之間重算雜湊與 cutoff 時都用同一份實作（見 [AGENTS.md](../../../AGENTS.md)「程式與 Skill 慣例」）。
+提供所有 Agent 共用、不依賴任何外部 Provider 的基礎函式：Canonical JSON 與內容雜湊、含時區的時間解析、有限 Decimal 解析、外來文字進入錯誤訊息前的清理、不可變 run 封存，以及依台北日期分資料夾的 run 佈局。Validator 在不同 Agent 之間重算雜湊與 cutoff 時都用同一份實作（見 [AGENTS.md](../../../AGENTS.md)「程式與 Skill 慣例」）。
 
 ## 檔案清單
 
@@ -10,12 +10,13 @@
 | `canonical.py` | Canonical JSON 編碼與內容雜湊 | `canonical_json`、`canonical_sha256`、`content_sha256` |
 | `numeric.py` | 有限 Decimal 解析與穩定文字輸出 | `parse_decimal`、`decimal_string` |
 | `timeutil.py` | 含時區時間解析；無時區的時間一律拒絕 | `parse_aware_time` |
+| `text.py` | Agent 輸出的外來值拼進錯誤訊息前的清理（錯誤會回流到重試提示詞）：去換行與控制字元、限長、以引號標示為資料；另把整則錯誤壓成單行 | `untrusted_value`、`single_line` |
 | `artifact_store.py` | 不可變、雜湊封存的 run 目錄（manifest 驗證） | `ImmutableRunStore`（`build_manifest`、`save`、`verify`、`run_dir`） |
 | `run_layout.py` | 日期分資料夾佈局 `<root>/<YYYY-MM-DD>/<run_id>`（Asia/Taipei） | `taipei_day`、`day_from_run_id`、`day_dirs`、`list_run_dirs`、`find_run_dir` |
 
 ## 對外介面
 
-`__init__.py` 的 `__all__`：`canonical_json`、`canonical_sha256`、`content_sha256`、`decimal_string`、`parse_aware_time`、`parse_decimal`。
+`__init__.py` 的 `__all__`：`canonical_json`、`canonical_sha256`、`content_sha256`、`decimal_string`、`parse_aware_time`、`parse_decimal`、`single_line`、`untrusted_value`。
 
 `ImmutableRunStore` 與 `run_layout` 的函式需從子模組匯入，例如 `from etf_agent.core.artifact_store import ImmutableRunStore`、`from etf_agent.core.run_layout import find_run_dir`。
 

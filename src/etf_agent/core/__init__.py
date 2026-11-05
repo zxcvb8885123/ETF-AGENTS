@@ -7,6 +7,7 @@ and cutoffs with the same functions, so they must stay dependency-free.
 
 from .canonical import canonical_json, canonical_sha256, content_sha256
 from .numeric import decimal_string, parse_decimal
+from .text import single_line, untrusted_value
 from .timeutil import parse_aware_time
 
 __all__ = [
@@ -16,4 +17,6 @@ __all__ = [
     "decimal_string",
     "parse_aware_time",
     "parse_decimal",
+    "single_line",
+    "untrusted_value",
 ]

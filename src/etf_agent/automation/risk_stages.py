@@ -111,6 +111,7 @@ class RiskStagesMixin:
         cash_buffers: Optional[Mapping[str, object]] = None,
         high_conviction_cash_floor: Optional[Mapping[str, object]] = None,
         cash_ratio_range: Optional[Mapping[str, object]] = None,
+        prior_context: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -182,7 +183,9 @@ class RiskStagesMixin:
 
         def validate(stance: Mapping[str, object]) -> List[str]:
             errors: List[str] = []
-            validate_cash_stance(context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range)
+            validate_cash_stance(
+                context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range, prior_context=prior_context
+            )
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
             if isinstance(stance, Mapping) and not stance_meets_floor(stance.get("level"), floor):

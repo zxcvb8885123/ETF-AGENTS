@@ -15,6 +15,7 @@ from etf_agent.evaluation import (
 )
 from etf_agent.evaluation.replay import DECISION_DECIMAL_PRECISION, _trade_date_for, replay_body_sha256
 from etf_agent.evaluation.replay_market import ReplayMarket
+from test_daily_pipeline import gateless_policy_template
 from test_team_chain import finalize, team_world, tradable_bundle
 from test_virtual_account_daily import create_prices
 
@@ -97,7 +98,9 @@ class PolicyReplayTests(unittest.TestCase):
         self.decisions = self.root / "artifacts" / "decisions"
         self.database = self.root / "market.db"
         create_prices(self.database, PRICES)
-        template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        # 去掉正式樣板的 limit_scaled_conviction／cash_ratio_range：cash_ratio_range 開啟時 cash_buffer_by_stance 不影響配置，
+        # 本測試要比較的正是改 cash_buffer_by_stance 的效果。
+        template = gateless_policy_template()
         # fixture 帳戶只有 66 萬 NAV，2 張 2317 就是 34% 換手；正式樣板的 0.3 上限（turnover_fit）會把它縮成 1 張，
         # 這裡測的是回放與重建，不是換手上限，所以放寬到 1。
         template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00", max_turnover_rate="1")
@@ -289,7 +292,8 @@ class ReplayRankingBindingTests(unittest.TestCase):
             self.bundle, _, self.debate, self.trade, self.policy, self.team, _, _ = team_world(
                 day_bundle(cutoff, trade_date, p2330, p2317))
         self.ranking = program_ranking(ranking_envelope(self.bundle, self.trade, "r-1"), self.trade)
-        self.template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        # 去掉正式閘門：limit_scaled_conviction 須與 selection_ranking 同時啟用，本類要測拿掉 selection_ranking 的候選樣板。
+        self.template = gateless_policy_template()
         self.template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
         self.bind = bind_replay_policy
 

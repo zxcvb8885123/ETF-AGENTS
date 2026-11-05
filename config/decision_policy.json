@@ -40,6 +40,19 @@
     "cash_buffer_floor": "v1",
     "cash_fit_order": "v1",
     "cash_fit_min_fill_ratio": "0.5",
+    "limit_scaled_conviction": {
+      "version": "v1",
+      "alpha": "0.6"
+    },
+    "cash_ratio_range": {
+      "version": "v1",
+      "grid": {
+        "aggressive": {"lower": "0.03", "middle": "0.05", "upper": "0.08"},
+        "neutral": {"lower": "0.08", "middle": "0.10", "upper": "0.13"},
+        "defensive": {"lower": "0.15", "middle": "0.18", "upper": "0.21"}
+      },
+      "max_daily_raise": "0.03"
+    },
     "cash_ceiling_fix": "v1",
     "stock_limit_headroom": "v1",
     "buy_gap_reserve": "v1",

@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
+from etf_agent.core import single_line
+
 from .agent_runner import LATER_STAGE_GLOBS, AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError, reject_secret_leak
 
 
@@ -354,7 +356,8 @@ class PipelineBase:
             with self._calls_lock:
                 item["validation_errors"] = len(errors)
                 item["first_validation_errors"] = [str(error)[:200] for error in errors[:3]]
-            prompt = task.prompt + VALIDATION_FEEDBACK_PREFIX + "\n- ".join(errors[:40])
+            # 錯誤可能含 Agent 輸出的外來值：逐條壓成單行並限長，避免偽造新的回饋條目或指示。
+            prompt = task.prompt + VALIDATION_FEEDBACK_PREFIX + "\n- ".join(single_line(error) for error in errors[:40])
         raise DailyPipelineError("%s Agent 輸出驗證失敗：%s" % (task.name, "；".join(errors[:10])))
 
     def _call_agent(

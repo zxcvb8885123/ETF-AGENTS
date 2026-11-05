@@ -5,6 +5,8 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence, Set
 
+from etf_agent.core import untrusted_value
+
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
 from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate
@@ -656,7 +658,8 @@ class RiskReviewValidator:
                         errors.append("RiskReview.evidence_ids 不得為空")
                     unknown = sorted(set(values) - set(self.context.evidence_symbols))
                     if unknown:
-                        errors.append("RiskReview.evidence_ids 引用不存在：%s" % ", ".join(unknown))
+                        errors.append("RiskReview.evidence_ids 引用不存在：%s"
+                                      % ", ".join(untrusted_value(item) for item in unknown))
             except DecisionToolError as error:
                 errors.append(str(error))
         if review.get("status") == "completed" and review.get("errors"):
