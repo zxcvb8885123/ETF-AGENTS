@@ -1,6 +1,6 @@
 # 依單股上限放大的信心權重：設計計劃
 
-狀態：**已實作（2026-11-05，採文末「α 方案」而非第 5 節的 C），正式設定尚未開啟**。本檔不改任何程式或設定；以下「事實」附出處，「推論／估算」另行標示。所有用 2026-11-05 封存輸入重算的數字都是 `evidence_grade: replay_reference_only`：只固定已封存的 Agent 意圖重算確定性程式，不是對 LLM 判斷的前瞻驗證。
+狀態：**已實作（2026-11-05，採文末「α 方案」而非第 5 節的 C），正式設定已開啟（alpha 0.6）**。本檔不改任何程式或設定；以下「事實」附出處，「推論／估算」另行標示。所有用 2026-11-05 封存輸入重算的數字都是 `evidence_grade: replay_reference_only`：只固定已封存的 Agent 意圖重算確定性程式，不是對 LLM 判斷的前瞻驗證。
 
 路徑說明：原請求為 `docs/plans/limit-aware-conviction-weights.md`，但 `docs/` 下沒有 `plans/` 子目錄，既有計劃檔慣例是 `docs/<snake_case>_plan.md`（例：`margin_level_signal_plan.md`、`fundamental_growth_signal_plan.md`），故改為本路徑。
 
@@ -229,7 +229,7 @@ git diff --check
 
 | 白話說明 | 程式名稱 |
 | --- | --- |
-| 高信心份額至少為 alpha × 單股上限（已實作、未開啟，見「α 方案」） | `position_sizing.limit_scaled_conviction: {"version": "v1", "alpha": …}`、`sizing.alpha_floor_weights` |
+| 高信心份額至少為 alpha × 單股上限（已實作、正式設定已開啟，見「α 方案」） | `position_sizing.limit_scaled_conviction: {"version": "v1", "alpha": …}`、`sizing.alpha_floor_weights` |
 | 份額計算 | `sizing.conviction_weights`、`allocation._conviction_targets` |
 | 單股上限 | `max_stock_weight`、`special_weight_limits`、`_weight_limit` |
 | 有買單股票留 3% 上限空間 | `stock_limit_headroom`、`LIMIT_HEADROOM_BUY` |
@@ -237,7 +237,7 @@ git diff --check
 | 現金緩衝只放行賣款 | `cash_buffer_floor` |
 | Active Share 重算 | 旗標 `RISK_ACTIVE_SHARE` |
 
-## α 方案（2026-11-05 人決定採用，已實作；正式設定尚未開啟）
+## α 方案（2026-11-05 人決定採用，已實作；正式設定已開啟）
 
 人的決定：不採第 5 節的 C，改採第 4 節 D 類「高信心填到單股上限的 α 比例」；α 寫成 Policy 參數、由人設定；同等級內沿用 `selection_ranking` 名次；不新增信心等級、不改 Agent 輸出契約。以下是實作的精確定義（`sizing.alpha_floor_weights`，由 `allocation._conviction_targets` 呼叫）。
 

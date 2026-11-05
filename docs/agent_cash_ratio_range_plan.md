@@ -1,11 +1,11 @@
 # 風險 Agent 在姿態範圍內填現金比例：設計計劃
 
-狀態：**第一階段（C2 子等級）已實作（2026-11-05），正式設定未開啟**；第二階段（Agent 填數字）未實作。人的決定：防守上限 22%（格點 15／18／21%），單日上限 3pp、只限制拉高，其餘第 10 節採推薦選項。實作與計劃不同處：Policy 不綁 `allowed_by_stance`（由 grid、anchor、Δ 確定性重算）、`max_daily_raise` 不接受 null、沒有另設 `cash_grade` 專屬理由欄位（沿用 `rationale`）。下文為原計劃。「事實」都附出處（file:line，行號以 2026-11-05 分支 `127-` 工作區為準，含尚未提交的修改）；「推論」與「估算」另外標示。凡是用封存輸入重算的數字，都標 `evidence_grade: replay_reference_only`：重算時固定已封存的 Agent 意圖，只重跑確定性程式，不是對 LLM 判斷的前瞻驗證。
+狀態：**第一階段（C2 子等級）已實作（2026-11-05），正式設定已開啟**；第二階段（Agent 填數字）未實作。人的決定：防守上限 22%（格點 15／18／21%），單日上限 3pp、只限制拉高，其餘第 10 節採推薦選項。實作與計劃不同處：Policy 不綁 `allowed_by_stance`（由 grid、anchor、Δ 確定性重算）、`max_daily_raise` 不接受 null、沒有另設 `cash_grade` 專屬理由欄位（沿用 `rationale`）。下文為原計劃。「事實」都附出處（file:line，行號以 2026-11-05 分支 `127-` 工作區為準，含尚未提交的修改）；「推論」與「估算」另外標示。凡是用封存輸入重算的數字，都標 `evidence_grade: replay_reference_only`：重算時固定已封存的 Agent 意圖，只重跑確定性程式，不是對 LLM 判斷的前瞻驗證。
 
 姊妹計劃（格式與重放方法沿用）：
 
 - [防守現金緩衝下的高信心買進](cash_buffer_high_conviction_plan.md)：`high_conviction_cash_floor`，已實作，正式設定未開啟。
-- [依單股上限放大的信心權重](limit_aware_conviction_weights_plan.md)：`limit_scaled_conviction`，α 方案，已實作，正式設定未開啟。
+- [依單股上限放大的信心權重](limit_aware_conviction_weights_plan.md)：`limit_scaled_conviction`，α 方案，已實作，正式設定已開啟（alpha 0.6）。
 
 三者的關係見第 6 節。
 

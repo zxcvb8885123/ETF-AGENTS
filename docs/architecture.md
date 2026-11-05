@@ -86,7 +86,7 @@
 
 現金緩衝：現金已低於姿態緩衝時，緩衝只擋買單動用原有現金，不擋用本次賣出收入買的替補，避免出場釋出的名額流失。
 
-三個 2026-11-05 新增、**目前正式設定未開啟**的版本閘門（只在 Policy 帶欄位時生效，舊 Policy／舊 run 逐位元不變；計劃見 [`cash_buffer_high_conviction_plan.md`](cash_buffer_high_conviction_plan.md)、[`limit_aware_conviction_weights_plan.md`](limit_aware_conviction_weights_plan.md)、[`agent_cash_ratio_range_plan.md`](agent_cash_ratio_range_plan.md)）：
+三個 2026-11-05 新增的版本閘門（正式設定：`limit_scaled_conviction` 與 `cash_ratio_range` 已開啟，`high_conviction_cash_floor` 與 `cash_ratio_range` 互斥而未開啟）（只在 Policy 帶欄位時生效，舊 Policy／舊 run 逐位元不變；計劃見 [`cash_buffer_high_conviction_plan.md`](cash_buffer_high_conviction_plan.md)、[`limit_aware_conviction_weights_plan.md`](limit_aware_conviction_weights_plan.md)、[`agent_cash_ratio_range_plan.md`](agent_cash_ratio_range_plan.md)）：
 
 - 高信心現金下限 `high_conviction_cash_floor`（`floor_ratio`，建議 0.75）：高信心買單可動用原有現金到「姿態緩衝 × floor_ratio」（防守 15%、中性 7.5%、積極 2.25%），中低信心仍只能用賣款；防守減碼的觸發與目標同改為這條線（帶狀防守，避免隔日來回交易）；當日觸發減碼時不套用。動用時記 `RISK_CASH_SOFT_FLOOR`。份額預算不變。
 - 高信心份額下限 `limit_scaled_conviction`（`alpha`，由人設定，建議 0.6）：高信心的目標份額至少為 alpha × 該股單股上限（台積電 25% → 15%，一般股 10% → 6%），預算足夠時高信心不因別檔被抬高而少於原式份額，必要份額總和超過預算時依入選名次填到用完；其餘照原式，`volatility_exponent` 為 0 時中信心不高於最小的高信心、低信心不高於最小的中信心，分不完的預算留作現金。兩者同時開啟時，名次第一的高信心股會先用掉高信心可動用的現金。
