@@ -86,3 +86,27 @@ class MarketNewsStageTests(unittest.TestCase):
         pipeline = FakePipeline(self.root, lambda items: label_all(items[:-1]))
         with self.assertRaisesRegex(DailyPipelineError, "覆蓋"):
             build_daily_market_news(pipeline, self.snapshot, self.captures_root, self.database)
+
+    def test_wrong_content_ids_are_restored_from_item_id(self):
+        self.save_captures(self.captures)
+
+        def sloppy(items):
+            answer = label_all(items)
+            for row in answer["labels"]:
+                row["canonical_content_id"] = "亂編的識別"
+            return answer
+
+        pair = build_daily_market_news(FakePipeline(self.root, sloppy), self.snapshot, self.captures_root, self.database)
+        self.assertEqual(pair["result"]["item_count"], 6)
+        self.assertNotIn("亂編的識別", [row["canonical_content_id"] for row in pair["bundle"]["labels"]])
+
+    def test_unknown_item_id_is_still_rejected(self):
+        self.save_captures(self.captures)
+
+        def unknown(items):
+            answer = label_all(items)
+            answer["labels"][0]["item_id"] = "market-news:不存在"
+            return answer
+
+        with self.assertRaisesRegex(DailyPipelineError, "不存在|覆蓋"):
+            build_daily_market_news(FakePipeline(self.root, unknown), self.snapshot, self.captures_root, self.database)
