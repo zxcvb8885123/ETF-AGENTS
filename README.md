@@ -57,6 +57,8 @@ uv python install 3.12
 - **失敗處理**：資料不足或風控不過就停止或明確降級，不填假值。
 - **驗證邊界**：官方執行價採交易所來源白名單，財報須與來源證據一致；有主辦方資料包時，D-Plan 的股數換算與最終比例檢查使用同一份官方 NAV。帳本重建先在暫存區驗證，再發布結果，失敗恢復範圍見[日常操作](docs/operations.md)。
 
+- **待人開啟的配置閘門**：高信心現金下限 `high_conviction_cash_floor` 與高信心份額下限 `limit_scaled_conviction`（2026-11-05 已實作與測試，正式設定尚未開啟；開啟前的決策結果不變），計劃與重放見 [`docs/cash_buffer_high_conviction_plan.md`](docs/cash_buffer_high_conviction_plan.md)、[`docs/limit_aware_conviction_weights_plan.md`](docs/limit_aware_conviction_weights_plan.md)。姿態內現金子等級 `cash_ratio_range`（同日已實作第一階段，正式設定尚未開啟）：風險 Agent 除了姿態另選 lower／middle／upper 子等級（仍是列舉、不輸出數字），程式依格點對應現金比例，現金每天最多比前次決策高 3 個百分點、往下不限；與高信心現金下限互斥，計劃見 [`docs/agent_cash_ratio_range_plan.md`](docs/agent_cash_ratio_range_plan.md)。開啟後以 `cli/portfolio_decision.py` 重跑 finalize／validate-decision 時，程式預設讀 `artifacts/decisions` 重讀前次決策，也可用 `--decision-repository` 指定。另外，風險審查修正動作 `increase_cash_buffer` 的值一律必須在現金上限之下留 3 個百分點邊際（比賽上限 25% 時最高 22%），因為整張取整與現金分配會讓現金高於緩衝。
+
 完整說明見[每日決策架構](docs/architecture.md)與[決策流程細節](docs/decision-details.md)。
 
 ## 專案架構

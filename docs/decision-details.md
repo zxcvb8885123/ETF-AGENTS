@@ -26,7 +26,7 @@
 
 ### 持股檔數
 
-風險 Agent 在給現金姿態時，同時選一個持股廣度，程式再換算成檔數。Agent 自己不輸出檔數。
+風險 Agent 在給現金姿態時，同時選一個持股廣度，程式再換算成檔數。Agent 自己不輸出檔數。Policy 開啟 `cash_ratio_range` 時，風險 Agent 另選姿態內子等級 `cash_grade`（lower／middle／upper），現金比例由格點對應，Agent 同樣不輸出百分比（見「控制回撤」一節）。
 
 | 廣度 | 檔數 |
 | --- | --- |
@@ -43,6 +43,8 @@
 ### 低波動偏好
 
 權重 = 信心等級乘數 ÷ 波動度的若干次方。次方是 `volatility_exponent`：1 代表完全依波動度反比（舊做法，低波動股權重可到高波動股的 4～5 倍），0 代表同信心等級內等權。目前正式設定為 0。這個值與「單次換股上限」可由策略反思依校準報告微調，版本開關只由人設定。
+
+份額與單股上限：原式只把單股上限當封頂，台積電上限 25% 對份額沒有作用。版本閘門 `position_sizing.limit_scaled_conviction`（`{"version": "v1", "alpha": "0.6"}`，alpha 必填、由人設定，**目前正式設定未開啟**）讓高信心股的份額至少為 alpha × 該股單股上限（再以封頂為限）；原式份額已高於這個下限時照原式；預算足夠時，高信心股不會因為別檔被抬高而少於原式份額。必要份額（原式與下限取大）總和超過預算時，依入選名次填到預算用完，中低信心為 0。`volatility_exponent` 為 0 時，中信心不高於最小的高信心、低信心不高於最小的中信心（例如 2330 為中信心時）；因此分不完的預算留作現金。前提是 `conviction_volatility_v2` 與 `selection_ranking`。公式、預算守恆與封頂見[計劃檔的「α 方案」](limit_aware_conviction_weights_plan.md)。proposal 的 `position_sizing` 區塊只在開啟時記錄 `limit_scaled_conviction`。
 
 ### 滿檔換股
 
@@ -67,7 +69,11 @@
 | 達 5% | 至少中性 | 回到 3% 以下 |
 | 達 10% | 至少防守 | 回到 7% 以下，降回中性 |
 
-防守姿態下，程式會依 ATR 由高到低主動減碼，直到現金達 20% 緩衝，單次最多減 NAV 的 25%。`position_sizing.drawdown_derisk.version`（只由人設定）：v1 整張進位可超過單次上限，且交易 Agent 標 add 的同一檔會被加回原持股（留下 `RISK_DRAWDOWN` 旗標卻沒有賣單，現金也達不到緩衝）；v2 進位不得超過上限；v3 另把被減碼的持股排除在本次加碼候選外，減碼後的股數就是上限、不建買單，交易 Agent 的意圖仍保留為 add。舊版本的決策逐位元維持原重建。設定綁定時會一併記下帳本歷史的指紋；每日流程與事後重建都用帳本歷史重算並比對峰值，被竄改就拒絕。
+防守姿態下，程式會依 ATR 由高到低主動減碼，直到現金達姿態緩衝（目前 20%；開啟 `cash_ratio_range` 時為所選子等級的比例），單次最多減 NAV 的 25%。`position_sizing.drawdown_derisk.version`（只由人設定）：v1 整張進位可超過單次上限，且交易 Agent 標 add 的同一檔會被加回原持股（留下 `RISK_DRAWDOWN` 旗標卻沒有賣單，現金也達不到緩衝）；v2 進位不得超過上限；v3 另把被減碼的持股排除在本次加碼候選外，減碼後的股數就是上限、不建買單，交易 Agent 的意圖仍保留為 add。舊版本的決策逐位元維持原重建。開啟 `high_conviction_cash_floor`（版本閘門，目前未開啟，須 `cash_buffer_floor`、`cash_fit_order` 與 v3）時，觸發與目標改為「緩衝 × floor_ratio」（例如防守 15%），與高信心買單可動用到的下限相同：20% 以上全部自由、15%～20% 只有高信心能動用原有現金、低於 15% 才由程式減碼補到 15%；當日觸發減碼時高信心也以完整緩衝計，`RISK_DRAWDOWN` 的說明文字改寫軟下限。設定綁定時會一併記下帳本歷史的指紋；每日流程與事後重建都用帳本歷史重算並比對峰值，被竄改就拒絕。
+
+姿態內現金子等級 `cash_ratio_range`（版本閘門，目前未開啟，與 `high_conviction_cash_floor` 互斥）：現金比例 = `grid[姿態][cash_grade]`。單日只限制現金拉高，今日可選格點 ≤ max(該姿態 lower, 前次比例 + `max_daily_raise`)，往下不限；以建議格點與 3pp 為例，前次中性 10% 轉防守的第一天只能選 15%，隔天最多 18%，再隔天 21%。回撤強制防守時同樣只到防守 lower，不放寬。前次比例 `anchor` 取自前次決策 run 的最終現金緩衝（與交易 Agent 的前次決策背景同一個 run），沒有前次 run 時用本次起始現金比例；它只給風險 Agent 當背景、不可引用。選了今日不可選的子等級即退回重答，修正循環用盡即停止，程式不夾到邊界。事後以 `cli/portfolio_decision.py` 執行 finalize／validate-decision 時，閘門開啟的 run 會讀預設決策庫 `artifacts/decisions` 重讀前次 run；也可以用 `--decision-repository` 指定其他位置。沒有閘門的舊 run 不讀決策庫。
+
+配置後風險審查的修正動作 `increase_cash_buffer`（2026-11-05 起，不論有沒有閘門）：值必須不高於競賽現金上限 `cash_weight_ceiling` 減 3 個百分點邊際（比賽上限 25% 時最高 22%；邊際為 `decision/risk.py` 的 `CASH_BUFFER_CEILING_MARGIN`，上限一律取 Policy），否則該審查無效，退回風險 Agent 重答。緩衝達到上限時，修正後的提案必然被 Guard 的現金上限拒絕，之後的修正又不得再降低緩衝，等於把當天推向拒絕；即使低於上限，整張取整與現金分配仍會讓現金高於緩衝（例如起始現金約 21%、緩衝 24% 時現金到 25.12%），所以要留邊際。留了邊際仍超過上限時，照舊由 Guard 拒絕。
 
 ## 交割與現金（2026-11-03 起）
 
@@ -125,6 +131,9 @@
 | 重試差異紀錄 | `agent_calls.revision_diff` |
 | 回撤控制 | `drawdown_control`；帳本歷史指紋 `history_ref` |
 | 主動降風險減碼 | `position_sizing.drawdown_derisk`，旗標 `RISK_DRAWDOWN` |
+| 高信心現金下限（未開啟） | `position_sizing.high_conviction_cash_floor`（`floor_ratio`），旗標 `RISK_CASH_SOFT_FLOOR`；簡報 `high_conviction_cash_floor_by_stance` |
+| 高信心份額下限（未開啟） | `position_sizing.limit_scaled_conviction`（`alpha`） |
+| 姿態內現金子等級（未開啟） | `position_sizing.cash_ratio_range`（`grid`、`max_daily_raise`、`anchor`）、`position_sizing.cash_grade`、`cash_stance.cash_grade`；簡報 `cash_grade_grid`、`cash_grade_allowed_by_stance`、`cash_ratio_anchor` |
 | 賣款當日可用 | `config/decision_rules.json` 的 `reuse_sell_proceeds` |
 | 現金不足的買單順序 | `cash_fit_order`，旗標 `RISK_CASH_FIT` |
 | 現金上限修正 | `cash_ceiling_fix`，旗標 `RISK_CASH_CEILING` |
