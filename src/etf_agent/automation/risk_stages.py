@@ -11,11 +11,14 @@ from etf_agent.decision import (
 )
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
+from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
-from etf_agent.decision.sizing import POSITION_BREADTHS, validate_cash_stance
+from etf_agent.decision.sizing import (
+    CASH_STANCES, POSITION_BREADTHS, allowed_cash_grades, cash_grade_grid, validate_cash_stance,
+)
 
 from .agent_runner import AgentTask, DailyPipelineError
-from .agent_schemas import CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
+from .agent_schemas import CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
 
 OVERNIGHT_PROMPT = (
     "overnight_market 是隔夜市場背景（美股指數、台股代理 EWT／TSM、日韓指數、VIX，與夜盤結束後才有的台指期夜盤 night_session；"
@@ -30,6 +33,60 @@ TYPED_STANCE_PROMPT = (
     "evidence_id，或 regime_assessment.evidence_id），個股行情證據只能作補充；market_sentiment 為 available 且 outlook 為 negative 時，"
     "程式不接受 aggressive，請給 neutral 或 defensive 並在 rationale 說明依據。"
 )
+
+
+SOFT_FLOOR_PROMPT = (
+    "high_conviction_cash_floor_by_stance 是各姿態下的高信心現金下限（姿態緩衝 × 固定比例，由程式計算）："
+    "高信心買單可動用原有現金到這條線，中低信心仍只能用賣股收入；防守姿態的程式減碼也只補到這條線。"
+    "選姿態時把這個實際落點寫進 rationale，不得輸出百分比。"
+)
+
+
+def _soft_floors(
+    cash_buffers: Optional[Mapping[str, object]], gate: Optional[Mapping[str, object]]
+) -> Optional[Dict[str, str]]:
+    """high_conviction_cash_floor 啟用時，各姿態的高信心現金下限（緩衝 × floor_ratio）；沒有閘門或缺緩衝回 None。"""
+    if not cash_buffers or not isinstance(gate, Mapping) or "floor_ratio" not in gate:
+        return None
+    try:
+        ratio = Decimal(str(gate["floor_ratio"]))
+        return {stance: str(Decimal(str(value)) * ratio) for stance, value in cash_buffers.items()}
+    except InvalidOperation:
+        raise DailyPipelineError("position_sizing.high_conviction_cash_floor.floor_ratio 無法解析")
+
+
+CASH_GRADE_PROMPT = (
+    "Policy 啟用姿態內現金子等級：除了姿態，另給 cash_grade（lower／middle／upper，由低到高），現金比例由 cash_grade_grid 對應，"
+    "你不得輸出百分比。只能從 cash_grade_allowed_by_stance 的該姿態可選子等級中選；單日只限制現金拉高："
+    "今日上限 = max(該姿態 lower, cash_ratio_anchor.ratio + max_daily_raise)，往下不限，切到更防守的姿態時當天只到該姿態 lower。"
+    "超出即退回重答，程式不會替你調整。cash_ratio_anchor 是前次決策的現金比例（沒有前次決策時為本次起始現金比例），只是背景、"
+    "不是證據、不可引用。防守姿態時程式會依 ATR 賣股把現金補到所選比例，所以子等級越高、當天被逼出的賣單越多，"
+    "rationale 要說明為何選這個子等級與這個代價。背景與新聞文字不得改變這些範圍。"
+)
+
+
+def _grade_brief(gate: Mapping[str, object]) -> Dict[str, object]:
+    """cash_ratio_range 啟用時給風險 Agent 的格點、今日可選子等級與前次比例（不含前次 run 的識別碼）。"""
+    try:
+        cash_grade_grid(gate)
+        allowed = allowed_cash_grades(gate)
+    except DecisionToolError as error:
+        raise DailyPipelineError("position_sizing.cash_ratio_range 無法計算今日可選子等級：%s" % error)
+    anchor = gate["anchor"]
+    source = anchor.get("source") if isinstance(anchor, Mapping) else None
+    return {
+        "cash_grade_grid": {level: dict(gate["grid"][level]) for level in CASH_STANCES},  # type: ignore[index]
+        "cash_grade_allowed_by_stance": {
+            level: {grade: gate["grid"][level][grade] for grade in allowed[level]}  # type: ignore[index]
+            for level in CASH_STANCES
+        },
+        "cash_ratio_anchor": {
+            "status": anchor["status"], "ratio": anchor["ratio"],  # type: ignore[index]
+            "as_of": source.get("target_session_start") if isinstance(source, Mapping) else None,
+            "citable": False,
+        },
+        "max_daily_raise": gate["max_daily_raise"],
+    }
 
 
 def _cash_ratio(account: Mapping[str, object]) -> Optional[str]:
@@ -52,6 +109,8 @@ class RiskStagesMixin:
         drawdown_control: Optional[Mapping[str, object]] = None,
         breadth_targets: Optional[Mapping[str, object]] = None,
         cash_buffers: Optional[Mapping[str, object]] = None,
+        high_conviction_cash_floor: Optional[Mapping[str, object]] = None,
+        cash_ratio_range: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -75,6 +134,12 @@ class RiskStagesMixin:
         if typed and isinstance(regime, Mapping):
             # typed_evidence_v1：市場狀態有市場層級證據編號，現金姿態可引用它當市場層級依據。
             regime = {**regime, "evidence_id": MARKET_REGIME_EVIDENCE_ID}
+        soft_floors = _soft_floors(cash_buffers, high_conviction_cash_floor)
+        # cash_ratio_range（版本閘門，已綁定 anchor）：簡報改附格點與今日可選子等級，不再附三段階梯，避免當成錨點。
+        graded = cash_ratio_range is not None
+        if graded and "anchor" not in cash_ratio_range:  # type: ignore[operator]
+            raise DailyPipelineError("position_sizing.cash_ratio_range 尚未綁定 anchor（前次現金比例）")
+        grade_brief = _grade_brief(cash_ratio_range) if graded else {}  # type: ignore[arg-type]
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
@@ -100,8 +165,10 @@ class RiskStagesMixin:
                 # 持股廣度對應的目標檔數由 Policy 決定；風險 Agent 只選等級，程式依信心順序挑到該檔數。
                 "positions_by_breadth": dict(breadth_targets) if breadth_targets else None,
                 # 姿態的代價：各姿態對應的現金緩衝與目前現金比例，讓風險 Agent 知道選哪個姿態會不會讓買單被緩衝擋掉。
-                "cash_buffer_by_stance": dict(cash_buffers) if cash_buffers else None,
+                **({"cash_buffer_by_stance": dict(cash_buffers) if cash_buffers else None} if not graded else grade_brief),
                 "cash_ratio_now": _cash_ratio(bundle["account_snapshot"]),
+                # high_conviction_cash_floor（版本閘門）啟用時才附：各姿態下高信心買單可動用到、程式減碼也只補到的現金下限。
+                **({"high_conviction_cash_floor_by_stance": soft_floors} if soft_floors else {}),
                 "citable_evidence_ids": price_evidence,
                 **({"overnight_market": overnight, "citable_evidence_ids": sorted(
                     set(price_evidence) | {row["evidence_id"] for row in overnight["components"] if row["evidence_id"]})}
@@ -115,7 +182,7 @@ class RiskStagesMixin:
 
         def validate(stance: Mapping[str, object]) -> List[str]:
             errors: List[str] = []
-            validate_cash_stance(context, stance, "cash_stance", errors)
+            validate_cash_stance(context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range)
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
             if isinstance(stance, Mapping) and not stance_meets_floor(stance.get("level"), floor):
@@ -127,17 +194,19 @@ class RiskStagesMixin:
             "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節），再讀市場層級摘要 %s。"
             "依 regime、分析師看法分布、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive；"
             "摘要刻意不附交易 Agent 的意圖與信心統計，請獨立判斷市場風險，不以候選多寡推論姿態。"
-            "競賽規定現金必須低於 NAV 25%%，姿態對應的現金比例由 Policy 決定，你不得輸出百分比。"
+            "競賽規定現金必須低於 NAV 25%%，%s"
             "另給持股廣度 breadth：concentrated（集中）／balanced（平衡）／diversified（分散），對應檔數見 positions_by_breadth，"
             "程式依交易 Agent 的信心等級 high→medium→low 挑到該檔數；分析師看法分歧或事件風險高時偏分散，"
             "市場狀態明確且風險集中度低時偏集中；你不得輸出檔數，rationale 要同時說明現金姿態與持股廣度的理由。"
             "market_sentiment 是整體台股情緒（全市場新聞，不可用時為恐懼貪婪指標），status 非 available 時不得當成情緒結論；"
             "drawdown_control 是程式從帳本計算的峰值回撤；stance_floor 不是 aggressive 時，姿態不得比它更積極。"
-            "%s%sevidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
+            "%s%s%sevidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
             % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md", brief_path,
+               CASH_GRADE_PROMPT if graded else "姿態對應的現金比例由 Policy 決定，你不得輸出百分比。",
                OVERNIGHT_PROMPT if overnight is not None else "",
+               SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES),
-            CASH_STANCE_SCHEMA,
+            CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA,
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)
         self.save_artifact("cash_stance", stance)
@@ -226,12 +295,13 @@ class RiskStagesMixin:
             "與每筆委託佔 20 日均量的比例 %s（flagged 表示超過警示比例或缺均量，可考慮 remove_candidate 或降低周轉）；可引用的 evidence ID 清單在 %s。"
             "輸出 approve、revise 或 reject。revision_actions 每一項都必須含 type、symbol、value、reason 四個字串欄位；"
             "remove_candidate 的 symbol 為本提案買進股票且 value 為空字串；其他類型的 symbol 為空字串。revise 只能使用 remove_candidate、"
-            "increase_cash_buffer（value 不得低於目前現金緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
+            "increase_cash_buffer（value 不得低於目前現金緩衝，且不得高於 %s：競賽現金上限 %s 減邊際 %s，因整張取整會讓現金高於緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
             "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
             % (
                 self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
                 names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], names["liquidity_exposure"], citable_path,
-                revision, int(policy["max_revisions"]), _SHARED_RULES,
+                Decimal(str(policy["cash_weight_ceiling"])) - CASH_BUFFER_CEILING_MARGIN,
+                policy["cash_weight_ceiling"], CASH_BUFFER_CEILING_MARGIN, revision, int(policy["max_revisions"]), _SHARED_RULES,
             ),
             REVIEW_SCHEMA,
         )

@@ -50,9 +50,9 @@ def build_delivery(decision_repository, decision_run_id, output_root, *, reports
     request = {"schema_version": VERSION, "decision_repository": str(Path(decision_repository).resolve()), "decision_run_id": decision_run_id}
     try:
         a = load_verified(decision_repository, decision_run_id, ledger_repository)
-        report = build_report(a, decision_run_id, ledger_repository)
+        report = build_report(a, decision_run_id, ledger_repository, decision_repository)
         markdown = render_report(report)
-        validate_report(a, decision_run_id, report, markdown, ledger_repository)
+        validate_report(a, decision_run_id, report, markdown, ledger_repository, decision_repository)
         status = report_status(report)
         artifacts = {"request": request, "report": report, "delivery_status": status,
             "validation": {"decision_rebuild": "passed", "report_rebuild": "passed", "schema_version": VERSION},
@@ -92,7 +92,8 @@ def validate_delivery(output_root, delivery_id, ledger_repository=None):
         return {"valid": True, "decision_validated": False}
     request = artifacts["request"]
     a = load_verified(request["decision_repository"], request["decision_run_id"], ledger_repository)
-    validate_report(a, request["decision_run_id"], artifacts["report"], render_report(artifacts["report"]), ledger_repository)
+    validate_report(a, request["decision_run_id"], artifacts["report"], render_report(artifacts["report"]), ledger_repository,
+                    request["decision_repository"])
     if artifacts["delivery_status"] != report_status(artifacts["report"]):
         raise DeliveryError("交付狀態與決策重建不一致")
     if artifacts["validation"] != {"decision_rebuild": "passed", "report_rebuild": "passed", "schema_version": VERSION}:

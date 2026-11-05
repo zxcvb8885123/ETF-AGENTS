@@ -5,7 +5,7 @@ from .renderer import render_report
 from .contracts import DeliveryError
 
 
-def validate_report(artifacts, run_id, report, markdown, ledger_repository=None):
-    expected = build_report(artifacts, run_id, ledger_repository)
+def validate_report(artifacts, run_id, report, markdown, ledger_repository=None, decision_repository=None):
+    expected = build_report(artifacts, run_id, ledger_repository, decision_repository)
     if report != expected or markdown != render_report(expected):
         raise DeliveryError("最終報告 JSON／Markdown 與完整重建不一致")

@@ -265,6 +265,8 @@ class DPlanExportServiceTests(unittest.TestCase):
             result = self._export(root, dict(base, datapack=dict(matched, nav_tradable="1000", close_prices={"2330.TW": "10"})), plan)
             kwargs = dict(self.last_build.call_args.kwargs)
             self.assertTrue(callable(kwargs.pop("nav_history_provider")))
+            # cash_ratio_range 的前次比例重建需要決策庫：匯出時傳入同一個決策庫。
+            self.assertEqual(kwargs.pop("decision_repository"), root / "decisions")
             self.assertEqual(kwargs, {"official_nav": "1000", "official_prices": {"2330.TW": "10"}})
             self.assertEqual(result["datapack"]["nav_tradable"], "1000")
             self.assertEqual(result["datapack"]["status"], "matched")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from etf_agent.decision.analysts import MATERIALITY, OUTLOOKS
 from etf_agent.decision.input_context import CLAIM_KINDS
-from etf_agent.decision.sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS
+from etf_agent.decision.sizing import CASH_GRADES, CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS
 from etf_agent.decision.stance import STRENGTHS
 from etf_agent.decision.trader import TRADE_INTENTS
 
@@ -93,6 +93,13 @@ CASH_STANCE_SCHEMA = _object(
     {"level": {"enum": list(CASH_STANCES)}, "breadth": {"enum": list(POSITION_BREADTHS)},
      "rationale": _TEXT, "evidence_ids": _strings(1)},
     ("level", "breadth", "rationale", "evidence_ids"),
+)
+# 只在 Policy 啟用 position_sizing.cash_ratio_range（版本閘門）時使用：另加姿態內子等級 cash_grade（列舉，不是數字）。
+# 沒有閘門時沿用 CASH_STANCE_SCHEMA，逐位元不變。
+CASH_GRADE_STANCE_SCHEMA = _object(
+    {"level": {"enum": list(CASH_STANCES)}, "cash_grade": {"enum": list(CASH_GRADES)},
+     "breadth": {"enum": list(POSITION_BREADTHS)}, "rationale": _TEXT, "evidence_ids": _strings(1)},
+    ("level", "cash_grade", "breadth", "rationale", "evidence_ids"),
 )
 # Codex strict JSON Schema 要求 properties 內宣告的欄位全部列入 required，但 revision_actions 的
 # symbol 與 value 只有部分 type 適用，不適用者必須能送出空字串；因此這兩個欄位不套用 _TEXT 的

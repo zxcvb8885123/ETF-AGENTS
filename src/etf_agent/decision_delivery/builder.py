@@ -9,8 +9,8 @@ from .provider import verify_inputs
 from .tools import trade_date
 
 
-def build_report(artifacts, run_id, ledger_repository=None):
-    verify_inputs(artifacts, ledger_repository)
+def build_report(artifacts, run_id, ledger_repository=None, decision_repository=None):
+    verify_inputs(artifacts, ledger_repository, decision_repository)
     a = deepcopy(artifacts)
     b, decision = a["decision_input"], a["decision"]
     accepted = decision["status"] in ("approved", "no_trade")

@@ -103,6 +103,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             plan = DPlanExporter().build(
                 args.team_id, args.trade_date, read_object(args.context, "D-Plan context"), artifacts,
                 nav_history_provider=ledger_nav_history_provider(args.virtual_account_repository, artifacts["decision_input"]),
+                decision_repository=args.decision_repository,
             )
             output = args.output or ROOT / "artifacts" / "competition_d_plan" / ("D-Plan_%s_%s.json" % (args.team_id, args.trade_date))
             write_new_json(output, plan)
