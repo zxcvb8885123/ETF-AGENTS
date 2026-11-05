@@ -1057,6 +1057,23 @@ class RevisionActionFieldTests(unittest.TestCase):
         errors = self.validate([{"type": "increase_cash_buffer", "symbol": "", "value": "", "reason": "缺數值。"}])
         self.assertTrue(any("value" in error for error in errors), errors)
 
+    def test_increase_cash_buffer_must_leave_margin_below_cash_weight_ceiling(self):
+        """緩衝接近或達到競賽現金上限時，整張取整與現金分配會讓現金高於緩衝而被 Guard 的 CASH_WEIGHT 拒絕，且之後的修正
+        不得再降低緩衝；在審查驗證就拒絕，值必須 ≤ cash_weight_ceiling − 邊際。上限取 policy（fixture 為 0.90，邊際 0.03）。"""
+        from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
+
+        self.assertEqual(self.settings["cash_weight_ceiling"], "0.90")
+        self.assertEqual(CASH_BUFFER_CEILING_MARGIN, Decimal("0.03"))
+        self.assertEqual(
+            self.validate([{"type": "increase_cash_buffer", "value": "0.87", "reason": "提高緩衝。"}]), []
+        )
+        for value in ("0.8701", "0.88", "0.89", "0.90", "0.95", "1"):
+            errors = self.validate([{"type": "increase_cash_buffer", "value": value, "reason": "提高緩衝。"}])
+            self.assertTrue(
+                any("競賽現金上限" in error and "0.90" in error and "0.03" in error and "0.87" in error for error in errors),
+                (value, errors),
+            )
+
     def test_schema_allows_empty_symbol_and_value(self):
         """修正前 symbol／value 套用 minLength 1，與「不適用者填空字串」的指示互相矛盾。"""
         from etf_agent.automation.agent_schemas import REVIEW_SCHEMA

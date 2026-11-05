@@ -26,7 +26,8 @@ from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
 from .rotation import validate_portfolio_slots
-from .sizing import validate_cash_stance
+from .cash_ratio import validate_cash_ratio_anchor
+from .sizing import cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
 
@@ -226,6 +227,15 @@ class DecisionFinalizer:
         validate_drawdown_control(self.policy, self.bundle, errors, history)
         return errors
 
+    def _validate_cash_ratio_anchor(self) -> List[str]:
+        """policy 有 cash_ratio_range 時，以決策庫（前次 run）或本次帳戶重算 anchor 比對；fail-closed。
+
+        前次決策背景（team_inputs 2.2 以上）為 available 時 anchor 必須是同一個 run；``prior_decision`` 而呼叫端沒給決策庫即拒絕。
+        沒有閘門的舊 policy 不讀決策庫，行為與舊版相同。"""
+        team = self.team_inputs or {}
+        prior = team.get("prior_decision_context") if isinstance(team.get("prior_decision_context"), Mapping) else None
+        return validate_cash_ratio_anchor(self.policy, self.bundle, self.decision_repository, prior)
+
     def validate_inputs(
         self,
         proposal: Mapping[str, object],
@@ -236,6 +246,7 @@ class DecisionFinalizer:
     ) -> List[str]:
         errors: List[str] = []
         errors.extend(self._validate_drawdown_history())
+        errors.extend(self._validate_cash_ratio_anchor())
         errors.extend(self._validate_team_chain())
         errors.extend(ProposalValidator(self.bundle, self.policy, self.intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, self.policy).validate(proposal, scenario))
@@ -346,8 +357,10 @@ class DecisionFinalizer:
             ).validate(self.intent)
         )
         stance = team.get("cash_stance")
-        validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors)
         sizing = self.policy.get("position_sizing")
+        # cash_ratio_range（版本閘門）：現金姿態另含 cash_grade，必須在 policy 綁定的 anchor 算出的今日可選格點內。
+        gate = cash_ratio_gate(sizing) if isinstance(sizing, Mapping) else None
+        validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate)
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {
@@ -364,6 +377,8 @@ class DecisionFinalizer:
             expected["support_by_symbol"] = support_by_symbol(self.intent, self.debate)
         if "positions_by_breadth" in sizing:
             expected["position_breadth"] = stance.get("breadth") if isinstance(stance, Mapping) else None
+        if gate is not None:
+            expected["cash_grade"] = stance.get("cash_grade") if isinstance(stance, Mapping) else None
         # 入選排序與 policy 的 selection_ranking 必須同時存在；排序以交易決策重建驗證，名次由程式綁定。
         ranking = team.get("selection_ranking") if version in RANKING_TEAM_VERSIONS else None
         if (version in RANKING_TEAM_VERSIONS) != ("selection_ranking" in sizing):

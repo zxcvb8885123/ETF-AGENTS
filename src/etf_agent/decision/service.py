@@ -44,6 +44,7 @@ class PortfolioDecisionApplicationService:
     def __init__(
         self, bundle: Mapping[str, object], position_review: Optional[Mapping[str, object]] = None,
         nav_history_provider: Optional[NavHistoryProvider] = None,
+        decision_repository: Optional[Path] = None,
     ):
         """``position_review`` 是 team_inputs 2.4 的持股檢視；有它的 run 必須讓每個驗證路徑都認得警示 ID，否則合法的
         ``review:…`` 引用會被當成未知 claim。舊 run 傳 None，驗證不變。"""
@@ -51,6 +52,8 @@ class PortfolioDecisionApplicationService:
         self.position_review = position_review
         # policy 的 drawdown_control 帶 history_ref 時，重建與保存前驗證以此讀帳本歷史；None＝沒有帳本來源。
         self.nav_history_provider = nav_history_provider
+        # policy 有 cash_ratio_range 且前次比例來自前次決策時，重建驗證以此重讀前次 run；None＝沒有決策庫來源（會被拒絕）。
+        self.decision_repository = decision_repository
 
     @classmethod
     def from_path(
@@ -490,7 +493,8 @@ class PortfolioDecisionApplicationService:
         history = self.read_json(history_path, " RevisionHistory")
         team_inputs = self.read_json(team_inputs_path, " team_inputs")
         result = DecisionFinalizer(
-            self.bundle, policy, momentum, debate, intent, team_inputs, nav_history_provider=self.nav_history_provider
+            self.bundle, policy, momentum, debate, intent, team_inputs, self.decision_repository,
+            nav_history_provider=self.nav_history_provider,
         ).run(
             proposal, scenario, guard, review, history
         )
@@ -523,7 +527,7 @@ class PortfolioDecisionApplicationService:
         team_inputs = self.read_json(team_inputs_path, " team_inputs")
         result = self.read_json(result_path, " DecisionResult")
         errors = DecisionResultValidator(
-            self.bundle, policy, momentum, debate, intent, team_inputs,
+            self.bundle, policy, momentum, debate, intent, team_inputs, self.decision_repository,
             nav_history_provider=self.nav_history_provider,
         ).validate(
             proposal, scenario, guard, review, history, result
@@ -567,6 +571,8 @@ class PortfolioDecisionApplicationService:
                 artifacts["debate"],
                 artifacts["intent"],
                 artifacts["team_inputs"],
+                # 保存目的地就是前次 run 所在的決策庫：cash_ratio_range 的前次比例在保存前即以它重算。
+                repository_root,
                 nav_history_provider=self.nav_history_provider,
             ).validate(
                 artifacts["proposal"],

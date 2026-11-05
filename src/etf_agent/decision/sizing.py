@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Dict, List, Mapping, Optional, Sequence
 
@@ -106,18 +107,65 @@ DRAWDOWN_DERISK_VERSION_V3 = "v3"
 DRAWDOWN_DERISK_VERSIONS = (DRAWDOWN_DERISK_VERSION, DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3)
 DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction"}
 DRAWDOWN_DERISK_FRACTION = Decimal("0.25")
+# 2026-11-05 後新增（high_conviction_cash_floor 版本閘門，只由人設定）：高信心（high）買單可把現金用到
+# min(NAV × 姿態緩衝 × floor_ratio, 起始已交割現金)，medium／low 維持 cash_buffer_floor 的 min(NAV × 緩衝, 起始現金)；
+# drawdown_derisk 的觸發與目標同改為 NAV × 緩衝 × floor_ratio（帶狀防守，避免隔日來回交易）；當日觸發減碼時不套用
+# （減碼收入只補緩衝）。份額預算不變。前提：cash_buffer_floor 與 cash_fit_order 同時啟用、drawdown_derisk（若有）為 v3。
+# 省略此欄位的舊 Policy／舊 Decision run 逐位維持原重建行為。
+HIGH_CONVICTION_CASH_FLOOR = "v1"
+HIGH_CONVICTION_CASH_FLOOR_FIELDS = {"version", "floor_ratio"}
+# 2026-11-05 後新增（limit_scaled_conviction 版本閘門，只由人設定）：高信心候選的必要份額為
+# max(原式份額, min(alpha × 單股上限, 封頂))，必要份額總和超過預算時依入選名次填到用完；剩餘預算再依原式
+# 分給 medium／low（volatility_exponent = 0 時不得高於最小的 high／medium，分不完留作現金），
+# 見 docs/limit_aware_conviction_weights_plan.md「α 方案」。alpha 為必要欄位（不在程式寫死預設值）。
+# 前提：method 為 conviction_volatility_v2 且已啟用 selection_ranking。省略此欄位的舊 run 走原式。
+LIMIT_SCALED_CONVICTION = "v1"
+LIMIT_SCALED_CONVICTION_FIELDS = {"version", "alpha"}
+# 2026-11-05 後新增（cash_ratio_range 版本閘門 v1，只由人設定；docs/agent_cash_ratio_range_plan.md 第一階段 C2）：
+# 風險 Agent 仍只輸出列舉，在姿態內另選子等級 cash_grade（lower／middle／upper），現金比例由 grid 對應固定百分比，
+# 取代 cash_buffer_by_stance 的三段階梯（後者仍必填、驗證不變，只供舊 run 回放與對照）。單日只限制現金拉高：
+# 今日可選格點 ≤ max(該姿態 lower, 前次比例 anchor + max_daily_raise)，往下不限。anchor 由 pipeline 依前次決策挑選規則
+# 綁進 Policy（沒有前次 run 時為本次起始現金比例，見 cash_ratio.py）。超出即拒絕，程式不夾到邊界。
+# 不得與 high_conviction_cash_floor 同時開啟；有 drawdown_derisk 時須 v3。省略此欄位的舊 Policy／舊 run 逐位元不變。
+CASH_RATIO_RANGE = "v1"
+CASH_RATIO_RANGE_FIELDS = {"version", "grid", "max_daily_raise", "anchor"}
+CASH_GRADES = ("lower", "middle", "upper")
+# 人決定的防守上限 22%（跌 10% 情境現金仍離 25% 競賽上限有餘裕；與策略反思 cash_buffer_by_stance 旋鈕上限一致）。
+CASH_GRID_MAX = Decimal("0.22")
+MAX_DAILY_RAISE_MIN = Decimal("0.01")
+MAX_DAILY_RAISE_MAX = Decimal("0.10")
+CASH_ANCHOR_STATUSES = ("prior_decision", "account_cash")
+CASH_ANCHOR_FIELDS = {"status", "ratio", "source"}
+CASH_ANCHOR_SOURCE_FIELDS = {
+    "run_id", "selection", "target_session_start", "decision_sha256", "proposal_id", "proposal_sha256",
+}
+_TWO_DECIMALS = re.compile(r"^0\.[0-9]{2}$")
+_ANCHOR_RATIO = re.compile(r"^[01]\.[0-9]{8}$")
 
 
-def validate_cash_stance(context: DecisionContext, stance: object, prefix: str, errors: List[str]) -> None:
+def validate_cash_stance(
+    context: DecisionContext,
+    stance: object,
+    prefix: str,
+    errors: List[str],
+    cash_ratio_range: Optional[Mapping[str, object]] = None,
+) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
 
     舊 bundle（無 ``evidence_policy``）維持「市場層級可引用任一股票」的原行為；``typed_evidence_v1`` 下
     至少一個證據必須是市場層級（全市場情緒／恐懼貪婪／隔夜／市場狀態編號），個股行情不得單獨成立，
-    且全市場情緒為 negative 時不得回 aggressive（一致性護欄；回撤下限另由 stance_floor 強制）。"""
+    且全市場情緒為 negative 時不得回 aggressive（一致性護欄；回撤下限另由 stance_floor 強制）。
+
+    ``cash_ratio_range`` 是已綁定 anchor 的版本閘門物件；為 None 時欄位白名單與舊版完全相同（出現 cash_grade 即拒絕）。
+    有閘門時 ``cash_grade`` 必填，且必須在該姿態今日可選的格點內；超出即拒絕、不夾到邊界。"""
     if not isinstance(stance, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    reject_unknown_fields(stance, {"level", "breadth", "rationale", "evidence_ids"}, prefix, errors)
+    fields = {"level", "breadth", "rationale", "evidence_ids"}
+    if cash_ratio_range is not None:
+        fields = fields | {"cash_grade"}
+        _validate_cash_grade(cash_ratio_range, stance, prefix, errors)
+    reject_unknown_fields(stance, fields, prefix, errors)
     if stance.get("level") not in CASH_STANCES:
         errors.append("%s.level 必須是 %s" % (prefix, "／".join(CASH_STANCES)))
     if "breadth" in stance and stance["breadth"] not in POSITION_BREADTHS:
@@ -248,6 +296,278 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
                 errors.append("position_sizing.buy_gap_reserve_rate 必須不小於 0 且小於 1")
         except DecisionToolError as error:
             errors.append(str(error))
+    if "high_conviction_cash_floor" in sizing:
+        _validate_high_conviction_cash_floor(sizing, errors)
+    if "limit_scaled_conviction" in sizing:
+        _validate_limit_scaled_conviction(sizing, errors)
+
+
+def _ratio_in_open_unit(raw: object, label: str, errors: List[str], allow_one: bool) -> None:
+    """比例參數必須是可解析的 Decimal 字串，且介於 0 與 1（allow_one 時含 1）；布林與非字串數字一律拒絕。"""
+    if isinstance(raw, bool) or not isinstance(raw, str):
+        errors.append("%s 必須是數字字串" % label)
+        return
+    try:
+        value = decimal_value(raw, label)
+    except DecisionToolError as error:
+        errors.append(str(error))
+        return
+    if value <= 0 or value > 1 or (value == 1 and not allow_one):
+        errors.append("%s 必須大於 0 且%s 1" % (label, "不超過" if allow_one else "小於"))
+
+
+def _validate_high_conviction_cash_floor(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """high_conviction_cash_floor：{version: v1, floor_ratio: 0～1（不含）}；語意建立在 cash_buffer_floor 與
+    cash_fit_order 之上（high 先拿現金），有 drawdown_derisk 時必須是 v3（減碼後不得加回）。"""
+    gate = sizing["high_conviction_cash_floor"]
+    prefix = "position_sizing.high_conviction_cash_floor"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, HIGH_CONVICTION_CASH_FLOOR_FIELDS, prefix, errors)
+    if gate.get("version") != HIGH_CONVICTION_CASH_FLOOR:
+        errors.append("%s.version 只允許 %s" % (prefix, HIGH_CONVICTION_CASH_FLOOR))
+    if "floor_ratio" not in gate:
+        errors.append("%s.floor_ratio 是必要欄位" % prefix)
+    else:
+        _ratio_in_open_unit(gate["floor_ratio"], "%s.floor_ratio" % prefix, errors, allow_one=False)
+    if sizing.get("cash_buffer_floor") != CASH_BUFFER_FLOOR:
+        errors.append("%s 必須與 cash_buffer_floor 同時啟用" % prefix)
+    if sizing.get("cash_fit_order") != CASH_FIT_ORDER:
+        errors.append("%s 必須與 cash_fit_order 同時啟用（高信心買單要先拿現金）" % prefix)
+    derisk = sizing.get("drawdown_derisk")
+    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V3):
+        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s" % (prefix, DRAWDOWN_DERISK_VERSION_V3))
+
+
+def _validate_limit_scaled_conviction(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """limit_scaled_conviction：{version: v1, alpha: 0～1（含 1）}；alpha 必填。需要 conviction_volatility_v2
+    與 selection_ranking（高信心依名次填充）。"""
+    gate = sizing["limit_scaled_conviction"]
+    prefix = "position_sizing.limit_scaled_conviction"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, LIMIT_SCALED_CONVICTION_FIELDS, prefix, errors)
+    if gate.get("version") != LIMIT_SCALED_CONVICTION:
+        errors.append("%s.version 只允許 %s" % (prefix, LIMIT_SCALED_CONVICTION))
+    if "alpha" not in gate:
+        errors.append("%s.alpha 是必要欄位（由人設定，程式不提供預設值）" % prefix)
+    else:
+        _ratio_in_open_unit(gate["alpha"], "%s.alpha" % prefix, errors, allow_one=True)
+    if sizing.get("method") != SIZING_METHOD_V2:
+        errors.append("%s 只允許用於 %s" % (prefix, SIZING_METHOD_V2))
+    if sizing.get("selection_ranking") != SELECTION_RANKING:
+        errors.append("%s 必須與 selection_ranking 同時啟用（高信心依入選名次填充）" % prefix)
+
+
+def high_conviction_floor_ratio(sizing: Mapping[str, object]) -> Optional[Decimal]:
+    """high_conviction_cash_floor 啟用時的 floor_ratio；沒有閘門回 None（走原式）。"""
+    gate = sizing.get("high_conviction_cash_floor")
+    if not isinstance(gate, Mapping):
+        return None
+    return decimal_value(gate["floor_ratio"], "position_sizing.high_conviction_cash_floor.floor_ratio")
+
+
+def limit_scaled_alpha(sizing: Mapping[str, object]) -> Optional[Decimal]:
+    """limit_scaled_conviction 啟用時的 alpha；沒有閘門回 None（走原式）。"""
+    gate = sizing.get("limit_scaled_conviction")
+    if not isinstance(gate, Mapping):
+        return None
+    return decimal_value(gate["alpha"], "position_sizing.limit_scaled_conviction.alpha")
+
+
+def _grid_point(raw: object, label: str) -> Decimal:
+    """格點與單日上限：只接受兩位小數字串（例如 "0.15"），以 1pp 為單位；數字型、百分號、科學記號一律拒絕。"""
+    if isinstance(raw, bool) or not isinstance(raw, str) or not _TWO_DECIMALS.match(raw):
+        raise DecisionToolError("%s 必須是兩位小數字串（例如 \"0.15\"）" % label)
+    return decimal_value(raw, label)
+
+
+def cash_grade_grid(gate: Mapping[str, object]) -> Dict[str, Dict[str, Decimal]]:
+    """解析 grid 為 {姿態: {子等級: Decimal}}；格式錯誤拋 DecisionToolError（呼叫端先以 validate_position_sizing 驗證）。"""
+    grid = gate.get("grid")
+    if not isinstance(grid, Mapping) or set(grid) != set(CASH_STANCES):
+        raise DecisionToolError("position_sizing.cash_ratio_range.grid 必須剛好包含 aggressive／neutral／defensive")
+    result: Dict[str, Dict[str, Decimal]] = {}
+    for level in CASH_STANCES:
+        points = grid[level]
+        if not isinstance(points, Mapping) or set(points) != set(CASH_GRADES):
+            raise DecisionToolError("position_sizing.cash_ratio_range.grid.%s 必須剛好包含 lower／middle／upper" % level)
+        result[level] = {
+            grade: _grid_point(points[grade], "position_sizing.cash_ratio_range.grid.%s.%s" % (level, grade))
+            for grade in CASH_GRADES
+        }
+    return result
+
+
+def cash_anchor_ratio(gate: Mapping[str, object]) -> Decimal:
+    anchor = gate.get("anchor")
+    if not isinstance(anchor, Mapping):
+        raise DecisionToolError("position_sizing.cash_ratio_range.anchor 尚未由 pipeline 綁定")
+    raw = anchor.get("ratio")
+    if isinstance(raw, bool) or not isinstance(raw, str) or not _ANCHOR_RATIO.match(raw):
+        raise DecisionToolError("position_sizing.cash_ratio_range.anchor.ratio 必須是八位小數字串")
+    value = decimal_value(raw, "position_sizing.cash_ratio_range.anchor.ratio")
+    if value > 1:
+        raise DecisionToolError("position_sizing.cash_ratio_range.anchor.ratio 必須介於 0 與 1")
+    return value
+
+
+def cash_daily_cap(gate: Mapping[str, object], level: str) -> Decimal:
+    """今日該姿態的現金上限：max(該姿態 lower, anchor + max_daily_raise)。切到更防守的姿態時永遠可選 lower。"""
+    grid = cash_grade_grid(gate)
+    raise_limit = _grid_point(gate.get("max_daily_raise"), "position_sizing.cash_ratio_range.max_daily_raise")
+    return max(grid[level]["lower"], cash_anchor_ratio(gate) + raise_limit)
+
+
+def allowed_cash_grades(gate: Mapping[str, object]) -> Dict[str, List[str]]:
+    """各姿態今日可選的子等級（由低到高）；只限制往上，往下不限。"""
+    grid = cash_grade_grid(gate)
+    return {
+        level: [grade for grade in CASH_GRADES if grid[level][grade] <= cash_daily_cap(gate, level)]
+        for level in CASH_STANCES
+    }
+
+
+def cash_ratio_gate(sizing: Mapping[str, object]) -> Optional[Mapping[str, object]]:
+    """cash_ratio_range 啟用時回傳閘門物件；沒有閘門回 None（走 cash_buffer_by_stance 原式）。"""
+    gate = sizing.get("cash_ratio_range") if isinstance(sizing, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def _percent(value: Decimal) -> str:
+    return format(value, ".0%")
+
+
+def anchor_reference_tokens(gate: Mapping[str, object]) -> List[str]:
+    """理由文字不得出現的前次決策識別碼：前次比例只是背景，不是證據。"""
+    anchor = gate.get("anchor")
+    source = anchor.get("source") if isinstance(anchor, Mapping) else None
+    if not isinstance(source, Mapping):
+        return []
+    tokens = [source.get(key) for key in ("run_id", "decision_sha256", "proposal_id", "proposal_sha256")]
+    return [token for token in tokens if isinstance(token, str) and token.strip()]
+
+
+def _validate_cash_grade(gate: Mapping[str, object], stance: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+    grade = stance.get("cash_grade")
+    if grade not in CASH_GRADES:
+        errors.append("%s.cash_grade 必須是 %s" % (prefix, "／".join(CASH_GRADES)))
+        return
+    rationale = stance.get("rationale")
+    if isinstance(rationale, str):
+        cited = [token for token in anchor_reference_tokens(gate) if token in rationale]
+        if cited:
+            errors.append("%s.rationale 不得引用前次決策識別碼（前次比例只是背景）：%s" % (prefix, "、".join(cited)))
+    level = stance.get("level")
+    if level not in CASH_STANCES:
+        return
+    try:
+        grid = cash_grade_grid(gate)
+        allowed = allowed_cash_grades(gate)
+        cap = cash_daily_cap(gate, str(level))
+        ratio = cash_anchor_ratio(gate)
+        raise_limit = _grid_point(gate.get("max_daily_raise"), "max_daily_raise")
+    except DecisionToolError as error:
+        errors.append("%s 無法核對 cash_grade：%s" % (prefix, error))
+        return
+    if grade not in allowed[str(level)]:
+        errors.append(
+            "%s.cash_grade %s（%s）超過今日上限：%s 今日可選 %s（今日上限 %s = max(該姿態 lower, 前次比例 %s + 單日上限 %s)，"
+            "只限制往上，往下不限）；請改選可選子等級或改變姿態，程式不會替你調整"
+            % (prefix, grade, _percent(grid[str(level)][str(grade)]), level,
+               "／".join("%s（%s）" % (item, _percent(grid[str(level)][item])) for item in allowed[str(level)]),
+               format(cap, ".2%"), format(ratio, ".2%"), _percent(raise_limit))
+        )
+
+
+def _validate_cash_ratio_range(policy: Mapping[str, object], sizing: Mapping[str, object], errors: List[str]) -> None:
+    """cash_ratio_range v1：格點、單日上限、anchor 形狀與前提；全部 fail-closed。"""
+    gate = sizing["cash_ratio_range"]
+    prefix = "position_sizing.cash_ratio_range"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, CASH_RATIO_RANGE_FIELDS, prefix, errors)
+    if gate.get("version") != CASH_RATIO_RANGE:
+        errors.append("%s.version 只允許 %s" % (prefix, CASH_RATIO_RANGE))
+    if "high_conviction_cash_floor" in sizing:
+        errors.append("%s 不得與 high_conviction_cash_floor 同時啟用（兩者都改變防守現金落點）" % prefix)
+    derisk = sizing.get("drawdown_derisk")
+    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V3):
+        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s" % (prefix, DRAWDOWN_DERISK_VERSION_V3))
+    raise_limit: Optional[Decimal] = None
+    try:
+        raise_limit = _grid_point(gate.get("max_daily_raise"), "%s.max_daily_raise" % prefix)
+        if raise_limit < MAX_DAILY_RAISE_MIN or raise_limit > MAX_DAILY_RAISE_MAX:
+            errors.append("%s.max_daily_raise 必須介於 %s 與 %s" % (prefix, MAX_DAILY_RAISE_MIN, MAX_DAILY_RAISE_MAX))
+            raise_limit = None
+    except DecisionToolError as error:
+        errors.append(str(error))
+    try:
+        grid = cash_grade_grid(gate)
+    except DecisionToolError as error:
+        errors.append(str(error))
+        grid = None
+    if grid is not None:
+        try:
+            ceiling = decimal_value(policy.get("cash_weight_ceiling"), "cash_weight_ceiling")
+        except DecisionToolError as error:
+            errors.append(str(error))
+            ceiling = None
+        previous_upper: Optional[Decimal] = None
+        for level in CASH_STANCES:
+            points = [grid[level][grade] for grade in CASH_GRADES]
+            if not points[0] < points[1] < points[2]:
+                errors.append("%s.grid.%s 必須 lower < middle < upper（嚴格遞增）" % (prefix, level))
+            if raise_limit is not None and any(b - a > raise_limit for a, b in zip(points, points[1:])):
+                errors.append(
+                    "%s.grid.%s 相鄰格點差距不得大於 max_daily_raise %s，否則較高的格點在單日上限下永遠選不到"
+                    % (prefix, level, raise_limit)
+                )
+            if any(point > CASH_GRID_MAX for point in points):
+                errors.append("%s.grid.%s 每個格點都不得高於 %s（防守現金上限）" % (prefix, level, CASH_GRID_MAX))
+            if ceiling is not None and any(point >= ceiling for point in points):
+                errors.append("%s.grid.%s 每個格點都必須低於 cash_weight_ceiling" % (prefix, level))
+            if previous_upper is not None and points[0] < previous_upper:
+                errors.append("%s.grid 姿態之間不得重疊：%s.lower 不得低於前一姿態的 upper" % (prefix, level))
+            previous_upper = points[2]
+    if "anchor" in gate:
+        _validate_cash_anchor_shape(gate, prefix, errors)
+    bound = "conviction_by_symbol" in sizing
+    if bound and "anchor" not in gate:
+        errors.append("%s 綁定交易決策時必須有 pipeline 綁定的 anchor（前次現金比例）" % prefix)
+    if bound and "cash_grade" not in sizing:
+        errors.append("position_sizing.cash_grade 是 cash_ratio_range 綁定交易決策時的必要欄位")
+    if "cash_grade" in sizing and not bound:
+        errors.append("position_sizing.cash_grade 只能與交易決策一起綁定")
+
+
+def _validate_cash_anchor_shape(gate: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+    anchor = gate["anchor"]
+    label = "%s.anchor" % prefix
+    if not isinstance(anchor, Mapping):
+        errors.append("%s 必須是物件" % label)
+        return
+    if set(anchor) != CASH_ANCHOR_FIELDS:
+        errors.append("%s 欄位必須剛好是 %s" % (label, "、".join(sorted(CASH_ANCHOR_FIELDS))))
+        return
+    status = anchor.get("status")
+    if status not in CASH_ANCHOR_STATUSES:
+        errors.append("%s.status 必須是 %s" % (label, "／".join(CASH_ANCHOR_STATUSES)))
+    try:
+        cash_anchor_ratio(gate)
+    except DecisionToolError as error:
+        errors.append(str(error))
+    source = anchor.get("source")
+    if status == "account_cash" and source is not None:
+        errors.append("%s.source 在 account_cash 時必須為 null" % label)
+    if status == "prior_decision":
+        if not isinstance(source, Mapping) or set(source) != CASH_ANCHOR_SOURCE_FIELDS:
+            errors.append("%s.source 在 prior_decision 時必須剛好有 %s" % (label, "、".join(sorted(CASH_ANCHOR_SOURCE_FIELDS))))
+        elif not all(isinstance(source[key], str) and source[key].strip() for key in CASH_ANCHOR_SOURCE_FIELDS):
+            errors.append("%s.source 每個欄位都必須是非空字串" % label)
 
 
 def cash_fit_min_fill_ratio(sizing: Mapping[str, object]) -> Decimal:
@@ -363,6 +683,7 @@ def validate_position_sizing(
             "cash_buffer_floor", "cash_fit_order", "cash_fit_min_fill_ratio", "cash_ceiling_fix",
             "stock_limit_headroom", "buy_gap_reserve", "buy_gap_reserve_rate", "insufficient_funds_policy",
             "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk",
+            "high_conviction_cash_floor", "limit_scaled_conviction", "cash_ratio_range", "cash_grade",
         },
         "DecisionPolicy.position_sizing",
         errors,
@@ -371,6 +692,10 @@ def validate_position_sizing(
         errors.append("position_sizing.method 必須為 %s" % "或".join(SIZING_METHODS))
     _validate_volatility_exponent(sizing, errors)
     _validate_execution_gates(sizing, errors)
+    if "cash_ratio_range" in sizing:
+        _validate_cash_ratio_range(policy, sizing, errors)
+    elif "cash_grade" in sizing:
+        errors.append("position_sizing.cash_grade 只允許與 cash_ratio_range 一起出現；舊 Decision run 省略此欄位")
     if "selection_tiebreak" in sizing and sizing["selection_tiebreak"] not in SELECTION_TIEBREAKS:
         errors.append(
             "position_sizing.selection_tiebreak 必須是 %s" % "／".join(SELECTION_TIEBREAKS)
@@ -439,6 +764,21 @@ def validate_position_sizing(
     stance = sizing.get("cash_stance")
     if stance not in CASH_STANCES:
         errors.append("position_sizing.cash_stance 必須是 %s" % "／".join(CASH_STANCES))
+    elif "cash_ratio_range" in sizing:
+        # cash_ratio_range（版本閘門）：緩衝改由 grid[姿態][子等級] 對應，子等級必須在今日可選格點內。
+        gate = sizing["cash_ratio_range"]
+        grade = sizing.get("cash_grade")
+        try:
+            if not isinstance(gate, Mapping) or "anchor" not in gate:
+                raise DecisionToolError("position_sizing.cash_ratio_range 缺少 anchor，無法核對 cash_grade")
+            if grade not in CASH_GRADES:
+                raise DecisionToolError("position_sizing.cash_grade 必須是 %s" % "／".join(CASH_GRADES))
+            if grade not in allowed_cash_grades(gate)[str(stance)]:
+                errors.append("position_sizing.cash_grade %s 不在 %s 今日可選格點內" % (grade, stance))
+            if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != cash_grade_grid(gate)[str(stance)][str(grade)]:
+                errors.append("cash_buffer_rate 必須等於 cash_ratio_range.grid 中 cash_stance／cash_grade 對應的現金比例")
+        except DecisionToolError as error:
+            errors.append(str(error))
     elif buffers is not None:
         try:
             if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != decimal_value(
@@ -552,4 +892,85 @@ def conviction_weights(
             weights[symbol] = limits[symbol]
             left -= limits[symbol]
             remaining.remove(symbol)
+    return weights
+
+
+def alpha_floor_weights(
+    order: Sequence[str],
+    tiers: Mapping[str, str],
+    multipliers: Mapping[str, Decimal],
+    volatility: Mapping[str, Decimal],
+    volatility_floor: Decimal,
+    limits: Mapping[str, Decimal],
+    budget: Decimal,
+    volatility_exponent: Optional[Decimal],
+    floors: Mapping[str, Decimal],
+) -> Dict[str, Decimal]:
+    """limit_scaled_conviction v1（α 方案）：高信心候選的份額至少為 max(原式份額, ``floors``)，其餘照原式並受跨等級約束。
+
+    ``order`` 必須已依（信心、入選名次、代號）排序；``floors`` 只含 high 的股票（min(α × 單股上限, 封頂)）。
+    公式見 docs/limit_aware_conviction_weights_plan.md「α 方案」：
+
+    0. ``base`` = 原式（``conviction_weights``）把預算分給全部入選股；每檔 high 的必要份額 r = max(base, floor)。
+    1. 沒有 high 被抬高、且（volatility_exponent = 0 時）base 已滿足 high ≥ medium ≥ low：直接回傳 base（逐位同原式）。
+    2. 預算不足（Σ r ≥ 預算）：high 依名次各取 min(r, 剩餘預算)，用完為止，medium／low 為 0。
+    3. 否則 high 固定為 r（不因別檔被抬高而縮小），剩餘預算依原式分給 medium／low；volatility_exponent = 0 時
+       medium 不得高於最小的 high、low 不得高於最小的 medium（沒有 medium 時為最小的 high）。因這些天花板而
+       分不完的預算留作現金（不違反封頂、總和不超過預算）。volatility_exponent > 0 不加天花板（文件揭露的例外）。
+    """
+    left = max(budget, Decimal("0"))
+    highs = [symbol for symbol in order if symbol in floors]
+    others = [symbol for symbol in order if symbol not in floors]
+    ordered_tiers = volatility_exponent == 0
+
+    def proportional(symbols: Sequence[str], amount: Decimal, caps: Mapping[str, Decimal]) -> Dict[str, Decimal]:
+        return conviction_weights(
+            symbols, tiers, multipliers, volatility, volatility_floor, caps, amount, volatility_exponent,
+        )
+
+    def tier_order_holds(shares: Mapping[str, Decimal]) -> bool:
+        upper: Optional[Decimal] = None
+        for level in CONVICTION_LEVELS:
+            members = [shares[symbol] for symbol in order if tiers[symbol] == level]
+            if not members:
+                continue
+            if upper is not None and max(members) > upper:
+                return False
+            upper = min(members)
+        return True
+
+    base = proportional(order, left, limits)
+    required = {symbol: max(base[symbol], floors[symbol]) for symbol in highs}
+    lifted = any(required[symbol] != base[symbol] for symbol in highs)
+    if not lifted and (not ordered_tiers or tier_order_holds(base)):
+        return base
+
+    weights = {symbol: Decimal("0") for symbol in order}
+    if sum((required[symbol] for symbol in highs), Decimal("0")) >= left:
+        for symbol in highs:
+            take = min(required[symbol], left)
+            weights[symbol] = take
+            left -= take
+        return weights
+
+    weights.update(required)
+    rest = left - sum((required[symbol] for symbol in highs), Decimal("0"))
+    caps = dict((symbol, limits[symbol]) for symbol in others)
+    if ordered_tiers and highs:
+        lowest_high = min(required[symbol] for symbol in highs)
+        caps = {symbol: min(cap, lowest_high) for symbol, cap in caps.items()}
+    shares = proportional(others, rest, caps)
+    if ordered_tiers:
+        mediums = [symbol for symbol in others if tiers[symbol] == "medium"]
+        lows = [symbol for symbol in others if tiers[symbol] == "low"]
+        if mediums and lows:
+            lowest_medium = min(shares[symbol] for symbol in mediums)
+            if any(shares[symbol] > lowest_medium for symbol in lows):
+                # 調低 low 的天花板只會讓 medium 分到更多，一次重算即可；仍違反時 fail-closed。
+                for symbol in lows:
+                    caps[symbol] = min(caps[symbol], lowest_medium)
+                shares = proportional(others, rest, caps)
+    weights.update(shares)
+    if ordered_tiers and not tier_order_holds(weights):
+        raise DecisionToolError("limit_scaled_conviction 份額違反 high ≥ medium ≥ low")
     return weights
