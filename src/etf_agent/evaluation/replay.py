@@ -41,7 +41,9 @@ from etf_agent.decision import (
     stance_meets_floor,
 )
 from etf_agent.decision.allocation import ALLOCATION_ENGINE_VERSION
+from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.finalization import DECISION_ENGINE_VERSION
+from etf_agent.decision.sizing import allowed_cash_grades, cash_grade_grid, cash_ratio_gate
 from etf_agent.virtual_account.daily import OfficialCloseMarket
 
 from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, REPLAY_SCHEMA_VERSION, ReplayError
@@ -228,6 +230,10 @@ def bind_replay_policy(
             # 舊封存的現金姿態沒有持股廣度：回放時拿掉樣板的 positions_by_breadth，沿用填滿 max_positions 的舊行為。
             base["position_sizing"] = {key: value for key, value in sizing.items() if key != "positions_by_breadth"}
             base["content_sha256"] = decision_policy_sha256(base)
+        bound_stance, grade_note = _replay_cash_grade(base, bundle, bound_stance, raised)
+        if grade_note is not None:
+            base = bind_cash_ratio_anchor(base, bundle, None, None)
+            base["content_sha256"] = decision_policy_sha256(base)
         policy = apply_trade_decision(base, intent, bound_stance, bundle, debate)
         # 樣板啟用 selection_ranking 且封存 run 有排序（2.5）才綁名次；舊 run 沒有排序，沿用原本入選規則。
         ranked = isinstance(policy.get("position_sizing"), Mapping) and "selection_ranking" in policy["position_sizing"] and ranking is not None
@@ -245,7 +251,47 @@ def bind_replay_policy(
         "stance_floor": floor, "stance_raised_to_floor": raised, "selection_ranking_applied": ranked, "breadth_unavailable": breadth_dropped, "cash_buffer_rate": policy["cash_buffer_rate"],
         "drawdown": (base.get("drawdown_control") or {}).get("drawdown"),
     }
+    # cash_ratio_range：只在樣板有閘門或封存姿態帶 cash_grade 時才記錄，沒有閘門的舊回放 notes 逐鍵不變。
+    if grade_note is not None:
+        notes["cash_grade"] = grade_note
     return policy, notes
+
+
+def _replay_cash_grade(
+    base: Mapping[str, object], bundle: Mapping[str, object], stance: Mapping[str, object], raised: bool,
+) -> Tuple[Dict[str, object], Optional[Dict[str, object]]]:
+    """回放時處理姿態內現金子等級（cash_ratio_range）。回傳（要綁定的姿態, notes；與閘門無關時為 None）。
+
+    - 樣板沒有閘門、封存姿態帶 cash_grade：拿掉子等級，改用樣板的 cash_buffer_by_stance 對應（``cash_ratio_dropped``）。
+    - 樣板有閘門：anchor 一律以回放帳戶的起始現金比例綁定（回放沒有前次 run 可讀）；封存子等級在今日可選內就沿用，
+      否則改為可選的最高子等級（``cash_ratio_adjusted``）；舊封存沒有子等級時取「格點不高於樣板 cash_buffer_by_stance」的
+      可選最高子等級（都高於時取 lower，``cash_ratio_imputed``）；回撤下限提高姿態時用該姿態 lower。
+    回放只固定封存的 Agent 意圖，結果標 replay_reference_only，不是對 LLM 的前瞻驗證。"""
+    sizing = base.get("position_sizing")
+    gate = cash_ratio_gate(sizing) if isinstance(sizing, Mapping) else None
+    archived = stance.get("cash_grade")
+    if gate is None:
+        if archived is None:
+            return dict(stance), None
+        dropped = {key: value for key, value in stance.items() if key != "cash_grade"}
+        return dropped, {"archived_cash_grade": archived, "cash_grade": None, "action": "cash_ratio_dropped"}
+    probe = bind_cash_ratio_anchor(base, bundle, None, None)
+    probe_gate = cash_ratio_gate(probe["position_sizing"])  # type: ignore[arg-type]
+    level = str(stance.get("level"))
+    allowed = allowed_cash_grades(probe_gate)[level]  # type: ignore[arg-type]
+    grid = cash_grade_grid(probe_gate)  # type: ignore[arg-type]
+    if raised:
+        grade, action = "lower", "cash_ratio_raised_to_floor"
+    elif archived in allowed:
+        grade, action = str(archived), "archived"
+    elif archived is not None:
+        grade, action = allowed[-1], "cash_ratio_adjusted"
+    else:
+        buffers = sizing.get("cash_buffer_by_stance") or {}  # type: ignore[union-attr]
+        target = Decimal(str(buffers.get(level, "0")))
+        fitting = [item for item in allowed if grid[level][item] <= target]
+        grade, action = (fitting[-1] if fitting else "lower"), "cash_ratio_imputed"
+    return dict(stance, cash_grade=grade), {"archived_cash_grade": archived, "cash_grade": grade, "action": action}
 
 
 # ---------------------------------------------------------------- one day

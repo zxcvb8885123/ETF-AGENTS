@@ -47,6 +47,16 @@ def non_risk_reducing(proposals: Sequence[Mapping[str, object]]) -> Dict[str, st
             for item in proposals if risk_direction(str(item["knob"]), item["current"], item["proposed"]) != RISK_REDUCING}
 
 
+def gated_cash_buffer_knobs(template: Mapping[str, object], proposals: Sequence[Mapping[str, object]]) -> Dict[str, str]:
+    """樣板啟用 cash_ratio_range（版本閘門）時，cash_buffer_by_stance.* 不再決定配置的現金比例（改由 grid 對應）：
+    這類提案調了也沒有效果，一律標方向不明（needs_human），不自動套用。沒有閘門時回空字典。"""
+    sizing = template.get("position_sizing")
+    if not isinstance(sizing, Mapping) or "cash_ratio_range" not in sizing:
+        return {}
+    return {str(item["knob"]): RISK_AMBIGUOUS for item in proposals
+            if str(item["knob"]).startswith("cash_buffer_by_stance.")}
+
+
 def _container(template: Dict[str, object], path: str):
     """回傳 (容器, 鍵)；位於 position_sizing 的旋鈕群與頂層欄位分開處理。"""
     head, _, tail = path.partition(".")

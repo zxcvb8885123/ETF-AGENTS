@@ -149,6 +149,11 @@ FORBIDDEN_PREFIXES = (
     # 2026-11-03 新增的風控閘門：產業上限只擋增量、換手上限主動縮減、出場冷卻、回撤防守減碼與解除門檻、強制換股需空頭證據。
     "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk",
     "drawdown_control.release_neutral_below", "drawdown_control.release_defensive_below",
+    # 2026-11-05 新增：高信心現金下限（含 floor_ratio）與依單股上限填充高信心份額（含 alpha），只由人設定。
+    "high_conviction_cash_floor", "limit_scaled_conviction",
+    # 2026-11-05 新增：姿態內現金子等級（grid、max_daily_raise 與 pipeline 綁定的 anchor）與綁定的 cash_grade，只由人設定；
+    # 閘門開啟時 cash_buffer_by_stance 旋鈕不再影響配置，apply-pending 一律標 needs_human（見 service.apply_pending）。
+    "cash_ratio_range", "cash_grade",
 )
 
 
