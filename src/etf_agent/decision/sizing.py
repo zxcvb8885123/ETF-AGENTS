@@ -11,6 +11,8 @@ import re
 from decimal import Decimal
 from typing import Dict, List, Mapping, Optional, Sequence
 
+from etf_agent.core import untrusted_value
+
 from .contracts import (
     DecisionContext,
     DecisionToolError,
@@ -182,7 +184,7 @@ def validate_cash_stance(
         errors.append("%s.evidence_ids 不得為空" % prefix)
     unknown = [item for item in evidence if item not in context.evidence_symbols]
     if unknown:
-        errors.append("%s 引用不存在：%s" % (prefix, ", ".join(unknown)))
+        errors.append("%s 引用不存在：%s" % (prefix, ", ".join(untrusted_value(item) for item in unknown)))
     if context.evidence_policy is None:
         return
     if evidence and not set(evidence) & context.market_evidence_ids:
@@ -461,6 +463,32 @@ def anchor_reference_tokens(
     return [token for token in tokens if isinstance(token, str) and token.strip()]
 
 
+# 前綴＋20 位十六進位摘要的識別碼（decision_id、proposal_id）；裸摘要同樣禁用。run_id 不拆：其餘部分只是日期。
+_PREFIXED_DIGEST = re.compile(r"^(?:decision|proposal):([0-9a-f]{20})$")
+# 邊界只看 ASCII 英數與底線：前後接中文、空白或標點仍算獨立出現，接英數（較長的另一個 ID）則不算。
+_TOKEN_BOUNDARY = "[0-9A-Za-z_]"
+
+
+def cited_reference_tokens(text: str, tokens: Sequence[str]) -> List[str]:
+    """``text`` 中以獨立形式出現的禁用識別碼（依 ``tokens`` 順序、去重）。
+
+    每個 token 連同「前綴＋20 位摘要」形式的裸摘要一起比對；前一字元與後一字元都不得是 ASCII 英數或底線，
+    所以以前次 ID 開頭的較長 ID、或嵌在更長十六進位字串中的片段不算引用。只比對完整 token／完整摘要，
+    不封鎖 run_id 片段、日期或短雜湊。pipeline、policy 綁定與 Finalizer 都經由此函式。"""
+    variants: List[str] = []
+    for token in tokens:
+        variants.append(token)
+        match = _PREFIXED_DIGEST.match(token)
+        if match:
+            variants.append(match.group(1))
+    cited: List[str] = []
+    for variant in dict.fromkeys(variants):
+        pattern = "(?<!%s)%s(?!%s)" % (_TOKEN_BOUNDARY, re.escape(variant), _TOKEN_BOUNDARY)
+        if re.search(pattern, text):
+            cited.append(variant)
+    return cited
+
+
 def _validate_cash_grade(
     gate: Mapping[str, object],
     stance: Mapping[str, object],
@@ -474,7 +502,7 @@ def _validate_cash_grade(
         return
     rationale = stance.get("rationale")
     if isinstance(rationale, str):
-        cited = [token for token in anchor_reference_tokens(gate, prior_context) if token in rationale]
+        cited = cited_reference_tokens(rationale, anchor_reference_tokens(gate, prior_context))
         if cited:
             errors.append("%s.rationale 不得引用前次決策識別碼（前次比例只是背景）：%s" % (prefix, "、".join(cited)))
     level = stance.get("level")
