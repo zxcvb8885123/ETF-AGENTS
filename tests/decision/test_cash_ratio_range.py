@@ -601,8 +601,11 @@ class CashRatioDailyPipelineTests(unittest.TestCase):
 class CashRatioReplayTests(unittest.TestCase):
     def setUp(self):
         self.bundle, _, self.debate, self.intent, self.archived, _, _, _ = chain_inputs()
-        # 正式樣板（只讀，不改 live 檔）：已有 drawdown_derisk v3，沒有 high_conviction_cash_floor。
-        self.template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        # 正式樣板去掉正式閘門（只讀，不改 live 檔）：已有 drawdown_derisk v3，沒有 high_conviction_cash_floor；
+        # 「無閘門樣板」明確由 gateless_policy_template 產生，不依賴 live 檔目前是否開啟 cash_ratio_range。
+        from test_daily_pipeline import gateless_policy_template
+
+        self.template = gateless_policy_template()
         self.template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
 
     def bind(self, template, archived_stance):

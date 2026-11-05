@@ -21,6 +21,22 @@ from test_decision_input_builder import builder_inputs, seed_history
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# 正式樣板已開啟、會改變現金姿態 Schema（cash_grade）與配置的版本閘門。
+PRODUCTION_SIZING_GATES = ("limit_scaled_conviction", "cash_ratio_range")
+
+
+def live_policy_template():
+    """正式樣板原樣（只讀，不改 live 檔）。"""
+    return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+
+
+def gateless_policy_template():
+    """正式樣板去掉 PRODUCTION_SIZING_GATES：只測閘門以外行為的測試明確使用這份，
+    不隱性依賴 live 檔目前是否開啟閘門；閘門開啟的整條鏈由 LiveTemplatePipelineTests 等測試另行覆蓋。"""
+    template = live_policy_template()
+    for field in PRODUCTION_SIZING_GATES:
+        template["position_sizing"].pop(field, None)
+    return template
 
 
 class FakeRunner:
@@ -107,13 +123,14 @@ def team_outputs(**overrides):
 class PipelineWorld:
     """在暫存目錄建立 Snapshot、行情資料庫、帳戶、規則、policy 樣板與產業分類。"""
 
-    def __init__(self, directory: Path, approved_status: bool):
+    def __init__(self, directory: Path, approved_status: bool, template=None):
         snapshot, rules, history, account = builder_inputs()
         snapshot["universe_version"] = "universe-fixture"
         self.snapshot = snapshot
         database = MarketDataDatabase(directory / "market.db")
         seed_history(database, [dict(row, source="TWSE_STOCK_DAY") for row in history])
-        template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        # 預設用去掉正式閘門的樣板；要測正式設定時由呼叫端傳入 live_policy_template()。
+        template = copy.deepcopy(template) if template is not None else gateless_policy_template()
         template["available_at"] = "2026-09-19T00:00:00+00:00"
         sectors = {
             "version": "sector:fixture",
@@ -733,6 +750,65 @@ class ResumeRobustnessTests(unittest.TestCase):
             result = run()
         self.assertEqual(result.status, "failed")
         self.assertIsNone(pipeline.last_result)
+
+
+class LiveTemplatePipelineTests(unittest.TestCase):
+    """正式樣板原樣（含 PRODUCTION_SIZING_GATES 兩個閘門）跑完整每日決策鏈：
+    風險 Agent 回合法 cash_grade、交易 Agent 給 high 買進，anchor 與子等級封存、保存前與事後重建都通過，竄改會被拒絕。"""
+
+    def test_live_template_with_both_gates_finalizes_and_rebuilds(self):
+        from etf_agent.decision import DecisionResultValidator
+
+        template = live_policy_template()
+        for field in PRODUCTION_SIZING_GATES:
+            self.assertIn(field, template["position_sizing"], "正式樣板未開啟 %s；本測試前提已變" % field)
+        high_trade = copy.deepcopy(TRADE)
+        high_trade["items"][0]["conviction"] = "high"
+        stance = dict(STANCE, cash_grade="middle")
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True, template=template)
+            runner = FakeRunner(team_outputs(trader_b0=[high_trade], cash_stance=[stance]))
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertEqual(result.decision_status, "approved")
+            brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
+            for key in ("cash_grade_grid", "cash_grade_allowed_by_stance", "cash_ratio_anchor"):
+                self.assertIn(key, brief)
+            run_dir = DecisionRepository(world.repository).verify("decision-fixture")
+            load = lambda name: json.loads((run_dir / ("%s.json" % name)).read_text(encoding="utf-8"))  # noqa: E731
+            names = ("decision_input", "policy", "momentum", "debate", "intent", "team_inputs", "proposal", "scenario",
+                     "guard", "risk_review", "revision_history", "decision")
+            art = {name: load(name) for name in names}
+            sizing = art["policy"]["position_sizing"]
+            gate = template["position_sizing"]["cash_ratio_range"]
+            self.assertEqual(sizing["cash_grade"], "middle")
+            self.assertEqual(art["team_inputs"]["cash_stance"]["cash_grade"], "middle")
+            self.assertEqual(art["policy"]["cash_buffer_rate"], gate["grid"]["neutral"]["middle"])
+            self.assertEqual(sizing["cash_ratio_range"]["anchor"]["status"], "account_cash")
+            self.assertEqual(art["proposal"]["position_sizing"]["limit_scaled_conviction"]["version"],
+                             template["position_sizing"]["limit_scaled_conviction"]["version"])
+            self.assertTrue(art["guard"]["passed"])
+
+            def validate(proposal):
+                return DecisionResultValidator(
+                    art["decision_input"], art["policy"], art["momentum"], art["debate"], art["intent"], art["team_inputs"],
+                    world.repository,
+                ).validate(proposal, art["scenario"], art["guard"], art["risk_review"], art["revision_history"], art["decision"])
+
+            self.assertEqual(validate(art["proposal"]), [])
+            # 沒有前次 run：anchor 是本次帳戶現金比例，竄改 anchor 後重建被拒絕。
+            from etf_agent.decision import decision_policy_sha256
+
+            forged_policy = copy.deepcopy(art["policy"])
+            forged_policy["position_sizing"]["cash_ratio_range"]["anchor"]["ratio"] = "0.20000000"
+            forged_policy["content_sha256"] = decision_policy_sha256(forged_policy)
+            self.assertTrue(DecisionResultValidator(
+                art["decision_input"], forged_policy, art["momentum"], art["debate"], art["intent"], art["team_inputs"],
+                world.repository,
+            ).validate(art["proposal"], art["scenario"], art["guard"], art["risk_review"], art["revision_history"], art["decision"]))
+            forged = copy.deepcopy(art["proposal"])
+            forged["position_sizing"]["limit_scaled_conviction"]["alpha"] = "0.90000000"
+            self.assertTrue(validate(forged))
 
 
 class DailyPipelineHelperTests(unittest.TestCase):
