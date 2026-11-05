@@ -13,7 +13,7 @@
 | 週一至週四、週日 21:00 | 用當天收盤資料做「下一個交易日」的決策與 D-Plan，當作備案 | `com.etf-agents.daily` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
 | 週一至週五 07:00 | 用新事件、新聞重做當天的決策，取代昨晚的備案 | `com.etf-agents.daily` |
-| 週一至週五 08:20 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證 | `com.etf-agents.dplan-watchdog` |
+| 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證 | `com.etf-agents.dplan-watchdog` |
 | 週五 19:30 | 策略反思週報 | `com.etf-agents.reflection` |
 | 週六 10:00 | 套用週報裡通過驗證的策略調整 | `com.etf-agents.reflection-apply` |
 
@@ -24,7 +24,7 @@
 ## 每天你要做的事
 
 1. **晚上 19:00 後、21:00 前：下載資料包。** 主辦方約 19:00 產生隔天的資料包（DataPack，內含現金、持股、前日委託結果），到參賽者後台「文件繳交」頁下載，放進 `var/datapack/`（檔名不限，不進 git）。沒放，21:00 對帳過不了，就不會有備案。
-2. **早上 08:20 後：看結果。** 看門狗會跳本機通知，也可以直接看最後幾行：
+2. **早上 08:00 後：看結果。** 看門狗會跳本機通知，也可以直接看最後幾行：
 
    ```bash
    tail -n 5 var/logs/daily_status.log
@@ -48,7 +48,7 @@
 2026-11-03T07:31:02+08:00	run_type=morning	status=approved	trade_date=2026-11-03	run_id=daily-20261103-070000	detail=<D-Plan 路徑>
 ```
 
-- `run_type`：`morning` 是 07:00 重做、`evening` 是 21:00 備案、`watchdog` 是 08:20 看門狗。
+- `run_type`：`morning` 是 07:00 重做、`evening` 是 21:00 備案、`watchdog` 是 08:00 看門狗。
 - `status` 的意思：
 
 | status | 意思 | 你要做 |
@@ -208,7 +208,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 | `data` | 20:00 資料更新 | 是 |
 | `finmind-news` | 20:40 個股新聞 | 建議 |
 | `overnight-capture` | 05:05 隔夜市場背景 | 建議 |
-| `dplan-watchdog` | 08:20 看門狗 | 建議 |
+| `dplan-watchdog` | 08:00 看門狗 | 建議 |
 | `reflection`、`reflection-apply` | 週五反思週報、週六套用 | 選用 |
 | `taifex-mis-probe`、`taifex-night-probe` | 只觀察台指期夜盤何時可取得，不進決策 | 驗證完可移除 |
 
@@ -222,7 +222,7 @@ sed -e 's#__PROJECT_ROOT__#/Users/apollo/stock/ETF_AGENTS#g' -e 's#__HOME__#/Use
 plutil -lint /Users/apollo/Library/LaunchAgents/com.etf-agents.dplan-watchdog.plist
 launchctl load /Users/apollo/Library/LaunchAgents/com.etf-agents.dplan-watchdog.plist
 launchctl list | grep com.etf-agents.dplan-watchdog        # 已載入會列出
-launchctl start com.etf-agents.dplan-watchdog               # 立刻跑一次驗證，不等 08:20
+launchctl start com.etf-agents.dplan-watchdog               # 立刻跑一次驗證，不等 08:00
 tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 ```
 
