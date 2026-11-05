@@ -149,6 +149,7 @@ def validate_cash_stance(
     prefix: str,
     errors: List[str],
     cash_ratio_range: Optional[Mapping[str, object]] = None,
+    prior_context: Optional[Mapping[str, object]] = None,
 ) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
 
@@ -157,14 +158,15 @@ def validate_cash_stance(
     且全市場情緒為 negative 時不得回 aggressive（一致性護欄；回撤下限另由 stance_floor 強制）。
 
     ``cash_ratio_range`` 是已綁定 anchor 的版本閘門物件；為 None 時欄位白名單與舊版完全相同（出現 cash_grade 即拒絕）。
-    有閘門時 ``cash_grade`` 必填，且必須在該姿態今日可選的格點內；超出即拒絕、不夾到邊界。"""
+    有閘門時 ``cash_grade`` 必填，且必須在該姿態今日可選的格點內；超出即拒絕、不夾到邊界。
+    ``prior_context`` 是本次的前次決策背景（PriorDecisionContext）；有閘門時其前次 decision_id 也列入理由的禁用識別碼。"""
     if not isinstance(stance, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
     fields = {"level", "breadth", "rationale", "evidence_ids"}
     if cash_ratio_range is not None:
         fields = fields | {"cash_grade"}
-        _validate_cash_grade(cash_ratio_range, stance, prefix, errors)
+        _validate_cash_grade(cash_ratio_range, stance, prefix, errors, prior_context)
     reject_unknown_fields(stance, fields, prefix, errors)
     if stance.get("level") not in CASH_STANCES:
         errors.append("%s.level 必須是 %s" % (prefix, "／".join(CASH_STANCES)))
@@ -440,24 +442,39 @@ def _percent(value: Decimal) -> str:
     return format(value, ".0%")
 
 
-def anchor_reference_tokens(gate: Mapping[str, object]) -> List[str]:
-    """理由文字不得出現的前次決策識別碼：前次比例只是背景，不是證據。"""
+def anchor_reference_tokens(
+    gate: Mapping[str, object], prior_context: Optional[Mapping[str, object]] = None,
+) -> List[str]:
+    """理由文字不得出現的前次決策識別碼：前次比例只是背景，不是證據。
+
+    anchor.source 記錄 run_id、decision／proposal 的 id 與雜湊；前次 decision_id 不在 anchor 結構內（不改已封存 Policy），
+    改由同一份前次決策背景（``prior_context.source.decision_id``，anchor 重建驗證已要求兩者指向同一個 run）補上。"""
     anchor = gate.get("anchor")
     source = anchor.get("source") if isinstance(anchor, Mapping) else None
-    if not isinstance(source, Mapping):
-        return []
-    tokens = [source.get(key) for key in ("run_id", "decision_sha256", "proposal_id", "proposal_sha256")]
+    tokens: List[object] = []
+    if isinstance(source, Mapping):
+        tokens.extend(source.get(key) for key in ("run_id", "decision_sha256", "proposal_id", "proposal_sha256"))
+    if isinstance(prior_context, Mapping) and prior_context.get("status") == "available":
+        prior_source = prior_context.get("source")
+        if isinstance(prior_source, Mapping):
+            tokens.append(prior_source.get("decision_id"))
     return [token for token in tokens if isinstance(token, str) and token.strip()]
 
 
-def _validate_cash_grade(gate: Mapping[str, object], stance: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+def _validate_cash_grade(
+    gate: Mapping[str, object],
+    stance: Mapping[str, object],
+    prefix: str,
+    errors: List[str],
+    prior_context: Optional[Mapping[str, object]] = None,
+) -> None:
     grade = stance.get("cash_grade")
     if grade not in CASH_GRADES:
         errors.append("%s.cash_grade 必須是 %s" % (prefix, "／".join(CASH_GRADES)))
         return
     rationale = stance.get("rationale")
     if isinstance(rationale, str):
-        cited = [token for token in anchor_reference_tokens(gate) if token in rationale]
+        cited = [token for token in anchor_reference_tokens(gate, prior_context) if token in rationale]
         if cited:
             errors.append("%s.rationale 不得引用前次決策識別碼（前次比例只是背景）：%s" % (prefix, "、".join(cited)))
     level = stance.get("level")

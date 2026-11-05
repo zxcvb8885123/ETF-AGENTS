@@ -39,6 +39,7 @@ from etf_agent.decision.sizing import (
     CASH_GRADES,
     CASH_RATIO_RANGE,
     allowed_cash_grades,
+    anchor_reference_tokens,
     validate_cash_stance,
 )
 from etf_agent.strategy_reflection.contracts import FORBIDDEN_PREFIXES
@@ -315,6 +316,33 @@ class CashStanceTests(unittest.TestCase):
     def test_gate_without_anchor_is_rejected(self):
         self.assertTrue(any("anchor" in e for e in self.errors(stance(), gate())))
 
+    def test_rationale_must_not_cite_prior_decision_id(self):
+        source = {"run_id": "decision-prior", "selection": "latest_cutoff", "target_session_start": "2026-09-21T09:00:00+08:00",
+                  "decision_sha256": "a" * 64, "proposal_id": "proposal:x", "proposal_sha256": "b" * 64}
+        gate_value = anchored(status="prior_decision", source=source)
+        prior = {"status": "available", "source": {"run_id": "decision-prior", "decision_id": "decision:0123456789abcdef0123"}}
+        cited = stance(rationale="依據前次 decision:0123456789abcdef0123 的比例。")
+        errors = []
+        validate_cash_stance(self.context, cited, "cash_stance", errors, cash_ratio_range=gate_value, prior_context=prior)
+        self.assertTrue(any("不得引用前次" in e and "decision:0123456789abcdef0123" in e for e in errors), errors)
+        clean = []
+        validate_cash_stance(self.context, stance(), "cash_stance", clean, cash_ratio_range=gate_value, prior_context=prior)
+        self.assertEqual(clean, [])
+        self.assertEqual(anchor_reference_tokens(gate_value, prior)[-1], "decision:0123456789abcdef0123")
+        # 前次背景 unavailable 時沒有前次 decision_id 可禁用；anchor 本身的識別碼照舊。
+        self.assertNotIn("decision:0123456789abcdef0123",
+                         anchor_reference_tokens(gate_value, {"status": "unavailable", "source": None}))
+
+    def test_without_gate_prior_decision_id_in_rationale_is_unchanged(self):
+        prior = {"status": "available", "source": {"run_id": "decision-prior", "decision_id": "decision:0123456789abcdef0123"}}
+        plain = {key: value for key, value in stance(rationale="依據前次 decision:0123456789abcdef0123。").items()
+                 if key != "cash_grade"}
+        with_prior, without_prior = [], []
+        validate_cash_stance(self.context, plain, "cash_stance", with_prior, prior_context=prior)
+        validate_cash_stance(self.context, plain, "cash_stance", without_prior)
+        self.assertEqual(with_prior, without_prior)
+        self.assertFalse(any("不得引用前次" in e for e in with_prior), with_prior)
+
 
 # ---------------------------------------------------------------- anchor
 class CashRatioAnchorTests(unittest.TestCase):
@@ -413,6 +441,22 @@ class CashRatioEndToEndTests(unittest.TestCase):
             world = GatedWorld().build(directory + "/ok", "defensive", "lower")
             self.assertEqual(world.policy["cash_buffer_rate"], "0.15")
 
+    def test_finalizer_rejects_rationale_citing_prior_decision_id_or_run_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = GatedWorld().build(directory, "neutral", "upper")
+            source = world.prior["source"]
+            self.assertTrue(source["decision_id"].startswith("decision:"))
+            for token in (source["decision_id"], source["run_id"]):
+                team = copy.deepcopy(world.team)
+                team["cash_stance"]["rationale"] += "依據前次 %s" % token
+                _, result = finalize(world.bundle, world.momentum, world.debate, world.trade, world.policy, team, world.repo)
+                self.assertEqual(result["status"], "rejected", token)
+                self.assertTrue(any("不得引用前次" in e and token in e for e in result["errors"]), result["errors"])
+            # 綁定 policy 時（pipeline 的 apply_trade_decision）同樣拒絕前次 decision_id。
+            cited = dict(world.stance, rationale=world.stance["rationale"] + source["decision_id"])
+            with self.assertRaises(DecisionToolError):
+                apply_trade_decision(world.base, world.trade, cited, world.bundle, None, world.prior)
+
     def test_finalizer_rejects_grade_mismatch_between_team_and_policy(self):
         with tempfile.TemporaryDirectory() as directory:
             world = GatedWorld().build(directory, "neutral", "upper")
@@ -491,7 +535,7 @@ class CashRatioEndToEndTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- pipeline
-def cash_stance_call(gate_value, outputs=None):
+def cash_stance_call(gate_value, outputs=None, prior_context=None):
     from etf_agent.decision import MomentumEngine
     from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
     from test_cash_stance_guard import STANCE as TYPED_STANCE
@@ -508,7 +552,7 @@ def cash_stance_call(gate_value, outputs=None):
         if gate_value is None:
             result = pipeline.run_cash_stance(*args)
         else:
-            result = pipeline.run_cash_stance(*args, None, gate_value)
+            result = pipeline.run_cash_stance(*args, None, gate_value, prior_context)
         brief = json.loads((Path(directory) / "brief_cash_stance.json").read_text(encoding="utf-8"))
         prompt = runner.prompts[0][1].replace(directory, "<DIR>").replace(str(ROOT), "<ROOT>")
     return brief, prompt, result
@@ -538,6 +582,23 @@ class CashRatioPipelineTests(unittest.TestCase):
 
         self.assertEqual(CASH_GRADE_STANCE_SCHEMA["properties"]["cash_grade"], {"enum": list(CASH_GRADES)})
         self.assertIn("cash_grade", CASH_GRADE_STANCE_SCHEMA["required"])
+
+    def test_pipeline_rejects_rationale_citing_prior_decision_id(self):
+        from etf_agent.automation.agent_runner import DailyPipelineError
+        from test_cash_stance_guard import STANCE as TYPED_STANCE
+
+        source = {"run_id": "decision-prior", "selection": "latest_cutoff", "target_session_start": "2026-09-21T09:00:00+08:00",
+                  "decision_sha256": "a" * 64, "proposal_id": "proposal:x", "proposal_sha256": "b" * 64}
+        gate_value = anchored(ratio="0.10000000", status="prior_decision", source=source)
+        prior = {"status": "available", "source": {"run_id": "decision-prior", "decision_id": "decision:0123456789abcdef0123"}}
+        cited = dict(TYPED_STANCE, cash_grade="middle",
+                     rationale=TYPED_STANCE["rationale"] + "依據前次 decision:0123456789abcdef0123。")
+        with self.assertRaises(DailyPipelineError) as raised:
+            cash_stance_call(gate_value, [dict(cited), dict(cited)], prior)
+        self.assertIn("decision:0123456789abcdef0123", str(raised.exception))
+        # 修正循環：第二次拿掉識別碼即通過。
+        _, _, result = cash_stance_call(gate_value, [dict(cited), dict(TYPED_STANCE, cash_grade="middle")], prior)
+        self.assertEqual(result["cash_grade"], "middle")
 
     def test_exhausted_attempts_raise_pipeline_error(self):
         from etf_agent.automation.agent_runner import DailyPipelineError
