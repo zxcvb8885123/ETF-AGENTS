@@ -267,7 +267,7 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 高信心份額至少為單股上限的 alpha 倍（未開啟） | `limit_scaled_conviction`（`alpha`） |
 | 姿態內現金子等級與單日上限（未開啟） | `cash_ratio_range`（`grid`、`max_daily_raise`、pipeline 綁定的 `anchor`）、`cash_grade` |
 | 現金不足依信心分錢、零頭取消 | `cash_fit_order`、旗標 `RISK_CASH_FIT` |
-| 剩下的現金先全給高信心（high 不取消零頭、不流向中低信心） | `high_conviction_cash_priority`（2026-11-06，已開啟） |
+| 剩下的現金先全給高信心（high 不取消零頭；high 被縮減後不流向未持有的中低信心新股，持股加碼與 high 整筆取消時不擋） | `high_conviction_cash_priority`（2026-11-06，已開啟） |
 | 現金逼近 25% 時留住出場 | `cash_ceiling_fix`、旗標 `RISK_CASH_CEILING` |
 | 有買單股票留 3% 上限空間 | `stock_limit_headroom` |
 | 買單預留 3% 跳空 | `buy_gap_reserve` |

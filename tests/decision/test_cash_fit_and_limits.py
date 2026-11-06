@@ -265,6 +265,29 @@ class CashFitOrderTests(unittest.TestCase):
         self.assertEqual(shares.get("2330.TW"), 1000)
         self.assertGreater(shares.get("2317.TW", 0), 0)
 
+    def test_priority_gate_does_not_block_when_high_is_cancelled_entirely(self):
+        bundle, _, _, _ = valid_inputs()
+        engine = AllocationOrderEngine(bundle, base_policy())
+        engine.policy = {**engine.policy, "position_sizing": {
+            "conviction_by_symbol": {"2330.TW": "high", "2317.TW": "medium"},
+            "cash_fit_order": CASH_FIT_ORDER, "high_conviction_cash_priority": HIGH_CONVICTION_CASH_PRIORITY}}
+        effective = engine._effective_policy({})
+        effective["cash_buffer_rate"] = Decimal("0")
+        effective["max_turnover_rate"] = Decimal("1")
+        high = engine._order("2330.TW", "buy", 1000, "buy", effective)
+        medium = engine._order("2317.TW", "buy", 1000, "buy", effective)
+        high_one = -Decimal(engine._order("2330.TW", "buy", 1000, "buy", effective)["net_cash_impact"])
+        medium_one = -Decimal(medium["net_cash_impact"])
+        cash = medium_one + Decimal("1")
+        self.assertLess(cash, high_one)  # 買不起一張高信心（fixture 價格若不符會在此失敗）
+        orders, _, _ = engine._fit_cash([high, medium], cash, cash, Decimal("100000000"), effective, {})
+        self.assertEqual({o["symbol"] for o in orders}, {"2317.TW"})
+
+    def test_priority_gate_blocked_flag_explains_the_reason(self):
+        _, flags = self._priority_case(True)
+        detail = [f["detail"] for f in flags if (f["symbol"], f["code"]) == ("2317.TW", "CASH_BUFFER")]
+        self.assertTrue(detail and "高信心" in detail[0])
+
     def test_priority_gate_requires_cash_fit_order(self):
         sizing = {**production_policy()["position_sizing"]}
         del sizing["cash_fit_order"]

@@ -1607,12 +1607,14 @@ class AllocationOrderEngine:
             lot = int(effective["lot_size"])
             cash_clipped = False
             turnover_clipped = False
+            priority_blocked = False
             is_high = all_tiers.get(str(item["symbol"])) == "high"
             if high_priority and high_cash_clipped and not is_high and str(item["symbol"]) not in held:
                 # 高信心買單已被現金縮減：剩下的現金全部留給它，未持有的中、低信心新股不得動用；
                 # 已持有股票的加碼不受影響（本來就是持股，加碼只看自己的信心）。
                 candidate = {}
                 cash_clipped = True
+                priority_blocked = True
             soft_high = soft_ratio is not None and all_tiers.get(str(item["symbol"])) == "high"
             item_buffer = soft_buffer if soft_high else buffer
             while candidate and int(candidate["shares"]) > 0:
@@ -1635,7 +1637,8 @@ class AllocationOrderEngine:
                     str(item["symbol"]), "buy", remaining, str(item["intent"]), effective
                 )
             dust_cancelled = False
-            if high_priority and is_high and cash_clipped:
+            if high_priority and is_high and cash_clipped and candidate:
+                # 至少買到一張才算「高信心用掉了剩下的現金」；連一張都買不起（整筆取消）時不擋後面的買單。
                 high_cash_clipped = True
             if (
                 ordered_fit and candidate and cash_clipped and str(item["symbol"]) not in held
@@ -1679,7 +1682,10 @@ class AllocationOrderEngine:
                     {
                         "symbol": item["symbol"],
                         "code": "CASH_BUFFER",
-                        "detail": "買進股數由 %d 降為 %d" % (requested_shares, actual_shares),
+                        "detail": (
+                            "買進股數由 %d 降為 %d（高信心買單已被現金縮減，剩下的現金優先留給高信心，未持有的中、低信心新股不買）"
+                            if priority_blocked else "買進股數由 %d 降為 %d"
+                        ) % (requested_shares, actual_shares),
                     }
                 )
             if actual_shares != requested_shares and turnover_clipped:
