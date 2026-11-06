@@ -292,6 +292,40 @@ class TurnoverFitTests(unittest.TestCase):
         self.assertTrue(ProposalValidator(bundle, policy, intent).validate(forged))
 
 
+class HighCashPriorityMinPositionsTests(unittest.TestCase):
+    """高信心優先現金閘門與 min_positions 的互動：2317 高信心新股、2330 持股標 exit，min_positions=2。"""
+
+    def body(self, priority):
+        bundle, intent, stance, policy = sized_inputs("high", "low")
+        bundle = account(bundle, "150000", 1000)
+        bundle = with_rules(bundle, min_positions=2)
+        items = [dict(item, intent="exit", conviction=None, adopted_claim_ids=["bear-2330-1"], rejected_claim_ids=["bull-2330-1"])
+                 if item["symbol"] == "2330.TW" else item for item in intent["items"]]
+        _, _, debate, _, _, _, _, _ = chain_inputs(copy.deepcopy(bundle))
+        intent = seal_trade_decision(trade_decision_envelope(bundle, debate, "trade-1"), items)
+        policy["min_positions"] = 2
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        gates = {"cash_fit_order": "v1"}
+        if priority:
+            gates["high_conviction_cash_priority"] = "v1"
+        policy = gated(sized_policy(policy, intent, stance, bundle), **gates)
+        body = AllocationOrderEngine(bundle, policy).run(intent)
+        self.assertEqual(ProposalValidator(bundle, policy, intent).validate(body), [])
+        return bundle, policy, body
+
+    def test_min_positions_loop_converges_with_the_priority_gate(self):
+        bundle, policy, body = self.body(True)
+        self.assertIn(("2330.TW", "RISK_MIN_POSITIONS"), flags(body))
+        # 只有兩檔可選又受單股上限限制，無法湊滿 min_positions；迴圈照樣收斂、重建一致，硬規則交由 Guard 拒絕。
+        self.assertIn("POSITION_COUNT", failed_rules(guard(bundle, policy, body)))
+
+    def test_gate_does_not_change_which_exits_are_kept(self):
+        _, _, with_gate = self.body(True)
+        _, _, without = self.body(False)
+        kept = lambda body: {sym for sym, code in flags(body) if code == "RISK_MIN_POSITIONS"}
+        self.assertEqual(kept(with_gate), kept(without))
+
+
 class ForcedSwapConfirmationTests(unittest.TestCase):
     """滿檔（max_positions=1，min_positions=0）、2330 續抱且在 broken 名單、2317 新買 high。"""
 

@@ -136,6 +136,7 @@
 | 姿態內現金子等級（未開啟） | `position_sizing.cash_ratio_range`（`grid`、`max_daily_raise`、`anchor`）、`position_sizing.cash_grade`、`cash_stance.cash_grade`；簡報 `cash_grade_grid`、`cash_grade_allowed_by_stance`、`cash_ratio_anchor` |
 | 賣款當日可用 | `config/decision_rules.json` 的 `reuse_sell_proceeds` |
 | 現金不足的買單順序 | `cash_fit_order`，旗標 `RISK_CASH_FIT` |
+| 高信心先拿剩下的現金 | `high_conviction_cash_priority`（high 不取消零頭；high（含 add）被縮減且至少買到一張後，未持有的中低信心新股為 0，持股加碼不受影響，high 整筆取消時不擋；turnover_fit 同樣不取消 high 零頭） |
 | 現金上限修正 | `cash_ceiling_fix`，旗標 `RISK_CASH_CEILING` |
 | 單股上限留空間 | `stock_limit_headroom` |
 | 跳空預留 | `buy_gap_reserve` |
