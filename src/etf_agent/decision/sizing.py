@@ -73,6 +73,12 @@ LIMIT_HEADROOM_BUY = Decimal("0.97")
 # 已持有的 add 不受影響、只減少增量。省略此欄位的舊 Decision run 維持依代號逐張減少的原重建行為。
 CASH_FIT_ORDER = "v1"
 CASH_FIT_MIN_FILL_RATIO = Decimal("0.5")
+# 2026-11-06 後新增（high_conviction_cash_priority 版本閘門）：可動用的現金先全部給高信心買單。高信心新股因現金不足
+# 買不到目標的 cash_fit_min_fill_ratio 時不再整筆取消，買得到幾張就買幾張；高信心買單被現金縮減後，
+# 後面中、低信心的買單（含持股加碼）一律不得動用剩下的現金（降為 0，CASH_BUFFER 旗標）。
+# turnover_fit 縮減也同樣不取消高信心零頭。須與 cash_fit_order 同時啟用。
+# 省略此欄位的舊 Policy／舊 Decision run 維持塵埃取消後現金流向後面買單的原重建行為。
+HIGH_CONVICTION_CASH_PRIORITY = "v1"
 # 2026-11-03 後新增（cash_ceiling_fix 版本閘門）：配置後 base 情境現金比例達競賽上限時，程式依 ATR14 由低到高
 # 留住交易 Agent 標為 exit 的持股續抱（RISK_CASH_CEILING，forced_exit 不留），直到低於上限。
 # 省略此欄位的舊 Decision run 維持由 Guard CASH_WEIGHT 整份拒絕的原重建行為。
@@ -231,6 +237,7 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     這些欄位只由人設定、策略反思不得改；省略即走舊 Decision run 的原重建路徑。"""
     for field, allowed in (
         ("cash_fit_order", CASH_FIT_ORDER),
+        ("high_conviction_cash_priority", HIGH_CONVICTION_CASH_PRIORITY),
         ("cash_ceiling_fix", CASH_CEILING_FIX),
         ("stock_limit_headroom", STOCK_LIMIT_HEADROOM),
         ("buy_gap_reserve", BUY_GAP_RESERVE),
@@ -282,6 +289,8 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
             "position_sizing.insufficient_funds_policy 只允許 %s；舊 Decision run 省略此欄位"
             % "／".join(INSUFFICIENT_FUNDS_POLICIES)
         )
+    if "high_conviction_cash_priority" in sizing and "cash_fit_order" not in sizing:
+        errors.append("position_sizing.high_conviction_cash_priority 必須與 cash_fit_order 同時出現")
     if "cash_fit_min_fill_ratio" in sizing:
         if "cash_fit_order" not in sizing:
             errors.append("position_sizing.cash_fit_min_fill_ratio 必須與 cash_fit_order 同時出現")
@@ -725,7 +734,7 @@ def validate_position_sizing(
             "support_by_symbol", "stock_weight_fit", "positions_by_breadth", "position_breadth",
             "held_add_priority", "rotation", "volatility_exponent", "selection_tiebreak",
             "selection_ranking", "rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256",
-            "cash_buffer_floor", "cash_fit_order", "cash_fit_min_fill_ratio", "cash_ceiling_fix",
+            "cash_buffer_floor", "cash_fit_order", "cash_fit_min_fill_ratio", "high_conviction_cash_priority", "cash_ceiling_fix",
             "stock_limit_headroom", "buy_gap_reserve", "buy_gap_reserve_rate", "insufficient_funds_policy",
             "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk",
             "high_conviction_cash_floor", "limit_scaled_conviction", "cash_ratio_range", "cash_grade",

@@ -24,6 +24,7 @@ from .position_review import validate_position_review_policy
 from .momentum import MomentumEngine
 from .sizing import (
     BUY_GAP_RESERVE, CASH_BUFFER_FLOOR, CASH_CEILING_FIX, CASH_FIT_ORDER, CONVICTION_LEVELS, FORCED_SWAP_CONFIRMATION,
+    HIGH_CONVICTION_CASH_PRIORITY,
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
     conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, high_conviction_floor_ratio,
@@ -906,7 +907,7 @@ class AllocationOrderEngine:
         # 執行面版本閘門只在 Policy 有該欄位時才進 effective（並寫入 proposal.effective_policy）：
         # 省略欄位的舊 Decision run 的 effective_policy 必須逐鍵不變，否則重建比對會失敗。
         sizing = self.policy.get("position_sizing") or {}
-        for key in ("cash_buffer_floor", "cash_fit_order", "cash_ceiling_fix", "stock_limit_headroom", "buy_gap_reserve",
+        for key in ("cash_buffer_floor", "cash_fit_order", "high_conviction_cash_priority", "cash_ceiling_fix", "stock_limit_headroom", "buy_gap_reserve",
                     "sector_fit", "turnover_fit"):
             if key in sizing:
                 result[key] = sizing[key]
@@ -1344,7 +1345,15 @@ class AllocationOrderEngine:
             cut = min(max(int((excess / (self.prices[symbol] * lot)).to_integral_value(rounding=ROUND_CEILING)), 1),
                       int(weakest["shares"]) // lot) * lot
             remaining = int(weakest["shares"]) - cut
-            if current.get(symbol, 0) <= 0 and Decimal(remaining) < Decimal(requested[symbol]) * min_fill_ratio:
+            high_exempt = (
+                effective.get("cash_fit_order") == CASH_FIT_ORDER
+                and effective.get("high_conviction_cash_priority") == HIGH_CONVICTION_CASH_PRIORITY
+                and tiers.get(symbol) == "high"
+            )
+            if (
+                current.get(symbol, 0) <= 0 and not high_exempt
+                and Decimal(remaining) < Decimal(requested[symbol]) * min_fill_ratio
+            ):
                 remaining = 0
             fitted.remove(weakest)
             cash -= decimal_value(weakest["net_cash_impact"], "net_cash_impact")
@@ -1590,15 +1599,22 @@ class AllocationOrderEngine:
         fitted = list(sells)
         flags: List[Dict[str, object]] = []
         buy_total = Decimal("0")
+        high_priority = ordered_fit and effective.get("high_conviction_cash_priority") == HIGH_CONVICTION_CASH_PRIORITY
+        high_cash_clipped = False
         for item in buys:
             candidate = dict(item)
             requested_shares = int(candidate["shares"])
             lot = int(effective["lot_size"])
             cash_clipped = False
             turnover_clipped = False
+            is_high = all_tiers.get(str(item["symbol"])) == "high"
+            if high_priority and high_cash_clipped and not is_high:
+                # 高信心買單已被現金縮減：剩下的現金全部留給它，中、低信心（含持股加碼）不得動用。
+                candidate = {}
+                cash_clipped = True
             soft_high = soft_ratio is not None and all_tiers.get(str(item["symbol"])) == "high"
             item_buffer = soft_buffer if soft_high else buffer
-            while int(candidate["shares"]) > 0:
+            while candidate and int(candidate["shares"]) > 0:
                 cost = -decimal_value(candidate["net_cash_impact"], "net_cash_impact")
                 gross = decimal_value(candidate["gross_amount"], "gross_amount")
                 if reserve_rate is None:
@@ -1618,8 +1634,11 @@ class AllocationOrderEngine:
                     str(item["symbol"]), "buy", remaining, str(item["intent"]), effective
                 )
             dust_cancelled = False
+            if high_priority and is_high and cash_clipped:
+                high_cash_clipped = True
             if (
                 ordered_fit and candidate and cash_clipped and str(item["symbol"]) not in held
+                and not (high_priority and is_high)
                 and Decimal(int(candidate["shares"])) < Decimal(requested_shares) * min_fill_ratio
             ):
                 # 新股只買得到零頭會白占一個名額：整筆取消，現金留給後面的買單。

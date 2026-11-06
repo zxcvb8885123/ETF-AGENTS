@@ -28,6 +28,7 @@ from etf_agent.decision.sizing import (
     CASH_CEILING_FIX,
     CASH_FIT_MIN_FILL_RATIO,
     CASH_FIT_ORDER,
+    HIGH_CONVICTION_CASH_PRIORITY,
     INSUFFICIENT_FUNDS_VOID_BATCH,
     LIMIT_HEADROOM,
     LIMIT_HEADROOM_BUY,
@@ -228,6 +229,52 @@ class CashFitOrderTests(unittest.TestCase):
         self.assertGreater(shares["2317.TW"], shares.get("2330.TW", 0))
         self.assertNotIn("RISK_CASH_FIT", {flag["code"] for flag in flags})
         self.assertTrue({flag["code"] for flag in flags} <= {"CASH_BUFFER"})
+
+    def _priority_case(self, priority, current=None):
+        # 高信心新股只買得到 1 張（目標 4 張，低於 50%），後面有便宜的中信心買單。
+        bundle, _, _, _ = valid_inputs()
+        engine = AllocationOrderEngine(bundle, base_policy())
+        sizing = {"conviction_by_symbol": {"2330.TW": "high", "2317.TW": "medium"}, "cash_fit_order": CASH_FIT_ORDER}
+        if priority:
+            sizing["high_conviction_cash_priority"] = HIGH_CONVICTION_CASH_PRIORITY
+        engine.policy = {**engine.policy, "position_sizing": sizing}
+        effective = engine._effective_policy({})
+        effective["cash_buffer_rate"] = Decimal("0")
+        effective["max_turnover_rate"] = Decimal("1")
+        high = engine._order("2330.TW", "buy", 4000, "buy", effective)
+        medium = engine._order("2317.TW", "buy", 2000, "buy", effective)
+        cost = lambda s, n: -Decimal(engine._order(s, "buy", n, "buy", effective)["net_cash_impact"])
+        cash = cost("2330.TW", 1000) + cost("2317.TW", 1000) + Decimal("1")
+        orders, _, flags = engine._fit_cash([high, medium], cash, cash, Decimal("100000000"), effective, current or {})
+        return {item["symbol"]: int(item["shares"]) for item in orders}, flags
+
+    def test_priority_gate_gives_the_remaining_cash_to_high_and_blocks_medium(self):
+        shares, flags = self._priority_case(True)
+        self.assertEqual(shares, {"2330.TW": 1000})
+        codes = {(flag["symbol"], flag["code"]) for flag in flags}
+        self.assertNotIn(("2330.TW", "RISK_CASH_FIT"), codes)
+        self.assertIn(("2317.TW", "CASH_BUFFER"), codes)
+
+    def test_without_priority_gate_high_dust_is_cancelled_and_medium_gets_the_cash(self):
+        shares, flags = self._priority_case(False)
+        self.assertEqual(shares, {"2317.TW": 2000})
+        self.assertIn(("2330.TW", "RISK_CASH_FIT"), {(flag["symbol"], flag["code"]) for flag in flags})
+
+    def test_priority_gate_blocks_adds_to_held_stocks_too(self):
+        shares, _ = self._priority_case(True, current={"2317.TW": 1000})
+        self.assertEqual(shares, {"2330.TW": 1000})
+
+    def test_priority_gate_requires_cash_fit_order(self):
+        sizing = {**production_policy()["position_sizing"]}
+        del sizing["cash_fit_order"]
+        del sizing["cash_fit_min_fill_ratio"]
+        errors = []
+        from etf_agent.decision.sizing import _validate_execution_gates
+        _validate_execution_gates(sizing, errors)
+        self.assertTrue(any("high_conviction_cash_priority" in message for message in errors))
+
+    def test_priority_gate_is_forbidden_for_strategy_reflection(self):
+        self.assertIn("high_conviction_cash_priority", FORBIDDEN_PREFIXES)
 
     def test_rank_orders_within_the_same_conviction(self):
         shares, _ = self._case(True, current={}, tiers={"2317.TW": "high", "2330.TW": "high"},
