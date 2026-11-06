@@ -18,9 +18,16 @@ CSV_KEYS = {"日期": "Date", "契約代號": "Contract", "到期月份(週別)"
 
 def parse_rows(text: str) -> list:
     """期交所 2026-11-04 起由 JSON 改為 CSV（含 BOM、中文欄名）；兩種都收。"""
-    if text.lstrip().startswith(("[", "{")):
+    head = text.lstrip()
+    if head.startswith(("[", "{")):
         return json.loads(text)
-    return [{CSV_KEYS.get(k, k): v for k, v in r.items()} for r in csv.DictReader(io.StringIO(text))]
+    if head[:1] == "<":
+        raise ValueError(f"期交所回傳的是網頁而不是資料：{head[:80]!r}")
+    reader = csv.DictReader(io.StringIO(text))
+    missing = [k for k in CSV_KEYS if k not in (reader.fieldnames or [])]
+    if missing:
+        raise ValueError(f"CSV 缺少欄位 {missing}，實際欄位：{reader.fieldnames}")
+    return [{CSV_KEYS.get(k, k): v for k, v in r.items()} for r in reader]
 
 
 def main() -> int:
