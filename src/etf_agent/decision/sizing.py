@@ -75,7 +75,7 @@ CASH_FIT_ORDER = "v1"
 CASH_FIT_MIN_FILL_RATIO = Decimal("0.5")
 # 2026-11-06 後新增（high_conviction_cash_priority 版本閘門）：可動用的現金先全部給高信心買單。高信心新股因現金不足
 # 買不到目標的 cash_fit_min_fill_ratio 時不再整筆取消，買得到幾張就買幾張；高信心買單被現金縮減後，
-# 後面中、低信心的買單（含持股加碼）一律不得動用剩下的現金（降為 0，CASH_BUFFER 旗標）。
+# 後面未持有的中、低信心新股不得動用剩下的現金（降為 0，CASH_BUFFER 旗標）；已持有股票的加碼不受影響。
 # turnover_fit 縮減也同樣不取消高信心零頭。須與 cash_fit_order 同時啟用。
 # 省略此欄位的舊 Policy／舊 Decision run 維持塵埃取消後現金流向後面買單的原重建行為。
 HIGH_CONVICTION_CASH_PRIORITY = "v1"

@@ -1608,8 +1608,9 @@ class AllocationOrderEngine:
             cash_clipped = False
             turnover_clipped = False
             is_high = all_tiers.get(str(item["symbol"])) == "high"
-            if high_priority and high_cash_clipped and not is_high:
-                # 高信心買單已被現金縮減：剩下的現金全部留給它，中、低信心（含持股加碼）不得動用。
+            if high_priority and high_cash_clipped and not is_high and str(item["symbol"]) not in held:
+                # 高信心買單已被現金縮減：剩下的現金全部留給它，未持有的中、低信心新股不得動用；
+                # 已持有股票的加碼不受影響（本來就是持股，加碼只看自己的信心）。
                 candidate = {}
                 cash_clipped = True
             soft_high = soft_ratio is not None and all_tiers.get(str(item["symbol"])) == "high"

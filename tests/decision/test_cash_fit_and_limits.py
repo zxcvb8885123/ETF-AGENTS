@@ -260,9 +260,10 @@ class CashFitOrderTests(unittest.TestCase):
         self.assertEqual(shares, {"2317.TW": 2000})
         self.assertIn(("2330.TW", "RISK_CASH_FIT"), {(flag["symbol"], flag["code"]) for flag in flags})
 
-    def test_priority_gate_blocks_adds_to_held_stocks_too(self):
+    def test_priority_gate_does_not_block_adds_to_held_stocks(self):
         shares, _ = self._priority_case(True, current={"2317.TW": 1000})
-        self.assertEqual(shares, {"2330.TW": 1000})
+        self.assertEqual(shares.get("2330.TW"), 1000)
+        self.assertGreater(shares.get("2317.TW", 0), 0)
 
     def test_priority_gate_requires_cash_fit_order(self):
         sizing = {**production_policy()["position_sizing"]}
