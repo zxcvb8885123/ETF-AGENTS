@@ -39,6 +39,7 @@
     "held_add_priority": "v1",
     "cash_buffer_floor": "v1",
     "cash_fit_order": "v1",
+    "held_weight_budget": "v1",
     "cash_fit_min_fill_ratio": "0.5",
     "high_conviction_cash_priority": "v1",
     "limit_scaled_conviction": {
@@ -66,7 +67,7 @@
       "days": 3
     },
     "drawdown_derisk": {
-      "version": "v3",
+      "version": "v4",
       "max_derisk_fraction": "0.25"
     },
     "rotation": {

@@ -93,7 +93,7 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertEqual(sizing["sector_fit"], SECTOR_FIT)
         self.assertEqual(sizing["turnover_fit"], TURNOVER_FIT)
         self.assertEqual(sizing["reentry_cooldown"], {"version": "v1", "days": 3})
-        self.assertEqual(sizing["drawdown_derisk"], {**DERISK, "version": "v3"})
+        self.assertEqual(sizing["drawdown_derisk"], {**DERISK, "version": "v4"})
         self.assertEqual(Decimal(DERISK["max_derisk_fraction"]), DRAWDOWN_DERISK_FRACTION)
         self.assertEqual(sizing["rotation"]["forced_swap"]["confirmation"], FORCED_SWAP_CONFIRMATION)
         self.assertEqual(policy["drawdown_control"], CONTROL)
@@ -116,7 +116,7 @@ class ProductionConfigTests(unittest.TestCase):
                     {"reentry_cooldown": {"version": "v2", "days": 3}},
                     {"reentry_cooldown": {"version": "v1", "days": 3, "blocked_symbols": ["2317.TW"]}},
                     {"reentry_cooldown": {"version": "v1", "days": 3, "blocked_symbols": ["b", "a"], "source_run_ids": []}},
-                    {"drawdown_derisk": {"version": "v4"}},
+                    {"drawdown_derisk": {"version": "v5"}},
                     {"drawdown_derisk": {"version": "v1", "max_derisk_fraction": "0"}},
                     {"drawdown_derisk": {"version": "v1", "max_derisk_fraction": "1.5"}},
                     {"drawdown_derisk": {"version": "v1", "extra": 1}}):

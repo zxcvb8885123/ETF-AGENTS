@@ -109,10 +109,22 @@ REENTRY_COOLDOWN_FIELDS = {"version", "days", "blocked_symbols", "source_run_ids
 # v2（2026-11-04，只由人設定）：整張進位不得超過單次減碼硬上限。
 # v3：v2 再加「被減碼的持股不再是本次加碼候選」——減碼後的股數是上限，交易 Agent 標 add 的同一檔不得加回
 #（v1／v2 會加回原持股，留下 RISK_DRAWDOWN 旗標卻沒有賣單）。v1 維持原重建行為。
+# v4（2026-11-08，審查 D-2，只由人設定）：v3 再加「單次減碼預算另受換手上限約束」——預算 = min(NAV × max_derisk_fraction,
+# NAV × max_turnover_rate − 交易 Agent 賣單 gross)，減碼不會讓賣單總額超過 max_turnover_rate，不再觸發 RISK_TURNOVER
+# 留住交易 Agent 的 exit、改賣別檔。v1～v3 維持原重建行為。
 DRAWDOWN_DERISK_VERSION = "v1"
 DRAWDOWN_DERISK_VERSION_V2 = "v2"
 DRAWDOWN_DERISK_VERSION_V3 = "v3"
-DRAWDOWN_DERISK_VERSIONS = (DRAWDOWN_DERISK_VERSION, DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3)
+DRAWDOWN_DERISK_VERSION_V4 = "v4"
+DRAWDOWN_DERISK_VERSIONS = (
+    DRAWDOWN_DERISK_VERSION, DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4,
+)
+# 其他閘門要求 drawdown_derisk「減碼後不得加回」時接受的版本（v3 與其後續版本）。
+DRAWDOWN_DERISK_NO_READD_VERSIONS = (DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4)
+# 2026-11-08 新增（held_weight_budget 版本閘門，審查 D-1，只由人設定）：已持有的加碼候選若現有權重已高於等級份額，
+# 依現有權重計入配置預算、目標權重就是現有權重、不建買單（RISK_HELD_WEIGHT），其他候選不再按高估的預算超配後
+# 再被 CASH_BUFFER／RISK_CASH_FIT 砍回。省略此欄位的舊 Policy／舊 Decision run 逐位維持原重建行為。
+HELD_WEIGHT_BUDGET = "v1"
 DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction"}
 DRAWDOWN_DERISK_FRACTION = Decimal("0.25")
 # 2026-11-05 後新增（high_conviction_cash_floor 版本閘門，只由人設定）：高信心（high）買單可把現金用到
@@ -243,6 +255,7 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
         ("buy_gap_reserve", BUY_GAP_RESERVE),
         ("sector_fit", SECTOR_FIT),
         ("turnover_fit", TURNOVER_FIT),
+        ("held_weight_budget", HELD_WEIGHT_BUDGET),
     ):
         if field in sizing and sizing[field] != allowed:
             errors.append("position_sizing.%s 只允許 %s；舊 Decision run 省略此欄位" % (field, allowed))
@@ -349,8 +362,9 @@ def _validate_high_conviction_cash_floor(sizing: Mapping[str, object], errors: L
     if sizing.get("cash_fit_order") != CASH_FIT_ORDER:
         errors.append("%s 必須與 cash_fit_order 同時啟用（高信心買單要先拿現金）" % prefix)
     derisk = sizing.get("drawdown_derisk")
-    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V3):
-        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s" % (prefix, DRAWDOWN_DERISK_VERSION_V3))
+    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") in DRAWDOWN_DERISK_NO_READD_VERSIONS):
+        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s"
+                      % (prefix, "／".join(DRAWDOWN_DERISK_NO_READD_VERSIONS)))
 
 
 def _validate_limit_scaled_conviction(sizing: Mapping[str, object], errors: List[str]) -> None:
@@ -549,8 +563,9 @@ def _validate_cash_ratio_range(policy: Mapping[str, object], sizing: Mapping[str
     if "high_conviction_cash_floor" in sizing:
         errors.append("%s 不得與 high_conviction_cash_floor 同時啟用（兩者都改變防守現金落點）" % prefix)
     derisk = sizing.get("drawdown_derisk")
-    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V3):
-        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s" % (prefix, DRAWDOWN_DERISK_VERSION_V3))
+    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") in DRAWDOWN_DERISK_NO_READD_VERSIONS):
+        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s"
+                      % (prefix, "／".join(DRAWDOWN_DERISK_NO_READD_VERSIONS)))
     raise_limit: Optional[Decimal] = None
     try:
         raise_limit = _grid_point(gate.get("max_daily_raise"), "%s.max_daily_raise" % prefix)
@@ -651,13 +666,21 @@ def drawdown_derisk_fraction(sizing: Mapping[str, object]) -> Optional[Decimal]:
 def drawdown_derisk_v2(sizing: Mapping[str, object]) -> bool:
     """drawdown_derisk 為 v2 以上（整張進位不得超過單次減碼硬上限）；v1 或沒有閘門回 False。"""
     derisk = sizing.get("drawdown_derisk")
-    return isinstance(derisk, Mapping) and derisk.get("version") in (DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3)
+    return isinstance(derisk, Mapping) and derisk.get("version") in (
+        DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4,
+    )
 
 
 def drawdown_derisk_v3(sizing: Mapping[str, object]) -> bool:
-    """drawdown_derisk 為 v3（減碼後股數為上限，同檔 add 不得加回）；其餘回 False。"""
+    """drawdown_derisk 為 v3 以上（減碼後股數為上限，同檔 add 不得加回）；v1／v2 或沒有閘門回 False。"""
     derisk = sizing.get("drawdown_derisk")
-    return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V3
+    return isinstance(derisk, Mapping) and derisk.get("version") in DRAWDOWN_DERISK_NO_READD_VERSIONS
+
+
+def drawdown_derisk_v4(sizing: Mapping[str, object]) -> bool:
+    """drawdown_derisk 為 v4（單次減碼預算另扣交易 Agent 賣單後的換手餘額）；其餘回 False。"""
+    derisk = sizing.get("drawdown_derisk")
+    return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V4
 
 
 def reentry_blocked_symbols(sizing: Mapping[str, object]) -> Optional[List[str]]:
@@ -736,7 +759,7 @@ def validate_position_sizing(
             "selection_ranking", "rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256",
             "cash_buffer_floor", "cash_fit_order", "cash_fit_min_fill_ratio", "high_conviction_cash_priority", "cash_ceiling_fix",
             "stock_limit_headroom", "buy_gap_reserve", "buy_gap_reserve_rate", "insufficient_funds_policy",
-            "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk",
+            "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk", "held_weight_budget",
             "high_conviction_cash_floor", "limit_scaled_conviction", "cash_ratio_range", "cash_grade",
         },
         "DecisionPolicy.position_sizing",
