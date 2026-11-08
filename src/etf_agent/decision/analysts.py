@@ -12,7 +12,14 @@ import json
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnapshotTools
-from etf_agent.core import canonical_sha256, parse_decimal, decimal_string, parse_aware_time
+from etf_agent.core import (
+    UNTRUSTED_TEXT_NOTICE,
+    canonical_sha256,
+    decimal_string,
+    parse_aware_time,
+    parse_decimal,
+    wrap_untrusted_text,
+)
 from etf_agent.fundamentals.contracts import (
     METRIC_KEYS,
     POLICY_VERSION,
@@ -346,26 +353,29 @@ def build_analyst_brief(
             entry["financial_context"] = financial_by_symbol.get(symbol, [])
             if not event_market_scope:
                 entry["sentiment"] = {key: value for key, value in sentiment_by_symbol[symbol].items() if key != "symbol"}
+            # 公告標題與內文是外部文字，只在這最後一層包成 untrusted_text；Snapshot 文件與 Validator 重算的內容不變。
             entry["events"] = [
                 {
                     "evidence_id": document.get("source_evidence_id"),
-                    "title": document.get("title"),
+                    "title": wrap_untrusted_text(document.get("title")),
                     "published_at": document.get("published_at"),
                     "available_at": document.get("available_at"),
-                    "body": str(document.get("body") or "")[:_EVENT_BODY_LIMIT],
+                    "body": wrap_untrusted_text(document.get("body"), limit=_EVENT_BODY_LIMIT),
                     "body_truncated": len(str(document.get("body") or "")) > _EVENT_BODY_LIMIT,
                 }
                 for document in sorted(events.get(symbol, []), key=lambda doc: str(doc.get("published_at")))
             ]
             if news is not None:
                 # 只有標題與媒體；可得時間是第一次抓取時間，FinMind 來源時間沒有時區，不當發布時間。
-                entry["news"] = news.get(symbol, [])
+                entry["news"] = [{**row, "title": wrap_untrusted_text(row.get("title"))} for row in news.get(symbol, [])]
         symbols.append(entry)
     brief = {
         "analyst": analyst,
         "report_envelope": {**report_envelope(bundle, analyst, "analyst-%s:%s" % (analyst, str(bundle["bundle_sha256"])[:16])),
                             "schema_version": (event_market_version(bundle) if event_market_scope else EVENT_SENTIMENT_VERSION) if analyst == "event" else ANALYST_SCHEMA_VERSION},
         "regime_assessment": momentum.get("regime_assessment") if analyst == "technical" else None,
+        # 只有事件分析師的摘要含外部原文；提醒放在 symbols 之前，讓模型先讀到規則再讀正文。
+        **({"untrusted_text_policy": UNTRUSTED_TEXT_NOTICE} if analyst == "event" else {}),
         "symbols": symbols,
     }
     if analyst == "technical" and technical_gate:
@@ -396,15 +406,18 @@ def compact_event_batch(brief: Mapping[str, object], bundle: Mapping[str, object
         ],
     }
     source["content_sha256"] = canonical_sha256(source)
+    # 節錄一律從 Snapshot 原文重算再包裹：舊 run 的 brief（body 為字串）與新 brief（untrusted_text 包裹）都適用。
+    bodies = {event["source_evidence_id"]: str(event.get("body") or "") for event in source["events"]}
     output = {**brief, "symbols": []}
     for row in brief["symbols"]:
         compact = {**row, "events": []}
         for event in row["events"]:
             item = dict(event)
-            body = str(item["body"])
+            body = bodies.get(item["evidence_id"], "")
             if len(body) > _EVENT_EXCERPT_HEAD + _EVENT_EXCERPT_TAIL:
-                item["body"] = body[:_EVENT_EXCERPT_HEAD] + " …［中段請依 evidence_id 查完整來源］… " + body[-_EVENT_EXCERPT_TAIL:]
+                body = body[:_EVENT_EXCERPT_HEAD] + " …［中段請依 evidence_id 查完整來源］… " + body[-_EVENT_EXCERPT_TAIL:]
                 item["brief_excerpt_truncated"] = True
+            item["body"] = wrap_untrusted_text(body)
             compact["events"].append(item)
         output["symbols"].append(compact)
     return output, source

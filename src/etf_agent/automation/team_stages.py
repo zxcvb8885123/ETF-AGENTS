@@ -57,31 +57,17 @@ from etf_agent.decision import evidence_policy
 from .batching import merge_batch_items, universe_batches, weighted_batches
 
 
-# 前次決策背景只給交易 Agent 核對一致性；它不是本次證據，Validator 會拒絕文字欄位出現其識別碼。
+# 本次 brief 含哪些背景區塊，提示只用一句指向 data-rules.md 的對應小節；規則本身只寫在那裡（與 Validator 同步）。
 _PRIOR_RULES = (
-    "輸入的 prior_decision_background 與各股 prior_decision 是前次已封存決策對目前持股的意圖、信心與重估條件，"
-    "只供你檢查這次判斷是否與前次一致、前次寫的重估條件是否已由本次多空論點證實；它不是本次事實或證據，"
-    "不得寫進 rationale、unresolved_questions 或 invalidation_conditions，也不得只因前次曾買進就續抱或加碼；"
-    "延續或改變行動都必須由本次採納的 claim 支持。沒有附前次決策的股票，照一般方式判斷。"
+    "本批輸入含 prior_decision_background 與各股 prior_decision（前次決策背景，只作一致性自我檢查、沒有 evidence_id），"
+    "依 data-rules.md「前次決策背景」處理。"
 )
 _ROTATION_RULES = (
-    "輸入的 portfolio_slots 是程式算好的名額狀態：held_positions 是目前持股檔數，max_positions 是硬上限，"
-    "free_slots 是真正的空名額，held_by_bear_strength 與 unheld_by_bull_strength 是全池統計。"
-    "free_slots 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交，"
-    "由程式依信心等級配對，名額不足者一律不建立買單；你看不到其他批的候選，也不需要指定誰換誰。"
-    "因此持股若空頭 claim 已經成立、多頭理由不再成立，應該給 exit 或 trim，而不是慣性 hold；"
-    "但不得只為了騰出名額而出場：exit 與 trim 一律必須採納至少一個該股票的空頭 claim，"
-    "也不得為了填滿名額而買進沒有多頭依據的股票。名額、權重、股數與現金全部由程式計算，"
-    "portfolio_slots 沒有 evidence_id，不可寫進 rationale、unresolved_questions 或 invalidation_conditions。"
+    "本批輸入含 portfolio_slots（程式算好的名額狀態，只是背景、沒有 evidence_id），依 data-rules.md「名額狀態」處理。"
 )
 _REVIEW_RULES = (
-    "輸入的 position_review_background 與各持股的 position_review 是程式算好的持股檢視（帳面報酬、近 5／20 日高點回落、警示，以及可能附上的相對交易池報酬 relative_to_pool_* 與最新月營收／財報可得時間 latest_*_available_at；這些是程式算的事實，不是證據，不可引用為 evidence_id），"
-    "數字不可改寫。flags 內的 review_id 是程式警示：你必須把它放進 adopted_claim_ids 剛好一次，不可放進 rejected_claim_ids，"
-    "也不得新增或改寫任何數字。警示只代表需要正視，不是賣出指令：請結合多空論點判斷是 hold、trim 還是 exit。"
-    "loss_alert 的持股若要 hold、add 或 no_trade，必須同時採納至少一個多頭 claim，否則請 trim 或 exit；"
-    "retrace_alert 代表從近期高點回落，可作為停利依據。trim 與 exit 可以採納警示取代空頭 claim。"
-    "賺賠自帳戶成本起算，開帳日成本是當日結算收盤價，請參考 note；review_id 可寫進 adopted_claim_ids，"
-    "但說明理由時請用白話描述虧損或回落，不要貼出識別碼。"
+    "本批輸入含 position_review_background 與各持股的 position_review（程式算好的持股檢視，數字不可改寫；"
+    "flags 內的 review_id 放進 adopted_claim_ids 剛好一次），依 data-rules.md「持股檢視」處理。"
 )
 
 
@@ -396,12 +382,8 @@ class TeamStagesMixin:
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
-                "再讀本批輸入 %s。對本批 %d 檔股票（%s），先比較兩方的依據與分歧，說明每個論點採納或否決的理由，"
-                "再依持股與交易條件形成單一交易意圖；不要按強度標籤或論點數量投票。"
-                "rationale 只寫整合後的判斷，不逐條重貼多空報告或論點全文；論點識別碼保留在採納／否決陣列供程式核對。"
-                "理由用簡短繁體中文分段：先寫主導決定的理由，再寫主要風險為何改變或沒有改變行動；"
-                "不要在 rationale、未解問題或重估條件中寫 bull-/bear- 識別碼或英文等級，不反覆敘述逐個 claim 的處理過程。"
-                "買進或加碼須給信心等級，其他行動不給買進信心。每檔剛好交付一次，不新增事實或 claim；欄位與限制依參考文件。"
+                "再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔整合兩方論點、記錄每個論點的採納或否決，"
+                "再依持股與交易條件形成單一交易意圖；整合方式、理由寫法、欄位與限制都依參考文件。"
                 "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
@@ -461,11 +443,10 @@ class TeamStagesMixin:
             validator = SelectionRankingValidator(bundle, trade_decision)
             task = AgentTask(
                 "ranker",
-                "你是 $trader 交易 Agent，現在做**第二輪入選排序**。先讀 %s 與 %s，再讀全部 buy／add 候選 %s。"
+                "你是 $trader 交易 Agent，現在做**第二輪入選排序**。先讀 %s，再讀全部 buy／add 候選 %s。"
                 "第一輪已給每檔信心等級；你只在**同一信心等級內**決定先後，把你最想優先入選的放在陣列最前面，"
-                "每一檔都附一句白話理由。不得改信心等級，不得新增事實或論點，不得輸出任何數字或權重；"
-                "每個信心等級必須剛好列出該等級的全部候選，不多不少。%s"
-                % (self.root / "tradeagent/trading/trader/SKILL.md", self.root / "tradeagent/trading/trader/references/ranking.md", brief_path, _SHARED_RULES),
+                "每一檔都附一句白話理由；每個信心等級必須剛好列出該等級的全部候選，不多不少。%s"
+                % (self.root / "tradeagent/trading/trader/references/ranking.md", brief_path, _SHARED_RULES),
                 RANKING_SCHEMA,
             )
             ranking = self.agent_step(

@@ -17,7 +17,7 @@ class StartDataModeTests(unittest.TestCase):
             # 抓資料模式會先經 scripts/with_data_lock.py 取得資料抓取鎖。
             (root / "scripts").mkdir()
             shutil.copyfile(ROOT / "scripts" / "with_data_lock.py", root / "scripts" / "with_data_lock.py")
-            for name in ("Dockerfile", "requirements.txt"):
+            for name in ("Dockerfile", "requirements.txt", "requirements.lock"):
                 (root / name).touch()
             (root / "data").mkdir()
             (root / "data" / "official_universe.csv").write_text(

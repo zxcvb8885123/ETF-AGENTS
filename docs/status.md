@@ -32,11 +32,47 @@
 | --- | --- | --- |
 | 每日決策鏈（分析團隊、多空、交易、風險） | 已接入 | 見[每日決策架構](architecture.md) |
 | 中文決策報告 | 已接入 | 可由封存重建並驗證 |
-| 同日賣款可買替補、現金分配、單股上限空間、跳空預留 | 已接入，尚未實跑 | 2026-11-03 起的規則，舊 run 不受影響，見[決策細節](decision-details.md) |
-| 持股滿檔換股、強制換股、產業與換手上限、再買冷卻、防守減碼 | 已接入，尚未實跑 | 同上 |
+| 同日賣款可買替補、現金分配、單股上限空間、跳空預留 | 已接入 | 2026-11-03 起的規則，2026-11-04 起的正式 run 已帶這些閘門（例如 11-06 run 出現現金分配取消旗標）；舊 run 不受影響，見[決策細節](decision-details.md) |
+| 持股滿檔換股、強制換股、產業與換手上限、再買冷卻、防守減碼 | 已接入 | 同上；個別分支（換手縮減、強制換股）是否觸發見各 run 的旗標，再買冷卻名單與防守減碼已在 11-04 起的 run 實際綁定／觸發 |
 | 主辦方結果當結算依據 | 已接入，尚未實跑 | 資料包標示當日委託作廢時，帳本結算為無成交；找不到本隊資料包時維持純模擬 |
 | 配置與輪動 v2 | 部分 | 低波動偏好強度與輪動已有程式；設計文件見[輪動 v2](sizing_rotation_v2_design.md) |
 | 基本面成長訊號 | 部分 | 已有訊號品質檢查；完整可比性設計見[成長訊號](fundamental_growth_signal_plan.md) |
+
+### 版本閘門啟用狀態
+
+這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-08 依 `config/decision_policy.json`（`policy_id: strategy-2026-10-28`，`available_at: 2026-11-03T20:30:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+
+已開啟：
+
+| 閘門 | 目前值 |
+| --- | --- |
+| `position_review` | `version v1`、`loss_alert 0.15`、`retrace_alert_20d null`、`gain_alert null`、`context v1` |
+| `position_sizing.method` | `conviction_volatility_v2`，`volatility_exponent 0`，乘數 high 1.5／medium 0.6／low 0.3，`volatility_floor 0.01` |
+| `selection_ranking` | `v1`（`selection_tiebreak` 未設定，被名次取代） |
+| `limit_scaled_conviction` | `{version v1, alpha 0.6}` |
+| `positions_by_breadth` | concentrated 22／balanced 26／diversified 30 |
+| `held_add_priority`＋`rotation` | `v1`；`max_swaps_per_run 5`、`min_new_conviction medium` |
+| `rotation.forced_swap` | `version v1`、`min_new_conviction high`、`max_swaps_per_run 2`、`confirmation v1` |
+| `cash_buffer_floor` | `v1` |
+| `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
+| `cash_buffer_by_stance` | aggressive 3%／neutral 10%／defensive 20%（`cash_ratio_range` 開啟時不影響配置） |
+| `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |
+| `high_conviction_cash_priority` | `v1`（2026-11-06 新增） |
+| `held_weight_budget` | `v1`（2026-11-08 新增） |
+| `cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`（`buy_gap_reserve_rate 0.03`）、`sector_fit`、`turnover_fit` | 皆 `v1`；`insufficient_funds_policy void_batch` |
+| `reentry_cooldown` | `{version v1, days 3}` |
+| `drawdown_derisk` | `{version v4, max_derisk_fraction 0.25}`（v4 於 2026-11-08 開啟） |
+| `drawdown_control` | `neutral_at 0.05`、`defensive_at 0.10`、`release_neutral_below 0.03`、`release_defensive_below 0.07`；`history_ref` 由 pipeline 綁定 |
+| `stock_weight_fit` | `v1`（單股上限減碼不依此欄位開關，一律由程式執行） |
+| rules | `max_turnover_rate 0.3`（policy）、`max_sector_weight 0.6`、`reuse_sell_proceeds true`、`minimum_active_share 0.15`、現金 `< 0.25`、持股 20～30 檔、單股 10%（2330 為 25%） |
+| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.6 |
+| `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
+
+未開啟：
+
+| 閘門 | 說明 |
+| --- | --- |
+| `position_sizing.high_conviction_cash_floor` | 與 `cash_ratio_range` 互斥，目前正式設定沒有這個欄位；行為見[決策鏈契約](decision-contracts.md#高信心現金下限high_conviction_cash_floor)，只在人改設定時才生效 |
 
 ## 帳本、D-Plan 與營運
 
@@ -56,3 +92,4 @@
 - 虛擬帳本使用官方價量模擬成交，不等於主辦方實際成交。
 - 回放與回測只重算已封存的 Agent 意圖，不是對 AI 判斷的前瞻驗證；只有比賽期間的即時紀錄算證據。
 - 台指期夜盤要台北 05:00 後才有，平日 21:00 的決策拿不到。
+- 持股很少、已滿檔又要強制換股時，防守減碼可能那一輪沒做：換出一檔再買一檔的成交量超過換手上限（`max_turnover_rate`），`turnover_fit` 把替補買單砍光，現金升到 100% 而觸發 `RISK_CASH_CEILING`，程式便留住被換出的持股，該輪也不再減碼，現金停在緩衝之下。結果仍通過 Guard、重建一致，不違反硬性規則；目前持股 20～30 檔，很少遇到。若發現防守姿態下現金長期補不到緩衝，先查這個互動（`forced_swap`、`turnover_fit`、`cash_ceiling_fix`、`drawdown_derisk` 四方）。測試見 `tests/decision/test_gate_prerequisites.py`。

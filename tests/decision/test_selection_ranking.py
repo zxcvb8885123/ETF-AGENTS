@@ -146,7 +146,7 @@ class ApplyRankingTests(unittest.TestCase):
             positions_by_breadth={"concentrated": 2}, position_breadth="concentrated",
             support_by_symbol={"2317.TW": 5, "2330.TW": 0},  # 舊規則會讓 2317 先；名次要壓過它
         )
-        order, _, _, _ = engine._conviction_targets(
+        order, _, _, _, _ = engine._conviction_targets(
             ["2317.TW", "2330.TW"], set(), {}, Decimal("1000000"), int(engine.policy["max_positions"]),
             {"cash_buffer_rate": Decimal("0.1"), "max_stock_weight": Decimal("0.5")}, 0,
         )
@@ -158,7 +158,7 @@ class ApplyRankingTests(unittest.TestCase):
             positions_by_breadth={"concentrated": 2}, position_breadth="concentrated",
             support_by_symbol={"2317.TW": 5, "2330.TW": 0},
         )
-        order, _, _, _ = engine._conviction_targets(
+        order, _, _, _, _ = engine._conviction_targets(
             ["2317.TW", "2330.TW"], set(), {}, Decimal("1000000"), int(engine.policy["max_positions"]),
             {"cash_buffer_rate": Decimal("0.1"), "max_stock_weight": Decimal("0.5")}, 0,
         )

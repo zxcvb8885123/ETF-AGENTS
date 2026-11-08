@@ -10,6 +10,8 @@
 | 每天系統自己做什麼、我要做什麼、出事怎麼辦 | [operations.md](operations.md) |
 | 每日決策怎麼跑（分析團隊、多空、交易、風險） | [architecture.md](architecture.md) |
 | 決策原則、權重與產業上限怎麼處理 | [decision-details.md](decision-details.md) |
+| 某條規則的完整條件、哪些閘門已開啟 | [decision-contracts.md](decision-contracts.md)、[status.md](status.md#版本閘門啟用狀態) |
+| 某個閘門、欄位或旗標的程式名稱是什麼、在哪 | [glossary.md](glossary.md) |
 | `./start.sh run` 有哪些參數 | [run-options.md](run-options.md) |
 | 怎麼安裝、用 Docker 跑 | [docker.md](docker.md) |
 | 單步命令怎麼用 | [../cli/README.md](../cli/README.md) |
@@ -26,7 +28,10 @@
 - [modules.md](modules.md)：核心程式套件與依賴。
 - [architecture.md](architecture.md)：每日決策架構。
 - [decision-details.md](decision-details.md)：決策原則與參賽策略細節。
+- [glossary.md](glossary.md)：決策閘門、欄位與旗標的名稱對照（是什麼、在哪；不寫啟用狀態）。
+- [decision-contracts.md](decision-contracts.md)：每日決策鏈各角色的契約、版本閘門的完整條件、子 Agent 執行器與策略反思的邊界細節（2026-11-08 自 `AGENTS.md` 搬出）；啟用狀態與目前數值見 [status.md](status.md#版本閘門啟用狀態)。
 - [sizing_rotation_v2_design.md](sizing_rotation_v2_design.md)、[sizing_rotation_v2_plan.md](sizing_rotation_v2_plan.md)：配置、權重與滿檔換股（後者已併入前者）。
+- [cash_buffer_high_conviction_plan.md](cash_buffer_high_conviction_plan.md)、[limit_aware_conviction_weights_plan.md](limit_aware_conviction_weights_plan.md)、[agent_cash_ratio_range_plan.md](agent_cash_ratio_range_plan.md)：2026-11-05 的三個配置閘門設計計畫（高信心現金下限、高信心份額下限、姿態內現金子等級；內含重放數字，`replay_reference_only`），目前啟用狀態以 `config/decision_policy.json` 與 [status.md](status.md) 為準。
 - [runtime-artifacts.md](runtime-artifacts.md)：執行時產物資料夾。
 
 ### 操作
@@ -80,10 +85,14 @@
 | 2026-10-22 | 新增本索引、`repository-layout.md`、`modules.md`、`runtime-artifacts.md`；各資料夾與 `src/etf_agent/` 各套件新增 README；根 `README.md` 加上整體架構圖。 |
 | 2026-10-31 | 根 `README.md` 精簡為入口頁；目前狀態、日常操作、`run` 參數、決策流程細節分別移到 `status.md`、`operations.md`、`run-options.md`、`decision-details.md`。 |
 | 2026-11-04 | 文件改寫為白話說明、計畫文件改為現況說明。 |
+| 2026-11-05 | 新增三份配置閘門設計計畫（`cash_buffer_high_conviction_plan.md`、`limit_aware_conviction_weights_plan.md`、`agent_cash_ratio_range_plan.md`），並同步閘門啟用狀態。 |
+| 2026-11-08 | 修正閘門啟用狀態、狀態頁「尚未實跑」、樣本門檻 5→10 與策略反思排程說法等過期敘述。 |
+| 2026-11-08 | `architecture.md` 與 `decision-details.md` 的兩份「附錄：名稱對照」合併為 `glossary.md`，兩處附錄改為連結。 |
+| 2026-11-08 | `AGENTS.md` 瘦身為原則與邊界；契約與閘門細節搬到新檔 `decision-contracts.md`，閘門啟用狀態表集中到 `status.md`。 |
 
 ## 維護規則
 
 - 改了資料夾用途、Agent 邊界或契約，要同步更新對應 README 與本索引。
 - 新增文件時，加到上面的分類並在更新紀錄補一行。
 - 文件只描述已完成、部分完成或尚未接入的功能，不把測試資料或介面說成真實資料來源。
-- 文件用白話寫；程式用的名稱放在各文件文末「附錄：名稱對照」，正文不用。
+- 文件用白話寫，正文不用程式名稱。決策閘門、欄位與旗標的名稱統一放在 [glossary.md](glossary.md)（只寫是什麼、在哪，不寫啟用狀態；狀態只在 `config/` 與 [status.md](status.md)），其他主題的程式名稱放各文件文末「附錄：名稱對照」。

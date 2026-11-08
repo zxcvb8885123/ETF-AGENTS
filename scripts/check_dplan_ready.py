@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """D-Plan 看門狗：交件期限前檢查今天該交的 D-Plan 主檔是否存在且通過本地驗證，缺少或被擋時發本機通知並記一行狀態。
 
-設計給 launchd 平日 08:00 執行（交件期限 08:55 前、07:00 重做大致跑完後），也可手動執行。
+設計給 launchd 平日 08:00 執行（交件期限 08:55 前；07:00 重做慢時會跑到 08:00 之後，此時回報 dplan_pending），
+也可手動執行。每日流程鎖 artifacts/daily/.lock 仍被持有（07:00 重做還在跑）時回報 dplan_pending，不把昨晚的主檔誤報成可交。
 只讀檔、不跑 Agent、不上傳、不改任何決策或 D-Plan；結束碼 0 代表有可交的 D-Plan（含備援），1 代表缺少或無效，
-2 代表今天沒有要交的時段（休市）或無法判斷。通知失敗不影響結束碼。
+2 代表今天沒有要交的時段（休市）、流程仍在跑或無法判斷。通知失敗不影響結束碼。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -25,10 +32,91 @@ from etf_agent.data import TradingCalendarError, calendar_from_capture, latest_c
 from etf_agent.data.trading_calendar import DECISION_DEADLINE  # noqa: E402
 
 TITLE = "ETF Agent D-Plan 看門狗"
+PIPELINE_LOCK_NAME = ".lock"  # 與 scripts/run_daily_pipeline.py 的每日流程鎖同一個檔案（artifacts/daily/.lock）
 
 
 def log(message: str) -> None:
     print("[%s] %s" % (datetime.now(local_notify.TAIPEI).strftime("%H:%M:%S"), message), flush=True)
+
+
+def lock_is_held(path: Path):
+    """探測每日流程鎖是否仍被別的程序持有：True 被持有、False 沒人持有、None 無法探測。
+
+    鎖檔跑完不會刪除，所以不能只看檔案在不在；用非阻塞方式試取，取到就立刻釋放，不留任何狀態。"""
+    try:
+        with path.open("a+b") as handle:
+            if fcntl is not None:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                return False
+            import errno  # pragma: no cover - Windows
+            import msvcrt
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as error:
+                if error.errno in (errno.EACCES, errno.EDEADLK, errno.EAGAIN):
+                    return True
+                return None
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return False
+    except OSError:
+        return None
+
+
+def pid_alive(pid) -> bool:
+    """持有者 pid 是否仍存在（只在鎖探測不可用時當備援；Windows 的 os.kill 會終止程序，不用）。"""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0 or os.name == "nt":
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def pipeline_lock_holder(root: Path, now: datetime):
+    """每日流程（07:00 重做或手動 run）仍在跑時回傳持有者描述字串，否則回 None。"""
+    path = root / "artifacts" / "daily" / PIPELINE_LOCK_NAME
+    if not path.is_file():
+        return None
+    try:
+        info = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        info = {}
+    if not isinstance(info, dict):
+        info = {}
+    held = lock_is_held(path)
+    if held is None:
+        held = pid_alive(info.get("pid"))
+    if not held:
+        return None
+    text = "每日流程鎖 %s 仍被持有" % path
+    try:
+        started = datetime.fromisoformat(str(info["started_at"]))
+        if started.tzinfo is None:
+            raise ValueError("started_at 缺少時區")
+        minutes = (now - started).total_seconds() / 60
+        text += "（pid %s，自 %s 起約 %.0f 分鐘）" % (
+            info.get("pid", "?"), started.astimezone(local_notify.TAIPEI).strftime("%H:%M"), minutes)
+    except (KeyError, TypeError, ValueError):
+        text += "（pid %s）" % info.get("pid", "?")
+    return text
 
 
 def expected_trade_date(root: Path, now: datetime):
@@ -70,7 +158,9 @@ def latest_pipeline_for_trade_date(root: Path, trade_date: str):
 
 
 def check(root: Path, now: datetime) -> dict:
-    """回傳 {"status": dplan_ready|dplan_fallback|dplan_missing|dplan_invalid|skipped, "trade_date", "detail", "main"}。"""
+    """回傳 {"status": dplan_ready|dplan_fallback|dplan_pending|dplan_missing|dplan_invalid|skipped, "trade_date", "detail", "main"}。
+
+    `dplan_pending`：每日流程鎖仍被持有（07:00 重做還在跑），此刻的主檔可能是昨晚那份、也可能馬上被取代，不判定可不可交。"""
     trade_date, reason = expected_trade_date(root, now)
     if trade_date is None:
         return {"status": "skipped", "trade_date": None, "detail": reason, "main": None}
@@ -80,6 +170,11 @@ def check(root: Path, now: datetime) -> dict:
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
         return {"status": "dplan_invalid", "trade_date": trade_date, "detail": "無法讀取 competition_profile.team_id：%s" % error, "main": None}
     main = root / "artifacts" / "competition_d_plan" / ("D-Plan_%s_%s.json" % (team_id, trade_date))
+    holder = pipeline_lock_holder(root, now)
+    if holder is not None:
+        detail = "每日流程仍在執行，尚不能判定今天的 D-Plan：%s；%s，等流程結束後自己看 daily_status.log" % (
+            holder, ("目前主檔 %s 存在但可能是較早那份" % main.name) if main.exists() else "目前沒有主檔 %s" % main.name)
+        return {"status": "dplan_pending", "trade_date": trade_date, "detail": detail, "main": str(main)}
     summary = latest_pipeline_for_trade_date(root, trade_date) or {}
     pipeline_status = (summary.get("dplan") or {}).get("status", "not_run")
     run_note = "最新 run %s：status=%s、dplan=%s" % (summary.get("run_id", "-"), summary.get("status", "-"), pipeline_status)
@@ -125,7 +220,7 @@ def main(argv=None) -> int:
         return 0
     if result["status"] in {"dplan_missing", "dplan_invalid"}:
         return 1
-    # 備援可交但要人決定：以 0 結束讓排程不當失敗，通知已發。
+    # 備援可交但要人決定：以 0 結束讓排程不當失敗，通知已發。流程仍在跑（dplan_pending）與休市同為 2：尚無法判斷。
     return 0 if result["status"] == "dplan_fallback" else 2
 
 

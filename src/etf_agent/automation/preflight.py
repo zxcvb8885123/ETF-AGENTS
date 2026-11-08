@@ -218,5 +218,46 @@ def require_preflight(checks: Sequence[PreflightCheck]) -> None:
         raise PreflightError(checks)
 
 
+VERSION_MAX_CHARS = 80
+
+
+def _cli_version(runner: CommandRunner, which: Callable[[str], Optional[str]], executable: str) -> Optional[str]:
+    """``<cli> --version`` 輸出的第一行（去掉 ANSI 色碼）；找不到、逾時、非零結束或沒輸出都回傳 None。"""
+    if which(executable) is None:
+        return None
+    try:
+        completed = _run(runner, [executable, "--version"])
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    lines = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout or "").strip().splitlines()
+    if not lines:
+        return None
+    return lines[0].strip()[:VERSION_MAX_CHARS]
+
+
+def agent_cli_versions(
+    agent_cli: str,
+    research_agent_cli: Optional[str] = None,
+    runner: CommandRunner = subprocess.run,
+    which: Callable[[str], Optional[str]] = shutil.which,
+    claude_executable: str = "claude",
+    codex_executable: str = "codex",
+    opencode_executable: str = "opencode",
+) -> Dict[str, Optional[str]]:
+    """本次會用到的 Agent CLI 版本，寫進 ``pipeline.json`` 的 ``agent_cli_versions`` 供事後稽核。
+
+    只是紀錄、不是檢查：鍵為 CLI 名稱（主 CLI 與研究員 CLI，相同時只一個），值為 ``--version``
+    第一行，取不到為 ``None``，不影響預檢結果；舊 run 沒有此欄位，續跑與重建都不讀它。
+    """
+    executables = {"claude": claude_executable, "codex": codex_executable, "opencode": opencode_executable}
+    versions: Dict[str, Optional[str]] = {}
+    for cli in (agent_cli, effective_research_agent_cli(agent_cli, research_agent_cli)):
+        if cli in executables and cli not in versions:
+            versions[cli] = _cli_version(runner, which, executables[cli])
+    return versions
+
+
 def checks_to_dict(checks: Sequence[PreflightCheck]) -> List[Dict[str, object]]:
     return [asdict(check) for check in checks]

@@ -54,8 +54,9 @@ from test_trader import STANCE
 ROOT = Path(__file__).resolve().parents[2]
 ARCHIVED = ROOT / "artifacts" / "daily" / "2026-11-05" / "daily-20261105-070000"
 # 改動前（2026-11-05）沒有閘門時的風險 Agent 簡報、提示詞（目錄與專案路徑以佔位字串取代）與 Schema 雜湊。
+# 提示詞雜湊於 2026-11-08 Skill 瘦身（規則移到 references/cash-stance.md、提示只留一句指向）後重新釘住；簡報與 Schema 不變。
 LEGACY_BRIEF_SHA256 = "a374c0779c0b594b063640e2b51a0f28432734f4e0edfdc807713719a110f415"
-LEGACY_PROMPT_SHA256 = "e5e384890c2665411199d383e9ca98bc8230d7f8859969f2dd285212ed5bee56"
+LEGACY_PROMPT_SHA256 = "0c5df8281bc602e14748b297c2ce5a5d77057f61366969d7a9f4fde22f1435b3"
 LEGACY_SCHEMA_SHA256 = "6275daca33305014ebf848768cf7ad39bdc04622d261947b1b3b042e4f86ff07"
 ARCHIVED_PROPOSAL_SHA256 = "13675b98af4a3305e8f9d45c914637f1f9b35095a8fae3b0056243e8412d0072"
 GRID = {

@@ -38,8 +38,8 @@
 | `news_sentiment.py` | 核對資料庫新聞候選、保存原頁版本並驗證全量情緒標註 |
 | `company_news.py` | FinMind 個股新聞來源核對（`review --database --status approved\|unverified\|restricted --evidence`）：抓規範頁原文與 SHA-256，寫入 `company_news_source_reviews`；只對保存之後的決策截止時間生效 |
 | `market_context_probe.py` | 補抓公開大盤成交、指數與法人資料（交易背景），不產生情緒結論 |
-| `strategy_reflection.py` | 策略反思：`brief` 看簡報、`auto` 每日自動反思並套用（樣本不足不呼叫 Agent）、`apply` 套用指定反思、`rollback` 還原最近一次套用、`history` 看歷史；在主機執行 |
-| `calibration.py` | 校準旁觀者：`snapshot` 記錄封存決策、`report` 以官方成交均價對答案（完整決策日少於 5 天不給結論）、`gap-audit` 審計決策價與成交均價的偏離；不影響決策 |
+| `strategy_reflection.py` | 策略反思：`brief` 看簡報、`auto` 自動反思（排程每週五 19:30 以 `--no-apply --force` 執行；樣本不足不呼叫 Agent）、`apply-pending` 套用最近一份待套用提案（週六 10:00 排程；`--allow-risk-increase <反思編號>` 人工放行加風險提案）、`apply` 套用指定反思、`rollback` 還原最近一次套用、`lessons-rollback` 還原經驗教訓、`history` 看歷史；在主機執行 |
+| `calibration.py` | 校準旁觀者：`snapshot` 記錄封存決策、`report` 以官方成交均價對答案（完整決策日少於 `calibration.MIN_DECISION_DAYS`（10）天不給結論）、`gap-audit` 審計決策價與成交均價的偏離；不影響決策 |
 | `policy_replay.py` | 便宜版回測：`run` 用封存 Decision run 的 Agent 輸出換策略樣板多日滾動回放（零 token，資料庫唯讀）、`verify` 整段重算驗證、`compare` 比較兩個回放；回放旁另寫一頁自包含 HTML |
 | `agent_eval.py` | Agent 評測：`coverage` 資料抓齊率、`suite` 建評測集、`run` 重跑（會呼叫 Agent；`--resume eval-編號` 只重跑未完成卷次並沿用已驗證的原始輸出）、`report` 寫 report.json／.md／.html、`grid` 回測格子（run × symbol，對交易池平均與對 0050.TW 兩種超額報酬並列，零 token）、`grid-verify` 重算驗證 |
 | `dashboard.py` | 啟動唯讀虛擬帳戶績效儀表板（FastAPI），`./start.sh` 預設模式使用；`--database`／`--rules`／`--benchmarks` 供 `/api/benchmarks` 基準比較讀取（唯讀） |

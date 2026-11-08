@@ -290,14 +290,16 @@ class FearGreedServiceTests(unittest.TestCase):
 
     def test_missing_token_or_redirect_recorded_as_failure(self):
         from etf_agent.perception.market_fear_greed import FearGreedProvider
-        provider = FearGreedProvider(opener=lambda request, timeout: FakeResponse("https://evil.example/x", b"x"), token="")
+        provider = FearGreedProvider(opener=lambda request, timeout: FakeResponse("https://evil.example/x", b"x"), token="",
+                                     sleep=lambda _seconds: None)
         rows = provider.capture_all(date(2026, 9, 18))
         self.assertTrue(all(row["status"] == "failed" for row in rows))
         self.assertIn("FINMIND_TOKEN", rows[-1]["error"])
 
     def test_empty_current_month_vix_is_not_a_failure(self):
         from etf_agent.perception.market_fear_greed import FearGreedProvider
-        provider = FearGreedProvider(opener=lambda request, timeout: FakeResponse(request.full_url, b""), token="token")
+        provider = FearGreedProvider(opener=lambda request, timeout: FakeResponse(request.full_url, b""), token="token",
+                                     sleep=lambda _seconds: None)
         rows = provider.capture_all(date(2026, 10, 1))
         status = {row["url"]: row["status"] for row in rows}
         self.assertEqual(status[vix_url("202610")], "fetched")

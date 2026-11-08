@@ -8,8 +8,14 @@
   因為前次結論不是本次 Snapshot 的事實，所以不配 evidence_id、``citable`` 永遠為 false。
 - 只整理目前持股的 ``intent``／``conviction``／``invalidation_conditions``；不含數字、權重或訂單。
 - 給了決策庫位置（``PriorDecisionContextValidator(repository_root=...)``）時，驗證會讀回來源 run 重建整份背景比對內容，
-  防止改寫後重算自身雜湊；但它只驗「來源 run 的內容」，不重跑 ``find_prior_decision_run``，所以不驗證「為什麼挑這個 run」
-  （換成另一個合法且更早時段的 run 會通過）。下游重建者（帳本、交付、D-Plan）目前沒有傳決策庫，只驗內部一致性。
+  防止改寫後重算自身雜湊；預設只驗「來源 run 的內容」，不重跑 ``find_prior_decision_run``，所以不驗證「為什麼挑這個 run」
+  （換成另一個合法且更早時段的 run 會通過）。Policy 開啟 ``position_sizing.cash_ratio_range.selection_check``（版本閘門，
+  只由人設定）時另加 ``selection_check=True``：以決策庫重跑挑選，來源 run 必須在最晚的前一交易時段內，``latest_cutoff``
+  必須是該時段 cutoff 最新者（``ledger_applied`` 沒有帳本可核對，只驗在該時段內），``unavailable`` 必須真的沒有候選；
+  決策庫中損壞的 run 會讓重跑失敗而拒絕。沒有閘門的舊 run 逐位元維持原驗證。
+- 決策庫掃描（``find_prior_decision_run``）遇到損壞的 run（``decision.json`` 讀不到、cutoff 解析不了、approved／no_trade
+  且 cutoff 更早卻讀不到 ``decision_input.json``、兩檔身分不一致）一律拒絕，不得靜默跳過退回更早的 run；狀態不是
+  approved／no_trade 的 run 不讀輸入檔、照舊不當候選。
 - 找不到前次 run 時輸出 ``status=unavailable``，不是錯誤；內容由 ``PriorDecisionContextValidator`` 重建驗證。
 - 交易 Agent 的文字欄位若出現本背景的識別碼，``TradeDecisionValidator`` 以 ``prior_reference_tokens`` 拒絕；
   行動的改變或延續仍必須由本次多空 claim 支持（既有 buy／add 與 trim／exit 規則）。
@@ -86,6 +92,70 @@ def _session_start(bundle: Mapping[str, object], field: str) -> datetime:
     return parse_time(start, field + ".target_session.start")
 
 
+def _damaged(run_dir: Path, detail: str) -> DecisionToolError:
+    return DecisionToolError(
+        "決策庫的 run %s %s，無法判定它是否為前次決策；請修復或移除該 run 後再執行，不得靜默改用更早的 run" % (run_dir.name, detail)
+    )
+
+
+def _prior_candidates(repository_root: Path, bundle: Mapping[str, object]) -> List[Tuple[datetime, datetime, str]]:
+    """前次決策的候選 run：同帳戶、approved／no_trade、cutoff 與目標交易時段都嚴格早於本次，回 (時段, cutoff, run_id)。
+
+    損壞的 run（decision.json 讀不到或 cutoff 解析不了；可用狀態且 cutoff 更早卻讀不到 decision_input.json、兩檔 cutoff
+    不一致、缺帳戶）一律拒絕（fail-closed），否則昨天的 run 壞掉會悄悄退回前天的 run，前次意圖與現金比例 anchor 都跟著錯。
+    狀態不是 approved／no_trade 的 run 不讀輸入檔、照舊略過；沒有目標時段的舊格式封存無法排序，不當候選（不是損壞）。
+    只讀身分欄位；內容完整性由 ``read_decision_run`` 以 manifest 驗證。"""
+    cutoff = parse_time(bundle.get("decision_cutoff"), "decision_cutoff")
+    session_start = _session_start(bundle, "本次 bundle")
+    account_id = _account_id(bundle)
+    candidates: List[Tuple[datetime, datetime, str]] = []
+    for run_dir in list_run_dirs(Path(repository_root)):
+        # 先讀小的 decision.json 過濾狀態與時間，只對候選 run 讀含整份 Snapshot 的 decision_input.json 核對帳戶與時段。
+        decision = _read_run_json(run_dir, "decision")
+        if decision is None:
+            raise _damaged(run_dir, "缺少或無法讀取 decision.json")
+        if decision.get("status") not in USABLE_DECISION_STATUSES:
+            continue
+        try:
+            prior_cutoff = parse_time(decision.get("decision_cutoff"), "decision_cutoff")
+        except DecisionToolError as error:
+            raise _damaged(run_dir, "的 decision_cutoff 無法解析（%s）" % error) from error
+        if prior_cutoff >= cutoff:
+            continue
+        prior_bundle = _read_run_json(run_dir, "decision_input")
+        if prior_bundle is None:
+            raise _damaged(run_dir, "缺少或無法讀取 decision_input.json")
+        if prior_bundle.get("decision_cutoff") != decision.get("decision_cutoff"):
+            raise _damaged(run_dir, "的 decision 與 decision_input 的 decision_cutoff 不一致")
+        prior_account = _account_id(prior_bundle)
+        if prior_account is None:
+            raise _damaged(run_dir, "的 decision_input 缺少 account_snapshot.account_id")
+        if prior_account != account_id:
+            continue
+        if _session_start_text(prior_bundle) is None:
+            continue  # 沒有目標時段的舊格式封存無法排序，不當候選。
+        try:
+            prior_session = _session_start(prior_bundle, "前次 bundle")
+        except DecisionToolError as error:
+            raise _damaged(run_dir, "的 target_session.start 無法解析（%s）" % error) from error
+        if prior_session < session_start:
+            candidates.append((prior_session, prior_cutoff, run_dir.name))
+    return candidates
+
+
+def _latest_session(candidates: Sequence[Tuple[datetime, datetime, str]]) -> List[Tuple[datetime, str]]:
+    """候選中最晚的前一交易時段內的 (cutoff, run_id)；沒有候選回空清單。"""
+    if not candidates:
+        return []
+    latest_session = max(session for session, _, _ in candidates)
+    return [(moment, run_id) for session, moment, run_id in candidates if session == latest_session]
+
+
+def _latest_cutoff_runs(same_session: Sequence[Tuple[datetime, str]]) -> List[str]:
+    latest_cutoff = max(moment for moment, _ in same_session)
+    return sorted(run_id for moment, run_id in same_session if moment == latest_cutoff)
+
+
 def find_prior_decision_run(
     repository_root: Path, bundle: Mapping[str, object], applied_run_ids: Optional[Sequence[str]] = None,
 ) -> Optional[Dict[str, str]]:
@@ -95,45 +165,17 @@ def find_prior_decision_run(
     同一天 21:00 備案與隔天 07:00 重做是同一時段的兩個 run，不能把備案當成前次決策，所以用時段而不是 cutoff 排序。
     最新的前一時段有多個 run 時：帳本實際結算過的（``applied_run_ids``，來自 close 狀態的 decision_run_id）剛好一個就取它
     （``selection=ledger_applied``）；否則取該時段 cutoff 最新者（``selection=latest_cutoff``）；cutoff 也相同才拒絕。
-    只讀 ``decision`` 與 ``decision_input`` 的身分欄位；內容完整性由 ``read_decision_run`` 以 manifest 驗證。
+    決策庫中損壞的 run 一律拒絕（見 ``_prior_candidates``），不得靜默跳過。
     """
-    cutoff = parse_time(bundle.get("decision_cutoff"), "decision_cutoff")
-    session_start = _session_start(bundle, "本次 bundle")
-    account_id = _account_id(bundle)
-    candidates: List[Tuple[datetime, datetime, str]] = []
-    for run_dir in list_run_dirs(Path(repository_root)):
-        # 先讀小的 decision.json 過濾狀態與時間，只對候選 run 讀含整份 Snapshot 的 decision_input.json 核對帳戶與時段。
-        decision = _read_run_json(run_dir, "decision")
-        if decision is None or decision.get("status") not in USABLE_DECISION_STATUSES:
-            continue
-        try:
-            prior_cutoff = parse_time(decision.get("decision_cutoff"), "decision_cutoff")
-        except DecisionToolError:
-            continue
-        if prior_cutoff >= cutoff:
-            continue
-        prior_bundle = _read_run_json(run_dir, "decision_input")
-        if prior_bundle is None or _account_id(prior_bundle) != account_id:
-            continue
-        if prior_bundle.get("decision_cutoff") != decision.get("decision_cutoff"):
-            continue  # 身分不一致的 run 不當候選；read_decision_run 的 manifest 驗證會再把關。
-        try:
-            prior_session = _session_start(prior_bundle, "前次 bundle")
-        except DecisionToolError:
-            continue  # 沒有目標時段的封存無法排序，不當候選。
-        if prior_session < session_start:
-            candidates.append((prior_session, prior_cutoff, run_dir.name))
-    if not candidates:
+    same_session = _latest_session(_prior_candidates(repository_root, bundle))
+    if not same_session:
         return None
-    latest_session = max(session for session, _, _ in candidates)
-    same_session = [(moment, run_id) for session, moment, run_id in candidates if session == latest_session]
     applied = [run_id for _, run_id in same_session if run_id in set(applied_run_ids or ())]
     if len(applied) == 1:
         return {"run_id": applied[0], "selection": "ledger_applied"}
     if len(applied) > 1:
         raise DecisionToolError("帳本記錄同一交易時段結算了多個 Decision run，無法判定前次決策：%s" % "、".join(sorted(applied)))
-    latest_cutoff = max(moment for moment, _ in same_session)
-    matches = sorted(run_id for moment, run_id in same_session if moment == latest_cutoff)
+    matches = _latest_cutoff_runs(same_session)
     if len(matches) > 1:
         raise DecisionToolError("前一交易時段有多個 cutoff 相同的 Decision run，無法判定前次決策：%s" % "、".join(matches))
     return {"run_id": matches[0], "selection": "latest_cutoff"}
@@ -289,9 +331,13 @@ def prior_decision_brief(context: Mapping[str, object]) -> Tuple[Dict[str, objec
 class PriorDecisionContextValidator:
     """重建驗證 PriorDecisionContext：欄位白名單、雜湊、時間順序、持股對應與不可引用旗標。"""
 
-    def __init__(self, bundle: Mapping[str, object], repository_root: Optional[Path] = None):
+    def __init__(
+        self, bundle: Mapping[str, object], repository_root: Optional[Path] = None, selection_check: bool = False,
+    ):
         # 給了決策庫位置時，available 的背景會讀回來源 run 重建比對；沒給時只驗內部一致性（舊呼叫端）。
+        # selection_check（Policy 的 cash_ratio_range.selection_check 閘門）另以決策庫重跑挑選；沒有決策庫即拒絕。
         self.repository_root = Path(repository_root) if repository_root is not None else None
+        self.selection_check = bool(selection_check)
         self.bundle = dict(bundle)
         self.held = _held_symbols(bundle)
         self.cutoff = parse_time(bundle.get("decision_cutoff"), "decision_cutoff")
@@ -325,6 +371,8 @@ class PriorDecisionContextValidator:
             return errors + ["%s.items 與 uncovered_symbols 必須是陣列" % prefix]
         if status == "unavailable":
             self._validate_unavailable(context, items, uncovered, prefix, errors)
+            if not errors and self.selection_check:
+                self._validate_selection(context, prefix, errors)
             return errors
         if context.get("reason") is not None:
             errors.append("%s.reason 在 available 時必須為 null" % prefix)
@@ -364,7 +412,53 @@ class PriorDecisionContextValidator:
             errors.append("%s 的 items 與 uncovered_symbols 必須剛好涵蓋目前持股" % prefix)
         if not errors and self.repository_root is not None:
             self._validate_against_source(context, prefix, errors)
+        if not errors and self.selection_check:
+            self._validate_selection(context, prefix, errors)
         return errors
+
+    def _validate_selection(self, context: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+        """selection_check 閘門：以決策庫重跑前次 run 的挑選，確認「為什麼是這個 run」也能重建；fail-closed。
+
+        沒有帳本可核對 ``ledger_applied`` 到底結算了哪個 run，所以該挑法只驗來源 run 在最晚的前一時段內；
+        ``latest_cutoff`` 必須剛好是該時段 cutoff 最新的唯一 run；``unavailable`` 必須真的沒有候選。"""
+        label = "%s（selection_check）" % prefix
+        if self.repository_root is None:
+            errors.append("%s 需要決策庫重跑前次 run 的挑選，但呼叫端未提供決策庫" % label)
+            return
+        status = context.get("status")
+        if status == "unavailable" and context.get("reason") == NO_SESSION_REASON:
+            if _session_start_text(self.bundle) is not None:
+                errors.append("%s 本次 bundle 有目標交易時段，不得以 %s 略過前次決策" % (label, NO_SESSION_REASON))
+            return
+        if status == "unavailable" and context.get("reason") != NO_PRIOR_REASON:
+            errors.append("%s 無法重建的 unavailable 原因：%s" % (label, context.get("reason")))
+            return
+        try:
+            same_session = _latest_session(_prior_candidates(self.repository_root, self.bundle))
+        except DecisionToolError as error:
+            errors.append("%s 無法重跑前次 run 挑選：%s" % (label, error))
+            return
+        run_ids = sorted(run_id for _, run_id in same_session)
+        if status == "unavailable":
+            if run_ids:
+                errors.append("%s 標為 unavailable，但決策庫中有更早交易時段的可用 run：%s" % (label, "、".join(run_ids)))
+            return
+        source = context["source"]  # type: ignore[index]
+        run_id = str(source.get("run_id"))  # type: ignore[union-attr]
+        if not run_ids:
+            errors.append("%s 決策庫中沒有可用的前次 run，背景不得為 available" % label)
+            return
+        if run_id not in run_ids:
+            errors.append(
+                "%s 來源 run %s 不在決策庫中最晚的前一交易時段（%s）內" % (label, run_id, "、".join(run_ids))
+            )
+            return
+        if source.get("selection") == "latest_cutoff":  # type: ignore[union-attr]
+            matches = _latest_cutoff_runs(same_session)
+            if matches != [run_id]:
+                errors.append(
+                    "%s selection=latest_cutoff 但該時段 cutoff 最新的 run 是 %s，不是 %s" % (label, "、".join(matches), run_id)
+                )
 
     def _validate_against_source(self, context: Mapping[str, object], prefix: str, errors: List[str]) -> None:
         """讀回來源 run 重建整份背景並比對；內容被改寫（即使重算了自身雜湊）就拒絕。"""

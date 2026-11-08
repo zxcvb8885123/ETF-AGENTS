@@ -59,7 +59,7 @@ case "$MODE" in
     ;;
   run|status|benchmark|backtest)
     if [ ! -x "$PROJECT_DIR/.venv/bin/python" ]; then
-      echo "找不到專案 Python 環境，請先以 Python 3.12 建立：uv python install 3.12，再執行 \"\$(uv python find 3.12)\" -m venv .venv，然後執行 .venv/bin/python -m pip install -r requirements.txt。" >&2
+      echo "找不到專案 Python 環境，請先以 Python 3.12 建立：uv python install 3.12，再執行 \"\$(uv python find 3.12)\" -m venv .venv，然後執行 .venv/bin/python -m pip install --require-hashes -r requirements.lock。" >&2
       exit 1
     fi
     if [ "$MODE" = "run" ]; then
@@ -142,9 +142,9 @@ elif [ "$MODE" = "daily" ]; then
 fi
 
 if command -v shasum >/dev/null 2>&1; then
-  BUILD_INPUT_SHA=$(shasum -a 256 Dockerfile requirements.txt | shasum -a 256 | awk '{print $1}')
+  BUILD_INPUT_SHA=$(shasum -a 256 Dockerfile requirements.txt requirements.lock | shasum -a 256 | awk '{print $1}')
 else
-  BUILD_INPUT_SHA=$(sha256sum Dockerfile requirements.txt | sha256sum | awk '{print $1}')
+  BUILD_INPUT_SHA=$(sha256sum Dockerfile requirements.txt requirements.lock | sha256sum | awk '{print $1}')
 fi
 IMAGE_INPUT_SHA=$(docker image inspect etf-agent:local \
   --format '{{ index .Config.Labels "org.etf-agent.build-input-sha" }}' 2>/dev/null || true)

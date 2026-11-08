@@ -24,11 +24,11 @@ from .position_review import validate_position_review_policy
 from .momentum import MomentumEngine
 from .sizing import (
     BUY_GAP_RESERVE, CASH_BUFFER_FLOOR, CASH_CEILING_FIX, CASH_FIT_ORDER, CONVICTION_LEVELS, FORCED_SWAP_CONFIRMATION,
-    HIGH_CONVICTION_CASH_PRIORITY,
+    HELD_WEIGHT_BUDGET, HIGH_CONVICTION_CASH_PRIORITY,
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
-    conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, high_conviction_floor_ratio,
-    limit_scaled_alpha, reentry_blocked_symbols, validate_position_sizing,
+    conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
+    high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, validate_position_sizing,
 )
 
 
@@ -578,10 +578,18 @@ class AllocationOrderEngine:
         for symbol, reason in sorted(unconfirmed.items()):
             constraint_flags.append({"symbol": symbol, "code": "RISK_FORCED_SWAP_UNCONFIRMED", "detail": reason})
         if "position_sizing" in self.policy:
-            candidates, sized_weights, skipped, budget = self._conviction_targets(
+            candidates, sized_weights, skipped, budget, held_frozen = self._conviction_targets(
                 candidates, active_symbols, target_shares, marked_nav, max_positions, effective,
                 len(current),
             )
+            # held_weight_budget（版本閘門）：現有權重已高於等級份額的加碼持股，目標權重就是現有權重、不建買單；
+            # 下面的 desired = max(current, desired) 會得到原持股數。沒有閘門時 held_frozen 一律為空。
+            for symbol, (current_weight, sized_weight) in sorted(held_frozen.items()):
+                constraint_flags.append({
+                    "symbol": symbol, "code": "RISK_HELD_WEIGHT",
+                    "detail": "加碼持股的現有權重 %s 已高於等級份額 %s：不加碼，依現有權重計入配置預算"
+                              "（交易 Agent 的意圖未被改寫）" % (format(current_weight, ".2%"), format(sized_weight, ".2%")),
+                })
         for symbol in candidates:
             if symbol not in self.prices:
                 constraint_flags.append(
@@ -933,12 +941,18 @@ class AllocationOrderEngine:
         max_positions: int,
         effective: Mapping[str, object],
         held_count: int,
-    ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal]:
+    ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。
 
-        回傳 (ordered, weights, skipped, budget)；skipped 記錄被名額規則擋下的新股與對應旗標代碼，
+        回傳 (ordered, weights, skipped, budget, held_frozen)；skipped 記錄被名額規則擋下的新股與對應旗標代碼，
         啟用 rotation 時才會有內容，舊 policy 一律為空並由 `_run` 沿用原本的旗標文案；budget 是扣除緩衝與
         未入選持股後可配置的權重預算（≤ 0 代表現金已低於姿態緩衝）。
+
+        ``held_weight_budget``（版本閘門）：已持有的加碼候選若現有權重高於等級份額，`_run` 的 max(current, desired)
+        會保留原持股，但份額只以較小的等級份額進預算，其他候選因此超配、再被 _fit_cash 砍回。閘門啟用時把這些
+        持股移出 eligible、以現有權重計入 held_outside 重新分配，直到沒有新的持股被凍結（每輪至少移出一檔，必定收斂）；
+        它們的目標權重記為現有權重，held_frozen 回傳 {代號: (現有權重, 凍結時的等級份額)}。省略閘門時 held_frozen
+        為空、只分配一輪，與原式逐位相同。
         """
         hard_max = max_positions
         sizing = self.policy["position_sizing"]
@@ -1001,37 +1015,56 @@ class AllocationOrderEngine:
             if symbol not in volatility:
                 raise DecisionToolError("%s 缺少可用 ATR，不能依波動度配置" % symbol)
             eligible.append(symbol)
-        held_outside = sum(
-            (
-                Decimal(target_shares[symbol]) * self.prices[symbol] / marked_nav
-                for symbol in active_symbols - set(eligible)
-            ),
-            Decimal("0"),
-        )
-        budget = Decimal("1") - effective["cash_buffer_rate"] - held_outside  # type: ignore[operator]
         multipliers = {
             level: decimal_value(sizing["conviction_multipliers"][level], level)
             for level in CONVICTION_LEVELS
         }
-        # eligible 全是本次 buy／add 的股票：stock_limit_headroom 啟用時封頂留 3%（0.97），否則 0.995。
-        limits = {symbol: self._weight_limit(symbol, effective) * self._headroom(effective, buying=True) for symbol in eligible}
         # 省略 volatility_exponent 的舊 policy 傳 None，conviction_weights 走 v1 原式。
         exponent = (
             decimal_value(sizing["volatility_exponent"], "volatility_exponent") if "volatility_exponent" in sizing else None
         )
         floor = decimal_value(sizing["volatility_floor"], "volatility_floor")
         alpha = limit_scaled_alpha(sizing)
-        if alpha is None:
-            weights = conviction_weights(eligible, tiers, multipliers, volatility, floor, limits, budget, exponent)
-        else:
-            # limit_scaled_conviction（版本閘門，α 方案）：high 份額至少為 α × 單股上限（依 effective，修正循環調低
-            # max_stock_weight 只會讓下限變小），並以封頂為限；eligible 已依（信心、名次、代號）排序。
-            floors = {
-                symbol: min(alpha * self._weight_limit(symbol, effective), limits[symbol])
-                for symbol in eligible if tiers[symbol] == "high"
+        held_weight_budget = sizing.get("held_weight_budget") == HELD_WEIGHT_BUDGET
+        held_frozen: Dict[str, Tuple[Decimal, Decimal]] = {}
+        while True:
+            held_outside = sum(
+                (
+                    Decimal(target_shares[symbol]) * self.prices[symbol] / marked_nav
+                    for symbol in active_symbols - set(eligible)
+                ),
+                Decimal("0"),
+            )
+            budget = Decimal("1") - effective["cash_buffer_rate"] - held_outside  # type: ignore[operator]
+            # eligible 全是本次 buy／add 的股票：stock_limit_headroom 啟用時封頂留 3%（0.97），否則 0.995。
+            limits = {
+                symbol: self._weight_limit(symbol, effective) * self._headroom(effective, buying=True) for symbol in eligible
             }
-            weights = alpha_floor_weights(eligible, tiers, multipliers, volatility, floor, limits, budget, exponent, floors)
-        return ordered, weights, skipped, budget
+            if alpha is None:
+                weights = conviction_weights(eligible, tiers, multipliers, volatility, floor, limits, budget, exponent)
+            else:
+                # limit_scaled_conviction（版本閘門，α 方案）：high 份額至少為 α × 單股上限（依 effective，修正循環調低
+                # max_stock_weight 只會讓下限變小），並以封頂為限；eligible 已依（信心、名次、代號）排序。
+                floors = {
+                    symbol: min(alpha * self._weight_limit(symbol, effective), limits[symbol])
+                    for symbol in eligible if tiers[symbol] == "high"
+                }
+                weights = alpha_floor_weights(eligible, tiers, multipliers, volatility, floor, limits, budget, exponent, floors)
+            if not held_weight_budget:
+                break
+            # held_weight_budget：現有權重已高於等級份額的加碼持股移出 eligible（視同未入選持股以現有權重計入預算）。
+            over = {
+                symbol: (Decimal(target_shares[symbol]) * self.prices[symbol] / marked_nav, weights[symbol])
+                for symbol in eligible if symbol in active_symbols
+            }
+            over = {symbol: pair for symbol, pair in over.items() if pair[0] > pair[1]}
+            if not over:
+                break
+            held_frozen.update(over)
+            eligible = [symbol for symbol in eligible if symbol not in over]
+        for symbol, (current_weight, _) in held_frozen.items():
+            weights[symbol] = current_weight
+        return ordered, weights, skipped, budget, held_frozen
 
     def _slot_flag(
         self,
@@ -1388,20 +1421,22 @@ class AllocationOrderEngine:
         NAV × max_derisk_fraction；每檔記 RISK_DRAWDOWN，訂單意圖由程式標 trim／exit，不改寫交易 Agent 的意圖。
         不動不可交易、被留住的 exit、交易 Agent 已標 exit／trim 的持股；持股數不低於 min_positions（必要時留一張）。
         版本：v1 整張進位可超過單次上限；v2 進位不得超過；v3 另由 ``_run`` 把被減碼的持股排除在本次加碼候選外
-        （減碼後的股數為上限，交易 Agent 標 add 也不加回）。省略閘門的舊 run 維持「防守姿態只停止買進、不降曝險」的原行為。"""
+        （減碼後的股數為上限，交易 Agent 標 add 也不加回）；v4 單次預算另取 min(·, NAV × max_turnover_rate − 交易 Agent
+        賣單 gross)，減碼不會把賣單總額推過換手上限（否則 ``_run_min_positions`` 的 RISK_TURNOVER 會留住交易 Agent 的
+        exit、下一輪再改賣別檔）。省略閘門的舊 run 維持「防守姿態只停止買進、不降曝險」的原行為。"""
         sizing = self.policy.get("position_sizing") or {}
         fraction = drawdown_derisk_fraction(sizing)
         if fraction is None or sizing.get("cash_stance") != "defensive":
             return []
         lot = int(effective["lot_size"])
         projected_cash = starting_total_cash
+        trader_sell_gross = Decimal("0")
         for symbol in sorted(current):
             sold = current[symbol] - target_shares.get(symbol, 0)
             if sold > 0:
-                projected_cash += decimal_value(
-                    self._order(symbol, "sell", sold, order_intents.get(symbol, "exit"), effective)["net_cash_impact"],
-                    "net_cash_impact",
-                )
+                sell = self._order(symbol, "sell", sold, order_intents.get(symbol, "exit"), effective)
+                projected_cash += decimal_value(sell["net_cash_impact"], "net_cash_impact")
+                trader_sell_gross += decimal_value(sell["gross_amount"], "gross_amount")
         # high_conviction_cash_floor（版本閘門）：觸發與目標都改為 NAV × 緩衝 × floor_ratio（帶狀防守），與高信心買單
         # 可動用到的下限是同一條線，避免「今天高信心買進、隔天程式減碼」的來回交易。沒有閘門時與原式相同。
         soft_ratio = effective.get("high_conviction_floor_ratio")
@@ -1414,6 +1449,14 @@ class AllocationOrderEngine:
         # 現金缺口可整張進位補足，但單次減碼總額（NAV × fraction）是硬上限：進位後不得超過剩餘預算。
         budget_capped = drawdown_derisk_v2(sizing)  # v1 的舊 run 維持進位可超過上限的原行為
         hard_budget = marked_nav * fraction
+        # v4：單次減碼預算另扣交易 Agent 賣單後的換手餘額（NAV × max_turnover_rate − 交易 Agent 賣單 gross），
+        # 減碼不會讓賣單總額超過換手上限，不再觸發 RISK_TURNOVER 留住交易 Agent 的 exit 改賣別檔；
+        # 餘額不足一張就不減碼（現金缺口留待下次）。v1～v3 的舊 run 維持原重建行為。
+        turnover_capped = False
+        if drawdown_derisk_v4(sizing):
+            turnover_room = max(Decimal("0"), marked_nav * effective["max_turnover_rate"] - trader_sell_gross)  # type: ignore[operator]
+            if turnover_room < hard_budget:
+                hard_budget, turnover_capped = turnover_room, True
         remaining = min(shortfall, hard_budget)
         tiers = sizing.get("conviction_by_symbol") or {}
         atr = self._atr_pct()
@@ -1469,6 +1512,9 @@ class AllocationOrderEngine:
                     % (format(target_rate, ".2%"), format(effective["cash_buffer_rate"], ".0%"), format(soft_ratio, "f"),
                        before, target_shares[symbol], format(fraction, ".0%"), order_intents[symbol])
                 )
+            if turnover_capped:
+                detail += "；本次減碼預算另受 %s 換手上限約束（扣除交易 Agent 賣單後的餘額）" % format(
+                    effective["max_turnover_rate"], ".0%")
             flags.append({"symbol": symbol, "code": "RISK_DRAWDOWN", "detail": detail})
         return flags
 

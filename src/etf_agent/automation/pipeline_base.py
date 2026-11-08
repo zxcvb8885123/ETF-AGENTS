@@ -15,6 +15,7 @@ from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, 
 from etf_agent.core import single_line
 
 from .agent_runner import LATER_STAGE_GLOBS, AgentCall, AgentRunner, AgentTask, DailyPipelineError, TransientAgentError, reject_secret_leak
+from .skill_digest import ROOT_PLACEHOLDER, RUN_DIR_PLACEHOLDER, prompt_sha256, skill_digest, skill_versions
 
 
 def degraded_research_result(snapshot: Mapping[str, object], run_id: str) -> Dict[str, object]:
@@ -58,6 +59,8 @@ class PipelineResult:
     agent_calls: List[Dict[str, object]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     stage_durations: Dict[str, float] = field(default_factory=dict)
+    # 本次 run 各子 Agent 實際讀到的 Skill 檔版本（由 agent_calls 的 skill_files 彙整）；只作執行紀錄，不進決策 artifact。
+    skill_versions: Dict[str, object] = field(default_factory=dict)
 
 
 # market 為事件分析師的全市場新聞標註（market_news_labels_*）。
@@ -403,7 +406,18 @@ class PipelineBase:
         model = getattr(runner, "model", None)
         if model:
             item["model"] = model
+        # Skill／指令版本指紋：提示詞指名的 SKILL.md（含連結的 references）逐檔雜湊，與去掉 run 目錄／專案根目錄後的
+        # 基礎指令雜湊（不含驗證回饋）。只是執行紀錄，不進 Decision artifact、manifest 或內容雜湊。
+        item.update(skill_digest(self.root, task.prompt))
+        item["prompt_sha256"] = prompt_sha256(
+            task.prompt, {str(self.run_dir): RUN_DIR_PLACEHOLDER, str(self.root): ROOT_PLACEHOLDER}
+        )
         return item
+
+    def skill_versions(self) -> Dict[str, object]:
+        """本次 run 到目前為止所有 Agent 呼叫讀到的 Skill 檔版本彙整（見 ``skill_digest.skill_versions``）。"""
+        with self._calls_lock:
+            return skill_versions(list(self.calls))
 
     def _retry_blocker(self, retry: int, failed_duration: float) -> Optional[str]:
         """不該再試的原因；可以再試時回 None。"""

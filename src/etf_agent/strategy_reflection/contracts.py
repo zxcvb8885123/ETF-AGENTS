@@ -145,7 +145,7 @@ FORBIDDEN_PREFIXES = (
     # 2026-11-03 新增的執行面閘門與其比例參數（買單順序與塵埃取消、現金上限補救、單股封頂空間、跳空預留、
     # 結算現金不足整批作廢）：都切換程式路徑或對應主辦方結算口徑，只由人設定。
     "cash_fit_order", "cash_fit_min_fill_ratio", "high_conviction_cash_priority", "cash_ceiling_fix", "stock_limit_headroom", "buy_gap_reserve",
-    "insufficient_funds_policy",
+    "insufficient_funds_policy", "held_weight_budget",
     # 2026-11-03 新增的風控閘門：產業上限只擋增量、換手上限主動縮減、出場冷卻、回撤防守減碼與解除門檻、強制換股需空頭證據。
     "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk",
     "drawdown_control.release_neutral_below", "drawdown_control.release_defensive_below",

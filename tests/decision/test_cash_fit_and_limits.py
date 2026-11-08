@@ -338,8 +338,9 @@ class CashFitOrderTests(unittest.TestCase):
         del sizing["cash_fit_order"]
         del sizing["cash_fit_min_fill_ratio"]
         errors = []
-        from etf_agent.decision.sizing import _validate_execution_gates
-        _validate_execution_gates(sizing, errors)
+        # 前提改由 GATE_PREREQUISITES 統一檢查（validate_gate_prerequisites），不再散在 _validate_execution_gates。
+        from etf_agent.decision.sizing import validate_gate_prerequisites
+        validate_gate_prerequisites(sizing, errors)
         self.assertTrue(any("high_conviction_cash_priority" in message for message in errors))
 
     def test_priority_gate_is_forbidden_for_strategy_reflection(self):

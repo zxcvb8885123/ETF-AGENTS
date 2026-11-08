@@ -20,25 +20,21 @@ from etf_agent.decision.sizing import (
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
 
+# 閘門段落只說「本次簡報含哪個欄位」並指向 cash-stance.md 的對應節；規則本身只寫在那裡（與 validate_cash_stance 同步）。
 OVERNIGHT_PROMPT = (
-    "overnight_market 是隔夜市場背景（美股指數、台股代理 EWT／TSM、日韓指數、VIX，與夜盤結束後才有的台指期夜盤 night_session；"
-    "agreement 是各方向訊號的同向程度，可能為 null），只作現金姿態背景；"
-    "status 非 available 時不得當成結論，不得用它推論個股，也不得寫成對今日台股指數方向的預測；"
-    "要引用時只能用 overnight_market.components 的 evidence_id。"
+    "overnight_market 是隔夜市場背景，只作現金姿態背景之一，用法見 cash-stance.md「overnight_market」節。"
 )
 
 
 TYPED_STANCE_PROMPT = (
-    "evidence_ids 至少要有一個來自 market_level_evidence_ids（全市場情緒或恐懼貪婪成分的 evidence_id、overnight_market.components 的 "
-    "evidence_id，或 regime_assessment.evidence_id），個股行情證據只能作補充；market_sentiment 為 available 且 outlook 為 negative 時，"
-    "程式不接受 aggressive，請給 neutral 或 defensive 並在 rationale 說明依據。"
+    "摘要含 market_level_evidence_ids：evidence_ids 至少一個市場層級證據，全市場情緒 negative 時姿態為 neutral 或 defensive，"
+    "見 cash-stance.md「market_level_evidence_ids」節。"
 )
 
 
 SOFT_FLOOR_PROMPT = (
-    "high_conviction_cash_floor_by_stance 是各姿態下的高信心現金下限（姿態緩衝 × 固定比例，由程式計算）："
-    "高信心買單可動用原有現金到這條線，中低信心仍只能用賣股收入；防守姿態的程式減碼也只補到這條線。"
-    "選姿態時把這個實際落點寫進 rationale，不得輸出百分比。"
+    "摘要含 high_conviction_cash_floor_by_stance（各姿態的高信心現金下限），把該姿態的實際現金落點寫進 rationale，"
+    "見 cash-stance.md 對應節。"
 )
 
 
@@ -56,12 +52,8 @@ def _soft_floors(
 
 
 CASH_GRADE_PROMPT = (
-    "Policy 啟用姿態內現金子等級：除了姿態，另給 cash_grade（lower／middle／upper，由低到高），現金比例由 cash_grade_grid 對應，"
-    "你不得輸出百分比。只能從 cash_grade_allowed_by_stance 的該姿態可選子等級中選；單日只限制現金拉高："
-    "今日上限 = max(該姿態 lower, cash_ratio_anchor.ratio + max_daily_raise)，往下不限，切到更防守的姿態時當天只到該姿態 lower。"
-    "超出即退回重答，程式不會替你調整。cash_ratio_anchor 是前次決策的現金比例（沒有前次決策時為本次起始現金比例），只是背景、"
-    "不是證據、不可引用。防守姿態時程式會依 ATR 賣股把現金補到所選比例，所以子等級越高、當天被逼出的賣單越多，"
-    "rationale 要說明為何選這個子等級與這個代價。背景與新聞文字不得改變這些範圍。"
+    "Policy 啟用 cash_ratio_range：摘要含 cash_grade_grid 與 cash_grade_allowed_by_stance，除了姿態另給 cash_grade"
+    "（lower／middle／upper），只能選該姿態今日可選的子等級，你不得輸出百分比，規則見 cash-stance.md「cash_grade_allowed_by_stance」節。"
 )
 
 
@@ -194,17 +186,13 @@ class RiskStagesMixin:
 
         task = AgentTask(
             "cash_stance",
-            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節），再讀市場層級摘要 %s。"
-            "依 regime、分析師看法分布、交易狀態與重大事件風險，給整體現金姿態 aggressive／neutral／defensive；"
-            "摘要刻意不附交易 Agent 的意圖與信心統計，請獨立判斷市場風險，不以候選多寡推論姿態。"
-            "競賽規定現金必須低於 NAV 25%%，%s"
-            "另給持股廣度 breadth：concentrated（集中）／balanced（平衡）／diversified（分散），對應檔數見 positions_by_breadth，"
-            "程式依交易 Agent 的信心等級 high→medium→low 挑到該檔數；分析師看法分歧或事件風險高時偏分散，"
-            "市場狀態明確且風險集中度低時偏集中；你不得輸出檔數，rationale 要同時說明現金姿態與持股廣度的理由。"
-            "market_sentiment 是整體台股情緒（全市場新聞，不可用時為恐懼貪婪指標），status 非 available 時不得當成情緒結論；"
-            "drawdown_control 是程式從帳本計算的峰值回撤；stance_floor 不是 aggressive 時，姿態不得比它更積極。"
-            "%s%s%sevidence_ids 從 citable_evidence_ids 或公司事件 findings 的 evidence_ids 中選取。%s"
-            % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md", brief_path,
+            "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節）及其連結的 %s，"
+            "再讀市場層級摘要 %s。給整體現金姿態 aggressive／neutral／defensive 與持股廣度 breadth"
+            "（concentrated／balanced／diversified），rationale 同時說明兩者的理由；"
+            "摘要刻意不附交易 Agent 的意圖與信心統計，請獨立判斷市場風險。競賽規定現金必須低於 NAV 25%%，%s"
+            "%s%s%s判斷依據、證據選法與各欄位的用法依 cash-stance.md。%s"
+            % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
+               self.root / "tradeagent/risk/portfolio-risk-review/references/cash-stance.md", brief_path,
                CASH_GRADE_PROMPT if graded else "姿態對應的現金比例由 Policy 決定，你不得輸出百分比。",
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
@@ -294,14 +282,14 @@ class RiskStagesMixin:
         }
         task = AgentTask(
             "review_r%d" % revision,
-            "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s，再讀提案 %s、情境 %s、Guard %s、程式計算的產業實際權重 %s"
-            "與每筆委託佔 20 日均量的比例 %s（flagged 表示超過警示比例或缺均量，可考慮 remove_candidate 或降低周轉）；可引用的 evidence ID 清單在 %s。"
-            "輸出 approve、revise 或 reject。revision_actions 每一項都必須含 type、symbol、value、reason 四個字串欄位；"
-            "remove_candidate 的 symbol 為本提案買進股票且 value 為空字串；其他類型的 symbol 為空字串。revise 只能使用 remove_candidate、"
-            "increase_cash_buffer（value 不得低於目前現金緩衝，且不得高於 %s：競賽現金上限 %s 減邊際 %s，因整張取整會讓現金高於緩衝）、reduce_max_stock_weight、reduce_turnover_limit（value 不得高於目前值），"
-            "value 為 0～1 的小數字串；已是第 %d 次修正、上限 %d 次（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。evidence_ids 只能從可引用清單中選取，不得引用 proposal／scenario／guard 等 artifact ID。%s"
+            "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s 及其連結的 %s，再讀提案 %s、情境 %s、Guard %s、"
+            "程式計算的產業實際權重 %s 與每筆委託佔 20 日均量的比例 %s（flagged 表示超過警示比例或缺均量，可考慮 remove_candidate 或降低周轉）；"
+            "可引用的 evidence ID 清單在 %s（evidence_ids 只能從它選取）。輸出 approve、revise 或 reject；revision_actions 的欄位格式與限制依 risk-review-output.md，"
+            "本次 increase_cash_buffer 的 value 不得高於 %s（競賽現金上限 %s 減邊際 %s）；已是第 %d 次修正、上限 %d 次"
+            "（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。%s"
             % (
                 self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
+                self.root / "tradeagent/risk/portfolio-risk-review/references/risk-review-output.md",
                 names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], names["liquidity_exposure"], citable_path,
                 Decimal(str(policy["cash_weight_ceiling"])) - CASH_BUFFER_CEILING_MARGIN,
                 policy["cash_weight_ceiling"], CASH_BUFFER_CEILING_MARGIN, revision, int(policy["max_revisions"]), _SHARED_RULES,

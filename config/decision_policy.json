@@ -39,6 +39,7 @@
     "held_add_priority": "v1",
     "cash_buffer_floor": "v1",
     "cash_fit_order": "v1",
+    "held_weight_budget": "v1",
     "cash_fit_min_fill_ratio": "0.5",
     "high_conviction_cash_priority": "v1",
     "limit_scaled_conviction": {
@@ -52,7 +53,8 @@
         "neutral": {"lower": "0.08", "middle": "0.10", "upper": "0.13"},
         "defensive": {"lower": "0.15", "middle": "0.18", "upper": "0.21"}
       },
-      "max_daily_raise": "0.03"
+      "max_daily_raise": "0.03",
+      "selection_check": "v1"
     },
     "cash_ceiling_fix": "v1",
     "stock_limit_headroom": "v1",
@@ -66,7 +68,7 @@
       "days": 3
     },
     "drawdown_derisk": {
-      "version": "v3",
+      "version": "v4",
       "max_derisk_fraction": "0.25"
     },
     "rotation": {
