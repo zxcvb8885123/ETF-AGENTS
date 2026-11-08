@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from etf_agent.core import untrusted_value
 
@@ -148,7 +148,11 @@ LIMIT_SCALED_CONVICTION_FIELDS = {"version", "alpha"}
 # 綁進 Policy（沒有前次 run 時為本次起始現金比例，見 cash_ratio.py）。超出即拒絕，程式不夾到邊界。
 # 不得與 high_conviction_cash_floor 同時開啟；有 drawdown_derisk 時須 v3。省略此欄位的舊 Policy／舊 run 逐位元不變。
 CASH_RATIO_RANGE = "v1"
-CASH_RATIO_RANGE_FIELDS = {"version", "grid", "max_daily_raise", "anchor"}
+# 2026-11-08 後新增（cash_ratio_range.selection_check 版本閘門，只由人設定、預設不開）：開啟時 Finalizer 與所有下游重建
+# 都以決策庫重跑前次 run 的挑選（最晚的前一交易時段、latest_cutoff 須為該時段 cutoff 最新者、unavailable 須真的沒有候選），
+# 決策庫中損壞的 run 也會讓重建拒絕；anchor 跟著前次決策背景指向同一個 run。省略此欄位的舊 Policy／舊 run 只驗來源內容。
+CASH_RATIO_SELECTION_CHECK = "v1"
+CASH_RATIO_RANGE_FIELDS = {"version", "grid", "max_daily_raise", "anchor", "selection_check"}
 CASH_GRADES = ("lower", "middle", "upper")
 # 人決定的防守上限 22%（跌 10% 情境現金仍離 25% 競賽上限有餘裕；與策略反思 cash_buffer_by_stance 旋鈕上限一致）。
 CASH_GRID_MAX = Decimal("0.22")
@@ -161,6 +165,152 @@ CASH_ANCHOR_SOURCE_FIELDS = {
 }
 _TWO_DECIMALS = re.compile(r"^0\.[0-9]{2}$")
 _ANCHOR_RATIO = re.compile(r"^[01]\.[0-9]{8}$")
+
+# position_sizing 的全部允許欄位：核心欄位、版本閘門與參數、以及綁定交易決策時由程式寫入的欄位。
+SIZING_CORE_FIELDS = frozenset({"method", "conviction_multipliers", "volatility_floor", "cash_buffer_by_stance"})
+# apply_trade_decision／apply_selection_ranking 綁定時寫入，不是閘門（由 _validate_rank／_validate_support 等檢查）。
+SIZING_BINDING_FIELDS = frozenset({
+    "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol", "support_by_symbol",
+    "position_breadth", "rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256",
+})
+
+
+class GateRule(NamedTuple):
+    """position_sizing 版本閘門／參數的允許值、前提、互斥與版本要求（程式內單一來源）。
+
+    ``validate_position_sizing`` 以 ``validate_gate_prerequisites`` 逐條套用；各閘門的物件形狀（巢狀欄位、比例範圍）
+    仍由專屬函式驗證。欄位說明：
+
+    - ``field``：position_sizing 欄位；巢狀以「.」連接（``rotation.forced_swap.confirmation``）。
+    - ``allowed``：純量閘門允許的值；空 tuple 代表物件或比例參數，不在此比對。
+    - ``requires``：必須同時出現的欄位（省略即走舊路徑的閘門，前提缺少時整份 Policy 拒絕）。
+    - ``requires_values``：其他欄位必須等於特定值（如 ``method`` 必須是 conviction_volatility_v2）。
+    - ``excludes``：不得同時出現的欄位（只在一方宣告，檢查時雙向成立）。
+    - ``derisk_versions``：與 ``drawdown_derisk`` 同時使用時其 version 必須屬於此集合；空 tuple 代表不限。
+    - ``human_only``：True 為版本閘門（只由人設定、策略反思不得改），False 為正式旋鈕或旋鈕容器。
+    - ``note``：程式內隱含但不強制的相依，只記錄供文件與測試列舉。
+    """
+
+    field: str
+    allowed: Tuple[object, ...] = ()
+    requires: Tuple[str, ...] = ()
+    requires_values: Tuple[Tuple[str, object], ...] = ()
+    excludes: Tuple[str, ...] = ()
+    derisk_versions: Tuple[str, ...] = ()
+    human_only: bool = True
+    note: str = ""
+
+
+GATE_PREREQUISITES: Tuple[GateRule, ...] = (
+    GateRule(
+        "volatility_exponent", requires_values=(("method", SIZING_METHOD_V2),), human_only=False,
+        note="conviction_volatility_v2 的必要欄位（反向要求與 0～1 範圍由 _validate_volatility_exponent 檢查）；策略反思旋鈕",
+    ),
+    GateRule("stock_weight_fit", allowed=(STOCK_WEIGHT_FIT,)),
+    GateRule("selection_tiebreak", allowed=SELECTION_TIEBREAKS),
+    GateRule(
+        "positions_by_breadth", human_only=False,
+        note="各廣度檔數為策略反思旋鈕；綁定交易決策時由 apply_trade_decision 寫入 position_breadth",
+    ),
+    GateRule("held_add_priority", allowed=(HELD_ADD_PRIORITY,)),
+    GateRule(
+        "rotation", requires=("held_add_priority",), human_only=False,
+        note="旋鈕容器：rotation.version 只由人設定（FORBIDDEN_PREFIXES），max_swaps_per_run／min_new_conviction 為策略反思旋鈕；"
+             "前提：新股不佔滿檔名額（held_add_priority），釋出名額的計算才有意義",
+    ),
+    GateRule(
+        "rotation.forced_swap",
+        note="broken_symbols／verdicts_ref 由每日 pipeline 綁定（bind_forced_swap），重建只讀 Policy；沒有名單就不換",
+    ),
+    GateRule(
+        "rotation.forced_swap.confirmation", allowed=(FORCED_SWAP_CONFIRMATION,),
+        note="減碼日（derisk_day）的現金可行性檢查只在 high_conviction_cash_floor 啟用時才與平日不同；"
+             "沒有該閘門時 derisk_day 不影響換股判斷（維持原重建）",
+    ),
+    GateRule(
+        "selection_ranking", allowed=(SELECTION_RANKING,),
+        note="rank_by_symbol／selection_ranking_id／selection_ranking_sha256 三者必須一起綁定（_validate_rank）",
+    ),
+    GateRule("cash_buffer_floor", allowed=(CASH_BUFFER_FLOOR,)),
+    GateRule("cash_fit_order", allowed=(CASH_FIT_ORDER,)),
+    GateRule("cash_fit_min_fill_ratio", requires=("cash_fit_order",)),
+    GateRule("high_conviction_cash_priority", allowed=(HIGH_CONVICTION_CASH_PRIORITY,), requires=("cash_fit_order",)),
+    GateRule(
+        "cash_ceiling_fix", allowed=(CASH_CEILING_FIX,),
+        note="rules.reuse_sell_proceeds=false 時賣款不能買替補，留住 exit 的判斷只看 base 情境期末現金比例，與 true 時同一套順序",
+    ),
+    GateRule("stock_limit_headroom", allowed=(STOCK_LIMIT_HEADROOM,)),
+    GateRule("buy_gap_reserve", allowed=(BUY_GAP_RESERVE,)),
+    GateRule("buy_gap_reserve_rate", requires=("buy_gap_reserve",)),
+    GateRule("insufficient_funds_policy", allowed=INSUFFICIENT_FUNDS_POLICIES),
+    GateRule("sector_fit", allowed=(SECTOR_FIT,)),
+    GateRule(
+        "turnover_fit", allowed=(TURNOVER_FIT,),
+        note="未強制的隱含相依：沒有 cash_fit_order 時 _fit_turnover 的新股殘量門檻仍用 CASH_FIT_MIN_FILL_RATIO 預設 0.5",
+    ),
+    GateRule("reentry_cooldown", note="blocked_symbols／source_run_ids 由每日 pipeline 綁定（bind_reentry_cooldown），重建只讀 Policy"),
+    GateRule(
+        "drawdown_derisk",
+        note="drawdown_control 另需 release_neutral_below／release_defensive_below（drawdown.validate_drawdown_control）；"
+             "v3 以上才能與 high_conviction_cash_floor／cash_ratio_range 同用；v4 另受 max_turnover_rate 約束",
+    ),
+    GateRule("held_weight_budget", allowed=(HELD_WEIGHT_BUDGET,)),
+    GateRule(
+        "high_conviction_cash_floor", requires=("cash_buffer_floor", "cash_fit_order"),
+        derisk_versions=DRAWDOWN_DERISK_NO_READD_VERSIONS,
+        note="高信心買單要先拿現金（cash_fit_order），下限建立在 cash_buffer_floor 之上；目前正式設定未開啟",
+    ),
+    GateRule(
+        "limit_scaled_conviction", requires=("selection_ranking",), requires_values=(("method", SIZING_METHOD_V2),),
+        note="高信心依入選名次填充（selection_ranking）；floors = min(alpha × 單股上限, 封頂 0.97 × 上限)",
+    ),
+    GateRule(
+        "cash_ratio_range", excludes=("high_conviction_cash_floor",), derisk_versions=DRAWDOWN_DERISK_NO_READD_VERSIONS,
+        note="兩者都改變防守現金落點所以互斥；anchor 由 pipeline 綁定，Finalizer 以決策庫重算；開啟時 cash_buffer_by_stance 旋鈕不影響配置",
+    ),
+    GateRule("cash_grade", requires=("cash_ratio_range",), note="只在綁定交易決策時由 apply_trade_decision 寫入"),
+)
+GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
+POSITION_SIZING_FIELDS = (
+    SIZING_CORE_FIELDS | SIZING_BINDING_FIELDS | frozenset(field for field in GATE_FIELDS if "." not in field)
+)
+
+
+def _gate_value(sizing: Mapping[str, object], path: str) -> Tuple[bool, object]:
+    """依「.」路徑取巢狀欄位；回傳 (是否存在, 值)。中途不是物件即視為不存在。"""
+    node: object = sizing
+    for part in path.split("."):
+        if not isinstance(node, Mapping) or part not in node:
+            return False, None
+        node = node[part]
+    return True, node
+
+
+def validate_gate_prerequisites(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """依 GATE_PREREQUISITES 檢查每個出現的閘門：允許值、前提、互斥與 drawdown_derisk 版本要求。全部 fail-closed。"""
+    for rule in GATE_PREREQUISITES:
+        present, value = _gate_value(sizing, rule.field)
+        if not present:
+            continue
+        label = "position_sizing.%s" % rule.field
+        if rule.allowed and value not in rule.allowed:
+            errors.append("%s 只允許 %s；舊 Decision run 省略此欄位" % (label, "／".join(str(item) for item in rule.allowed)))
+        for required in rule.requires:
+            if not _gate_value(sizing, required)[0]:
+                errors.append("%s 必須與 %s 同時存在" % (label, required))
+        for field, expected in rule.requires_values:
+            if sizing.get(field) != expected:
+                errors.append("%s 只允許用於 %s=%s；其他設定必須省略此欄位" % (label, field, expected))
+        for other in rule.excludes:
+            if _gate_value(sizing, other)[0]:
+                errors.append("%s 不得與 %s 同時啟用" % (label, other))
+        if rule.derisk_versions and "drawdown_derisk" in sizing:
+            derisk = sizing["drawdown_derisk"]
+            if not (isinstance(derisk, Mapping) and derisk.get("version") in rule.derisk_versions):
+                errors.append(
+                    "%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s"
+                    % (label, "／".join(rule.derisk_versions))
+                )
 
 
 def validate_cash_stance(
@@ -220,17 +370,10 @@ def validate_cash_stance(
 
 
 def _validate_volatility_exponent(sizing: Mapping[str, object], errors: List[str]) -> None:
-    """v2 必須給 0～1 的波動度指數；v1 不得出現此欄位，確保舊 run 走原式重建。"""
+    """v2 必須給 0～1 的波動度指數；「v1 不得出現此欄位」由 GATE_PREREQUISITES（requires_values）檢查，確保舊 run 走原式重建。"""
     present = "volatility_exponent" in sizing
-    if sizing.get("method") == SIZING_METHOD_V2:
-        if not present:
-            errors.append("position_sizing.volatility_exponent 是 %s 的必要欄位" % SIZING_METHOD_V2)
-            return
-    elif present:
-        errors.append(
-            "position_sizing.volatility_exponent 只允許用於 %s；%s 必須省略"
-            % (SIZING_METHOD_V2, SIZING_METHOD)
-        )
+    if sizing.get("method") == SIZING_METHOD_V2 and not present:
+        errors.append("position_sizing.volatility_exponent 是 %s 的必要欄位" % SIZING_METHOD_V2)
         return
     if not present:
         return
@@ -244,21 +387,9 @@ def _validate_volatility_exponent(sizing: Mapping[str, object], errors: List[str
 
 
 def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -> None:
-    """2026-11-03 新增的執行面版本閘門：值只接受已知版本，比例參數必須與對應閘門同時出現。
+    """2026-11-03 新增的執行面版本閘門的物件形狀與比例範圍；允許值、前提與互斥由 GATE_PREREQUISITES 統一檢查。
 
     這些欄位只由人設定、策略反思不得改；省略即走舊 Decision run 的原重建路徑。"""
-    for field, allowed in (
-        ("cash_fit_order", CASH_FIT_ORDER),
-        ("high_conviction_cash_priority", HIGH_CONVICTION_CASH_PRIORITY),
-        ("cash_ceiling_fix", CASH_CEILING_FIX),
-        ("stock_limit_headroom", STOCK_LIMIT_HEADROOM),
-        ("buy_gap_reserve", BUY_GAP_RESERVE),
-        ("sector_fit", SECTOR_FIT),
-        ("turnover_fit", TURNOVER_FIT),
-        ("held_weight_budget", HELD_WEIGHT_BUDGET),
-    ):
-        if field in sizing and sizing[field] != allowed:
-            errors.append("position_sizing.%s 只允許 %s；舊 Decision run 省略此欄位" % (field, allowed))
     if "reentry_cooldown" in sizing:
         cooldown = sizing["reentry_cooldown"]
         if not isinstance(cooldown, Mapping):
@@ -297,16 +428,7 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
                         errors.append("position_sizing.drawdown_derisk.max_derisk_fraction 必須大於 0 且不超過 1")
                 except DecisionToolError as error:
                     errors.append(str(error))
-    if "insufficient_funds_policy" in sizing and sizing["insufficient_funds_policy"] not in INSUFFICIENT_FUNDS_POLICIES:
-        errors.append(
-            "position_sizing.insufficient_funds_policy 只允許 %s；舊 Decision run 省略此欄位"
-            % "／".join(INSUFFICIENT_FUNDS_POLICIES)
-        )
-    if "high_conviction_cash_priority" in sizing and "cash_fit_order" not in sizing:
-        errors.append("position_sizing.high_conviction_cash_priority 必須與 cash_fit_order 同時出現")
     if "cash_fit_min_fill_ratio" in sizing:
-        if "cash_fit_order" not in sizing:
-            errors.append("position_sizing.cash_fit_min_fill_ratio 必須與 cash_fit_order 同時出現")
         try:
             ratio = decimal_value(sizing["cash_fit_min_fill_ratio"], "position_sizing.cash_fit_min_fill_ratio")
             if ratio <= 0 or ratio > 1:
@@ -314,8 +436,6 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
         except DecisionToolError as error:
             errors.append(str(error))
     if "buy_gap_reserve_rate" in sizing:
-        if "buy_gap_reserve" not in sizing:
-            errors.append("position_sizing.buy_gap_reserve_rate 必須與 buy_gap_reserve 同時出現")
         try:
             rate = decimal_value(sizing["buy_gap_reserve_rate"], "position_sizing.buy_gap_reserve_rate")
             if rate < 0 or rate >= 1:
@@ -343,8 +463,8 @@ def _ratio_in_open_unit(raw: object, label: str, errors: List[str], allow_one: b
 
 
 def _validate_high_conviction_cash_floor(sizing: Mapping[str, object], errors: List[str]) -> None:
-    """high_conviction_cash_floor：{version: v1, floor_ratio: 0～1（不含）}；語意建立在 cash_buffer_floor 與
-    cash_fit_order 之上（high 先拿現金），有 drawdown_derisk 時必須是 v3（減碼後不得加回）。"""
+    """high_conviction_cash_floor 的形狀：{version: v1, floor_ratio: 0～1（不含）}。前提（cash_buffer_floor、
+    cash_fit_order、drawdown_derisk 須 v3 以上）由 GATE_PREREQUISITES 檢查。"""
     gate = sizing["high_conviction_cash_floor"]
     prefix = "position_sizing.high_conviction_cash_floor"
     if not isinstance(gate, Mapping):
@@ -357,19 +477,11 @@ def _validate_high_conviction_cash_floor(sizing: Mapping[str, object], errors: L
         errors.append("%s.floor_ratio 是必要欄位" % prefix)
     else:
         _ratio_in_open_unit(gate["floor_ratio"], "%s.floor_ratio" % prefix, errors, allow_one=False)
-    if sizing.get("cash_buffer_floor") != CASH_BUFFER_FLOOR:
-        errors.append("%s 必須與 cash_buffer_floor 同時啟用" % prefix)
-    if sizing.get("cash_fit_order") != CASH_FIT_ORDER:
-        errors.append("%s 必須與 cash_fit_order 同時啟用（高信心買單要先拿現金）" % prefix)
-    derisk = sizing.get("drawdown_derisk")
-    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") in DRAWDOWN_DERISK_NO_READD_VERSIONS):
-        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s"
-                      % (prefix, "／".join(DRAWDOWN_DERISK_NO_READD_VERSIONS)))
 
 
 def _validate_limit_scaled_conviction(sizing: Mapping[str, object], errors: List[str]) -> None:
-    """limit_scaled_conviction：{version: v1, alpha: 0～1（含 1）}；alpha 必填。需要 conviction_volatility_v2
-    與 selection_ranking（高信心依名次填充）。"""
+    """limit_scaled_conviction 的形狀：{version: v1, alpha: 0～1（含 1）}；alpha 必填。前提（conviction_volatility_v2
+    與 selection_ranking）由 GATE_PREREQUISITES 檢查。"""
     gate = sizing["limit_scaled_conviction"]
     prefix = "position_sizing.limit_scaled_conviction"
     if not isinstance(gate, Mapping):
@@ -382,10 +494,6 @@ def _validate_limit_scaled_conviction(sizing: Mapping[str, object], errors: List
         errors.append("%s.alpha 是必要欄位（由人設定，程式不提供預設值）" % prefix)
     else:
         _ratio_in_open_unit(gate["alpha"], "%s.alpha" % prefix, errors, allow_one=True)
-    if sizing.get("method") != SIZING_METHOD_V2:
-        errors.append("%s 只允許用於 %s" % (prefix, SIZING_METHOD_V2))
-    if sizing.get("selection_ranking") != SELECTION_RANKING:
-        errors.append("%s 必須與 selection_ranking 同時啟用（高信心依入選名次填充）" % prefix)
 
 
 def high_conviction_floor_ratio(sizing: Mapping[str, object]) -> Optional[Decimal]:
@@ -461,6 +569,12 @@ def cash_ratio_gate(sizing: Mapping[str, object]) -> Optional[Mapping[str, objec
     """cash_ratio_range 啟用時回傳閘門物件；沒有閘門回 None（走 cash_buffer_by_stance 原式）。"""
     gate = sizing.get("cash_ratio_range") if isinstance(sizing, Mapping) else None
     return gate if isinstance(gate, Mapping) else None
+
+
+def cash_ratio_selection_check(sizing: Mapping[str, object]) -> bool:
+    """cash_ratio_range.selection_check 開啟時為 True：重建時以決策庫重跑前次 run 的挑選；沒有閘門回 False（原行為）。"""
+    gate = cash_ratio_gate(sizing)
+    return gate is not None and gate.get("selection_check") == CASH_RATIO_SELECTION_CHECK
 
 
 def _percent(value: Decimal) -> str:
@@ -551,7 +665,8 @@ def _validate_cash_grade(
 
 
 def _validate_cash_ratio_range(policy: Mapping[str, object], sizing: Mapping[str, object], errors: List[str]) -> None:
-    """cash_ratio_range v1：格點、單日上限、anchor 形狀與前提；全部 fail-closed。"""
+    """cash_ratio_range v1：格點、單日上限與 anchor 形狀；互斥（high_conviction_cash_floor）與 drawdown_derisk 版本要求
+    由 GATE_PREREQUISITES 檢查。全部 fail-closed。"""
     gate = sizing["cash_ratio_range"]
     prefix = "position_sizing.cash_ratio_range"
     if not isinstance(gate, Mapping):
@@ -560,12 +675,8 @@ def _validate_cash_ratio_range(policy: Mapping[str, object], sizing: Mapping[str
     reject_unknown_fields(gate, CASH_RATIO_RANGE_FIELDS, prefix, errors)
     if gate.get("version") != CASH_RATIO_RANGE:
         errors.append("%s.version 只允許 %s" % (prefix, CASH_RATIO_RANGE))
-    if "high_conviction_cash_floor" in sizing:
-        errors.append("%s 不得與 high_conviction_cash_floor 同時啟用（兩者都改變防守現金落點）" % prefix)
-    derisk = sizing.get("drawdown_derisk")
-    if derisk is not None and not (isinstance(derisk, Mapping) and derisk.get("version") in DRAWDOWN_DERISK_NO_READD_VERSIONS):
-        errors.append("%s 與 drawdown_derisk 同時使用時，drawdown_derisk.version 必須是 %s"
-                      % (prefix, "／".join(DRAWDOWN_DERISK_NO_READD_VERSIONS)))
+    if "selection_check" in gate and gate["selection_check"] != CASH_RATIO_SELECTION_CHECK:
+        errors.append("%s.selection_check 只允許 %s；舊 Decision run 省略此欄位" % (prefix, CASH_RATIO_SELECTION_CHECK))
     raise_limit: Optional[Decimal] = None
     try:
         raise_limit = _grid_point(gate.get("max_daily_raise"), "%s.max_daily_raise" % prefix)
@@ -720,11 +831,6 @@ def _validate_rotation(sizing: Mapping[str, object], errors: List[str]) -> None:
             count = forced.get("max_swaps_per_run")
             if isinstance(count, bool) or not isinstance(count, int) or count < 1:
                 errors.append("position_sizing.rotation.forced_swap.max_swaps_per_run 必須是正整數")
-            if "confirmation" in forced and forced["confirmation"] != FORCED_SWAP_CONFIRMATION:
-                errors.append(
-                    "position_sizing.rotation.forced_swap.confirmation 只允許 %s；舊 Decision run 省略此欄位"
-                    % FORCED_SWAP_CONFIRMATION
-                )
             broken, ref = forced.get("broken_symbols"), forced.get("verdicts_ref")
             if broken is not None:
                 if (not isinstance(broken, list) or not all(isinstance(s, str) and s == s.upper() and s for s in broken)
@@ -737,9 +843,7 @@ def _validate_rotation(sizing: Mapping[str, object], errors: List[str]) -> None:
                     errors.append("position_sizing.rotation.forced_swap.verdicts_ref 欄位必須是 verdicts_id、as_of、sha256 的非空字串")
                 elif broken is None:
                     errors.append("position_sizing.rotation.forced_swap.verdicts_ref 必須附 broken_symbols")
-    # 換股名額的前提是「新股不佔滿檔名額」，否則釋出名額的計算沒有意義。
-    if "held_add_priority" not in sizing:
-        errors.append("position_sizing.rotation 必須與 held_add_priority 同時存在")
+    # 前提「新股不佔滿檔名額」（held_add_priority）與 confirmation 的允許值由 GATE_PREREQUISITES 檢查。
 
 
 def validate_position_sizing(
@@ -749,42 +853,15 @@ def validate_position_sizing(
     if not isinstance(sizing, Mapping):
         errors.append("DecisionPolicy.position_sizing 必須是物件")
         return
-    reject_unknown_fields(
-        sizing,
-        {
-            "method", "conviction_multipliers", "volatility_floor", "cash_buffer_by_stance",
-            "cash_stance", "sizing_plan_id", "sizing_plan_sha256", "conviction_by_symbol",
-            "support_by_symbol", "stock_weight_fit", "positions_by_breadth", "position_breadth",
-            "held_add_priority", "rotation", "volatility_exponent", "selection_tiebreak",
-            "selection_ranking", "rank_by_symbol", "selection_ranking_id", "selection_ranking_sha256",
-            "cash_buffer_floor", "cash_fit_order", "cash_fit_min_fill_ratio", "high_conviction_cash_priority", "cash_ceiling_fix",
-            "stock_limit_headroom", "buy_gap_reserve", "buy_gap_reserve_rate", "insufficient_funds_policy",
-            "sector_fit", "turnover_fit", "reentry_cooldown", "drawdown_derisk", "held_weight_budget",
-            "high_conviction_cash_floor", "limit_scaled_conviction", "cash_ratio_range", "cash_grade",
-        },
-        "DecisionPolicy.position_sizing",
-        errors,
-    )
+    reject_unknown_fields(sizing, set(POSITION_SIZING_FIELDS), "DecisionPolicy.position_sizing", errors)
     if sizing.get("method") not in SIZING_METHODS:
         errors.append("position_sizing.method 必須為 %s" % "或".join(SIZING_METHODS))
+    # 閘門的允許值、前提、互斥與 drawdown_derisk 版本要求：單一來源 GATE_PREREQUISITES。
+    validate_gate_prerequisites(sizing, errors)
     _validate_volatility_exponent(sizing, errors)
     _validate_execution_gates(sizing, errors)
     if "cash_ratio_range" in sizing:
         _validate_cash_ratio_range(policy, sizing, errors)
-    elif "cash_grade" in sizing:
-        errors.append("position_sizing.cash_grade 只允許與 cash_ratio_range 一起出現；舊 Decision run 省略此欄位")
-    if "selection_tiebreak" in sizing and sizing["selection_tiebreak"] not in SELECTION_TIEBREAKS:
-        errors.append(
-            "position_sizing.selection_tiebreak 必須是 %s" % "／".join(SELECTION_TIEBREAKS)
-        )
-    if "selection_ranking" in sizing and sizing["selection_ranking"] != SELECTION_RANKING:
-        errors.append("position_sizing.selection_ranking 只允許 %s；舊 Decision run 省略此欄位" % SELECTION_RANKING)
-    if "stock_weight_fit" in sizing and sizing["stock_weight_fit"] != STOCK_WEIGHT_FIT:
-        errors.append("position_sizing.stock_weight_fit 只允許 %s；舊 Decision run 省略此欄位" % STOCK_WEIGHT_FIT)
-    if "cash_buffer_floor" in sizing and sizing["cash_buffer_floor"] != CASH_BUFFER_FLOOR:
-        errors.append("position_sizing.cash_buffer_floor 只允許 %s；舊 Decision run 省略此欄位" % CASH_BUFFER_FLOOR)
-    if "held_add_priority" in sizing and sizing["held_add_priority"] != HELD_ADD_PRIORITY:
-        errors.append("position_sizing.held_add_priority 只允許 %s；舊 Decision run 省略此欄位" % HELD_ADD_PRIORITY)
     _validate_rotation(sizing, errors)
     multipliers = sizing.get("conviction_multipliers")
     if not isinstance(multipliers, Mapping) or set(multipliers) != set(CONVICTION_LEVELS):
