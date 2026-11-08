@@ -1,6 +1,10 @@
+import fcntl
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -138,6 +142,103 @@ class WatchdogTests(unittest.TestCase):
             result = self.module.check(self.root, datetime(2026, 10, 23, 8, 20, tzinfo=TAIPEI))
         self.assertEqual(result["status"], "skipped")
         self.assertIn("開休市日期表", result["detail"])
+
+    @staticmethod
+    def finished_pid() -> int:
+        """一個已結束程序的 pid，模擬流程跑完後留在鎖檔裡的持有者。"""
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        return child.pid
+
+    def write_lock(self, pid, started_at="2026-10-23T07:00:05+08:00"):
+        path = self.root / "artifacts" / "daily" / ".lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"pid": pid, "started_at": started_at}), encoding="utf-8")
+        return path
+
+    def test_running_pipeline_reports_pending_instead_of_last_night_main_file(self):
+        # 昨晚的主檔仍在、昨晚的 run 也是 ready；07:00 重做正在跑（鎖被持有）時不能報成可交。
+        self.main.parent.mkdir(parents=True)
+        self.main.write_text(json.dumps(valid_plan()), encoding="utf-8")
+        self.write_run("daily-20261022-210000", {"status": "ready", "output": str(self.main)}, finished="2026-10-22T21:25:00+08:00")
+        lock_path = self.write_lock(os.getpid())
+        holder = lock_path.open("a+b")
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            code, notices, record = self.run_main(at="2026-10-23T08:30:00+08:00")
+            self.assertEqual((code, record["status"]), (2, "dplan_pending"))
+            self.assertEqual(record["trade_date"], TRADE_DATE)
+            self.assertIn("仍在執行", record["detail"])
+            self.assertIn("07:00", record["detail"])
+            self.assertIn("可能是較早那份", record["detail"])
+            self.assertEqual(len(notices), 1)
+            self.assertIn("dplan_pending", notices[0])
+            # 探測不得把鎖搶走：持有者仍握著鎖，別的程序仍取不到。
+            with lock_path.open("a+b") as probe:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # 沒有主檔時也是 pending（不是 missing），因為流程結束後可能就有了。
+            self.main.unlink()
+            code, notices, record = self.run_main(at="2026-10-23T08:45:00+08:00")
+            self.assertEqual((code, record["status"]), (2, "dplan_pending"))
+            self.assertIn("目前沒有主檔", record["detail"])
+        finally:
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            holder.close()
+        # 鎖釋放後鎖檔仍在（流程跑完不刪檔），不能再當成在跑：回到正常判定。
+        self.assertTrue(lock_path.is_file())
+        code, notices, record = self.run_main(at="2026-10-23T08:45:00+08:00")
+        self.assertEqual((code, record["status"]), (1, "dplan_missing"))
+        self.main.write_text(json.dumps(valid_plan()), encoding="utf-8")
+        code, notices, record = self.run_main(at="2026-10-23T08:45:00+08:00")
+        self.assertEqual((code, record["status"]), (0, "dplan_ready"))
+        self.assertEqual(notices, [])
+
+    def test_leftover_lock_file_without_holder_is_not_pending(self):
+        # 流程結束後鎖檔留著（內容是已結束的 pid）：沒人持有就照常檢查主檔。
+        finished = self.finished_pid()
+        self.write_lock(finished)
+        self.main.parent.mkdir(parents=True)
+        self.main.write_text(json.dumps(valid_plan()), encoding="utf-8")
+        self.write_run("daily-20261023-070000", {"status": "ready", "output": str(self.main)})
+        code, notices, record = self.run_main()
+        self.assertEqual((code, record["status"]), (0, "dplan_ready"))
+        self.assertEqual(notices, [])
+        # 鎖檔內容壞掉也一樣，不因此誤報。
+        (self.root / "artifacts" / "daily" / ".lock").write_text("{broken", encoding="utf-8")
+        code, notices, record = self.run_main()
+        self.assertEqual((code, record["status"]), (0, "dplan_ready"))
+
+    def test_pid_fallback_when_lock_probe_unavailable(self):
+        # 鎖探測不可用（例如檔案系統不支援）時改看持有者 pid 是否存活；pid 已結束或讀不到則不當在跑。
+        self.main.parent.mkdir(parents=True)
+        self.main.write_text(json.dumps(valid_plan()), encoding="utf-8")
+        self.write_lock(os.getpid())
+        with patch.object(self.module, "lock_is_held", lambda _path: None):
+            code, notices, record = self.run_main()
+            self.assertEqual((code, record["status"]), (2, "dplan_pending"))
+            finished = self.finished_pid()
+            self.write_lock(finished)
+            code, notices, record = self.run_main()
+            self.assertEqual((code, record["status"]), (0, "dplan_ready"))
+            self.write_lock("not-a-pid")
+            code, notices, record = self.run_main()
+            self.assertEqual((code, record["status"]), (0, "dplan_ready"))
+
+    def test_lock_holder_description_handles_missing_or_naive_started_at(self):
+        now = datetime(2026, 10, 23, 8, 30, tzinfo=TAIPEI)
+        self.write_lock(os.getpid(), started_at="2026-10-23T07:00:00")
+        with patch.object(self.module, "lock_is_held", lambda _path: True):
+            text = self.module.pipeline_lock_holder(self.root, now)
+            self.assertIn("仍被持有", text)
+            self.assertIn("pid %d" % os.getpid(), text)
+            self.assertNotIn("分鐘", text)
+            self.write_lock(os.getpid(), started_at="2026-10-23T07:00:00+08:00")
+            text = self.module.pipeline_lock_holder(self.root, now)
+            self.assertIn("約 90 分鐘", text)
+        # 沒有鎖檔：不在跑。
+        (self.root / "artifacts" / "daily" / ".lock").unlink()
+        self.assertIsNone(self.module.pipeline_lock_holder(self.root, now))
 
 
 if __name__ == "__main__":

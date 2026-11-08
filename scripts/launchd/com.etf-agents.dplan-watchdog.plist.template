@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- D-Plan 看門狗：週一到週五 08:00（主機時區 Asia/Taipei；07:00 重做大致跑完、08:55 交件期限前）檢查今天要交的
+<!-- D-Plan 看門狗：週一到週五 08:00（主機時區 Asia/Taipei；08:55 交件期限前）檢查今天要交的
      D-Plan 主檔 artifacts/competition_d_plan/D-Plan_<team_id>_<交易日>.json 是否存在、通過本地驗證，以及最新 run 的
-     pipeline.json dplan.status。缺少、無效或主檔是備援（全部續抱）時發本機通知，並在 var/logs/daily_status.log 記一行。
-     只讀檔、不跑 Agent、不上傳、不改任何檔案。休市日自行略過。
+     pipeline.json dplan.status。07:00 重做慢時會跑到 08:00 之後：流程鎖 artifacts/daily/.lock 仍被持有時
+     回報 dplan_pending（不把昨晚的主檔當成可交），不會再有下一次檢查，請自己看 daily_status.log。缺少、無效、仍在跑或主檔是備援（全部續抱）時發本機通知，
+     並在 var/logs/daily_status.log 記一行。只讀檔、不跑 Agent、不上傳、不改任何檔案。休市日自行略過。
      安裝：把 __PROJECT_ROOT__ 與 __HOME__ 換成實際路徑，mkdir -p __PROJECT_ROOT__/var/logs，複製到 ~/Library/LaunchAgents/
      後 launchctl load；完整指令與通知權限檢查見 docs/operations.md「D-Plan 看門狗」。 -->
 <plist version="1.0">
