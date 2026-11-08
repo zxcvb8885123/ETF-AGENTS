@@ -3,7 +3,7 @@
 本文說明系統每天怎麼從資料走到一份「可供人工檢視的封存決策」。系統**不自動下單或送件**；最後是否上傳由人決定。
 
 - 欄位細節以 `src/etf_agent/` 的契約與驗證程式為準，Agent 的工作說明（Skill）在 `tradeagent/`。
-- 文中的程式名稱只在附錄對照，正文用白話。
+- 正文用白話；程式名稱、設定位置與旗標見[名稱對照表](glossary.md)。
 
 ## 一句話原則
 
@@ -92,7 +92,7 @@
 - 高信心份額下限 `limit_scaled_conviction`（`alpha`，由人設定，建議 0.6）：高信心的目標份額至少為 alpha × 該股單股上限（台積電 25% → 15%，一般股 10% → 6%），預算足夠時高信心不因別檔被抬高而少於原式份額，必要份額總和超過預算時依入選名次填到用完；其餘照原式，`volatility_exponent` 為 0 時中信心不高於最小的高信心、低信心不高於最小的中信心，分不完的預算留作現金。兩者同時開啟時，名次第一的高信心股會先用掉高信心可動用的現金。
 - 姿態內現金子等級 `cash_ratio_range`（`{version: v1, grid, max_daily_raise}`，第一階段；與 `high_conviction_cash_floor` 互斥，有 `drawdown_derisk` 時須 v3）：風險 Agent 除了姿態另選 `cash_grade`（lower／middle／upper，仍是列舉），現金比例 = `grid[姿態][子等級]`，取代三段階梯（建議格點：積極 3／5／8%、中性 8／10／13%、防守 15／18／21%；每點不高於 22%、姿態內相鄰差距不大於單日上限、姿態間不重疊）。單日只限制現金拉高：今日可選格點 ≤ max(該姿態最低格點, 前次比例 + `max_daily_raise`，建議 3pp)，往下不限；轉防守當天只到 15%，回撤強制防守也不放寬。前次比例由程式依前次決策的挑選規則綁進 Policy 的 `anchor`（前次 run 最終的現金緩衝；沒有前次 run 時為本次起始現金比例），只給風險 Agent 當背景、不可引用（風險理由出現前次 run_id、decision_id、proposal_id 或其內容雜湊即拒絕，含 decision_id／proposal_id 不帶前綴的完整摘要；比對有邊界，前後接英數或底線的較長 ID 不算）。超出一律退回重答（修正循環用盡即停止），不夾到邊界；修正循環的 `increase_cash_buffer` 也不得高於今日可選的最高格點。防守減碼目標就是所選比例。重建時以決策庫重讀前次 run 重算 anchor，沒有決策庫即拒絕。11-05 07:00 封存重放（`replay_reference_only`）：防守 lower 15% 時 6446 買 35,000 股、middle 18% 時 6446 仍被 `RISK_CASH_FIT` 取消。
 
-這些規則多數由「版本閘門」控制：只由人在 `config/decision_policy.json` 開啟，策略反思不得改；沒有該欄位的舊決策逐位元維持原本的重建結果。逐項名稱見附錄。
+這些規則多數由「版本閘門」控制：只由人在 `config/decision_policy.json` 開啟，策略反思不得改；沒有該欄位的舊決策逐位元維持原本的重建結果。逐項名稱見[名稱對照表](glossary.md)。
 
 ### 交割口徑與執行面規則
 
@@ -253,42 +253,4 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 ## 附錄：名稱對照
 
-以下閘門都在 `config/decision_policy.json` 的 `position_sizing`（除非另註），只由人設定、策略反思不得改。
-
-| 白話說明 | 程式名稱 |
-| --- | --- |
-| 持股廣度對應檔數 | `positions_by_breadth` |
-| 同信心內的名次排序 | `selection_ranking`、`rank_by_symbol` |
-| 同等級並列時的次序 | `selection_tiebreak`（`atr_low`／`symbol`／`momentum_high`） |
-| 新股只能用出場空出的名額 | `held_add_priority`、`rotation` |
-| 強制換股、須有本次空頭論點 | `rotation.forced_swap`、`forced_swap.confirmation`、旗標 `RISK_FORCED_SWAP`、`RISK_FORCED_SWAP_UNCONFIRMED` |
-| 現金緩衝下限 | `cash_buffer_floor` |
-| 高信心可動用部分緩衝、減碼補到同一條線（未開啟） | `high_conviction_cash_floor`（`floor_ratio`）、旗標 `RISK_CASH_SOFT_FLOOR` |
-| 高信心份額至少為單股上限的 alpha 倍（已開啟，alpha 0.6） | `limit_scaled_conviction`（`alpha`） |
-| 姿態內現金子等級與單日上限（已開啟，格點 3／5／8%、8／10／13%、15／18／21%，`max_daily_raise` 0.03） | `cash_ratio_range`（`grid`、`max_daily_raise`、pipeline 綁定的 `anchor`）、`cash_grade` |
-| 現金不足依信心分錢、零頭取消 | `cash_fit_order`、旗標 `RISK_CASH_FIT` |
-| 剩下的現金先全給高信心（high 不取消零頭；high 被縮減後不流向未持有的中低信心新股，持股加碼與 high 整筆取消時不擋） | `high_conviction_cash_priority`（2026-11-06，已開啟） |
-| 現金逼近 25% 時留住出場 | `cash_ceiling_fix`、旗標 `RISK_CASH_CEILING` |
-| 有買單股票留 3% 上限空間 | `stock_limit_headroom` |
-| 買單預留 3% 跳空 | `buy_gap_reserve` |
-| 現金不足整批作廢 | `insufficient_funds_policy: void_batch` |
-| 產業上限 60%（規則檔） | `sector_fit`、`max_sector_weight`、旗標 `RISK_SECTOR_WEIGHT` |
-| 換手上限 30% | `turnover_fit`、`max_turnover_rate`、旗標 `TURNOVER_LIMIT`、`RISK_TURNOVER` |
-| 出場後 3 日不買回 | `reentry_cooldown`、旗標 `RISK_REENTRY_COOLDOWN` |
-| 防守姿態主動減碼與回撤解除門檻 | `drawdown_derisk`（v4 另受換手上限約束）、`drawdown_control.release_*`、旗標 `RISK_DRAWDOWN` |
-| 已持股權重高於信心份額時的預算 | `held_weight_budget`、旗標 `RISK_HELD_WEIGHT` |
-| 單股權重減碼 | `stock_weight_fit`、旗標 `RISK_STOCK_WEIGHT` |
-| 不可交易標的不買 | 旗標 `RISK_NOT_TRADABLE` |
-| 持股低於下限時留住出場 | 旗標 `RISK_MIN_POSITIONS` |
-| Active Share 重算 | 旗標 `RISK_ACTIVE_SHARE` |
-| 賣款當日可用 | `reuse_sell_proceeds`（`config/decision_rules.json`） |
-| 主辦方作廢整批 | DataPack `prev_day_orders.outcome=voided`、原因 `HOST_VOIDED` |
-| 持股檢視與門檻 | `position_review`（`loss_alert`、`retrace_alert_20d`、`gain_alert`、`context`） |
-| 前次決策背景 | `prior_decision_context`（`decision/prior_decision.py`） |
-| 名額脈絡 | `portfolio_slots` |
-| 帳本歷史參照 | `history_ref`、`ledger_nav_history_provider` |
-| 證據種類閘門 | `evidence_policy: typed_evidence_v1`、`claim_kind`、`finding_kind` |
-| 逐檔基本面期別 | `fundamental_period_policy: per_symbol_latest_available_v1`、`fundamental_metrics` |
-| 快照退回資訊旗標 | `PRICE_DATE_FALLBACK_<日期>_MISSING_<代號>` |
-| 重試差異紀錄 | `agent_calls.revision_diff` |
-| 拒讀清單 | `agent_runner.SENSITIVE_READ_GLOBS` |
+程式名稱、設定位置與旗標統一見 [名稱對照表](glossary.md)；啟用狀態以 `config/decision_policy.json` 與 [status.md](status.md) 為準。

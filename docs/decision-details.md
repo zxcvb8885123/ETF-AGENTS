@@ -117,32 +117,4 @@
 
 ## 附錄：名稱對照
 
-| 白話說明 | 程式名稱 |
-| --- | --- |
-| 持股廣度對應檔數 | `positions_by_breadth`（`config/decision_policy.json`） |
-| 同級排序的舊規則 | `selection_tiebreak` |
-| 入選排序 | `selection_ranking` |
-| 波動度次方 | `volatility_exponent`（方法 `conviction_volatility_v2`） |
-| 滿檔換股上限／最低信心 | `rotation.max_swaps_per_run`／`rotation.min_new_conviction` |
-| 名額脈絡 | `portfolio_slots` |
-| 強制換股 | `rotation.forced_swap`，證據要求 `confirmation`，旗標 `RISK_FORCED_SWAP_UNCONFIRMED` |
-| 持股檢視門檻 | `position_review`（`loss_alert`、`retrace_alert_20d`、`gain_alert`） |
-| 證據種類制度 | `evidence_policy: typed_evidence_v1` |
-| 重試差異紀錄 | `agent_calls.revision_diff` |
-| 回撤控制 | `drawdown_control`；帳本歷史指紋 `history_ref` |
-| 主動降風險減碼 | `position_sizing.drawdown_derisk`，旗標 `RISK_DRAWDOWN` |
-| 高信心現金下限（未開啟） | `position_sizing.high_conviction_cash_floor`（`floor_ratio`），旗標 `RISK_CASH_SOFT_FLOOR`；簡報 `high_conviction_cash_floor_by_stance` |
-| 高信心份額下限（已開啟，alpha 0.6） | `position_sizing.limit_scaled_conviction`（`alpha`） |
-| 姿態內現金子等級（已開啟） | `position_sizing.cash_ratio_range`（`grid`、`max_daily_raise`、`anchor`）、`position_sizing.cash_grade`、`cash_stance.cash_grade`；簡報 `cash_grade_grid`、`cash_grade_allowed_by_stance`、`cash_ratio_anchor` |
-| 賣款當日可用 | `config/decision_rules.json` 的 `reuse_sell_proceeds` |
-| 現金不足的買單順序 | `cash_fit_order`，旗標 `RISK_CASH_FIT` |
-| 已持股權重高於信心份額時的預算 | `held_weight_budget`，旗標 `RISK_HELD_WEIGHT` |
-| 高信心先拿剩下的現金 | `high_conviction_cash_priority`（high 不取消零頭；high（含 add）被縮減且至少買到一張後，未持有的中低信心新股為 0，持股加碼不受影響，high 整筆取消時不擋；turnover_fit 同樣不取消 high 零頭） |
-| 現金上限修正 | `cash_ceiling_fix`，旗標 `RISK_CASH_CEILING` |
-| 單股上限留空間 | `stock_limit_headroom` |
-| 跳空預留 | `buy_gap_reserve` |
-| 資金不足整批作廢 | `insufficient_funds_policy: void_batch` |
-| 產業上限 | `max_sector_weight`、`sector_fit`，旗標 `RISK_SECTOR_WEIGHT` |
-| 單股上限減碼 | 旗標 `RISK_STOCK_WEIGHT` |
-| 換手上限 | `max_turnover_rate`、`turnover_fit`，旗標 `TURNOVER_LIMIT`、`RISK_TURNOVER` |
-| 出場冷卻 | `reentry_cooldown`，旗標 `RISK_REENTRY_COOLDOWN` |
+程式名稱、設定位置與旗標統一見 [名稱對照表](glossary.md)；啟用狀態以 `config/decision_policy.json` 與 [status.md](status.md) 為準。
