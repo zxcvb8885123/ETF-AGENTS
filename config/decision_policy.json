@@ -53,7 +53,8 @@
         "neutral": {"lower": "0.08", "middle": "0.10", "upper": "0.13"},
         "defensive": {"lower": "0.15", "middle": "0.18", "upper": "0.21"}
       },
-      "max_daily_raise": "0.03"
+      "max_daily_raise": "0.03",
+      "selection_check": "v1"
     },
     "cash_ceiling_fix": "v1",
     "stock_limit_headroom": "v1",

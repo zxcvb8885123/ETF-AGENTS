@@ -27,7 +27,7 @@ from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
 from .rotation import validate_portfolio_slots
 from .cash_ratio import validate_cash_ratio_anchor
-from .sizing import cash_ratio_gate, validate_cash_stance
+from .sizing import cash_ratio_gate, cash_ratio_selection_check, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
 
@@ -313,9 +313,13 @@ class DecisionFinalizer:
         # 2.2／2.3 的前次決策背景先自行重建驗證，再交給 TradeDecisionValidator 檢查交易 Agent 沒有引用它。
         prior = team.get("prior_decision_context") if version in MEMORY_TEAM_VERSIONS else None
         if version in MEMORY_TEAM_VERSIONS:
+            # cash_ratio_range.selection_check（版本閘門）開啟時另以決策庫重跑前次 run 的挑選；沒有閘門的舊 run 只驗來源內容。
+            selection_check = cash_ratio_selection_check(self.policy.get("position_sizing") or {})
             errors.extend(
                 "team_inputs.prior_decision_context：%s" % error
-                for error in PriorDecisionContextValidator(self.bundle, self.decision_repository).validate(prior)
+                for error in PriorDecisionContextValidator(
+                    self.bundle, self.decision_repository, selection_check=selection_check
+                ).validate(prior)
             )
         # 2.3 的名額脈絡全部由程式算；以最終 policy 重算比對（build_portfolio_slots 只讀
         # apply_trade_decision 不會改動的欄位，所以與交易階段用基礎 policy 建出的結果相同）。

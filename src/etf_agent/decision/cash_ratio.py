@@ -8,7 +8,9 @@
 - ``account_cash``：沒有前次 run（比賽首日、帳戶重開、本次沒有目標時段）時，用本次起始現金比例 cash／NAV。
 
 anchor 不經 ``prior_decision_context``（那份背景只給交易 Agent）；它只給風險 Agent 當背景：``citable=false``、沒有 evidence_id，
-簡報不放 run_id。重建時 Finalizer 以決策庫重讀前次 run 重算 anchor 比對；``prior_decision`` 而呼叫端沒給決策庫一律拒絕。
+簡報不放 run_id。重建時 Finalizer 以決策庫重讀前次 run 重算 anchor 比對；``prior_decision`` 而呼叫端沒給決策庫一律拒絕；
+有閘門卻沒有前次決策背景（team_inputs 2.2 以上）也拒絕，anchor 的 run_id 與 selection 都必須與背景一致。
+「為什麼挑這個 run」由 ``PriorDecisionContextValidator`` 在 ``cash_ratio_range.selection_check`` 閘門下重跑挑選核對。
 """
 
 from __future__ import annotations
@@ -125,18 +127,22 @@ def validate_cash_ratio_anchor(
     if not isinstance(anchor, Mapping):
         return ["%s 缺少或不是物件" % prefix]
     status = anchor.get("status")
-    available = isinstance(prior_context, Mapping) and prior_context.get("status") == "available"
+    # 沒有前次決策背景就無法核對「同一個 run」：cash_ratio_range 的 run 一定有 team_inputs 2.2 以上的背景，缺少即拒絕。
+    if not isinstance(prior_context, Mapping):
+        return ["%s 需要 team_inputs 2.2 以上的前次決策背景才能核對是否指向同一個前次 run，但呼叫端未提供" % prefix]
+    available = prior_context.get("status") == "available"
     errors: List[str] = []
-    if isinstance(prior_context, Mapping):
-        if available and status != "prior_decision":
-            errors.append("%s 必須來自前次決策（前次決策背景為 available），不得改用本次帳戶現金" % prefix)
-        if not available and status != "account_cash":
-            errors.append("%s 在前次決策背景 unavailable 時必須是 account_cash" % prefix)
-        source = anchor.get("source")
-        prior_source = prior_context.get("source")
-        if available and isinstance(source, Mapping) and isinstance(prior_source, Mapping):
-            if source.get("run_id") != prior_source.get("run_id"):
-                errors.append("%s.source.run_id 與前次決策背景的 run_id 不一致" % prefix)
+    if available and status != "prior_decision":
+        errors.append("%s 必須來自前次決策（前次決策背景為 available），不得改用本次帳戶現金" % prefix)
+    if not available and status != "account_cash":
+        errors.append("%s 在前次決策背景 unavailable 時必須是 account_cash" % prefix)
+    source = anchor.get("source")
+    prior_source = prior_context.get("source")
+    if available and isinstance(source, Mapping) and isinstance(prior_source, Mapping):
+        if source.get("run_id") != prior_source.get("run_id"):
+            errors.append("%s.source.run_id 與前次決策背景的 run_id 不一致" % prefix)
+        if source.get("selection") != prior_source.get("selection"):
+            errors.append("%s.source.selection 與前次決策背景的 selection 不一致" % prefix)
     if errors:
         return errors
     if status == "prior_decision":
