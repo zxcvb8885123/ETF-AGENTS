@@ -44,7 +44,7 @@ flowchart TD
 | `docs/` | 本資料夾；`source_audit/` 是資料來源核對證據，程式與設定會引用，不可刪 | [文件索引](README.md) |
 | `var/` | 執行時資料：資料庫、日誌、策略反思、主辦方資料包；不進 git | [執行產物](runtime-artifacts.md) |
 | `artifacts/` | 執行時產物：最新報告、每日狀態、決策封存、D-Plan、帳本；不進 git | [執行產物](runtime-artifacts.md) |
-| `compose.yaml`、`Dockerfile`、`requirements.txt` | 容器與依賴；本機 `.venv` 與 Docker 共用同一份依賴 | [Docker 說明](docker.md) |
+| `compose.yaml`、`Dockerfile`、`requirements.txt`、`requirements.lock` | 容器與依賴；本機 `.venv` 與 Docker 共用同一份依賴 | [Docker 說明](docker.md) |
 | `pytest.ini` | 測試設定 | [tests/README.md](../tests/README.md) |
 | `AGENTS.md` | 開發規則：Agent 邊界、證據規則、測試與 commit 格式 | 根目錄 |
 

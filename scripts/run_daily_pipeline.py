@@ -40,6 +40,7 @@ from etf_agent.automation.daily_pipeline import (  # noqa: E402
 )
 from etf_agent.automation.preflight import (  # noqa: E402
     DEFAULT_MIN_FREE_BYTES,
+    agent_cli_versions,
     checks_to_dict,
     effective_research_agent_cli,
     require_preflight,
@@ -1045,6 +1046,9 @@ def _main(args) -> int:
                                 agent_cli=args.agent_cli, research_agent_cli=args.research_agent_cli)
         summary["preflight"] = checks_to_dict(checks)
         require_preflight(checks)
+        # 只記錄本次使用的 Agent CLI 版本供事後稽核（新欄位，舊 run 沒有也不影響續跑與重建）。
+        summary["agent_cli_versions"] = agent_cli_versions(args.agent_cli, args.research_agent_cli)
+        log("Agent CLI 版本：%s" % "、".join("%s %s" % (name, version or "未知") for name, version in summary["agent_cli_versions"].items()))
         if not args.skip_data:
             # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
             log("[0/4] 封存交易狀態與開休市政府開放 CSV")

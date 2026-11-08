@@ -15,7 +15,7 @@ docker compose version
 
 在專案根目錄執行 `./start.sh`。它會：
 
-1. 建置映像。只在映像不存在，或 `requirements.txt`、Dockerfile 變更時才重建。
+1. 建置映像。只在映像不存在，或 `requirements.txt`、`requirements.lock`、Dockerfile 變更時才重建。
 2. 驗證使用中的虛擬帳戶（`config/active_account.json`）。帳戶不存在就依 `config/competition_rules.json` 建立唯一的開帳紀錄；已存在就只驗證並沿用，帳本不完整時停止，不重新注資。
 3. 啟動唯讀儀表板 <http://127.0.0.1:8000>（埠號可用環境變數 `DASHBOARD_PORT` 改）。不抓資料、不跑決策。
 
@@ -83,7 +83,37 @@ Windows PowerShell 可執行單步 Python CLI；`start.sh` 的 PowerShell 對應
 
 ## 依賴與重建
 
-Dockerfile 與本機 `.venv` 共用 `requirements.txt`（含 Skill 驗證用的 PyYAML）。修改依賴後執行 `./start.sh check` 會自動重建；強制重建用 `FORCE_DOCKER_BUILD=1 ./start.sh check`。確認容器內版本：
+依賴分兩份檔案，本機 `.venv` 與 Docker 都只安裝鎖定檔：
+
+| 檔案 | 角色 | 誰改 |
+| --- | --- | --- |
+| `requirements.txt` | 人維護的「想要的版本範圍」（直接依賴，含 Skill 驗證用的 PyYAML 與 pytest） | 人 |
+| `requirements.lock` | 由 `uv pip compile` 從 `requirements.txt` 解出的完整釘版（直接＋間接依賴、每個套件的 sha256），Dockerfile 以 `pip install --require-hashes` 安裝 | 只由指令重產，不手改 |
+
+鎖定檔用 `--universal` 產生，同一份同時涵蓋 macOS 的 `.venv` 與 Linux 容器（x86_64／aarch64）；安裝只需要 pip，不需要 uv。
+
+安裝或同步本機環境（與 Docker 完全相同的版本）：
+
+```bash
+.venv/bin/python -m pip install --require-hashes -r requirements.lock
+.venv/bin/python -m pip check
+```
+
+### 更新依賴的流程
+
+1. 改 `requirements.txt` 的版本範圍（新增、移除或放寬／收緊）。
+2. 重產鎖定檔。預設只在範圍不再滿足時才改版本，其他套件維持原釘版；要刻意升級某個套件加 `--upgrade-package <套件>`，全部升級加 `--upgrade`：
+
+   ```bash
+   uv pip compile requirements.txt -o requirements.lock --generate-hashes --universal --python-version 3.12
+   ```
+
+3. 以鎖定檔重裝 `.venv` 並確認沒有衝突：`.venv/bin/python -m pip install --require-hashes -r requirements.lock && .venv/bin/python -m pip check`。
+4. 跑完整測試與編譯檢查（`PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache .venv/bin/python -m pytest`、`compileall`、`git diff --check`）。
+5. `./start.sh check` 會因 `requirements.lock` 變更自動重建映像並在容器內跑測試；強制重建用 `FORCE_DOCKER_BUILD=1 ./start.sh check`。
+6. `requirements.txt` 與 `requirements.lock` 一起提交。
+
+確認容器內版本：
 
 ```bash
 docker compose run --rm agent python3 -c 'import yaml; print(yaml.__version__)'

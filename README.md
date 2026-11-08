@@ -11,7 +11,7 @@
 ```bash
 uv python install 3.12
 "$(uv python find 3.12)" -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install --require-hashes -r requirements.lock
 ```
 
 啟動 Docker Desktop，執行：
@@ -84,7 +84,7 @@ flowchart LR
 | `docs/` | 本專案的說明文件；`source_audit/` 是來源核對證據，不可刪 |
 | `tests/` | 自動化測試 |
 | `var/`、`artifacts/` | 執行時資料與產物，不進 git。先看 `artifacts/latest/` 的最新報告；各資料夾內容與能否刪除見[執行產物說明](docs/runtime-artifacts.md) |
-| `start.sh`、`compose.yaml`、`Dockerfile`、`requirements.txt`、`pytest.ini` | 入口腳本、容器與測試設定 |
+| `start.sh`、`compose.yaml`、`Dockerfile`、`requirements.txt`、`requirements.lock`、`pytest.ini` | 入口腳本、容器與測試設定 |
 
 每個資料夾都有自己的 README；整體分工見[資料夾架構](docs/repository-layout.md)。
 

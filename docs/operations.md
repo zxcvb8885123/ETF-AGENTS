@@ -203,7 +203,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 
 ## 安裝排程
 
-排程由 macOS launchd 執行，樣板都在 `scripts/launchd/`。安裝前需求：Docker Desktop 已啟動、`claude` CLI 已登入、`.venv` 已建立；Mac 在排程時間不能是睡著的（launchd 不會把睡著的 Mac 叫醒，也不補跑），請保持喚醒或關閉接電源時自動睡眠。
+排程由 macOS launchd 執行，樣板都在 `scripts/launchd/`。安裝前需求：Docker Desktop 已啟動、`claude` CLI 已登入、`.venv` 已建立（以 `requirements.lock` 安裝，見 [Docker 說明](docker.md#依賴與重建)）；Mac 在排程時間不能是睡著的（launchd 不會把睡著的 Mac 叫醒，也不補跑），請保持喚醒或關閉接電源時自動睡眠。
 
 | 樣板 | 用途 | 必要 |
 | --- | --- | --- |
@@ -304,5 +304,6 @@ tail -n 3 var/logs/backup.log
 | D-Plan 被擋 | `dplan.status=blocked` |
 | 資料包的可交易淨值 | `nav_tradable` |
 | 已還原重做前狀態 | `pipeline.json` 的 `rolled_back` |
+| 這次用的 Agent CLI 版本 | `pipeline.json` 的 `agent_cli_versions`（預檢通過後記 `claude`／`codex`／`opencode --version` 第一行，取不到為 `null`；只供稽核，舊 run 沒有此欄位） |
 | 回放報告的證據等級 | `evidence_grade: replay_reference_only` |
 | 評測的決策日樣本門檻 | `calibration.MIN_DECISION_DAYS`（10） |

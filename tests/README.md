@@ -21,7 +21,7 @@ PYTHONPYCACHEPREFIX=/tmp/etf-agent-pycache .venv/bin/python -m pytest tests/data
 
 `tests/conftest.py` 把 `tests/` 下除 `fixtures` 以外的子資料夾加入 `sys.path`，測試檔可共用輔助模組（例如 `from test_daily_pipeline import FakeRunner`）。
 
-GitHub Actions（`.github/workflows/ci.yml`）在每次 push 與 pull request 時，於 ubuntu-latest／Python 3.12 安裝 `requirements.txt`，依序執行 `python -m pytest`、`python -m compileall -q src tradeagent tests` 與 `git diff --check`（PR 比對 base 分支，push 比對上一個 commit）；Skill 的 `quick_validate.py` 依賴本機 `~/.codex`，不在 CI 執行。測試不得依賴本機未追蹤檔案、`.env`、網路或 Asia/Taipei 本機時區（CI 為 UTC）。
+GitHub Actions（`.github/workflows/ci.yml`）在每次 push 與 pull request 時，於 ubuntu-latest／Python 3.12 安裝 `requirements.lock`，依序執行 `python -m pytest`、`python -m compileall -q src tradeagent tests` 與 `git diff --check`（PR 比對 base 分支，push 比對上一個 commit）；Skill 的 `quick_validate.py` 依賴本機 `~/.codex`，不在 CI 執行。測試不得依賴本機未追蹤檔案、`.env`、網路或 Asia/Taipei 本機時區（CI 為 UTC）。
 
 ```mermaid
 flowchart LR

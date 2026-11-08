@@ -6,7 +6,7 @@ from collections import namedtuple
 from pathlib import Path
 
 from etf_agent.automation.preflight import (
-    PreflightError, effective_research_agent_cli, required_files, require_preflight, run_preflight,
+    PreflightError, agent_cli_versions, effective_research_agent_cli, required_files, require_preflight, run_preflight,
 )
 from etf_agent.virtual_account import VirtualAccountRepository, VirtualAccountService
 
@@ -17,11 +17,14 @@ LOGGED_IN = json.dumps({"loggedIn": True, "authMethod": "claude.ai", "email": "s
 
 
 class FakeRunner:
-    def __init__(self, docker_exit=0, auth_stdout=LOGGED_IN, raise_for=None, exec_help="  --ephemeral  不保存 session\n"):
+    def __init__(self, docker_exit=0, auth_stdout=LOGGED_IN, raise_for=None, exec_help="  --ephemeral  不保存 session\n",
+                 version_stdout="9.9.9 (Fake CLI)\nsecond line\n", version_exit=0):
         self.exec_help = exec_help
         self.docker_exit = docker_exit
         self.auth_stdout = auth_stdout
         self.raise_for = raise_for
+        self.version_stdout = version_stdout
+        self.version_exit = version_exit
         self.commands = []
 
     def __call__(self, command, **kwargs):
@@ -33,6 +36,8 @@ class FakeRunner:
             return subprocess.CompletedProcess(command, self.docker_exit, "29.7.2\n", "")
         if command[:3] == ["codex", "exec", "--help"]:
             return subprocess.CompletedProcess(command, 0, self.exec_help, "")
+        if command[1:] == ["--version"]:
+            return subprocess.CompletedProcess(command, self.version_exit, self.version_stdout, "")
         return subprocess.CompletedProcess(command, 0, self.auth_stdout, "")
 
     @staticmethod
@@ -234,6 +239,32 @@ class PreflightTests(unittest.TestCase):
             require_preflight(list(checks.values()))
         self.assertIn("files", str(caught.exception))
         self.assertIn("disk", str(caught.exception))
+
+
+class AgentCliVersionTests(unittest.TestCase):
+    def test_records_first_line_of_main_and_researcher_cli_versions(self):
+        runner = FakeRunner()
+        self.assertEqual(agent_cli_versions("claude", None, runner=runner, which=which_all), {"claude": "9.9.9 (Fake CLI)"})
+        self.assertEqual([command for command in runner.commands if command[1:] == ["--version"]], [["claude", "--version"]])
+        runner = FakeRunner(version_stdout="\x1b[32mcodex-cli 0.1.0\x1b[0m\n")
+        versions = agent_cli_versions("codex", "opencode", runner=runner, which=which_all)
+        self.assertEqual(versions, {"codex": "codex-cli 0.1.0", "opencode": "codex-cli 0.1.0"})
+        self.assertEqual(list(versions), ["codex", "opencode"])
+
+    def test_same_cli_is_queried_once(self):
+        runner = FakeRunner()
+        self.assertEqual(agent_cli_versions("codex", "codex", runner=runner, which=which_all), {"codex": "9.9.9 (Fake CLI)"})
+        self.assertEqual(sum(1 for command in runner.commands if command[1:] == ["--version"]), 1)
+
+    def test_failures_are_recorded_as_none_and_never_raise(self):
+        self.assertEqual(agent_cli_versions("claude", runner=FakeRunner(), which=lambda name: None), {"claude": None})
+        self.assertEqual(agent_cli_versions("claude", runner=FakeRunner(raise_for="claude"), which=which_all), {"claude": None})
+        self.assertEqual(agent_cli_versions("claude", runner=FakeRunner(version_exit=1), which=which_all), {"claude": None})
+        self.assertEqual(agent_cli_versions("claude", runner=FakeRunner(version_stdout="  \n"), which=which_all), {"claude": None})
+
+    def test_long_output_is_truncated(self):
+        runner = FakeRunner(version_stdout="v" * 500)
+        self.assertEqual(len(agent_cli_versions("opencode", runner=runner, which=which_all)["opencode"]), 80)
 
 
 if __name__ == "__main__":
