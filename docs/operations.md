@@ -13,7 +13,7 @@
 | 週一至週四、週日 21:00 | 用當天收盤資料做「下一個交易日」的決策與 D-Plan，當作備案 | `com.etf-agents.daily` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
 | 週一至週五 07:00 | 用新事件、新聞重做當天的決策，取代昨晚的備案 | `com.etf-agents.daily` |
-| 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證 | `com.etf-agents.dplan-watchdog` |
+| 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證；07:00 重做還在跑時回報「尚在執行」 | `com.etf-agents.dplan-watchdog` |
 | 週五 19:30 | 策略反思週報 | `com.etf-agents.reflection` |
 | 週六 10:00 | 套用週報裡通過驗證的策略調整 | `com.etf-agents.reflection-apply` |
 
@@ -24,7 +24,7 @@
 ## 每天你要做的事
 
 1. **晚上 19:00 後、21:00 前：下載資料包。** 主辦方約 19:00 產生隔天的資料包（DataPack，內含現金、持股、前日委託結果），到參賽者後台「文件繳交」頁下載，放進 `var/datapack/`（檔名不限，不進 git）。沒放，21:00 對帳過不了，就不會有備案。
-2. **早上 08:00 後：看結果。** 看門狗會跳本機通知，也可以直接看最後幾行：
+2. **早上 08:00 後：看結果。** 看門狗（08:00）會跳本機通知；通知寫 `dplan_pending` 代表 07:00 重做還沒跑完，請自己看最後幾行：
 
    ```bash
    tail -n 5 var/logs/daily_status.log
@@ -70,15 +70,18 @@ osascript -e 'display notification "測試" with title "ETF Agent"'
 
 ### 看門狗的結果
 
-`scripts/check_dplan_ready.py` 只讀檔，不跑 Agent、不上傳、不改任何檔案。狀態不是 `dplan_ready` 時發通知。
+`scripts/check_dplan_ready.py` 只讀檔，不跑 Agent、不上傳、不改任何檔案。狀態不是 `dplan_ready` 時發通知。平日排 08:00 一次：07:00 重做慢的日子會跑到 08:00 之後，此時昨晚的主檔還在，看門狗先探測每日流程鎖 `artifacts/daily/.lock` 是否仍被持有（鎖檔跑完不會刪，所以看的是有沒有人握著鎖，不是檔案在不在），仍被持有就回報 `dplan_pending`，不把昨晚那份報成可交；此時沒有下一次檢查，請自己看 `daily_status.log`。
 
 | 狀態 | 意思 | 結束碼 |
 | --- | --- | --- |
 | `dplan_ready` | 主檔可交 | 0 |
 | `dplan_fallback` | 主檔是程式產生的備援（全部續抱），要你決定是否繳交 | 0 |
+| `dplan_pending` | 每日流程還在跑（鎖被持有）；`detail` 帶持有者 pid、開始時間與目前主檔是否存在。請自己盯 `daily_status.log`，08:55 前決定上傳哪一份 | 2 |
 | `dplan_missing` | 沒有主檔；`detail` 帶最新 run 的狀態與原因 | 1 |
 | `dplan_invalid` | 主檔讀不到、驗證失敗，或隊伍、日期不符 | 1 |
 | `skipped` | 今天休市、已過 08:55，或日曆不可用 | 2 |
+
+探測鎖的方式是非阻塞試取、取到立刻釋放，不留狀態；若此刻剛好有流程正要啟動（機率極低），那個流程會記一筆 `skipped` 而不會誤跑。
 
 手動執行：
 
@@ -209,12 +212,14 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 | `finmind-news` | 20:40 個股新聞 | 建議 |
 | `overnight-capture` | 05:05 隔夜市場背景 | 建議 |
 | `dplan-watchdog` | 08:00 看門狗 | 建議 |
+| `backup` | 08:20、23:30 把帳本、決策、D-Plan、設定備份到私人 GitHub 倉庫 `etf-agents-backup` | 建議 |
 | `reflection`、`reflection-apply` | 週五反思週報、週六套用 | 選用 |
 | `taifex-mis-probe`、`taifex-night-probe` | 只觀察台指期夜盤何時可取得，不進決策 | 驗證完可移除 |
 
-以看門狗為例（專案在 `/Users/apollo/stock/ETF_AGENTS`，家目錄 `/Users/apollo`），其他樣板把名稱換掉即可：
+以看門狗為例（專案在 `/Users/apollo/stock/ETF_AGENTS`，家目錄 `/Users/apollo`），其他樣板把名稱換掉即可。已經裝過的話，先 `launchctl unload` 舊的再照下面重新產生與載入：
 
 ```bash
+launchctl unload /Users/apollo/Library/LaunchAgents/com.etf-agents.dplan-watchdog.plist 2>/dev/null || true
 mkdir -p /Users/apollo/stock/ETF_AGENTS/var/logs /Users/apollo/stock/ETF_AGENTS/artifacts/daily
 sed -e 's#__PROJECT_ROOT__#/Users/apollo/stock/ETF_AGENTS#g' -e 's#__HOME__#/Users/apollo#g' \
   /Users/apollo/stock/ETF_AGENTS/scripts/launchd/com.etf-agents.dplan-watchdog.plist.template \
@@ -222,7 +227,7 @@ sed -e 's#__PROJECT_ROOT__#/Users/apollo/stock/ETF_AGENTS#g' -e 's#__HOME__#/Use
 plutil -lint /Users/apollo/Library/LaunchAgents/com.etf-agents.dplan-watchdog.plist
 launchctl load /Users/apollo/Library/LaunchAgents/com.etf-agents.dplan-watchdog.plist
 launchctl list | grep com.etf-agents.dplan-watchdog        # 已載入會列出
-launchctl start com.etf-agents.dplan-watchdog               # 立刻跑一次驗證，不等 08:00
+launchctl start com.etf-agents.dplan-watchdog               # 立刻跑一次驗證，不等排程時間
 tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 ```
 
@@ -257,9 +262,19 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 解讀重點：
 
 - 評測答案是之後真正的官方成交均價；價格未出來標「待答案」，累積到 10 個完整決策日才給命中率。
-- 回測格子同時列兩種超額報酬（贏過交易池平均、贏過 0050.TW），不合成單一分數；完整決策日少於 5 天只給天數與筆數。
+- 回測格子同時列兩種超額報酬（贏過交易池平均、贏過 0050.TW），不合成單一分數；完整決策日少於 10 天（`calibration.MIN_DECISION_DAYS`）只給天數與筆數。
 - 換策略回放用下一交易日官方均價成交，成交日少於 20 天沒有統計意義；缺日、缺價、前視價格一律停止或標示。
 - 結果分別在 `artifacts/evaluation/` 底下的 `grids/`、`replays/`；每份報告旁有一頁自包含 HTML，只排版、不重算，可隨時重產。
+
+## 狀態備份
+
+`scripts/backup_state.sh` 把 `artifacts/ledger`、`artifacts/decisions`、`artifacts/competition_d_plan`、`artifacts/fallback_decisions` 與 `config/`（不含 `.env*`）複製到本機 `~/stock/etf-agents-backup`，再推到私人 GitHub 倉庫 `etf-agents-backup`。沒有變更就不提交。`var/` 資料庫與 `artifacts/daily` 暫存不在備份內（可重抓、可重跑）。排程樣板是 `scripts/launchd/com.etf-agents.backup.plist.template`，每天 08:20 與 23:30 執行，結果寫在 `var/logs/backup.log`：
+
+```bash
+tail -n 3 var/logs/backup.log
+```
+
+備份失敗目前只留在這份 log，沒有通知。手動備份直接執行 `scripts/backup_state.sh`。
 
 ## 檔案位置
 

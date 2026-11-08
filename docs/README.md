@@ -27,6 +27,7 @@
 - [architecture.md](architecture.md)：每日決策架構。
 - [decision-details.md](decision-details.md)：決策原則與參賽策略細節。
 - [sizing_rotation_v2_design.md](sizing_rotation_v2_design.md)、[sizing_rotation_v2_plan.md](sizing_rotation_v2_plan.md)：配置、權重與滿檔換股（後者已併入前者）。
+- [cash_buffer_high_conviction_plan.md](cash_buffer_high_conviction_plan.md)、[limit_aware_conviction_weights_plan.md](limit_aware_conviction_weights_plan.md)、[agent_cash_ratio_range_plan.md](agent_cash_ratio_range_plan.md)：2026-11-05 的三個配置閘門設計計畫（高信心現金下限、高信心份額下限、姿態內現金子等級；內含重放數字，`replay_reference_only`），目前啟用狀態以 `config/decision_policy.json` 與 [status.md](status.md) 為準。
 - [runtime-artifacts.md](runtime-artifacts.md)：執行時產物資料夾。
 
 ### 操作
@@ -80,6 +81,8 @@
 | 2026-10-22 | 新增本索引、`repository-layout.md`、`modules.md`、`runtime-artifacts.md`；各資料夾與 `src/etf_agent/` 各套件新增 README；根 `README.md` 加上整體架構圖。 |
 | 2026-10-31 | 根 `README.md` 精簡為入口頁；目前狀態、日常操作、`run` 參數、決策流程細節分別移到 `status.md`、`operations.md`、`run-options.md`、`decision-details.md`。 |
 | 2026-11-04 | 文件改寫為白話說明、計畫文件改為現況說明。 |
+| 2026-11-05 | 新增三份配置閘門設計計畫（`cash_buffer_high_conviction_plan.md`、`limit_aware_conviction_weights_plan.md`、`agent_cash_ratio_range_plan.md`），並同步閘門啟用狀態。 |
+| 2026-11-08 | 修正閘門啟用狀態、狀態頁「尚未實跑」、樣本門檻 5→10 與策略反思排程說法等過期敘述。 |
 
 ## 維護規則
 

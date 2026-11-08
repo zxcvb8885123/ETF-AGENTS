@@ -264,8 +264,8 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 強制換股、須有本次空頭論點 | `rotation.forced_swap`、`forced_swap.confirmation`、旗標 `RISK_FORCED_SWAP`、`RISK_FORCED_SWAP_UNCONFIRMED` |
 | 現金緩衝下限 | `cash_buffer_floor` |
 | 高信心可動用部分緩衝、減碼補到同一條線（未開啟） | `high_conviction_cash_floor`（`floor_ratio`）、旗標 `RISK_CASH_SOFT_FLOOR` |
-| 高信心份額至少為單股上限的 alpha 倍（未開啟） | `limit_scaled_conviction`（`alpha`） |
-| 姿態內現金子等級與單日上限（未開啟） | `cash_ratio_range`（`grid`、`max_daily_raise`、pipeline 綁定的 `anchor`）、`cash_grade` |
+| 高信心份額至少為單股上限的 alpha 倍（已開啟，alpha 0.6） | `limit_scaled_conviction`（`alpha`） |
+| 姿態內現金子等級與單日上限（已開啟，格點 3／5／8%、8／10／13%、15／18／21%，`max_daily_raise` 0.03） | `cash_ratio_range`（`grid`、`max_daily_raise`、pipeline 綁定的 `anchor`）、`cash_grade` |
 | 現金不足依信心分錢、零頭取消 | `cash_fit_order`、旗標 `RISK_CASH_FIT` |
 | 剩下的現金先全給高信心（high 不取消零頭；high 被縮減後不流向未持有的中低信心新股，持股加碼與 high 整筆取消時不擋） | `high_conviction_cash_priority`（2026-11-06，已開啟） |
 | 現金逼近 25% 時留住出場 | `cash_ceiling_fix`、旗標 `RISK_CASH_CEILING` |
@@ -275,7 +275,8 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 產業上限 60%（規則檔） | `sector_fit`、`max_sector_weight`、旗標 `RISK_SECTOR_WEIGHT` |
 | 換手上限 30% | `turnover_fit`、`max_turnover_rate`、旗標 `TURNOVER_LIMIT`、`RISK_TURNOVER` |
 | 出場後 3 日不買回 | `reentry_cooldown`、旗標 `RISK_REENTRY_COOLDOWN` |
-| 防守姿態主動減碼與回撤解除門檻 | `drawdown_derisk`、`drawdown_control.release_*`、旗標 `RISK_DRAWDOWN` |
+| 防守姿態主動減碼與回撤解除門檻 | `drawdown_derisk`（v4 另受換手上限約束）、`drawdown_control.release_*`、旗標 `RISK_DRAWDOWN` |
+| 已持股權重高於信心份額時的預算 | `held_weight_budget`、旗標 `RISK_HELD_WEIGHT` |
 | 單股權重減碼 | `stock_weight_fit`、旗標 `RISK_STOCK_WEIGHT` |
 | 不可交易標的不買 | 旗標 `RISK_NOT_TRADABLE` |
 | 持股低於下限時留住出場 | 旗標 `RISK_MIN_POSITIONS` |

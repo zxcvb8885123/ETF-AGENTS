@@ -33,7 +33,7 @@
 
 | 參數 | 預設 | 作用 |
 | --- | --- | --- |
-| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，並沿用既有 Snapshot、不重新更新資料。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`：續跑指定 run。以下情況不能續跑，改用 `--force`：run 已被還原成重做前狀態（`pipeline.json` 有 `rolled_back`）；Snapshot 截止時間早於策略設定檔 `config/decision_policy.json` 的生效時間（目前 2026-10-23 00:00 台北）。 |
+| `--resume [RUN_ID]` | 關 | 沿用已通過驗證的 Agent 輸出續跑，並沿用既有 Snapshot、不重新更新資料。不帶值：續跑今天最近一個未完成的 run；帶 `RUN_ID`：續跑指定 run。以下情況不能續跑，改用 `--force`：run 已被還原成重做前狀態（`pipeline.json` 有 `rolled_back`）；Snapshot 截止時間早於策略設定檔 `config/decision_policy.json` 的生效時間（`available_at`，目前 2026-11-03 20:30 台北）。 |
 | `--no-auto-resume` | 關 | 預設在決策鏈失敗時，若離 08:55 還有 25 分鐘以上、且原因不是額度用完或安全拒絕，程式會沿用已驗證輸出自動續跑一次（記在 `pipeline.json` 的 `auto_resume`）。加此參數就不續跑。 |
 | `--skip-data` | 關 | 沿用既有 Snapshot 與帳戶快照，不更新資料。續跑時，或 Snapshot 已含最新交易日完整資料（150 檔齊全、且是該日 15:00 後建立）時會自動套用，通常不用手動加。 |
 | `--force` | 關 | 休市日或當日已完成仍執行。預設同一台北日期、同一目標時段在 1 小時內已完成就不重跑（早上做當天時段、晚上做隔天時段，兩者不算重複）；休市日 15:00 後若隔天是交易日，不加也會做隔天備案；更早完成的（例如半夜手動跑）照常重跑，舊 run 與 D-Plan 版本都保留。 |

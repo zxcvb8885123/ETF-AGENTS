@@ -47,7 +47,7 @@
 
 | 路徑 | 內容 |
 | --- | --- |
-| `daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json` | 這次執行的總狀態：決策 run、交付結果、D-Plan 結果、阻擋原因、每次 Agent 呼叫的耗時與用量。**今天流程成功還是失敗，先看這個** |
+| `daily/<日期>/daily-<YYYYMMDD>-<HHMMSS>/pipeline.json` | 這次執行的總狀態：決策 run、交付結果、D-Plan 結果、阻擋原因、每次 Agent 呼叫的耗時與用量，以及這次各 Skill 檔案的版本指紋（`skill_versions`）。**今天流程成功還是失敗，先看這個** |
 | 同資料夾 `brief_*.json` | 給子 Agent 的任務簡報，用來審計當時餵了什麼 |
 | 同資料夾 `analyst_*.json` | 三位分析師的報告 |
 | 同資料夾 `*_raw_<N>.json` | 子 Agent 的原始輸出；續跑時靠這些檔判斷哪些呼叫已完成 |

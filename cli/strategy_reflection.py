@@ -37,7 +37,7 @@ def main(argv=None) -> int:
     parser.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decisions")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("brief", help="只印出簡報（校準統計、目前旋鈕、evidence），不呼叫 Agent、不改任何檔案")
-    auto = sub.add_parser("auto", help="每日自動：樣本足夠才呼叫 Agent；提案通過驗證與影子回放後自動套用")
+    auto = sub.add_parser("auto", help="排程每週五執行：樣本足夠才呼叫 Agent；提案通過驗證與影子回放後自動套用（排程加 --no-apply，週六由 apply-pending 套用）")
     auto.add_argument("--model", help="反思使用的模型；預設沿用 Claude CLI 設定")
     auto.add_argument("--no-apply", action="store_true", help="只產生並封存反思，不套用")
     auto.add_argument("--force", action="store_true", help="距上一份反思不到 6 天也照跑（手動補跑）")
