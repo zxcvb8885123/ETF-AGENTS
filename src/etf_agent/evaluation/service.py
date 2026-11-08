@@ -203,7 +203,8 @@ def run_suite(
                 stop_after=None if stop_after == "full" else stop_after,
             )
             record: Dict[str, object] = {"repeat": repeat, "run_dir": str(run_dir), "status": result.status, "errors": result.errors,
-                                         "agent_calls": result.agent_calls, "stage_durations": result.stage_durations}
+                                         "agent_calls": result.agent_calls, "stage_durations": result.stage_durations,
+                                         "skill_versions": result.skill_versions}
             if resuming:
                 record.update(resumed_from_attempts=raw_attempts, resumed_at=now)
                 manifest["resumes"][-1]["reran"].append("%s/r%d" % (case["case_id"], repeat))

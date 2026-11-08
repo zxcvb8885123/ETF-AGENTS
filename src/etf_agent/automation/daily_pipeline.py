@@ -128,6 +128,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self._finish_failed(result, error)
         result.agent_calls = self.calls
         result.stage_durations = dict(self.stage_durations)
+        result.skill_versions = self.skill_versions()
         return result
 
     def _finish_failed(self, result: PipelineResult, error: Exception) -> None:
@@ -143,6 +144,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         result.errors.append("未預期的 %s：%s" % (type(error).__name__, error))
         result.agent_calls = self.calls
         result.stage_durations = dict(self.stage_durations)
+        result.skill_versions = self.skill_versions()
         self.last_result = result
         self.log("[錯誤] 決策鏈發生未預期的 %s：%s（Agent 呼叫紀錄已保留）" % (type(error).__name__, error))
 
@@ -238,6 +240,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self._finish_failed(result, error)
         result.agent_calls = self.calls
         result.stage_durations = dict(self.stage_durations)
+        result.skill_versions = self.skill_versions()
         return result
 
     def _decide(

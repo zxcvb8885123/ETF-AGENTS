@@ -1135,6 +1135,7 @@ def _main(args) -> int:
                 partial = pipeline.last_result
                 if partial is not None:
                     summary["agent_calls"] = list(partial.agent_calls)
+                    summary["skill_versions"] = partial.skill_versions
                     summary["stage_durations"] = partial.stage_durations
                     summary["agent_estimated_usage_usd"] = round(sum(call["estimated_usage_usd"] for call in partial.agent_calls), 4)
                     write_json(summary_path, summary)
@@ -1172,6 +1173,7 @@ def _main(args) -> int:
                 "position_breadth": result.position_breadth,
                 "order_count": len(result.orders),
                 "agent_calls": agent_calls,
+                "skill_versions": result.skill_versions,
                 "max_workers": args.max_workers,
                 "stage_durations": result.stage_durations,
                 "agent_estimated_usage_usd": round(sum(call["estimated_usage_usd"] for call in agent_calls), 4),

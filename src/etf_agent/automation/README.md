@@ -63,6 +63,7 @@ flowchart TD
 - 事件分析師標為 high 的事件直接交給多空研究員。
 - 每日鏈不另跑 Fact／Bull／Bear／Adjudicator；`research` 在此只用於驗證 `ResearchResult`。
 - 每次 agent 呼叫的 `duration_seconds` 寫入執行紀錄。
+- 每次 agent 呼叫另記 Skill／指令版本指紋（`skill_digest.py`）：`skill_files`（提示詞指名的 SKILL.md 及其連結的 `references/*.md` 逐檔 sha256）、`skill_sha256`（整組合併雜湊）與 `prompt_sha256`（基礎指令去掉 run 目錄／專案根目錄後的雜湊，不含驗證回饋）；`PipelineResult.skill_versions` 彙整整個 run 的逐檔版本。這些只進 `agent_calls` 與執行紀錄，不進 Decision artifact、manifest 或內容雜湊，舊 run 與舊驗證不受影響。
 - Claude runner 用 `--output-format stream-json --verbose` 執行，邊跑邊把事件摘要（時間、事件類型、工具與檔名、限流事件，不含模型文字）寫到 `var/logs/agent_trace/<run 目錄名>/<任務名>.jsonl`，供事後查哪一步慢；寫入失敗不影響流程。最後的 `result` 事件仍走原本的結構化輸出與秘密外洩檢查，沒有 `result` 事件即視為暫時性失敗。
 - OpenCode 的 read 權限拒絕 `.env`、`.env.*`、`.envrc`、`.pem`、`.key`、`.netrc`、`.p12`、`.pfx`、`id_rsa*`、`.token`、`.npmrc`、`.pypirc`、`.jks` 與含 `credential`／`secret` 的檔案及大小寫變體（見 AGENTS.md）。OpenCode 輸出事件只要 `part` 帶 `tool` 欄位就當工具呼叫檢查（不只認 `tool_use` 型別名稱），非 read 工具一律安全拒絕。
 - 續跑沿用既有輸出時，先過秘密外洩檢查（外洩直接停止、不跳過），`build`／`validate` 丟 KeyError、TypeError、ValueError 的壞輸出視為不可沿用而不是讓整個 run 失敗；決策鏈遇到預期之外的例外仍往上拋，但已花的 Agent 呼叫與階段耗時會先保存在 `pipeline.last_result` 並寫入 `pipeline.json`。
