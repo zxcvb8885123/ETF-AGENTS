@@ -114,9 +114,15 @@ class ArgumentTests(unittest.TestCase):
             self.preflight_kwargs.append(kwargs)
             return [PreflightCheck("fake", False, "測試用預檢失敗")]
 
+        # 沒指定 root 時用暫存資料夾，避免碰到真排程正持有的 artifacts/daily/.lock。
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        if root is None:
+            root = Path(scratch.name)
+            (root / "artifacts" / "daily").mkdir(parents=True)
         with patch.object(self.module, "run_preflight", fake_preflight), \
                 patch.object(self.module, "notify", lambda *_args, **_kwargs: None), \
-                patch.object(self.module, "ROOT", root or ROOT), \
+                patch.object(self.module, "ROOT", root), \
                 patch("sys.argv", ["run_daily_pipeline.py", *argv]):
             code = self.module.main()
         return code, seen

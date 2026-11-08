@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,8 @@ FINMIND_DATASETS = frozenset({
     "TaiwanStockCashFlowsStatement",
 })
 FINMIND_NEWS_DATASET = "TaiwanStockNews"
+FINMIND_CONNECT_ATTEMPTS = 3
+FINMIND_RETRY_WAIT_SECONDS = (5, 15)
 FINMIND_LICENSE_URL = "https://finmind.github.io/en/Disclaimer/"
 
 SUPPLEMENTAL_SCHEMA = """
@@ -154,9 +157,11 @@ class FinMindApiProvider:
     dataset_error = "FinMind 資料集未列入白名單"
 
     def __init__(self, token: str | None = None,
-                 opener: Callable = urllib.request.urlopen):
+                 opener: Callable = urllib.request.urlopen,
+                 sleep: Callable[[float], None] = time.sleep):
         self.token = token if token is not None else os.environ.get("FINMIND_TOKEN", "")
         self.opener = opener
+        self.sleep = sleep
 
     def fetch(self, dataset: str, stock_id: str, start: date, end: date) -> str:
         if not self.token:
@@ -176,13 +181,20 @@ class FinMindApiProvider:
             headers={"Authorization": "Bearer " + self.token,
                      "Accept": "application/json"},
         )
-        try:
-            with self.opener(request, timeout=30) as response:
-                return response.read().decode("utf-8")
-        except urllib.error.HTTPError as error:
-            raise RuntimeError("FinMind HTTP %d；請檢查權限或額度" % error.code) from None
-        except (urllib.error.URLError, TimeoutError):
-            raise RuntimeError("FinMind 連線失敗") from None
+        reason = ""
+        for attempt in range(FINMIND_CONNECT_ATTEMPTS):
+            try:
+                with self.opener(request, timeout=30) as response:
+                    return response.read().decode("utf-8")
+            except urllib.error.HTTPError as error:
+                raise RuntimeError("FinMind HTTP %d；請檢查權限或額度" % error.code) from None
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                # 只有連線層錯誤才重試；HTTP 狀態碼（含額度用完）不重試。保留真正原因方便排查。
+                reason = type(error).__name__ + (
+                    ": %s" % getattr(error, "reason", error) if getattr(error, "reason", error) else "")
+                if attempt + 1 < FINMIND_CONNECT_ATTEMPTS:
+                    self.sleep(FINMIND_RETRY_WAIT_SECONDS[min(attempt, len(FINMIND_RETRY_WAIT_SECONDS) - 1)])
+        raise RuntimeError("FinMind 連線失敗（已試 %d 次，%s）" % (FINMIND_CONNECT_ATTEMPTS, reason)) from None
 
 
 class FinMindFundamentalProvider(FinMindApiProvider):

@@ -52,7 +52,7 @@ docker compose version
 
 **FinMind Token** 依序讀取：執行環境 → 專案根目錄 `.env`（`FINMIND_TOKEN=...`，權限 600，Git 忽略）。財報流程還可回退到 macOS 鑰匙圈服務 `etf-agent-finmind`。
 
-排程（20:00 資料、20:40 個股新聞、21:00 與 07:00 決策等）的時間表與安裝方式見[日常操作](operations.md#系統每天自己會做的事)。
+排程（20:00／06:00 資料、20:40 個股新聞、21:00 與 07:00 決策等）的時間表與安裝方式見[日常操作](operations.md#系統每天自己會做的事)。
 
 ## 每日流程（daily／run）
 

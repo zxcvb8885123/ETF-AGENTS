@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from etf_agent.data.database import MarketDataDatabase
 from etf_agent.data.supplemental_sources import (
@@ -145,6 +145,42 @@ class SupplementalSourceTests(unittest.TestCase):
             self.assertEqual(connection.execute(
                 "SELECT COUNT(*) FROM finmind_news_candidates"
             ).fetchone()[0], 1)
+
+
+class FinMindRetryTests(unittest.TestCase):
+    def provider(self, outcomes):
+        calls, waits = [], []
+
+        def opener(request, timeout):
+            calls.append(request)
+            outcome = outcomes[len(calls) - 1]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return FakeResponse(outcome)
+
+        return FinMindNewsProvider("secret", opener, sleep=waits.append), calls, waits
+
+    def test_retries_connection_error_then_succeeds(self):
+        provider, calls, waits = self.provider([URLError("reset"), TimeoutError(), "{}"])
+        self.assertEqual(provider.fetch("TaiwanStockNews", "2330", date(2026, 11, 6), date(2026, 11, 6)), "{}")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(waits, [5, 15])
+
+    def test_connection_failure_keeps_real_reason_after_all_attempts(self):
+        provider, calls, _ = self.provider([URLError("reset")] * 3)
+        with self.assertRaises(RuntimeError) as caught:
+            provider.fetch("TaiwanStockNews", "2330", date(2026, 11, 6), date(2026, 11, 6))
+        self.assertEqual(len(calls), 3)
+        self.assertIn("連線失敗", str(caught.exception))
+        self.assertIn("reset", str(caught.exception))
+
+    def test_http_error_is_not_retried(self):
+        error = HTTPError("u", 402, "quota", {}, None)
+        provider, calls, waits = self.provider([error, "{}"])
+        with self.assertRaises(RuntimeError) as caught:
+            provider.fetch("TaiwanStockNews", "2330", date(2026, 11, 6), date(2026, 11, 6))
+        self.assertIn("HTTP 402", str(caught.exception))
+        self.assertEqual((len(calls), waits), (1, []))
 
 
 if __name__ == "__main__":
