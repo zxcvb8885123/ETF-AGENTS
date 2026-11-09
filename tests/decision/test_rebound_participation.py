@@ -353,7 +353,7 @@ class GateShapeTests(unittest.TestCase):
             self.assertTrue(any("缺少必要欄位" in e and field in e for e in sizing_errors(sizing)), field)
         cases = {
             "含未允許欄位": {"threshold": "1"},
-            "version 只允許": {"version": "v2"},
+            "version 只允許": {"version": "v3"},
             "candidate_return": {"candidate_return": 0.03},
             "retreat_return": {"retreat_return": "0.04"},
             "candidate_expiry_days": {"candidate_expiry_days": 1},

@@ -264,7 +264,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
     GateRule(
         "rebound_participation",
         requires=("exposure_rotation", "cash_stance_turn_facts", "drawdown_derisk"),
-        note="反彈參與：程式狀態 turn_state 與風險 Agent 的 turn_assessment 取較保守者，放寬防守姿態下的曝險換股；"
+        note="反彈參與：v1 為程式狀態 turn_state 與風險 Agent 的 turn_assessment 取較保守者；v2 只算事實、由 turn_assessment 單獨決定（缺資料恆 none）；皆放寬防守姿態下的曝險換股；"
              "exposure_rotation 須為 v3、cash_stance_turn_facts v1、drawdown_derisk v4（自訂檢查在 rebound.validate_rebound_gate）；"
              "bundle 須為 typed_evidence_v1（建 turn_state 時檢查）；effective_state 由 apply_trade_decision 綁定；team_inputs 須為 2.8",
     ),

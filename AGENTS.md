@@ -77,7 +77,7 @@
 - 已開啟（現金與執行面）：`cash_buffer_floor`、`cash_ratio_range`、`cash_stance_recency`、`cash_fit_order`、`high_conviction_cash_priority`、`held_weight_budget`、`cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`、`sector_fit`、`turnover_fit`、`reentry_cooldown`、`drawdown_derisk` v4。
 - 已開啟（紀錄）：`cash_stance_turn_facts`（2026-11-09，紀錄工具，簡報附交易池轉向事實、風險 Agent 多填列舉 `turn_assessment`，列舉與姿態不設對應，見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)）。
 - 已開啟（紀錄）：`market_index_facts` v1（2026-11-10，風險 Agent 簡報附加權指數事實，背景、不可引用、不改配置；見 [`docs/market_index_facts_plan.md`](docs/market_index_facts_plan.md)）。
-- 已開啟（反彈）：`rebound_participation` v1（2026-11-09 23:45，只開 confirmed 一檔；程式狀態機與風險 Agent `turn_assessment` 雙鑰匙放寬防守姿態下的曝險換股，不放寬現金與換手；缺資料永不升級，重放成本目標未達，見 [`docs/rebound_participation_plan.md`](docs/rebound_participation_plan.md)）與其前提 `exposure_rotation` v3（防守目標仍 null）。
+- 已開啟（反彈）：`rebound_participation` v1（2026-11-09 23:45，只開 confirmed 一檔；程式狀態機與風險 Agent `turn_assessment` 雙鑰匙放寬防守姿態下的曝險換股，不放寬現金與換手；缺資料永不升級，重放成本目標未達，見 [`docs/rebound_participation_plan.md`](docs/rebound_participation_plan.md)）與其前提 `exposure_rotation` v3（防守目標仍 null）。`rebound_participation` v2 已實作、尚未開啟（拿掉固定門檻，程式只整理事實，`turn_assessment` 單獨決定、缺資料恆 none，見 [`docs/rebound_participation_v2_plan.md`](docs/rebound_participation_v2_plan.md)）；把它的行為當成現行行為是錯的。
 - 已實作、尚未開啟：`slot_recycle`。把它的行為當成現行行為是錯的。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
