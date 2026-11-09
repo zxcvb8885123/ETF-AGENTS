@@ -68,6 +68,8 @@
 | bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.6 |
 | `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
 
+未開啟：`high_conviction_cash_floor`；`cash_stance_recency`（2026-11-09 已實作，尚未寫入 `config/decision_policy.json`，由人決定何時開啟，見[計劃](recency_weighting_plan.md)）。
+
 未開啟：
 
 | 閘門 | 說明 |

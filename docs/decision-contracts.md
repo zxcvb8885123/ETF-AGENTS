@@ -147,6 +147,14 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 閘門開啟時 `cash_buffer_by_stance` 旋鈕不影響配置，相關反思提案一律 `needs_human`。
 - 省略此欄位的舊 Policy／舊 run 逐位元不變。
 
+### 現金姿態的資料新舊（`cash_stance_recency`）
+
+- 欄位 `{version: v1}`；只能用於 `evidence_policy: typed_evidence_v1`，可與 `cash_ratio_range` 獨立開關；目前尚未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。
+- 簡報第一個鍵 `evidence_recency` 由程式依 bundle 重算：市場層級證據的內容時間（新聞 `published_at`、隔夜時段 `session_end`、恐懼貪婪資料日）、距截止小時數與三個分組，界線是台股最近交易日 13:30；內容時間晚於截止即拒絕，找不到內容時間的證據記入 `data_gaps`；不含新聞文字。
+- 風險 Agent 另填列舉 `recency_reconciliation`；最新一組（`after_latest_close`）非空時不得填 `newest_insufficient` 且須引用其中至少一個證據，為空時只能填 `newest_insufficient`。Skill 規定：最新一組的事件與新聞預設為判斷「情況有沒有改變」的主要依據，利多利空同樣適用，不採用須說明；隔夜行情仍只是背景。這條是給 Agent 的取捨規則，程式只驗引用與列舉，不要求列舉與姿態對應，不放寬任何現金格點、上限、Guard 或回撤下限。
+- `team_inputs` 不升版：閘門決定 `cash_stance` 允許的欄位（與 `cash_grade` 同做法），Finalizer 與 `apply_trade_decision` 以 bundle 重算時間表再驗；回放略過此閘門（notes 標 `cash_stance_recency: ignored_in_replay`）。
+- 省略此欄位的舊 Policy／舊 run 逐位元不變。
+
 ### 2026-11-03 起的執行面閘門
 
 全為 `position_sizing`／rules 的版本閘門；白話說明見[決策流程細節](decision-details.md#交割與現金2026-11-03-起)。
