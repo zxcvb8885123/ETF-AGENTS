@@ -78,6 +78,7 @@
 未開啟：`high_conviction_cash_floor`。
 
 已開啟（紀錄用）：`cash_stance_turn_facts` v1（2026-11-09 開啟，轉向事實與 `turn_assessment` 列舉，不是規則，與姿態不設對應，見[計劃](turn_facts_plan.md)）。
+已實作、尚未開啟（紀錄用）：`market_index_facts` v1（風險 Agent 簡報附證交所加權指數收盤、當日漲跌、近 5／20 日報酬與離高點回檔，背景事實、不可引用；補上晚間決策看不到隔夜行情的缺口；不新增輸出欄位、不影響配置；要開啟由人在 `config/decision_policy.json` 的 `position_sizing` 加 `"market_index_facts": {"version": "v1"}`，見[計畫](market_index_facts_plan.md)）。把它的行為當成現行行為是錯的。
 
 未開啟：
 

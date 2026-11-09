@@ -369,7 +369,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                           prior_context,
                                           (base_policy.get("position_sizing") or {}).get("cash_stance_recency"),
                                           (base_policy.get("position_sizing") or {}).get("cash_stance_turn_facts"),
-                                          turn_state)
+                                          turn_state,
+                                          (base_policy.get("position_sizing") or {}).get("market_index_facts"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)

@@ -300,6 +300,11 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="風險 Agent 簡報附 turn_facts（交易池轉向事實，紀錄用）並多填 turn_assessment 列舉，列舉與姿態不設對應；"
              "前提 evidence_policy=typed_evidence_v1 在重建現金姿態時檢查；與 cash_stance_recency、cash_ratio_range 可獨立開關",
     ),
+    GateRule(
+        "market_index_facts",
+        note="風險 Agent 簡報附 market_index_facts（證交所加權指數收盤、漲跌、近 5／20 日報酬與離高點回檔，紀錄用、不可引用）；"
+             "不新增 Agent 輸出欄位、不影響配置，所以 Finalizer 不需重算；與其他現金姿態閘門可獨立開關",
+    ),
 )
 GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
 POSITION_SIZING_FIELDS = (
@@ -512,6 +517,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "cash_stance_turn_facts" in sizing:
         from .turn_facts import validate_cash_stance_turn_facts_gate
         validate_cash_stance_turn_facts_gate(sizing, errors)
+    if "market_index_facts" in sizing:
+        from .market_index import validate_market_index_facts_gate
+        validate_market_index_facts_gate(sizing, errors)
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)
