@@ -271,7 +271,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 service.read_json(sector_path, " 產業分類"),
             )
             base_policy = bind_drawdown(base_policy, bundle, nav_history)
-            base_policy = bind_holding_days(base_policy, bundle, holdings_history)
+            base_policy = bind_holding_days(base_policy, bundle, holdings_history, nav_history)
             if exposure_rotation_gate(base_policy.get("position_sizing")) is not None and fundamental_period_policy(bundle) is None:
                 raise DailyPipelineError("policy 啟用 exposure_rotation 時 bundle 必須有 fundamental_period_policy（team_inputs 2.7 是 2.6 的超集）")
             base_policy["content_sha256"] = decision_policy_sha256(base_policy)

@@ -293,5 +293,23 @@ class AnswerKeyTests(unittest.TestCase):
         self.assertEqual((enough["status"], enough["hit_rate"], enough["complete_days"]), ("ok", 0.5, 10))
 
 
+class RealPolicyEvaluationModeTests(unittest.TestCase):
+    """正式 config/decision_policy.json 的 available_at 必須晚於它最新開啟的閘門：較早 cutoff 一律標為反事實評測。"""
+
+    POLICY = Path(__file__).resolve().parents[2] / "config" / "decision_policy.json"
+
+    def test_cutoff_before_available_at_is_counterfactual(self):
+        from etf_agent.evaluation.service import _eval_template
+        available_at = json.loads(self.POLICY.read_text(encoding="utf-8"))["available_at"]
+        day = available_at[:10]
+        early, notes = _eval_template(self.POLICY, day + "T14:00:00+08:00")
+        self.assertEqual(notes["evaluation_mode"], "counterfactual")
+        self.assertTrue(notes["available_at_overridden"])
+        self.assertEqual(early["available_at"], day + "T14:00:00+08:00")
+        _, later = _eval_template(self.POLICY, "2026-11-10T07:00:00+08:00")
+        self.assertEqual(later["evaluation_mode"], "as_available")
+        self.assertFalse(later["available_at_overridden"])
+
+
 if __name__ == "__main__":
     unittest.main()

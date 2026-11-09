@@ -40,7 +40,7 @@
 
 ### 版本閘門啟用狀態
 
-這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-09 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-09-review-v1`，`available_at: 2026-11-09T13:42:11+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-09 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-09-turnfacts-v1`，`available_at: 2026-11-09T16:10:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
 
 本次只更新策略識別與真實可得時間，不變更任何策略門檻或閘門開關。審查前樣板原樣保存在 `config/policy_versions/2026-11-09-before-review.json`；該檔是當日審查前的內容快照，**不是**其中舊 `available_at` 日期當時的策略還原。封存 run 仍讀自己保存的 Policy，不改寫歷史。用新版策略重跑較早 cutoff 僅能是明確標示的反事實評測。
 
@@ -57,7 +57,7 @@
 | `rotation.forced_swap` | `version v1`、`min_new_conviction high`、`max_swaps_per_run 2`、`confirmation v1` |
 | `cash_buffer_floor` | `v1` |
 | `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
-| `exposure_rotation` | `version v1`（2026-11-09 開啟，見[計劃](exposure_rotation_plan.md)）；`beta_window_days 60`；`beta_floor_by_stance` aggressive 1.00／neutral 0.65／defensive null（實際觸發線＝下限 − `release_margin`：進攻 0.90、中性 0.55）；`release_margin 0.10`；`max_swaps_per_run 2`；`max_rotation_fraction 0.08`；`min_holding_days 5`；`min_new_conviction medium`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
+| `exposure_rotation` | `version v1`（2026-11-09 開啟，見[計劃](exposure_rotation_plan.md)）；`beta_window_days 60`；`beta_floor_by_stance` aggressive 1.00／neutral 0.65／defensive null（實際觸發線＝下限 − `release_margin`：進攻 0.90、中性 0.55）；`release_margin 0.10`；`max_swaps_per_run 2`；`max_rotation_fraction 0.20`；`min_holding_days 5`；`min_new_conviction medium`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
 | `cash_stance_recency` | `{version v1}`（2026-11-09 開啟；風險 Agent 簡報首鍵附證據時間表，另填 `recency_reconciliation`） |
 | `cash_buffer_by_stance` | aggressive 3%／neutral 10%／defensive 20%（`cash_ratio_range` 開啟時不影響配置） |
 | `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |

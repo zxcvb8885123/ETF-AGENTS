@@ -272,7 +272,7 @@ class DecisionFinalizer:
         errors: List[str] = []
         errors.extend(self._validate_drawdown_history())
         # exposure_rotation（版本閘門）：持有天數以帳本獨立重算；沒有閘門的舊 policy 不碰帳本。
-        validate_held_since(self.policy, self.bundle, self.holdings_history_provider, errors)
+        validate_held_since(self.policy, self.bundle, self.holdings_history_provider, errors, self.nav_history_provider)
         errors.extend(self._validate_cash_ratio_anchor())
         errors.extend(self._validate_team_chain())
         errors.extend(ProposalValidator(self.bundle, self.policy, self.intent).validate(proposal))

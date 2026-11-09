@@ -420,6 +420,7 @@ def _history_head(policy: Mapping[str, object]) -> str:
 def bind_holding_days(
     policy: Mapping[str, object], bundle: Mapping[str, object],
     holdings_history: Optional[Sequence[Mapping[str, object]]],
+    nav_history: Optional[Sequence[Mapping[str, object]]] = None,
 ) -> Dict[str, object]:
     """樣板啟用 ``exposure_rotation`` 時把每檔連續持有起點綁進 Policy；沒有閘門原樣回傳（呼叫端須重算 content_sha256）。
 
@@ -438,9 +439,20 @@ def bind_holding_days(
     if not rows or rows[-1].get("run_id") != _history_head(bound):
         raise DecisionToolError("帳本持股歷史的最新一筆不是 drawdown_control.history_ref.head_run_id")
     _check_history_times(rows, bundle)
+    _check_same_chain(rows, nav_history)
     held = [str(p["symbol"]).upper() for p in bundle["account_snapshot"]["positions"] if int(p.get("shares", 0)) > 0]
     gate["held_since_by_symbol"] = held_since_from_history(rows, held)
     return bound
+
+
+def _check_same_chain(rows: Sequence[Mapping[str, object]], nav_rows: Optional[Sequence[Mapping[str, object]]]) -> None:
+    """持股歷史必須與 NAV 歷史是同一條帳本鏈：逐列比對 run_id 與 as_of（筆數、順序都要一致）。"""
+    if nav_rows is None:
+        return
+    held = [(str(r.get("run_id")), str(r.get("as_of"))) for r in rows]
+    nav = [(str(r.get("run_id")), str(r.get("as_of"))) for r in nav_rows]
+    if held != nav:
+        raise DecisionToolError("帳本持股歷史與 NAV 歷史不是同一條鏈（run_id／as_of／筆數不一致）")
 
 
 def _check_history_times(rows: Sequence[Mapping[str, object]], bundle: Mapping[str, object]) -> None:
@@ -454,6 +466,7 @@ def _check_history_times(rows: Sequence[Mapping[str, object]], bundle: Mapping[s
 def validate_held_since(
     policy: Mapping[str, object], bundle: Mapping[str, object],
     provider: Optional[Callable[[str], Sequence[Mapping[str, object]]]], errors: List[str],
+    nav_provider: Optional[Callable[[str], Sequence[Mapping[str, object]]]] = None,
 ) -> None:
     """Finalizer：以帳本獨立重算 ``held_since_by_symbol``；缺帳本來源、讀不到、歷史不符或與重算不同一律拒絕。"""
     gate = exposure_rotation_gate(policy.get("position_sizing"))
@@ -476,6 +489,7 @@ def validate_held_since(
         if not rows or rows[-1].get("run_id") != head:
             raise DecisionToolError("帳本持股歷史的最新一筆不是 head_run_id=%s" % head)
         _check_history_times(rows, bundle)
+        _check_same_chain(rows, list(nav_provider(head)) if nav_provider is not None else None)
         held = [str(p["symbol"]).upper() for p in bundle["account_snapshot"]["positions"] if int(p.get("shares", 0)) > 0]
         expected = held_since_from_history(rows, held)
     except Exception as error:  # 帳本缺 head、雜湊鏈損毀、與帳戶不同步一律拒絕

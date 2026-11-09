@@ -352,8 +352,9 @@ class FinalizerChainTests(unittest.TestCase):
         # 對照：同一個世界、帳本也是近期才買進，就通過。
         recent_rows = [dict(row, as_of=row["as_of"].replace("09-01", "09-17")) for row in stale.holding_rows[:1]] + [
             dict(row, as_of=row["as_of"].replace("09-02", "09-18")) for row in stale.holding_rows[1:]]
-        _, recent_holdings = ledger_providers(stale.nav_rows, recent_rows)
-        self.assertEqual(mentions(stale.finalize(holdings_provider=recent_holdings), "held_since_by_symbol"), [])
+        recent_nav = [dict(nav, as_of=held["as_of"]) for nav, held in zip(stale.nav_rows, recent_rows)]  # 兩條歷史必須同一條鏈
+        recent_nav_provider, recent_holdings = ledger_providers(recent_nav, recent_rows)
+        self.assertEqual(mentions(stale.finalize(nav_provider=recent_nav_provider, holdings_provider=recent_holdings), "held_since_by_symbol"), [])
 
     def test_ledger_that_cannot_be_read_is_rejected(self):
         world = self.world
