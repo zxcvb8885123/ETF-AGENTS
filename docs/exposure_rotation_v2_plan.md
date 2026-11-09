@@ -125,3 +125,12 @@ v2 欄位：`version`（`v2`）、`beta_window_days`、`beta_target_by_stance`�
 - 已驗證（`replay_reference_only`）：用 11-09 真實持股、積極／`lower`／`balanced`、候選新股 30 檔、10 天的同一組情境（`sim4.py`）跑 v1 與 v2，每天的含現金 beta（0.1057→0.8572）、現金比例、訂單數、換出的股票名單逐日完全相同，連第 10 天 `no_eligible_victim` 都一樣。所以「換入者門檻改為高於組合 beta」在這組情境沒有改變行為；仍只是一組情境，不代表所有輸入。
 - 切換（2026-11-09 17:50，人決定）：`policy_id` 改為 `strategy-2026-11-09-exposure-v2-1`、`available_at` 為真實切換時間（不回填）；觸發與停止線數值不變（進攻 0.90、中性 0.55）。回放仍略過此閘門。
 - 回滾：把 `exposure_rotation` 區塊換回 `config/policy_versions/2026-11-09-exposure-rotation-v1.json` 的內容並更新 `policy_id`／`available_at`；v1 程式路徑仍在。
+
+## 12. v3：防守姿態的 beta 停止線
+
+動機（2026-11-09 實況）：大漲日交易池等權 +5.51%，我們的 NAV 只有 +0.40%，持股 beta 只有 0.13。v2 的 `beta_target_by_stance.defensive` 只能是 null，防守姿態不觸發曝險換股，所以低 beta 持股一檔都沒換。是否在防守姿態也補 beta 是策略取捨，由人決定；程式只提供能力。
+
+- 實作：`exposure.py` 新增 `EXPOSURE_ROTATION_V3`、`gate_is_v3`、`gate_has_targets`（v2／v3 共用欄位集合與配對規則）；`_validate_beta_targets` 在 v3 允許 `defensive` 填數字（值域與 aggressive／neutral 相同：大於 0 且不超過 2），並要求 進攻 ≥ 中性 ≥ 防守（有填的比較）。`exposure_rotation_plan` 對 v3 走 v2 的全部分支，`defensive` 為 null 時 `skipped.exposure = stance_not_triggered`，與 v2 逐位相同。
+- 不變：欄位白名單（沿用 v2，不加回已刪的欄位）、`max_swaps_per_run`、換入者 beta 嚴格高於組合 beta、`rotation.min_new_conviction`、與 `drawdown_derisk` 互斥（減碼日略過）、不只賣不買、賣單由程式標 `exit` 且不改寫交易 Agent 意圖、`turn_assessment` 等列舉與姿態不設對應。`team_inputs` 結構沒有變，維持 2.7（`exposure_review.policy.version` 只回寫閘門版本字串）；v1／v2 的 Policy 重建路徑逐位元不變。
+- 策略反思：整個 `exposure_rotation` 已在 `FORBIDDEN_PREFIXES`，v3 欄位同樣不可調。
+- 啟用：由人把正式設定的 `exposure_rotation.version` 改成 `v3` 並把 `beta_target_by_stance.defensive` 填成數字；尚未開啟，未用歷史輸入驗證防守目標值（例如 0.35）的實際效果。

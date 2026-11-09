@@ -47,6 +47,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 | 版本 | 內容 |
 | --- | --- |
+| 2.8 | 2.7 再加程式計算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（雙向檢查，缺一即拒絕），Finalizer 整份重算比對 |
 | 2.7 | 2.6 再加程式計算的曝險檢視 `exposure_review`；只在 `position_sizing.exposure_rotation` 啟用時存在，兩者缺一即拒絕 |
 | 2.6 | 2.5 再加程式計算的基本面指標 `fundamental_metrics`；只在 bundle 有 `fundamental_period_policy` 時，Finalizer 以 `validate_fundamental_metrics` 整份重算比對 |
 | 2.5 | 2.4 再加交易 Agent 第二輪的入選排序 `selection_ranking` |
@@ -160,19 +161,34 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 - 欄位 `{version: v1}`；只能用於 `evidence_policy: typed_evidence_v1`，與 `cash_stance_recency`、`cash_ratio_range` 互相獨立；目前尚未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。這是**紀錄工具，不是規則**。
 - 簡報在 `regime_assessment` 旁多一個鍵 `turn_facts`，由 `decision/turn_facts.py` 只依 `price_series` 重算：最近兩日池等權日報酬、連續上漲日數、站回 MA5／MA20 的股票比例、MA20／MA60 之上比例（呼叫 `MomentumEngine._regime`，與 regime 同一公式）、MA20 之上比例的 5 日變化、20 日新低比例、regime 連續 bear 天數（需 61 筆以上，被歷史長度截斷時標 `bear_streak_truncated`）。全部為字串或整數，沒有文字判斷；資料不足記入 `data_gaps`；任何 bar 晚於 `snapshot.latest_trade_date` 即拒絕。
-- 風險 Agent 另填列舉 `turn_assessment`（`no_turn_evidence`／`turn_unconfirmed`／`turn_confirmed`）；驗證只檢查必填與值域，不驗與姿態的對應、不驗文字品質，不放寬或收緊任何現金格點、`stance_floor` 或 Guard，也不改 `_regime`。
+- 風險 Agent 另填列舉 `turn_assessment`（`no_turn_evidence`／`turn_unconfirmed`／`turn_confirmed`）；驗證只檢查必填與值域，不驗與姿態的對應、不驗文字品質，不放寬或收緊任何現金格點、`stance_floor` 或 Guard，也不改 `_regime`。Policy 另啟用 `rebound_participation` 時，這個列舉才是雙鑰匙的一把（與程式狀態取較保守者，只放寬防守姿態下的曝險換股，見下方「反彈參與」）；沒有該閘門時它仍然只是紀錄。
 - 簡報 note 與 Agent Skill 只保留一般性風險提醒，不硬寫特定日期案例、後續報酬或未由本次資料計算的交易成本；歷史重跑也不得取得 cutoff 之後的案例。
 - `team_inputs` 不升版；Finalizer 與 `apply_trade_decision` 以 bundle 重算再驗；回放略過此閘門（notes 標 `cash_stance_turn_facts: ignored_in_replay`）；策略反思不得改。省略此欄位的舊 Policy／舊 run 逐位元不變。
 
-### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1／v2）
+### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1／v2／v3）
 
 - 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
 - **v2**（2026-11-09 已實作，同日 17:50 正式設定切到 v2，計劃見 [exposure_rotation_v2_plan.md](exposure_rotation_v2_plan.md)）：欄位只有 `version: v2`、`beta_window_days`、`beta_target_by_stance`（停止線，`defensive` 只能 null，進攻 ≥ 中性）、`max_swaps_per_run`、`min_holding_days`、`hold_conviction: v1`、選配 `conviction_gap_swap: v1` 與流程綁入的 `held_since_by_symbol`；v1 專屬欄位（`beta_floor_by_stance`、`release_margin`、`max_rotation_fraction`、`min_new_conviction`）出現即拒絕，v1 閘門逐位元不變。差異：觸發與停止都是「含現金整體 beta ≥ 目標」（沒有釋放帶）；換入者 beta 必須高於組合 beta（v1 是 ≥ 組合 beta + `release_margin`）；沒有賣出市值比例上限，換出量只受 `max_swaps_per_run` 與單股上限間接限制（換手由 `turnover_fit` 把關）；換入者的最低信心沿用 `rotation.min_new_conviction`。
+- **v3**（已實作、尚未開啟；動機見 [exposure_rotation_v2_plan.md](exposure_rotation_v2_plan.md#12-v3防守姿態的-beta-停止線)）：欄位集合與全部行為都同 v2，唯一差別是 `beta_target_by_stance.defensive` 可填數字（v1／v2 只能 null）；`defensive` 為 null 時等同不觸發，有填時要求 進攻 ≥ 中性 ≥ 防守（有填的比較）。`team_inputs` 結構不變（仍為 2.7，`exposure_review.policy.version` 只回寫閘門版本）；與 `drawdown_derisk` 互斥（減碼日略過）、換股上限、不只賣不買、賣單標 `exit` 等規則與 v2 相同。v1／v2 的 Policy 重建逐位元不變。
 - hold 信心：閘門開啟時交易 Agent 對 `hold` 也必填 `conviction`，程式綁入 `hold_conviction_by_symbol`（不得與 `conviction_by_symbol` 重複）；沒開時 hold 帶信心被拒。
 - `exposure_review`（`team_inputs` 2.7）：程式依 `price_series` 對交易池等權基準算每檔 beta、up／down capture 與含現金的組合 beta；任何持股缺資料時組合層級為 null，不補假值。
 - 持有天數由帳本持股歷史算（連續持有、台北時區日曆日），Finalizer 以帳本獨立重算，讀不到或與 Policy 不符即拒絕。
 - 換股：姿態有非 null 下限且組合 beta 低於「下限 − `release_margin`」（死區，起止同一條線，沒有跨日狀態）時，把「本次 buy 被名額擋下」的高 beta 新股換掉「hold、信心非 high、持有天數足夠、beta 低於組合」的持股；`conviction_gap_swap` 另可在任何姿態以 high 新股換 low 持股。兩者共用 `max_swaps_per_run`、`max_rotation_fraction`（v2 沒有後者），換出者的賣單由程式標 `exit`（旗標 `RISK_EXPOSURE_ROTATION`／`RISK_CONVICTION_GAP_SWAP`，不觸發時留 `…_SKIPPED:<原因>`），換入者拿不到名額就捨棄該對，絕不只賣不買。首個換入候選無可負擔的配對時，依原信心／名次繼續嘗試後續候選，不讓昂貴候選擋住整條配對；失敗嘗試不預扣資金。與 `drawdown_derisk` 互斥（減碼日整個略過）；`forced_swap` 與交易 Agent 的 exit／trim 優先。
 - 回放略過此閘門（notes 標 `exposure_rotation: ignored_in_replay`）；省略此欄位的舊 Policy／舊 run 逐位元不變。
+
+### 反彈參與（`position_sizing.rebound_participation` v1，已實作、尚未開啟）
+
+動機、定義、過擬合風險與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md)。版本閘門，只由人設定，策略反思不得改（`FORBIDDEN_PREFIXES`）；沒有此欄位的舊 Policy／舊 run 逐位元不變。
+
+- 前提（缺一 fail-closed 拒絕）：`exposure_rotation.version = v3`、`cash_stance_turn_facts = {version: v1}`、`drawdown_derisk.version = v4`、bundle 為 `typed_evidence_v1`（建 `turn_state` 時檢查）。
+- 欄位（全部由人設定、程式不給預設值）：`version`、`candidate_return`、`candidate_ma5_share`、`confirm_return`、`confirm_ma5_share`、`confirm_new_low_share_max`、`candidate_expiry_days`、`retreat_return`、`retreat_window_days`、`retreat_ma5_share`、`min_coverage`、`by_state`（`candidate`／`confirmed` 各有 `defensive_target`、`max_swaps_per_run`、`min_holding_days`；選填 `defensive_cash_buffer`（兩態皆可，見下「條件式現金放寬」）；`confirmed` 另可選 `neutral_target` 與 `max_turnover_rate`（見下「confirmed 換手上限」））；流程綁入、不得預填的 `effective_state` 與 `cash_loosening`。`by_state` 的檔數不得高於 `rotation.max_swaps_per_run`，confirmed 不得比 candidate 更保守（停止線不降、檔數不減、持有天數不增、現金比例不升）。小動大動分開：candidate 只建議放寬停止線（`max_swaps_per_run` 與 `min_holding_days` 與現行曝險換股相同），只有 confirmed 才放大檔數並取消持有天數限制。
+- **程式狀態 `turn_state` ∈ none／candidate／confirmed**（`decision/rebound.py`）：只在 regime（`MomentumEngine._regime`）為 bear 時有意義，其餘恆 none；訊號只用 `turn_facts` 既有欄位（池等權日報酬、站回 MA5 比例、20 日新低比例），沿 `price_series` 逐日推進的無記憶重算（不跨 run 存狀態）。none→candidate：當日池報酬 ≥ `candidate_return` 且站回 MA5 比例 ≥ `candidate_ma5_share`（該日為第 1 日）。candidate→confirmed：第 2 日起至第 `candidate_expiry_days` 日，**轉向日之後**各日池報酬複利 ≥ `confirm_return`（不含轉向日當天）、站回 MA5 比例 ≥ `confirm_ma5_share`、20 日新低比例 ≤ `confirm_new_low_share_max`；第 `candidate_expiry_days` + 1 日仍未確認即回 none（期間再出現大漲不重設計數）。退回 none：近 `retreat_window_days` 日池報酬複利 ≤ `retreat_return` 且站回 MA5 比例 < `retreat_ma5_share`（單日大跌不退）；或 regime 離開 bear。任一訊號算不出、覆蓋 < `min_coverage`、regime 不可用（歷史不足 61 筆）或 bar 晚於 `snapshot.latest_trade_date`：回 none 並標 `TURN_STATE_UNAVAILABLE`（缺資料永不升級）。
+- **雙鑰匙**：`effective_state = min(程式 turn_state, 風險 Agent 既有 turn_assessment 對映)`，`no_turn_evidence`→none、`turn_unconfirmed`→candidate、`turn_confirmed`→confirmed；程式單獨不能升、Agent 單獨也不能升。Agent 不輸出任何數字、不新增欄位，驗證只核列舉值域。`drawdown_control.stance_floor` 為 defensive 時恆 none（回撤下限優先）；減碼日（`drawdown_derisk`）曝險換股整個略過。`effective_state` 由 `apply_trade_decision` 綁進閘門，Finalizer 以 `team_inputs.turn_state` 與風險 Agent 列舉重算比對。
+- 對映（`apply_rebound`，只放寬、不收緊）：有效狀態不是 none 時，曝險換股的防守 beta 停止線取 `max(現行, by_state.defensive_target)`（`neutral_target` 選配）、`max_swaps_per_run` 取較大、`min_holding_days` 取較小；換出者範圍不變（交易 Agent 標 `hold` 且非 `high`）、賣單仍標 `exit`、不改寫交易 Agent 意圖、不只賣不買，`turnover_fit` 仍是最終上限；不改持股廣度。留下旗標 `REBOUND_PARTICIPATION:<state>`（symbol 為 `PORTFOLIO`）。
+- **條件式現金放寬（選填 `by_state.<state>.defensive_cash_buffer`，放寬風控、只由人設定）**：有效狀態為 candidate／confirmed 且風險 Agent 的姿態為 `defensive` 時，`apply_trade_decision` 把 `cash_buffer_rate` 改為 `min(grid 或 cash_buffer_by_stance 的原比例, 該態目標)`——這是程式在「雙鑰匙都同意轉向」才成立的條件式覆寫，覆寫的是風險 Agent 的 defensive 現金子等級，只放寬、永不收緊；neutral／aggressive 不動。目標不得低於中性姿態最低現金比例、confirmed ≤ candidate。覆寫前後值綁進閘門的 `cash_loosening`（`{from, to}`），`sizing.validate_position_sizing` 以 `rebound.loosened_cash_buffer` 重算 `cash_buffer_rate` 與 `cash_loosening` 比對（Finalizer 隨 Policy 驗證一併重算），配置留下旗標 `REBOUND_CASH_LOOSENED:<state>`。與其他閘門：`drawdown_control.stance_floor` 為 defensive 時有效狀態恆 none，所以回撤下限優先；`cash_ratio_range.max_daily_raise` 只限制往上拉高風險 Agent 可選的格點，放寬是往下，不受影響；放寬後的比例成為次日 `cash_ratio_range` 的 anchor（次日若轉回防守，`max(lower, anchor + max_daily_raise)` 仍保證至少 lower 格可選）；`cash_buffer_floor`、`drawdown_derisk` 都讀放寬後的現金比例（防守姿態減碼的目標隨之降低，減碼日仍整個略過曝險換股）；與 `high_conviction_cash_floor` 本來就互斥。
+- **confirmed 換手上限（選填 `by_state.confirmed.max_turnover_rate`，放寬風控、只由人設定）**：`max_turnover_rate` 是 `config/decision_policy.json` 的可調 Policy 值，不是競賽硬規則（`competition_rules.json`、`competition_profile.json`、`decision_rules.json` 都沒有換手上限；只有 Guard 的 `TURNOVER` 檢查與 `turnover_fit` 讀它）。有效狀態為 confirmed 且有此欄位時，`effective_policy.max_turnover_rate` 取 `max(Policy 值, 欄位值)`（只放寬），Guard 的 `TURNOVER` 同步用放寬後的上限，留下旗標 `REBOUND_TURNOVER_RAISED:confirmed`；candidate 與 none 沿用 Policy 值。修正循環的 `reduce_turnover_limit` 仍只能往下。
+- 風險 Agent 簡報附 `turn_state`（`citable=false`、無 `evidence_id`，只當背景）；簡報與 Skill 不寫特定日期案例。回放略過此閘門（notes 標 `rebound_participation: ignored_in_replay`）；用新 Policy 重跑較早 cutoff 屬反事實評測（`evaluation_mode: counterfactual`）。
+- **證據等級**：門檻是以只有極少數大漲日的歷史擬合出來的（n ≤ 3），重放全部是 `replay_reference_only`，不是對 LLM 的前瞻驗證；只有比賽期間的即時紀錄算證據。
 
 ### 輸入時間與評測帳本的前置驗證
 
@@ -190,6 +206,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 | `cash_fit_order` | 現金不足時依信心、名次分錢；新股殘量不足（低於 `cash_fit_min_fill_ratio`）即整筆取消，`RISK_CASH_FIT`；持有的 add 只減量 |
 | `high_conviction_cash_priority`（2026-11-06，須與 `cash_fit_order` 同時出現） | 可動用現金先全部給 high，high 新股不做零頭取消、買得到幾張買幾張；high（含持有的 add）被縮減且至少買到一張後，後面未持有的中、低信心新股降為 0 並留 `CASH_BUFFER` 旗標，持股加碼不受影響；high 連一張都買不起而整筆取消時不擋後面買單 |
 | `held_weight_budget`（2026-11-08） | 已持有的加碼候選現有權重高於信心份額時，以現有權重計入預算、不再加碼、不建買單（`RISK_HELD_WEIGHT`），避免其他候選被超配後又被現金緩衝砍回 |
+| `slot_recycle`（`{version: v1}`，已實作、尚未開啟） | 排名在前的新股因預算為零或目標金額不足一張（`LOT_SIZE`）而不會成交時，不再占著新增名額：移出名額計數後重算，讓後面的候選補位（原本被記 `MAX_POSITIONS`）；移出者仍記 `LOT_SIZE`、權重為 0，入選總數仍受持股上限、廣度目標與換股名額限制。只處理 `LOT_SIZE`／預算為零，不處理現金、權重或換手等後續步驟才沒有買單的候選。省略此欄位的舊 Policy／舊 run 逐位元不變；策略反思不得改 |
 | `cash_ceiling_fix` | 現金逼近 25% 上限時留住 exit，`RISK_CASH_CEILING` |
 | `stock_limit_headroom` | buy／add 的單股上限留 3% 空間 |
 | `buy_gap_reserve` | 買單預留跳空緩衝（`buy_gap_reserve_rate`） |

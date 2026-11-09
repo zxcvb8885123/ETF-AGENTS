@@ -58,11 +58,14 @@
 | `cash_buffer_floor` | `v1` |
 | `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
 | `exposure_rotation` | `version v2`（2026-11-09 開啟 v1、同日 17:50 切到 v2，見[計劃](exposure_rotation_plan.md)與[v2 計劃](exposure_rotation_v2_plan.md)）；`beta_window_days 60`；`beta_target_by_stance` aggressive 0.90／neutral 0.55／defensive null（觸發與停止線，與 v1 的「下限 − margin」數值相同）；`max_swaps_per_run 2`；`min_holding_days 5`；換入者最低信心沿用 `rotation.min_new_conviction`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
+| `exposure_rotation` v3 | **2026-11-09 23:45 已開啟**（為了 `rebound_participation`，`defensive` 目標仍是 null，行為與 v2 相同）：欄位同 v2，`beta_target_by_stance.defensive` 可填數字（例如 0.35）；見[v2 計劃第 12 節](exposure_rotation_v2_plan.md#12-v3防守姿態的-beta-停止線) |
 | `cash_stance_recency` | `{version v1}`（2026-11-09 開啟；風險 Agent 簡報首鍵附證據時間表，另填 `recency_reconciliation`） |
 | `cash_buffer_by_stance` | aggressive 3%／neutral 10%／defensive 20%（`cash_ratio_range` 開啟時不影響配置） |
 | `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |
 | `high_conviction_cash_priority` | `v1`（2026-11-06 新增） |
 | `held_weight_budget` | `v1`（2026-11-08 新增） |
+| `rebound_participation` | v1 **2026-11-09 23:45 已開啟，只開 confirmed 一檔**（candidate 的 `defensive_target` 設 0.01、換股 2 檔、持有 5 天＝實質不動；confirmed 為 0.55、4 檔、持有 0 天；**沒有**填選填的 `defensive_cash_buffer` 與 `confirmed.max_turnover_rate`，所以不放寬現金與換手；之前樣板存於 `config/policy_versions/2026-11-09-rebound-before.json`，回滾＝刪除此欄位並把 `exposure_rotation.version` 改回 v2）：程式狀態機 `turn_state` 與風險 Agent 的 `turn_assessment` 取較保守者，放寬防守姿態下的曝險換股（選填：防守現金比例條件式放寬、confirmed 換手上限，皆放寬風控、只由人設定）；前提 `exposure_rotation` v3（正式設定已是 v3）、`cash_stance_turn_facts`、`drawdown_derisk` v4、`typed_evidence_v1`；`team_inputs` 2.8；計劃與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md) |
+| `slot_recycle` | v1 已實作、尚未開啟（正式設定沒有此欄位）：LOT_SIZE／預算為零的新股釋出新增名額給後面的候選 |
 | `cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`（`buy_gap_reserve_rate 0.03`）、`sector_fit`、`turnover_fit` | 皆 `v1`；`insufficient_funds_policy void_batch` |
 | `reentry_cooldown` | `{version v1, days 3}` |
 | `drawdown_derisk` | `{version v4, max_derisk_fraction 0.25}`（v4 於 2026-11-08 開啟） |

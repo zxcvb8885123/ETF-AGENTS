@@ -27,5 +27,6 @@
 
 ## 開啟與回滾
 
+- 後續：`position_sizing.rebound_participation`（已實作、尚未開啟，見 [rebound_participation_plan.md](rebound_participation_plan.md)）把 `turn_assessment` 當作雙鑰匙的一把；只有該閘門開啟時列舉才會影響配置，沒有它時本閘門仍然只是紀錄。
 - 開啟：在 `config/decision_policy.json` 的 `position_sizing` 加 `"cash_stance_turn_facts": {"version": "v1"}`（需 `typed_evidence_v1`，可獨立於 `cash_stance_recency`）。
 - 回滾：刪除該欄位即可，舊 Policy／舊 run 逐位元不變；策略反思不得改此欄位。
