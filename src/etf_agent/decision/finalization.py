@@ -27,6 +27,7 @@ from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
 from .rotation import validate_portfolio_slots
 from .cash_ratio import validate_cash_ratio_anchor
+from .recency import cash_stance_recency_gate
 from .sizing import cash_ratio_gate, cash_ratio_selection_check, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
@@ -364,7 +365,10 @@ class DecisionFinalizer:
         sizing = self.policy.get("position_sizing")
         # cash_ratio_range（版本閘門）：現金姿態另含 cash_grade，必須在 policy 綁定的 anchor 算出的今日可選格點內。
         gate = cash_ratio_gate(sizing) if isinstance(sizing, Mapping) else None
-        validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate, prior_context=prior)
+        validate_cash_stance(
+            self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate, prior_context=prior,
+            recency_gate=cash_stance_recency_gate(sizing),
+        )
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {

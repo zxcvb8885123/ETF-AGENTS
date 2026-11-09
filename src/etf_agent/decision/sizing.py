@@ -269,6 +269,11 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="兩者都改變防守現金落點所以互斥；anchor 由 pipeline 綁定，Finalizer 以決策庫重算；開啟時 cash_buffer_by_stance 旋鈕不影響配置",
     ),
     GateRule("cash_grade", requires=("cash_ratio_range",), note="只在綁定交易決策時由 apply_trade_decision 寫入"),
+    GateRule(
+        "cash_stance_recency",
+        note="風險 Agent 簡報附 evidence_recency（內容時間分組）並多填 recency_reconciliation 列舉；"
+             "前提 evidence_policy=typed_evidence_v1 在重建現金姿態時檢查（Policy 看不到 bundle）；與 cash_ratio_range 可獨立開關",
+    ),
 )
 GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
 POSITION_SIZING_FIELDS = (
@@ -320,6 +325,7 @@ def validate_cash_stance(
     errors: List[str],
     cash_ratio_range: Optional[Mapping[str, object]] = None,
     prior_context: Optional[Mapping[str, object]] = None,
+    recency_gate: Optional[Mapping[str, object]] = None,
 ) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
 
@@ -329,11 +335,15 @@ def validate_cash_stance(
 
     ``cash_ratio_range`` 是已綁定 anchor 的版本閘門物件；為 None 時欄位白名單與舊版完全相同（出現 cash_grade 即拒絕）。
     有閘門時 ``cash_grade`` 必填，且必須在該姿態今日可選的格點內；超出即拒絕、不夾到邊界。
-    ``prior_context`` 是本次的前次決策背景（PriorDecisionContext）；有閘門時其前次 decision_id 也列入理由的禁用識別碼。"""
+    ``prior_context`` 是本次的前次決策背景（PriorDecisionContext）；有閘門時其前次 decision_id 也列入理由的禁用識別碼。
+    ``recency_gate`` 是 cash_stance_recency 閘門物件；為 None 時欄位白名單與舊版完全相同（出現 recency_reconciliation 即拒絕）。
+    有閘門時必須是 typed_evidence_v1，且 ``recency_reconciliation`` 必填、依程式重算的時間表驗證。"""
     if not isinstance(stance, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
     fields = {"level", "breadth", "rationale", "evidence_ids"}
+    if recency_gate is not None:
+        fields = fields | {"recency_reconciliation"}
     if cash_ratio_range is not None:
         fields = fields | {"cash_grade"}
         _validate_cash_grade(cash_ratio_range, stance, prefix, errors, prior_context)
@@ -354,7 +364,17 @@ def validate_cash_stance(
     if unknown:
         errors.append("%s 引用不存在：%s" % (prefix, ", ".join(untrusted_value(item) for item in unknown)))
     if context.evidence_policy is None:
+        if recency_gate is not None:
+            errors.append("%s：cash_stance_recency 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
         return
+    if recency_gate is not None:
+        from .recency import evidence_recency, validate_recency_reconciliation
+        try:
+            recency = evidence_recency(context.bundle, context.market_evidence_ids)
+        except DecisionToolError as error:
+            errors.append("%s：%s" % (prefix, error))
+        else:
+            validate_recency_reconciliation(recency, stance, evidence, prefix, errors)
     if evidence and not set(evidence) & context.market_evidence_ids:
         errors.append(
             "%s 至少要引用一個市場層級證據（market_level_evidence_ids：全市場情緒、恐懼貪婪成分、隔夜市場或市場狀態編號）；"
@@ -446,6 +466,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
         _validate_high_conviction_cash_floor(sizing, errors)
     if "limit_scaled_conviction" in sizing:
         _validate_limit_scaled_conviction(sizing, errors)
+    if "cash_stance_recency" in sizing:
+        from .recency import validate_cash_stance_recency_gate
+        validate_cash_stance_recency_gate(sizing, errors)
 
 
 def _ratio_in_open_unit(raw: object, label: str, errors: List[str], allow_one: bool) -> None:
