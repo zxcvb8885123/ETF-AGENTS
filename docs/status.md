@@ -72,7 +72,9 @@
 | bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.7（`exposure_rotation` 開啟時） |
 | `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
 
-未開啟：`high_conviction_cash_floor`；`cash_stance_turn_facts`（2026-11-09 已實作 v1，紀錄用的轉向事實與 `turn_assessment` 列舉，不是規則；尚未寫入 `config/decision_policy.json`，見[計劃](turn_facts_plan.md)）。
+未開啟：`high_conviction_cash_floor`。
+
+已開啟（紀錄用）：`cash_stance_turn_facts` v1（2026-11-09 開啟，轉向事實與 `turn_assessment` 列舉，不是規則，與姿態不設對應，見[計劃](turn_facts_plan.md)）。
 
 未開啟：
 

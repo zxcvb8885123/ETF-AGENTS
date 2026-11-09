@@ -57,6 +57,7 @@
       "selection_check": "v1"
     },
     "cash_stance_recency": {"version": "v1"},
+    "cash_stance_turn_facts": {"version": "v1"},
     "exposure_rotation": {
       "version": "v1",
       "beta_window_days": 60,

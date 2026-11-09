@@ -97,9 +97,9 @@ class TurnFactsGateShapeTests(unittest.TestCase):
         rule = next(rule for rule in GATE_PREREQUISITES if rule.field == "cash_stance_turn_facts")
         self.assertEqual(tuple(rule.requires), ())
 
-    def test_live_config_does_not_enable_it_yet(self):
+    def test_live_config_enables_it(self):
         policy = json.loads((ROOT / "config/decision_policy.json").read_text(encoding="utf-8"))
-        self.assertNotIn("cash_stance_turn_facts", policy["position_sizing"])
+        self.assertEqual(policy["position_sizing"]["cash_stance_turn_facts"], {"version": "v1"})
 
 
 class ShortHistoryFactsTests(unittest.TestCase):

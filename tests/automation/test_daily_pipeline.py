@@ -38,7 +38,7 @@ def fixed_policy_template():
 def gateless_policy_template():
     """固定樣板移除會改變 Agent Schema 的閘門；live 整合測試必須明確選用 live_policy_template。"""
     template = fixed_policy_template()
-    for field in ("limit_scaled_conviction", "cash_ratio_range", "cash_stance_recency", "exposure_rotation"):
+    for field in ("limit_scaled_conviction", "cash_ratio_range", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation"):
         template["position_sizing"].pop(field, None)
     return template
 
@@ -789,6 +789,7 @@ class LiveTemplatePipelineTests(unittest.TestCase):
         # cash_stance_recency 需要 typed_evidence_v1 的 bundle 與 recency_reconciliation，這份 fixture 沒有；
         # 它的整條鏈由 test_cash_stance_recency 覆蓋，這裡只驗另外兩個閘門。
         template["position_sizing"].pop("cash_stance_recency")
+        template["position_sizing"].pop("cash_stance_turn_facts")  # 同上，需要 turn_assessment
         # exposure_rotation 需要帳本持股歷史與 team_inputs 2.7；整條鏈由 test_exposure_rotation_e2e 覆蓋。
         template["position_sizing"].pop("exposure_rotation")
         high_trade = copy.deepcopy(TRADE)

@@ -75,7 +75,8 @@
 - **版本閘門啟用狀態**（唯一出處與目前數值：[`docs/status.md`](docs/status.md#版本閘門啟用狀態)，2026-11-08 依 `config/decision_policy.json` 核對）。已開啟（判斷與配置）：`position_review`（只設 `loss_alert` 0.15）、`conviction_volatility_v2`（`volatility_exponent` 0）、`selection_ranking`、`limit_scaled_conviction`（alpha 0.6）、`held_add_priority`＋`rotation`、`forced_swap`＋`confirmation`、`typed_evidence_v1`。
 - 已開啟（曝險）：`exposure_rotation`（2026-11-09，只在姿態為 neutral／aggressive 或信心差換股時動作）。
 - 已開啟（現金與執行面）：`cash_buffer_floor`、`cash_ratio_range`、`cash_stance_recency`、`cash_fit_order`、`high_conviction_cash_priority`、`held_weight_budget`、`cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`、`sector_fit`、`turnover_fit`、`reentry_cooldown`、`drawdown_derisk` v4。
-- 未開啟：`high_conviction_cash_floor`；`cash_stance_turn_facts`（2026-11-09 已實作 v1，紀錄工具，簡報附交易池轉向事實、風險 Agent 多填列舉 `turn_assessment`，列舉與姿態不設對應，見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)）。把它們的行為當成現行行為是錯的。
+- 已開啟（紀錄）：`cash_stance_turn_facts`（2026-11-09，紀錄工具，簡報附交易池轉向事實、風險 Agent 多填列舉 `turn_assessment`，列舉與姿態不設對應，見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)）。
+- 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界
 
