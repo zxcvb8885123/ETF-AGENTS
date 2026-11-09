@@ -88,7 +88,7 @@ claim 是研究員提出的一個理由；claim_id 是它的識別碼，讓交�
 | --- | --- |
 | symbol | 本批股票的完整代號，例如 2308.TW。 |
 | intent | 這次選擇的單一行動，見下一節。 |
-| conviction | 只有買進或加碼才填 high／medium／low；其他行動填 JSON 的 null（不是「中性」或空字串）。 |
+| conviction | 買進或加碼填 high／medium／low；policy 啟用 `exposure_rotation` 時 hold 也必填（見第 5 節）；其他行動一律填 JSON 的 null（不是「中性」或空字串）。 |
 | rationale | 用中文說明整合後的決定：主要支持理由、主要反對理由、採納與否決的依據，以及為什麼選這個行動。只使用既有論點與提供的背景。 |
 | adopted_claim_ids | 本檔採納的既有論點、警示與持股事實識別碼陣列，可同時包含多頭與空頭。沒有時填 []。 |
 | rejected_claim_ids | 本檔否決的既有論點識別碼陣列。沒有時填 []。 |
@@ -114,7 +114,7 @@ unresolved_questions 記錄「現在還不知道什麼」；invalidation_conditi
 依據要求（Validator 檢查；名額、警示與前次決策都不改變它）：
 
 - buy／add：至少採納一個多頭論點，且 momentum_status=available。
-- trim／exit／forced_exit：至少採納一個依據——該股票的空頭論點、持股檢視警示 `review_id` 或持股事實 `position_id`（後兩者只在 policy 啟用 `position_review` 時才有；沒有時就要有空頭論點）。只為了騰出名額而出場、或為了填滿名額而買進沒有多頭依據的股票，都不符合這兩條。
+- trim／exit／forced_exit：至少採納一個依據——該股票的空頭論點、持股檢視警示 `review_id` 或持股事實 `position_id`（後兩者只在 policy 啟用 `position_review` 時才有；沒有時就要有空頭論點）。不得純粹為了買別檔而賣（出場要有該股自己的依據），也不得為了填滿名額而買進沒有多頭依據的股票，都不符合這兩條。
 - `loss_alert` 的持股：hold／add／no_trade 另需至少一個被採納的多頭論點。
 
 滿足這些條件只表示意圖符合基本契約，風控是另一關；forced_exit 同樣要接受交易狀態與 Guard 檢查。
@@ -122,6 +122,8 @@ unresolved_questions 記錄「現在還不知道什麼」；invalidation_conditi
 ## 5. 買進或加碼的信心怎麼填
 
 conviction 表示整合後對此次 buy／add 的支持程度，不是勝率、目標報酬或手寫權重。
+
+**hold 信心**（只在 brief 含 `exposure_background` 時填寫；否則 hold 帶信心會被拒）：hold 的 conviction 表示以目前資訊，這檔持股還值得佔一個位置的程度，同樣是 high／medium／low，不是為了買別檔而給。你分批工作、看不到別批的新股，所以只依這檔自己的證據判斷。`exposure_background.by_symbol` 的 beta、up_capture、down_capture 是程式算的持股事實（相對交易池等權基準，背景、不可引用）；beta 低或 down capture 小本身不是賣出理由。
 
 - high：支持理由清楚，關鍵反對材料已被合理處理。
 - medium：支持理由占優，但仍有需要追蹤的問題。
