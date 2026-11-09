@@ -164,13 +164,14 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 簡報 note 與 Agent Skill 只保留一般性風險提醒，不硬寫特定日期案例、後續報酬或未由本次資料計算的交易成本；歷史重跑也不得取得 cutoff 之後的案例。
 - `team_inputs` 不升版；Finalizer 與 `apply_trade_decision` 以 bundle 重算再驗；回放略過此閘門（notes 標 `cash_stance_turn_facts: ignored_in_replay`）；策略反思不得改。省略此欄位的舊 Policy／舊 run 逐位元不變。
 
-### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1）
+### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1／v2）
 
 - 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
+- **v2**（2026-11-09 已實作，同日 17:50 正式設定切到 v2，計劃見 [exposure_rotation_v2_plan.md](exposure_rotation_v2_plan.md)）：欄位只有 `version: v2`、`beta_window_days`、`beta_target_by_stance`（停止線，`defensive` 只能 null，進攻 ≥ 中性）、`max_swaps_per_run`、`min_holding_days`、`hold_conviction: v1`、選配 `conviction_gap_swap: v1` 與流程綁入的 `held_since_by_symbol`；v1 專屬欄位（`beta_floor_by_stance`、`release_margin`、`max_rotation_fraction`、`min_new_conviction`）出現即拒絕，v1 閘門逐位元不變。差異：觸發與停止都是「含現金整體 beta ≥ 目標」（沒有釋放帶）；換入者 beta 必須高於組合 beta（v1 是 ≥ 組合 beta + `release_margin`）；沒有賣出市值比例上限，換出量只受 `max_swaps_per_run` 與單股上限間接限制（換手由 `turnover_fit` 把關）；換入者的最低信心沿用 `rotation.min_new_conviction`。
 - hold 信心：閘門開啟時交易 Agent 對 `hold` 也必填 `conviction`，程式綁入 `hold_conviction_by_symbol`（不得與 `conviction_by_symbol` 重複）；沒開時 hold 帶信心被拒。
 - `exposure_review`（`team_inputs` 2.7）：程式依 `price_series` 對交易池等權基準算每檔 beta、up／down capture 與含現金的組合 beta；任何持股缺資料時組合層級為 null，不補假值。
 - 持有天數由帳本持股歷史算（連續持有、台北時區日曆日），Finalizer 以帳本獨立重算，讀不到或與 Policy 不符即拒絕。
-- 換股：姿態有非 null 下限且組合 beta 低於「下限 − `release_margin`」（死區，起止同一條線，沒有跨日狀態）時，把「本次 buy 被名額擋下」的高 beta 新股換掉「hold、信心非 high、持有天數足夠、beta 低於組合」的持股；`conviction_gap_swap` 另可在任何姿態以 high 新股換 low 持股。兩者共用 `max_swaps_per_run`、`max_rotation_fraction`，換出者的賣單由程式標 `exit`（旗標 `RISK_EXPOSURE_ROTATION`／`RISK_CONVICTION_GAP_SWAP`，不觸發時留 `…_SKIPPED:<原因>`），換入者拿不到名額就捨棄該對，絕不只賣不買。首個換入候選無可負擔的配對時，依原信心／名次繼續嘗試後續候選，不讓昂貴候選擋住整條配對；失敗嘗試不預扣資金。與 `drawdown_derisk` 互斥（減碼日整個略過）；`forced_swap` 與交易 Agent 的 exit／trim 優先。
+- 換股：姿態有非 null 下限且組合 beta 低於「下限 − `release_margin`」（死區，起止同一條線，沒有跨日狀態）時，把「本次 buy 被名額擋下」的高 beta 新股換掉「hold、信心非 high、持有天數足夠、beta 低於組合」的持股；`conviction_gap_swap` 另可在任何姿態以 high 新股換 low 持股。兩者共用 `max_swaps_per_run`、`max_rotation_fraction`（v2 沒有後者），換出者的賣單由程式標 `exit`（旗標 `RISK_EXPOSURE_ROTATION`／`RISK_CONVICTION_GAP_SWAP`，不觸發時留 `…_SKIPPED:<原因>`），換入者拿不到名額就捨棄該對，絕不只賣不買。首個換入候選無可負擔的配對時，依原信心／名次繼續嘗試後續候選，不讓昂貴候選擋住整條配對；失敗嘗試不預扣資金。與 `drawdown_derisk` 互斥（減碼日整個略過）；`forced_swap` 與交易 Agent 的 exit／trim 優先。
 - 回放略過此閘門（notes 標 `exposure_rotation: ignored_in_replay`）；省略此欄位的舊 Policy／舊 run 逐位元不變。
 
 ### 輸入時間與評測帳本的前置驗證

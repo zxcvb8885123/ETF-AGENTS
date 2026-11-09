@@ -1,4 +1,4 @@
-"""市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1 版本閘門，只由人設定）。
+"""市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1／v2 版本閘門，只由人設定）。
 
 整條鏈全部是確定性程式，Agent 不輸出任何數字：
 
@@ -8,6 +8,8 @@
 - 換股配對（``exposure_rotation_plan``）：純函式，``AllocationOrderEngine`` 與測試共用；Finalizer 以整份配置重建驗證。
 
 誰判斷方向：維持風險 Agent 的現金姿態列舉；本模組只把姿態對映成「含現金整體 beta 下限」並做有上限、有死區的換股。
+v1 的下限減 ``release_margin`` 才是觸發與停止線；v2 直接寫停止線 ``beta_target_by_stance``，且沒有 ``max_rotation_fraction``
+（換手由 ``turnover_fit`` 把關）與自己的 ``min_new_conviction``（沿用 ``rotation`` 的）。
 交易 Agent 的意圖不被改寫：換出者在訂單意圖標 ``exit``，原因只留在旗標欄位。沒有 ``exposure_rotation`` 欄位的舊 Policy
 完全不經過本模組。
 """
@@ -24,6 +26,10 @@ from etf_agent.core import parse_aware_time
 from .fields import DecisionToolError, decimal_value, reject_unknown_fields, snapshot_execution_price
 
 EXPOSURE_ROTATION = "v1"
+# v2（docs/exposure_rotation_v2_plan.md）：刪 max_rotation_fraction 與 min_new_conviction（沿用 rotation 的）、
+# release_margin 併進停止線 beta_target_by_stance；v1 路徑逐位元保留，沒有 v2 的舊 Policy／舊 run 行為不變。
+EXPOSURE_ROTATION_V2 = "v2"
+EXPOSURE_ROTATION_VERSIONS = (EXPOSURE_ROTATION, EXPOSURE_ROTATION_V2)
 HOLD_CONVICTION = "v1"
 CONVICTION_GAP_SWAP = "v1"
 EXPOSURE_REVIEW_VERSION = "1.0"
@@ -35,6 +41,10 @@ GATE_REQUIRED_FIELDS = {
     "max_rotation_fraction", "min_holding_days", "min_new_conviction", "hold_conviction",
 }
 GATE_FIELDS = GATE_REQUIRED_FIELDS | {"conviction_gap_swap", "held_since_by_symbol"}
+GATE_REQUIRED_FIELDS_V2 = {
+    "version", "beta_window_days", "beta_target_by_stance", "max_swaps_per_run", "min_holding_days", "hold_conviction",
+}
+GATE_FIELDS_V2 = GATE_REQUIRED_FIELDS_V2 | {"conviction_gap_swap", "held_since_by_symbol"}
 # 前提：position_sizing 內的欄位由 sizing.GATE_PREREQUISITES 檢查；position_review 在 Policy 頂層，由 DecisionPolicyValidator 檢查。
 POLICY_PREREQUISITE_FIELDS = ("position_review",)
 LOW_BETA_THRESHOLD = Decimal("0.3")  # 統計用事實門檻（low_beta_share），不是策略旋鈕
@@ -55,6 +65,10 @@ def exposure_rotation_gate(sizing: object) -> Optional[Mapping[str, object]]:
     """exposure_rotation 啟用時回傳閘門物件；沒有閘門回 None（欄位白名單與舊版完全相同）。"""
     gate = sizing.get("exposure_rotation") if isinstance(sizing, Mapping) else None
     return gate if isinstance(gate, Mapping) else None
+
+
+def gate_is_v2(gate: Optional[Mapping[str, object]]) -> bool:
+    return gate is not None and gate.get("version") == EXPOSURE_ROTATION_V2
 
 
 def hold_conviction_enabled(policy_or_sizing: object) -> bool:
@@ -100,29 +114,28 @@ def _decimal_in(value: object, label: str, errors: List[str], low: Decimal, high
     return number
 
 
-def validate_exposure_rotation_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
-    """閘門形狀；其他閘門的前提由 ``GATE_PREREQUISITES``、position_review 由 DecisionPolicyValidator 檢查。"""
-    gate = sizing["exposure_rotation"]
-    prefix = "position_sizing.exposure_rotation"
-    if not isinstance(gate, Mapping):
-        errors.append("%s 必須是物件" % prefix)
+def _validate_beta_targets(gate: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+    """v2 的停止線 ``beta_target_by_stance``：觸發與停止都是「含現金整體 beta ≥ 目標」；防守只能 null；進攻 ≥ 中性。"""
+    if "beta_target_by_stance" not in gate:
         return
-    reject_unknown_fields(gate, GATE_FIELDS, prefix, errors)
-    missing = sorted(GATE_REQUIRED_FIELDS - set(gate))
-    if missing:
-        errors.append("%s 缺少必要欄位（由人設定，程式不提供預設值）：%s" % (prefix, "、".join(missing)))
-    if gate.get("version") != EXPOSURE_ROTATION:
-        errors.append("%s.version 只允許 %s" % (prefix, EXPOSURE_ROTATION))
-    if "hold_conviction" in gate and gate["hold_conviction"] != HOLD_CONVICTION:
-        errors.append("%s.hold_conviction 必須與閘門同時出現且只允許 %s" % (prefix, HOLD_CONVICTION))
-    if "conviction_gap_swap" in gate and gate["conviction_gap_swap"] != CONVICTION_GAP_SWAP:
-        errors.append("%s.conviction_gap_swap 只允許省略或 %s" % (prefix, CONVICTION_GAP_SWAP))
-    if "beta_window_days" in gate:
-        _positive_int(gate["beta_window_days"], "%s.beta_window_days" % prefix, errors, 20, 250)
-    if "max_swaps_per_run" in gate:
-        _positive_int(gate["max_swaps_per_run"], "%s.max_swaps_per_run" % prefix, errors, 1, 10)
-    if "min_holding_days" in gate:
-        _positive_int(gate["min_holding_days"], "%s.min_holding_days" % prefix, errors, 0, 60)
+    targets = gate["beta_target_by_stance"]
+    label = "%s.beta_target_by_stance" % prefix
+    if not isinstance(targets, Mapping) or set(targets) != set(STANCES):
+        errors.append("%s 必須剛好包含 aggressive／neutral／defensive（不觸發請寫 null）" % label)
+        return
+    if targets["defensive"] is not None:
+        errors.append("%s.defensive 只能是 null（防守姿態不觸發曝險換股）" % label)
+    values: Dict[str, Decimal] = {}
+    for stance in ("aggressive", "neutral"):
+        if targets[stance] is not None:
+            number = _decimal_in(targets[stance], "%s.%s" % (label, stance), errors, Decimal(0), Decimal("2"))
+            if number is not None:
+                values[stance] = number
+    if "aggressive" in values and "neutral" in values and values["aggressive"] < values["neutral"]:
+        errors.append("%s 必須 aggressive ≥ neutral（越進攻目標越高）" % label)
+
+
+def _validate_v1_fields(gate: Mapping[str, object], sizing: Mapping[str, object], prefix: str, errors: List[str]) -> None:
     if "release_margin" in gate:
         _decimal_in(gate["release_margin"], "%s.release_margin" % prefix, errors, Decimal(0), Decimal("0.5"))
     if "max_rotation_fraction" in gate:
@@ -163,6 +176,36 @@ def validate_exposure_rotation_gate(sizing: Mapping[str, object], errors: List[s
                 margin_value = None
             if margin_value is not None and any(value <= margin_value for value in values.values()):
                 errors.append("%s 的下限必須大於 release_margin（補到「下限 − margin」才停）" % label)
+
+
+def validate_exposure_rotation_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """閘門形狀；其他閘門的前提由 ``GATE_PREREQUISITES``、position_review 由 DecisionPolicyValidator 檢查。"""
+    gate = sizing["exposure_rotation"]
+    prefix = "position_sizing.exposure_rotation"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    v2 = gate_is_v2(gate)
+    reject_unknown_fields(gate, GATE_FIELDS_V2 if v2 else GATE_FIELDS, prefix, errors)
+    missing = sorted((GATE_REQUIRED_FIELDS_V2 if v2 else GATE_REQUIRED_FIELDS) - set(gate))
+    if missing:
+        errors.append("%s 缺少必要欄位（由人設定，程式不提供預設值）：%s" % (prefix, "、".join(missing)))
+    if gate.get("version") not in EXPOSURE_ROTATION_VERSIONS:
+        errors.append("%s.version 只允許 %s" % (prefix, "、".join(EXPOSURE_ROTATION_VERSIONS)))
+    if "hold_conviction" in gate and gate["hold_conviction"] != HOLD_CONVICTION:
+        errors.append("%s.hold_conviction 必須與閘門同時出現且只允許 %s" % (prefix, HOLD_CONVICTION))
+    if "conviction_gap_swap" in gate and gate["conviction_gap_swap"] != CONVICTION_GAP_SWAP:
+        errors.append("%s.conviction_gap_swap 只允許省略或 %s" % (prefix, CONVICTION_GAP_SWAP))
+    if "beta_window_days" in gate:
+        _positive_int(gate["beta_window_days"], "%s.beta_window_days" % prefix, errors, 20, 250)
+    if "max_swaps_per_run" in gate:
+        _positive_int(gate["max_swaps_per_run"], "%s.max_swaps_per_run" % prefix, errors, 1, 10)
+    if "min_holding_days" in gate:
+        _positive_int(gate["min_holding_days"], "%s.min_holding_days" % prefix, errors, 0, 60)
+    if v2:
+        _validate_beta_targets(gate, prefix, errors)
+    else:
+        _validate_v1_fields(gate, sizing, prefix, errors)
     if "held_since_by_symbol" in gate:
         held = gate["held_since_by_symbol"]
         label = "%s.held_since_by_symbol" % prefix
@@ -542,6 +585,7 @@ def exposure_rotation_plan(
     victims: Sequence[Victim],
     fills: Sequence[Fill],
     afford: Optional[Callable[[str, str], bool]] = None,
+    min_new_conviction: Optional[str] = None,
 ) -> Dict[str, object]:
     """換股配對（純函式）。回傳 ``{"swaps": [{"kind", "victim", "fill"}...], "skipped": {"exposure": 原因|None, "gap": 原因|None}}``。
 
@@ -554,10 +598,19 @@ def exposure_rotation_plan(
     信心差換股（``conviction_gap_swap`` 有開才做，不看姿態與 beta）：新股 high 對持股 low，沿用同一組上限（與曝險換股共用
     ``max_swaps_per_run`` 與賣出市值上限），曝險換股先。``afford(victim, fill)`` 是呼叫端的現金可行性檢查（有狀態，回 True 即已預扣）。
     """
+    v2 = gate_is_v2(gate)
     max_swaps = int(gate["max_swaps_per_run"])
-    cap = decimal_value(gate["max_rotation_fraction"], "max_rotation_fraction") * nav
-    margin = decimal_value(gate["release_margin"], "release_margin")
-    min_tier = CONVICTION_LEVELS.index(str(gate["min_new_conviction"]))
+    if v2:
+        # v2：沒有賣出市值比例上限（換手由 turnover_fit 把關）、沒有 release_margin；換入信心門檻沿用 rotation 的，由呼叫端傳入。
+        if min_new_conviction not in CONVICTION_LEVELS:
+            raise DecisionToolError("exposure_rotation v2 需要呼叫端傳入 rotation.min_new_conviction")
+        cap: Optional[Decimal] = None
+        margin = Decimal(0)
+        min_tier = CONVICTION_LEVELS.index(str(min_new_conviction))
+    else:
+        cap = decimal_value(gate["max_rotation_fraction"], "max_rotation_fraction") * nav
+        margin = decimal_value(gate["release_margin"], "release_margin")
+        min_tier = CONVICTION_LEVELS.index(str(gate["min_new_conviction"]))
     swaps: List[Dict[str, str]] = []
     skipped: Dict[str, Optional[str]] = {"exposure": None, "gap": None}
     used_victims: Set[str] = set()
@@ -584,8 +637,8 @@ def exposure_rotation_plan(
             for victim in victim_pool:
                 if victim.symbol in used_victims:
                     continue
-                blocked = "rotation_fraction" if sold + victim.value > cap else blocked
-                if sold + victim.value > cap:
+                if cap is not None and sold + victim.value > cap:
+                    blocked = "rotation_fraction"
                     continue
                 if afford is not None and not afford(victim.symbol, fill.symbol):
                     blocked = "cash_infeasible"
@@ -606,15 +659,15 @@ def exposure_rotation_plan(
         return None if made else reason
 
     state: Dict[str, Decimal] = {"beta": portfolio_beta_value if portfolio_beta_value is not None else Decimal(0)}
-    floors = gate["beta_floor_by_stance"]
+    floors = gate["beta_target_by_stance"] if v2 else gate["beta_floor_by_stance"]
     floor_raw = floors.get(str(stance)) if isinstance(floors, Mapping) else None  # type: ignore[union-attr]
     if floor_raw is None:
         skipped["exposure"] = "stance_not_triggered"
     elif portfolio_beta_value is None:
         skipped["exposure"] = "beta_unavailable"
     else:
-        floor = decimal_value(floor_raw, "beta_floor_by_stance")
-        target = floor - margin
+        floor = decimal_value(floor_raw, "beta_target_by_stance" if v2 else "beta_floor_by_stance")
+        target = floor if v2 else floor - margin
         if portfolio_beta_value >= floor:
             skipped["exposure"] = "beta_at_target"
         elif portfolio_beta_value >= target:
@@ -626,7 +679,7 @@ def exposure_rotation_plan(
             )
             fill_pool = [
                 f for f in fills
-                if f.beta is not None and f.beta >= portfolio_beta_value + margin
+                if f.beta is not None and (f.beta > portfolio_beta_value if v2 else f.beta >= portfolio_beta_value + margin)
                 and CONVICTION_LEVELS.index(f.conviction) <= min_tier
             ]
             skipped["exposure"] = take("exposure", victim_pool, fill_pool, lambda: state["beta"] >= target)

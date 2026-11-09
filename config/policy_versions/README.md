@@ -4,3 +4,4 @@
 - 正式樣板仍是 `config/decision_policy.json`；目前版本及生效時間只記在 `docs/status.md`。版本變更另存新檔，不覆寫既有快照。
 - 舊 run 以各自封存的 `policy.json` 重建，不改寫既有 artifacts。將新策略套用較早日期的測試屬反事實評測，必須保留原始生效時間並標示。
 - 舊行為測試可明確使用本目錄固定快照；只有正式設定整合測試讀 live 樣板，避免正式開關變動悄悄改變舊 fixture。
+- `2026-11-09-exposure-rotation-v1.json`：2026-11-09 17:50 切換 `exposure_rotation` 到 v2 之前的正式樣板（`policy_id: strategy-2026-11-09-turnfacts-v1`，`available_at: 2026-11-09T16:10:00+08:00`，曝險換股 v1；canonical SHA-256：`02aa46be22779a7dafc3c9a280e0f193e84558d61340fec58ef555a5473eb54d`）。要回滾曝險換股時，以此檔的 `position_sizing.exposure_rotation` 區塊為準；舊 run 仍讀各自封存的 `policy.json`。

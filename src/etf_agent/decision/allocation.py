@@ -925,7 +925,7 @@ class AllocationOrderEngine:
         excluded_fills: Set[str],
         flags: List[Dict[str, object]],
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
-        """市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1，版本閘門）：在 forced_swap 之後、買單配置之前，
+        """市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1／v2，版本閘門）：在 forced_swap 之後、買單配置之前，
         把「本次 buy 卻被名額擋下」的高 beta 新股，換掉交易 Agent 標 hold、信心不高、beta 偏低的持股，配對規則與上限見
         ``exposure.exposure_rotation_plan``。換出者的訂單意圖標 ``exit``（交易 Agent 的意圖未被改寫），旗標
         RISK_EXPOSURE_ROTATION／EXPOSURE_ROTATION_FILL（信心差換股另有 RISK_CONVICTION_GAP_SWAP／CONVICTION_GAP_SWAP_FILL）；
@@ -1001,7 +1001,12 @@ class AllocationOrderEngine:
             room[0] += proceeds - cost
             return True
 
-        plan = exposure_rotation_plan(gate, sizing.get("cash_stance"), current_beta, marked_nav, victims, fills, afford)
+        rotation_rule = sizing.get("rotation")
+        # v2 沒有自己的 min_new_conviction：沿用 rotation 的（_conviction_targets 本來就用它擋 ROTATION_CONVICTION）；v1 讀閘門自己的。
+        plan = exposure_rotation_plan(
+            gate, sizing.get("cash_stance"), current_beta, marked_nav, victims, fills, afford,
+            min_new_conviction=str(rotation_rule["min_new_conviction"]) if isinstance(rotation_rule, Mapping) else None,
+        )
         swaps = plan["swaps"]
         accepted: List[Dict[str, str]] = []
         result = targets
