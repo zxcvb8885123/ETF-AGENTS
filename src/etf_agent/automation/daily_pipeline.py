@@ -37,6 +37,7 @@ from etf_agent.decision import (
 from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
+from etf_agent.decision.rebound import build_turn_state, rebound_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
@@ -271,7 +272,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 service.read_json(sector_path, " 產業分類"),
             )
             base_policy = bind_drawdown(base_policy, bundle, nav_history)
-            base_policy = bind_holding_days(base_policy, bundle, holdings_history)
+            base_policy = bind_holding_days(base_policy, bundle, holdings_history, nav_history)
             if exposure_rotation_gate(base_policy.get("position_sizing")) is not None and fundamental_period_policy(bundle) is None:
                 raise DailyPipelineError("policy 啟用 exposure_rotation 時 bundle 必須有 fundamental_period_policy（team_inputs 2.7 是 2.6 的超集）")
             base_policy["content_sha256"] = decision_policy_sha256(base_policy)
@@ -331,6 +332,15 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 raise DailyPipelineError("policy 啟用 exposure_rotation 時 bundle 必須有 fundamental_period_policy（team_inputs 2.7 是 2.6 的超集）")
             exposure_review = build_exposure_review(bundle, base_policy)
             self.save_artifact("exposure_review", exposure_review)
+        # 沒有 rebound_participation 的樣板一律不建反彈參與狀態，team_inputs 維持 2.7 以前、風險 Agent 簡報與舊版逐鍵相同。
+        # turn_state 由 price_series 程式重算（只作風險 Agent 簡報的背景，不可引用）；team_inputs 2.8 是 2.7 的超集。
+        turn_state = None
+        rebound = rebound_gate(base_policy.get("position_sizing"))
+        if rebound is not None:
+            if exposure_review is None:
+                raise DailyPipelineError("policy 啟用 rebound_participation 時也必須啟用 exposure_rotation（team_inputs 2.8 是 2.7 的超集）")
+            turn_state = build_turn_state(bundle, rebound)
+            self.save_artifact("turn_state", turn_state)
 
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
         with self._timed("trader"):
@@ -358,7 +368,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                           (base_policy.get("position_sizing") or {}).get("cash_ratio_range"),
                                           prior_context,
                                           (base_policy.get("position_sizing") or {}).get("cash_stance_recency"),
-                                          (base_policy.get("position_sizing") or {}).get("cash_stance_turn_facts"))
+                                          (base_policy.get("position_sizing") or {}).get("cash_stance_turn_facts"),
+                                          turn_state,
+                                          (base_policy.get("position_sizing") or {}).get("market_index_facts"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
@@ -411,6 +423,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             analysts, None, stance, prior_context, slots, position_review, ranking,
             **({"fundamental_metrics": self.fundamental_metrics} if fundamental_period_policy(bundle) is not None else {}),
             **({"exposure_review": exposure_review} if exposure_review is not None else {}),
+            **({"turn_state": turn_state} if turn_state is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history

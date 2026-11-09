@@ -24,12 +24,18 @@ RUN_STATUSES = ("approved", "no_trade", "rejected", "blocked", "fallback", "fail
 DETAIL_MAX_CHARS = 500
 
 
+def _applescript_quote(text: str) -> str:
+    """AppleScript 字串字面值：只跳脫反斜線與雙引號、換行轉空白；中文原樣保留（不能用 json 的 \\uXXXX）。"""
+    clean = str(text).replace("\r", " ").replace("\n", " ")
+    return '"' + clean.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def notify(title: str, message: str, *, log: Optional[Callable[[str], None]] = None,
            timeout: float = NOTIFY_TIMEOUT_SECONDS, platform: Optional[str] = None) -> bool:
     """送出本機通知；回傳是否成功。非 macOS、osascript 不存在、逾時、非零結束（含通知權限被拒）都回 False。"""
     if (platform or sys.platform) != "darwin":
         return False
-    script = "display notification %s with title %s" % (json.dumps(message), json.dumps(title))
+    script = "display notification %s with title %s" % (_applescript_quote(message), _applescript_quote(title))
     try:
         completed = subprocess.run(["osascript", "-e", script], check=False, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:

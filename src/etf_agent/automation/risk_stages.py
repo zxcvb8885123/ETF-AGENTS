@@ -12,6 +12,7 @@ from etf_agent.decision import (
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
 from etf_agent.decision.recency import evidence_recency
+from etf_agent.decision.market_index import market_index_facts
 from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
@@ -62,10 +63,22 @@ RECENCY_PROMPT = (
 )
 
 
+MARKET_INDEX_PROMPT = (
+    "摘要含 market_index_facts（程式依證交所加權指數算的當日收盤、漲跌、近 5／20 日報酬與離高點回檔，是背景事實、"
+    "沒有 evidence_id、不可引用）：判斷現金姿態時一併參考，但單日漲跌不代表趨勢，不要只憑它改變姿態。規則見 cash-stance.md「market_index_facts」節。"
+)
+
 TURN_FACTS_PROMPT = (
     "摘要含 turn_facts（程式依行情算的交易池轉向事實，是事實不是訊號）：另輸出 turn_assessment"
-    "（no_turn_evidence／turn_unconfirmed／turn_confirmed），只是紀錄你怎麼看，不要求與現金姿態一致，"
-    "規則見 cash-stance.md「turn_facts」節。"
+    "（no_turn_evidence／turn_unconfirmed／turn_confirmed），只是紀錄你怎麼看，不要求與現金姿態一致，不影響現金格點；"
+    "若摘要另附程式狀態機結果，你的列舉才會與程式狀態取較保守者、決定曝險換股是否放寬。規則見 cash-stance.md「turn_facts」節。"
+)
+
+
+TURN_STATE_PROMPT = (
+    "摘要另含 turn_state（程式狀態機的結果，只是背景，沒有證據編號、不可引用）：你的 turn_assessment 與它取較保守者，"
+    "才決定防守姿態下的曝險換股是否放寬；你認為尚未轉向就填 no_turn_evidence 或 turn_unconfirmed，不要為了配合它而升級，"
+    "規則見 cash-stance.md「turn_state」節。"
 )
 
 
@@ -124,6 +137,8 @@ class RiskStagesMixin:
         prior_context: Optional[Mapping[str, object]] = None,
         cash_stance_recency: Optional[Mapping[str, object]] = None,
         cash_stance_turn_facts: Optional[Mapping[str, object]] = None,
+        turn_state: Optional[Mapping[str, object]] = None,
+        market_index_facts_gate: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -165,12 +180,20 @@ class RiskStagesMixin:
             if not typed:
                 raise DailyPipelineError("position_sizing.cash_stance_turn_facts 只能用於 evidence_policy=typed_evidence_v1")
             turn_brief = {"turn_facts": turn_facts(bundle)}
+            if turn_state is not None:
+                # rebound_participation（版本閘門）：程式狀態機的結果只當背景（沒有 evidence_id，不可引用）。
+                turn_brief["turn_state"] = {"citable": False, **dict(turn_state)}
+        # market_index_facts（版本閘門）：附程式算的加權指數事實（背景、不可引用）；沒有閘門時簡報與舊版逐鍵相同。
+        index_brief: Dict[str, object] = (
+            {"market_index_facts": market_index_facts(bundle)} if market_index_facts_gate is not None else {}
+        )
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
                 **recency_brief,
                 "regime_assessment": regime,
                 **turn_brief,
+                **index_brief,
                 "analyst_outlooks": {
                     name: counts([item.get("outlook") for item in report.get("items", [])])
                     for name, report in analyst_reports.items()
@@ -233,7 +256,9 @@ class RiskStagesMixin:
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
-            + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else ""),
+            + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else "")
+            + (TURN_STATE_PROMPT if turn_state is not None else "")
+            + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else ""),
             cash_stance_turn_facts_schema(graded, cash_stance_recency is not None) if cash_stance_turn_facts is not None
             else cash_stance_recency_schema(graded) if cash_stance_recency is not None
             else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA),

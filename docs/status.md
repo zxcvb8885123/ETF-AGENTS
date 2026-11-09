@@ -40,9 +40,9 @@
 
 ### 版本閘門啟用狀態
 
-這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-09 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-09-review-v1`，`available_at: 2026-11-09T13:42:11+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-09 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-09-exposure-v2-1`，`available_at: 2026-11-09T17:50:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
 
-本次只更新策略識別與真實可得時間，不變更任何策略門檻或閘門開關。審查前樣板原樣保存在 `config/policy_versions/2026-11-09-before-review.json`；該檔是當日審查前的內容快照，**不是**其中舊 `available_at` 日期當時的策略還原。封存 run 仍讀自己保存的 Policy，不改寫歷史。用新版策略重跑較早 cutoff 僅能是明確標示的反事實評測。
+2026-11-09 17:50 把 `exposure_rotation` 由 v1 切到 v2（只換欄位寫法，觸發線與停止線數值不變：進攻 0.90、中性 0.55；刪 `max_rotation_fraction`、`min_new_conviction`、`release_margin`），切換前的樣板存為 `config/policy_versions/2026-11-09-exposure-rotation-v1.json`，其餘門檻與閘門開關不變；先前的策略識別與可得時間更新（`strategy-2026-11-09-turnfacts-v1`）沿用同一段說明。審查前樣板原樣保存在 `config/policy_versions/2026-11-09-before-review.json`；該檔是當日審查前的內容快照，**不是**其中舊 `available_at` 日期當時的策略還原。封存 run 仍讀自己保存的 Policy，不改寫歷史。用新版策略重跑較早 cutoff 僅能是明確標示的反事實評測。
 
 已開啟：
 
@@ -57,12 +57,15 @@
 | `rotation.forced_swap` | `version v1`、`min_new_conviction high`、`max_swaps_per_run 2`、`confirmation v1` |
 | `cash_buffer_floor` | `v1` |
 | `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
-| `exposure_rotation` | `version v1`（2026-11-09 開啟，見[計劃](exposure_rotation_plan.md)）；`beta_window_days 60`；`beta_floor_by_stance` aggressive 1.00／neutral 0.65／defensive null（實際觸發線＝下限 − `release_margin`：進攻 0.90、中性 0.55）；`release_margin 0.10`；`max_swaps_per_run 2`；`max_rotation_fraction 0.08`；`min_holding_days 5`；`min_new_conviction medium`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
+| `exposure_rotation` | `version v2`（2026-11-09 開啟 v1、同日 17:50 切到 v2，見[計劃](exposure_rotation_plan.md)與[v2 計劃](exposure_rotation_v2_plan.md)）；`beta_window_days 60`；`beta_target_by_stance` aggressive 0.90／neutral 0.55／defensive null（觸發與停止線，與 v1 的「下限 − margin」數值相同）；`max_swaps_per_run 2`；`min_holding_days 5`；換入者最低信心沿用 `rotation.min_new_conviction`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
+| `exposure_rotation` v3 | **2026-11-09 23:45 已開啟**（為了 `rebound_participation`，`defensive` 目標仍是 null，行為與 v2 相同）：欄位同 v2，`beta_target_by_stance.defensive` 可填數字（例如 0.35）；見[v2 計劃第 12 節](exposure_rotation_v2_plan.md#12-v3防守姿態的-beta-停止線) |
 | `cash_stance_recency` | `{version v1}`（2026-11-09 開啟；風險 Agent 簡報首鍵附證據時間表，另填 `recency_reconciliation`） |
 | `cash_buffer_by_stance` | aggressive 3%／neutral 10%／defensive 20%（`cash_ratio_range` 開啟時不影響配置） |
 | `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |
 | `high_conviction_cash_priority` | `v1`（2026-11-06 新增） |
 | `held_weight_budget` | `v1`（2026-11-08 新增） |
+| `rebound_participation` | v1 **2026-11-09 23:45 已開啟，只開 confirmed 一檔**（candidate 的 `defensive_target` 設 0.01、換股 2 檔、持有 5 天＝實質不動；confirmed 為 0.55、4 檔、持有 0 天；**沒有**填選填的 `defensive_cash_buffer` 與 `confirmed.max_turnover_rate`，所以不放寬現金與換手；之前樣板存於 `config/policy_versions/2026-11-09-rebound-before.json`，回滾＝刪除此欄位並把 `exposure_rotation.version` 改回 v2）：程式狀態機 `turn_state` 與風險 Agent 的 `turn_assessment` 取較保守者，放寬防守姿態下的曝險換股（選填：防守現金比例條件式放寬、confirmed 換手上限，皆放寬風控、只由人設定）；前提 `exposure_rotation` v3（正式設定已是 v3）、`cash_stance_turn_facts`、`drawdown_derisk` v4、`typed_evidence_v1`；`team_inputs` 2.8；計劃與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md) |
+| `slot_recycle` | v1 已實作、尚未開啟（正式設定沒有此欄位）：LOT_SIZE／預算為零的新股釋出新增名額給後面的候選 |
 | `cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`（`buy_gap_reserve_rate 0.03`）、`sector_fit`、`turnover_fit` | 皆 `v1`；`insufficient_funds_policy void_batch` |
 | `reentry_cooldown` | `{version v1, days 3}` |
 | `drawdown_derisk` | `{version v4, max_derisk_fraction 0.25}`（v4 於 2026-11-08 開啟） |
@@ -75,6 +78,7 @@
 未開啟：`high_conviction_cash_floor`。
 
 已開啟（紀錄用）：`cash_stance_turn_facts` v1（2026-11-09 開啟，轉向事實與 `turn_assessment` 列舉，不是規則，與姿態不設對應，見[計劃](turn_facts_plan.md)）。
+已實作、尚未開啟（紀錄用）：`market_index_facts` v1（風險 Agent 簡報附證交所加權指數收盤、當日漲跌、近 5／20 日報酬與離高點回檔，背景事實、不可引用；補上晚間決策看不到隔夜行情的缺口；不新增輸出欄位、不影響配置；要開啟由人在 `config/decision_policy.json` 的 `position_sizing` 加 `"market_index_facts": {"version": "v1"}`，見[計畫](market_index_facts_plan.md)）。把它的行為當成現行行為是錯的。
 
 未開啟：
 

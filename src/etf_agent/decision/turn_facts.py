@@ -96,6 +96,17 @@ class _Pool:
             returns.append(closes[position - 1] / closes[position - 2] - Decimal(1))
         return sum(returns, Decimal(0)) / Decimal(len(returns)) if returns else None
 
+    def share(self, day: str, window: int, test) -> Optional[str]:
+        """截至 ``day`` 的序列中，有至少 ``window`` 筆收盤的股票裡通過 ``test`` 的比例（字串）；沒有任何股票回 None。"""
+        count = total = 0
+        for symbol in self.dates_by_symbol:
+            closes = self.history(symbol, day)
+            if len(closes) < window:
+                continue
+            total += 1
+            count += 1 if test(closes) else 0
+        return _ratio(count, total)
+
     def regime(self, day: str) -> Dict[str, object]:
         """與 MomentumEngine 同一公式：有 61 筆以上者才算可用，breadth 與 regime 交給 ``MomentumEngine._regime``。"""
         available: List[Dict[str, object]] = []
@@ -153,14 +164,7 @@ def turn_facts(bundle: Mapping[str, object]) -> Dict[str, object]:
     result["up_streak_window_days"] = STREAK_WINDOW
 
     def share(window: int, test) -> Optional[str]:
-        count = total = 0
-        for symbol in pool.dates_by_symbol:
-            closes = pool.history(symbol, pool.days[-1]) if pool.days else []
-            if len(closes) < window:
-                continue
-            total += 1
-            count += 1 if test(closes) else 0
-        return _ratio(count, total)
+        return pool.share(pool.days[-1], window, test) if pool.days else None
 
     result["share_above_ma5"] = share(5, lambda c: c[-1] >= sum(c[-5:]) / Decimal(5))
     result["share_above_ma20"] = share(20, lambda c: c[-1] >= sum(c[-20:]) / Decimal(20))

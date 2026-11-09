@@ -187,7 +187,7 @@ class GateShapeTests(unittest.TestCase):
     def test_shape_violations_are_rejected(self):
         cases = {
             "未允許欄位": {"threshold": "1"},
-            "version 只允許": {"version": "v2"},
+            "version 只允許": {"version": "v4"},
             "hold_conviction": {"hold_conviction": "v2"},
             "conviction_gap_swap": {"conviction_gap_swap": "v2"},
             "beta_window_days": {"beta_window_days": 5},
@@ -594,6 +594,21 @@ class HoldingDaysTests(unittest.TestCase):
                 held_since_from_history(history, held)
         with self.assertRaisesRegex(DecisionToolError, "空的"):
             held_since_from_history([], [])
+
+    def test_bind_rejects_holdings_chain_that_differs_from_nav_chain(self):
+        bundle, _, policy, _ = run_world()
+        template = copy.deepcopy(policy)
+        template["position_sizing"] = anchored_gate_template(bundle)
+        template["drawdown_control"] = {"history_ref": {"head_run_id": "r1", "length": 2, "sha256": "x"}}
+        held = ["1101.TW", "2330.TW"]
+        history = rows(("2026-09-01T06:00:00+00:00", held), ("2026-09-02T06:00:00+00:00", held))
+        nav = [{"run_id": r["run_id"], "as_of": r["as_of"], "nav": "1"} for r in history]
+        bind_holding_days(template, bundle, history, nav)  # 同一條鏈：通過
+        mixed = [dict(history[0], run_id="other", as_of="2026-08-01T06:00:00+00:00"), history[1]]  # head 相同、中間不同
+        for bad_holdings, bad_nav in ((mixed, nav), (history[1:], nav), (history, nav[:1] + [dict(nav[1], as_of="x")])):
+            with self.subTest(len=len(bad_holdings)):
+                with self.assertRaisesRegex(DecisionToolError, "不是同一條鏈|晚於|最新一筆"):
+                    bind_holding_days(template, bundle, bad_holdings, bad_nav)
 
     def test_bind_requires_history_head_and_refuses_prefill(self):
         bundle, _, policy, _ = run_world()

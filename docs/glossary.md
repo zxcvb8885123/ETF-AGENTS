@@ -19,6 +19,7 @@
 | `limit_scaled_conviction`（`version`、`alpha`） | 高信心份額至少為 alpha × 該股單股上限；必要份額超過預算時依名次填到用完 | policy；`decision/sizing.py` `alpha_floor_weights` | — |
 | `held_add_priority` | 既有持股加碼優先於未持有的新股 | policy；`decision/allocation.py` | — |
 | `held_weight_budget` | 已持股權重高於信心份額時，該檔不再分配新預算的處理 | policy；`decision/allocation.py` | `RISK_HELD_WEIGHT` |
+| `slot_recycle`（`{version: v1}`） | 名額回收：LOT_SIZE／預算為零的新股釋出新增名額給後面的候選（已實作、尚未開啟） | policy；`decision/allocation.py` `_conviction_targets`、`decision/sizing.py` | `LOT_SIZE`、`MAX_POSITIONS` |
 | `stock_weight_fit`、`stock_limit_headroom`（`LIMIT_HEADROOM_BUY`） | 單股硬性上限的減碼（程式一律執行，不依 `stock_weight_fit` 開關）；有買單的股票在上限下留空間 | policy；`decision/allocation.py` `_fit_stock_weights`、`decision/sizing.py` | `RISK_STOCK_WEIGHT` |
 
 ## 滿檔換股
@@ -39,7 +40,10 @@
 | `cash_grade`（lower／middle／upper） | 風險 Agent 在姿態內選的現金子等級，仍是列舉、不含數字 | 風險 Agent 輸出 `cash_stance.cash_grade`（proposal 的 `position_sizing.cash_stance`）；驗證 `decision/sizing.py` `validate_cash_stance`、重算 `decision/finalization.py` | — |
 | `cash_stance_recency`（`{version: v1}`） | 風險 Agent 現金姿態的版本閘門：簡報首鍵附 `evidence_recency`（證據內容時間分組），輸出另填列舉 `recency_reconciliation`；需 `typed_evidence_v1`；2026-11-09 已開啟 | `decision/recency.py` |
 | `cash_stance_turn_facts`（`{version: v1}`） | 風險 Agent 現金姿態的版本閘門（紀錄工具，不是規則）：簡報在 `regime_assessment` 旁附 `turn_facts`（程式算的交易池轉向事實），輸出另填列舉 `turn_assessment`（`no_turn_evidence`／`turn_unconfirmed`／`turn_confirmed`），列舉與姿態不設對應；需 `typed_evidence_v1`；2026-11-09 已開啟 | `decision/turn_facts.py` |
-| `exposure_rotation`（`version`、`beta_window_days`、`beta_floor_by_stance`、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`、`hold_conviction`、`conviction_gap_swap`） | 持股曝險換股的版本閘門：依持股 beta、持有天數與 hold 信心，換掉低 beta 或信心低的持股；2026-11-09 已開啟 | `decision/exposure.py`、`decision/allocation.py` |
+| `market_index_facts`（`{version: v1}`） | 風險 Agent 現金姿態的版本閘門（紀錄工具，不是規則）：簡報在 `regime_assessment` 旁附程式依證交所加權指數算的 `market_index_facts`（收盤、當日漲跌、近 5／20 日報酬、離 60 日高點回檔、MA20／MA60），`citable=false`、不可引用；不新增輸出欄位、不影響配置；只由人設定 |
+| `exposure_rotation`（`version`、`beta_window_days`、`beta_floor_by_stance`、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`、`hold_conviction`、`conviction_gap_swap`） | 持股曝險換股的版本閘門：依持股 beta、持有天數與 hold 信心，換掉低 beta 或信心低的持股；2026-11-09 先開 v1、同日切到 v2（以 `beta_target_by_stance` 取代 `beta_floor_by_stance`／`release_margin`，刪 `max_rotation_fraction` 與 `min_new_conviction`）；v1 仍保留供舊 Policy 重建；v3（已實作、尚未開啟）與 v2 同欄位，唯一差別是 `beta_target_by_stance.defensive` 可填數字 | `decision/exposure.py`、`decision/allocation.py` |
+| `rebound_participation`（`version`、`candidate_return`、`candidate_ma5_share`、`confirm_return`、`confirm_ma5_share`、`confirm_new_low_share_max`、`candidate_expiry_days`、`retreat_return`、`retreat_window_days`、`retreat_ma5_share`、`min_coverage`、`by_state`（內含選填的 `defensive_cash_buffer`、`max_turnover_rate`）；程式綁入 `effective_state`、`cash_loosening`） | 反彈參與版本閘門（已實作、尚未開啟）：程式狀態 `turn_state`（none／candidate／confirmed）與風險 Agent `turn_assessment` 取較保守者為 `effective_state`（流程綁入），放寬防守姿態下的曝險換股；前提 `exposure_rotation` v3、`cash_stance_turn_facts`、`drawdown_derisk` v4、`typed_evidence_v1` | `decision/rebound.py`、`decision/allocation.py` |
+| `turn_state`（team_inputs 2.8）、`TURN_STATE_UNAVAILABLE`、`REBOUND_PARTICIPATION:<state>`、`REBOUND_CASH_LOOSENED:<state>`、`REBOUND_TURNOVER_RAISED:confirmed` | 程式算的反彈參與狀態（缺資料永不升級）；資料不足時的旗標；有效狀態不是 none 時的組合層級旗標；防守姿態現金比例被條件式放寬的旗標；confirmed 放寬總換手上限的旗標 | `decision/rebound.py`、`decision/allocation.py` |
 | `hold_conviction_by_symbol`、`held_since_by_symbol` | 流程綁入 Policy：hold 持股的信心等級；持股連續持有起點（由帳本算） | `decision/trader.py`、`decision/exposure.py` |
 | `exposure_review`（team_inputs 2.7） | 程式算的持股 beta、up／down capture 與組合 beta | `decision/exposure.py` |
 | `RISK_EXPOSURE_ROTATION`、`EXPOSURE_ROTATION_FILL`、`RISK_CONVICTION_GAP_SWAP`、`CONVICTION_GAP_SWAP_FILL`、`…_SKIPPED:<原因>` | 曝險／信心差換股的旗標；SKIPPED 的 symbol 為 `PORTFOLIO` | `decision/allocation.py` |

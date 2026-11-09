@@ -251,6 +251,12 @@ def bind_replay_policy(
         if exposure_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "exposure_rotation"}
             base["content_sha256"] = decision_policy_sha256(base)
+        # rebound_participation 依賴 exposure_rotation（回放略過）與 Agent 當天的 turn_assessment（回放拿掉）：同樣略過，
+        # 不然前提驗證會失敗；沒有閘門的舊回放 notes 與 policy 逐位元不變。
+        rebound_ignored = isinstance(base.get("position_sizing"), Mapping) and "rebound_participation" in base["position_sizing"]
+        if rebound_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "rebound_participation"}
+            base["content_sha256"] = decision_policy_sha256(base)
         bound_stance, grade_note = _replay_cash_grade(base, bundle, bound_stance, raised)
         if grade_note is not None:
             base = bind_cash_ratio_anchor(base, bundle, None, None)
@@ -281,6 +287,8 @@ def bind_replay_policy(
         notes["cash_stance_turn_facts"] = "ignored_in_replay"
     if exposure_ignored:
         notes["exposure_rotation"] = "ignored_in_replay"
+    if rebound_ignored:
+        notes["rebound_participation"] = "ignored_in_replay"
     return policy, notes
 
 

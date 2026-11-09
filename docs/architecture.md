@@ -183,6 +183,7 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 | 版本 | 內容 |
 | --- | --- |
+| 2.8 | 2.7 再加程式算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（已實作、尚未開啟），與閘門雙向檢查，整份重算比對 |
 | 2.7 | 2.6 再加程式算的曝險檢視 `exposure_review`（beta、capture）；只在 `position_sizing.exposure_rotation` 啟用時存在，與閘門雙向檢查，整份重算比對 |
 | 2.6（目前正式） | 2.5 再加程式算的基本面指標；有逐檔期別設定時必為 2.6，整份重算比對，改寫或降級都拒絕 |
 | 2.5 | 2.4 再加第二輪入選排序 |

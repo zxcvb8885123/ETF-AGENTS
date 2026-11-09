@@ -66,6 +66,7 @@ def production_policy():
     """固定版本配置夾具，排除需要額外 Agent／帳本輸入的閘門；live 驗證另用 live_production_policy。"""
     policy = json.loads((ROOT / "config/policy_versions/2026-11-09-before-review.json").read_text(encoding="utf-8"))
     policy["position_sizing"].pop("cash_stance_recency", None)
+    policy["position_sizing"].pop("rebound_participation", None)
     policy["position_sizing"].pop("exposure_rotation", None)  # 需要帳本持股歷史與 team_inputs 2.7，由 test_exposure_rotation* 覆蓋
     return policy
 

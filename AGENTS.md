@@ -57,13 +57,13 @@
 - **入選排序**：交易 Agent 分批執行所以只給三級信心；合併後由同一個交易 Agent 做第二輪，只在同信心等級內排先後，不改信心、不新增事實、不輸出數字。見 [`docs/decision-contracts.md`](docs/decision-contracts.md#入選排序selection_ranking-v1)。
 - **背景不是證據**：前次決策背景 `prior_decision_context`、論點檢視 `thesis_review_background`、策略教訓 `strategy_lessons` 與名額脈絡 `portfolio_slots` 都 `citable=false`、沒有 evidence_id，只給交易 Agent 當背景；文字欄位出現其識別碼即拒絕，行動仍須由本次 claim 支持；多空研究員不讀它們。來源挑法見 [`docs/decision-contracts.md`](docs/decision-contracts.md#前次決策背景prior_decision_context)。
 - **風險 Agent**在配置前對整體給 `aggressive`／`neutral`／`defensive` 現金姿態並附證據（至少一個市場層級證據，全市場情緒負面時不得 `aggressive`），同時給 `concentrated`／`balanced`／`diversified` 持股廣度，`cash_ratio_range` 啟用時另給 `cash_grade`；現金比例與檔數由 Policy 對應。不得手寫權重或覆寫 CompetitionGuard；修正動作 `increase_cash_buffer` 不得高於現金上限減 3 個百分點邊際，`cash_ratio_range` 開啟時另不得高於今日可選最高格點。風險理由出現前次 run 識別碼即拒絕。
-- **`team_inputs`**：Decision run 必須另存（目前 2.6，`exposure_rotation` 啟用時 2.7；版本史見 [`docs/architecture.md`](docs/architecture.md#decision-run-的-team_inputs-版本)），Finalizer 與所有下游重建驗證都要傳入，缺少即拒絕；`portfolio_slots`、`position_review`、`selection_ranking`、`fundamental_metrics`、`exposure_review` 都由 Finalizer 整份重算比對。
+- **`team_inputs`**：Decision run 必須另存（目前 2.6，`exposure_rotation` 啟用時 2.7、`rebound_participation` 啟用時 2.8；版本史見 [`docs/architecture.md`](docs/architecture.md#decision-run-的-team_inputs-版本)），Finalizer 與所有下游重建驗證都要傳入，缺少即拒絕；`portfolio_slots`、`position_review`、`selection_ranking`、`fundamental_metrics`、`exposure_review` 都由 Finalizer 整份重算比對。
 
 ### 證據與驗證
 
 - `evidence_policy: typed_evidence_v1`（新 bundle 預設）：claim 填 `claim_kind`、分析師 finding 填 `finding_kind`（price／financial／revenue／material_event／news），程式依來源判定證據種類並核對對映；至少一個證據必須屬於該股票，市場層級與帳戶證據只能作補充。風險 Agent 的 brief 不附交易 Agent 的意圖與信心統計。驗證失敗的回饋用中性措辭、並列「降級」與「補依據」兩種修法，重試差異記在 `agent_calls.revision_diff`。
 - 基本面期別逐檔（`fundamental_period_policy`）：`team_inputs` 2.6 另存程式計算的 `fundamental_metrics`，Finalizer 以 `validate_fundamental_metrics` 整份重算。
-- 曝險換股（`position_sizing.exposure_rotation` v1，版本閘門，2026-11-09 已開啟）：交易 Agent 對 `hold` 也給 `conviction`；程式依持股 beta、持有天數（由帳本算）與交易 Agent 的信心，在姿態觸發或新股 high 對持股 low 時換股，有次數與比例上限、死區（不是跨日遲滯），賣單意圖由程式標 `exit`、不改寫交易 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買。細節見 [`docs/decision-contracts.md`](docs/decision-contracts.md)。
+- 曝險換股（`position_sizing.exposure_rotation` v1／v2，版本閘門，2026-11-09 已開啟，目前 v2）：交易 Agent 對 `hold` 也給 `conviction`；程式依持股 beta、持有天數（由帳本算）與交易 Agent 的信心，在姿態觸發或新股 high 對持股 low 時換股，有次數與比例上限、死區（不是跨日遲滯），賣單意圖由程式標 `exit`、不改寫交易 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買。正式設定已於 2026-11-09 17:50 切到 v2（刪 `max_rotation_fraction`／`min_new_conviction`、`release_margin` 併進停止線；v1 保留供舊 Policy 重建），見 [`docs/exposure_rotation_v2_plan.md`](docs/exposure_rotation_v2_plan.md)。細節見 [`docs/decision-contracts.md`](docs/decision-contracts.md)。
 
 ### 程式配置與風控（Agent 不參與）
 
@@ -76,6 +76,9 @@
 - 已開啟（曝險）：`exposure_rotation`（2026-11-09，只在姿態為 neutral／aggressive 或信心差換股時動作）。
 - 已開啟（現金與執行面）：`cash_buffer_floor`、`cash_ratio_range`、`cash_stance_recency`、`cash_fit_order`、`high_conviction_cash_priority`、`held_weight_budget`、`cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`、`sector_fit`、`turnover_fit`、`reentry_cooldown`、`drawdown_derisk` v4。
 - 已開啟（紀錄）：`cash_stance_turn_facts`（2026-11-09，紀錄工具，簡報附交易池轉向事實、風險 Agent 多填列舉 `turn_assessment`，列舉與姿態不設對應，見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)）。
+- 已實作、尚未開啟：`market_index_facts` v1（風險 Agent 簡報附加權指數事實，背景、不可引用、不改配置；見 [`docs/market_index_facts_plan.md`](docs/market_index_facts_plan.md)）。把它的行為當成現行行為是錯的。
+- 已開啟（反彈）：`rebound_participation` v1（2026-11-09 23:45，只開 confirmed 一檔；程式狀態機與風險 Agent `turn_assessment` 雙鑰匙放寬防守姿態下的曝險換股，不放寬現金與換手；缺資料永不升級，重放成本目標未達，見 [`docs/rebound_participation_plan.md`](docs/rebound_participation_plan.md)）與其前提 `exposure_rotation` v3（防守目標仍 null）。
+- 已實作、尚未開啟：`slot_recycle`。把它的行為當成現行行為是錯的。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界

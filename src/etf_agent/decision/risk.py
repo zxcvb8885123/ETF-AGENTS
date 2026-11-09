@@ -9,6 +9,7 @@ from etf_agent.core import untrusted_value
 
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
+from .rebound import lifted_turnover_rate
 from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate
 from .contracts import (
     DECISION_SCHEMA_VERSION,
@@ -411,6 +412,9 @@ class CompetitionGuardV2:
             self._check(checks, "SECTOR_WEIGHT", not sector_violations, sector_violations)
         turnover = decimal_value(proposal["order_proposal"]["turnover_rate"], "turnover_rate")
         turnover_limit = decimal_value(self.policy["max_turnover_rate"], "max_turnover_rate")
+        lifted = lifted_turnover_rate(self.policy)  # rebound_participation confirmed 的選填換手上限；沒有閘門恆為 None
+        if lifted is not None:
+            turnover_limit = lifted
         self._check(checks, "TURNOVER", turnover <= turnover_limit, {"actual": _rate(turnover), "limit": _rate(turnover_limit)})
         self._check(checks, "NON_NEGATIVE_CASH", decimal_value(allocation["cash"], "cash") >= 0, allocation["cash"])
         scenario_checks = []
