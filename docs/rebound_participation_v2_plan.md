@@ -10,7 +10,7 @@ v1 的 `turn_state` 用一組固定數字（池報酬 ≥ 3%、站回 MA5 ≥ 30
 
 - 程式只整理事實：最近 5 日的池等權報酬、站回 MA5 比例、20 日新低比例、regime、覆蓋率與 `data_status`（沒有 `state`、沒有轉向門檻）。風險 Agent 本來就看得到 `turn_facts` 的多日事實，v2 的 `recent_path` 補上逐日路徑。
 - 有效狀態 `effective_state` 只由風險 Agent 的 `turn_assessment` 對映：`no_turn_evidence`→none、`turn_unconfirmed`→candidate、`turn_confirmed`→confirmed。
-- 程式只做兩件壓回 none 的事（缺資料不放行）：`data_status` 為 unavailable（覆蓋 < `min_coverage`、行情缺漏、regime 算不出、bar 晚於最近交易日），或 `drawdown_control.stance_floor` 為 defensive。
+- 程式只做兩件壓回 none 的事（缺資料不放行）：`data_status` 為 unavailable（當日覆蓋或報酬樣本覆蓋 `return_coverage`（當日與前一交易日都有收盤者占交易池）< `min_coverage`、行情缺漏、regime 算不出、bar 晚於最近交易日），或 `drawdown_control.stance_floor` 為 defensive。
 - 對映列 `by_state`、現金放寬、換手上限、換股的上限（換手、檔數、現金）全部沿用 v1，程式硬上限不變。
 
 ## 與 v1 的行為差異（開啟前要知道）

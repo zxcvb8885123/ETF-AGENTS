@@ -69,7 +69,7 @@ SIGNAL_FIELDS = {"pool_return_latest", "share_above_ma5", "new_low_20d_share", "
 TURN_STATE_FIELDS_V2 = {
     "schema_version", "version", "as_of", "data_status", "regime", "signals", "flags", "recent_path", "note",
 }
-SIGNAL_FIELDS_V2 = {"pool_return_latest", "share_above_ma5", "new_low_20d_share", "coverage"}
+SIGNAL_FIELDS_V2 = {"pool_return_latest", "share_above_ma5", "new_low_20d_share", "coverage", "return_coverage"}
 DATA_STATUSES = ("available", "unavailable")
 RECENT_PATH_DAYS = 5
 QUANTUM = Decimal("0.000001")
@@ -378,15 +378,28 @@ def _unavailable_facts_v2(trade_date: object, gate: Mapping[str, object], reason
     }
 
 
+def _return_coverage(pool: _Pool, index: int) -> Decimal:
+    """池日報酬實際用到的股票占交易池的比例（當日與前一個交易日都有收盤者）。``coverage`` 只看當日有 bar，
+    前一日缺很多檔時報酬只由少數檔算出，必須另外看這個比例（v2 專用，不改 turn_facts 的 pool_return）。"""
+    if index < 1 or not pool.size:
+        return Decimal(0)
+    today, before = pool.days[index], pool.days[index - 1]
+    used = sum(1 for dates in pool.dates_by_symbol.values() if today in dates and before in dates)
+    return Decimal(used) / Decimal(pool.size)
+
+
 def _turn_facts_v2(pool: _Pool, gate: Mapping[str, object], trade_date: str) -> Dict[str, object]:
     """v2：只整理最近 ``RECENT_PATH_DAYS`` 日的事實與資料品質（沒有門檻、沒有狀態）；缺資料標 unavailable，永不補假值。"""
     date_sets = {symbol: set(dates) for symbol, dates in pool.dates_by_symbol.items()}
     start = max(0, len(pool.days) - RECENT_PATH_DAYS)
     records = [_day_record(pool, index, gate, date_sets) for index in range(start, len(pool.days))]
+    return_coverage = [_return_coverage(pool, index) for index in range(start, len(pool.days))]
     last = records[-1]
-    flags: List[str] = []
-    if last["unavailable"] is not None:
-        flags = [TURN_STATE_UNAVAILABLE, "無法計算：%s" % last["unavailable"]]
+    reasons = [last["unavailable"]] if last["unavailable"] is not None else []
+    if return_coverage[-1] < _gate_decimal(gate, "min_coverage"):
+        reasons.append("pool_return_sample")  # 前一交易日缺很多檔：報酬只由少數檔算出，不可當事實
+    unavailable = bool(reasons)
+    flags: List[str] = [TURN_STATE_UNAVAILABLE, "無法計算：%s" % "、".join(reasons)] if unavailable else []
 
     def text(value: object) -> Optional[str]:
         return _q(value) if isinstance(value, Decimal) else None  # type: ignore[arg-type]
@@ -395,19 +408,21 @@ def _turn_facts_v2(pool: _Pool, gate: Mapping[str, object], trade_date: str) -> 
         "schema_version": TURN_STATE_VERSION_V2,
         "version": gate["version"],
         "as_of": trade_date,
-        "data_status": "unavailable" if last["unavailable"] is not None else "available",
+        "data_status": "unavailable" if unavailable else "available",
         "regime": last["regime"],
         "signals": {
             "pool_return_latest": text(last["ret"]),
             "share_above_ma5": text(last["ma5"]),
             "new_low_20d_share": text(last["new_low"]),
             "coverage": _q(last["coverage"]),  # type: ignore[arg-type]
+            "return_coverage": _q(return_coverage[-1]),
         },
         "flags": flags,
         "recent_path": [
             {"date": row["date"], "pool_return": text(row["ret"]), "share_above_ma5": text(row["ma5"]),
-             "new_low_20d_share": text(row["new_low"]), "regime": row["regime"], "coverage": _q(row["coverage"])}  # type: ignore[arg-type]
-            for row in records
+             "new_low_20d_share": text(row["new_low"]), "regime": row["regime"], "coverage": _q(row["coverage"]),  # type: ignore[arg-type]
+             "return_coverage": _q(sample)}
+            for row, sample in zip(records, return_coverage)
         ],
         "note": TURN_STATE_NOTE_V2,
     }

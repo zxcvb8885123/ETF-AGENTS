@@ -195,8 +195,8 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 動機與取捨見 [rebound_participation_v2_plan.md](rebound_participation_v2_plan.md)。v1 保留不動（舊 Policy／舊 run 逐位元重建）；v2 是同一欄位的另一個版本，依 `version` 分派。
 
 - 欄位只剩 `version`、`min_coverage`（資料品質數字，不是判斷）、`by_state`（對映列，規則同 v1）與程式綁入的 `effective_state`、`cash_loosening`；v1 的轉向門檻（`candidate_*`、`confirm_*`、`retreat_*`、`candidate_expiry_days`）出現即拒絕，v1 缺它們也照舊拒絕（不混用）。前提同 v1。
-- `team_inputs` 仍為 2.8、欄位名仍是 `turn_state`，但 v2 的 `turn_state`（`schema_version` 2.0）**沒有 `state` 欄位**：只有 `data_status`（available／unavailable）、`regime`、最新一日 `signals`（池報酬、站回 MA5 比例、20 日新低比例、覆蓋）、最近 5 日 `recent_path` 與 `flags`。Finalizer 以同一輸入整份重算比對，欄位白名單與 v1 分開。
-- `effective_state` 只由風險 Agent 的 `turn_assessment` 對映（`no_turn_evidence`→none、`turn_unconfirmed`→candidate、`turn_confirmed`→confirmed）；程式只在 `data_status` 為 unavailable（覆蓋不足、行情缺漏、regime 算不出、bar 晚於最近交易日）或 `drawdown_control.stance_floor` 為 defensive 時壓回 none。**與 v1 的行為差異**：regime 不是 bear 不再擋。
+- `team_inputs` 仍為 2.8、欄位名仍是 `turn_state`，但 v2 的 `turn_state`（`schema_version` 2.0）**沒有 `state` 欄位**：只有 `data_status`（available／unavailable）、`regime`、最新一日 `signals`（池報酬、站回 MA5 比例、20 日新低比例、當日覆蓋 `coverage` 與報酬樣本覆蓋 `return_coverage`）、最近 5 日 `recent_path` 與 `flags`。Finalizer 以同一輸入整份重算比對，欄位白名單與 v1 分開。
+- `effective_state` 只由風險 Agent 的 `turn_assessment` 對映（`no_turn_evidence`→none、`turn_unconfirmed`→candidate、`turn_confirmed`→confirmed）；程式只在 `data_status` 為 unavailable（當日覆蓋不足、前一交易日缺很多檔使報酬樣本覆蓋 `return_coverage` 不足、行情缺漏、regime 算不出、bar 晚於最近交易日）或 `drawdown_control.stance_floor` 為 defensive 時壓回 none。**與 v1 的行為差異**：regime 不是 bear 不再擋。
 - 已知缺口：`turn_assessment` 成為唯一鑰匙後，驗證仍只核列舉值域，不要求引用證據、不驗文字品質（使用者 2026-11-10 決定先不加規定，風險由 `by_state` 的放寬幅度與換手、現金上限承擔）。
 - 風險 Agent 簡報附 v2 的 `turn_state`（`citable=false`），提示明講「你的 turn_assessment 是唯一決定依據」。
 

@@ -63,7 +63,7 @@ class FactsTests(unittest.TestCase):
         self.assertEqual(result["recent_path"][-2]["pool_return"], "0.010000")
         self.assertEqual(result["recent_path"][-3]["pool_return"], "0.040000")
         self.assertEqual(set(result["recent_path"][-1]), {
-            "date", "pool_return", "share_above_ma5", "new_low_20d_share", "regime", "coverage"})
+            "date", "pool_return", "share_above_ma5", "new_low_20d_share", "regime", "coverage", "return_coverage"})
 
     def test_no_threshold_decides_anything_a_flat_day_is_still_available_data(self):
         self.assertEqual(facts([])["data_status"], "available")
@@ -81,6 +81,18 @@ class FactsTests(unittest.TestCase):
         result = build_turn_state(bundle, REBOUND_V2)
         self.assertEqual(result["data_status"], "unavailable")
         self.assertEqual(result["signals"]["coverage"], "0.700000")
+
+    def test_a_missing_previous_day_makes_the_return_unreliable_even_when_the_latest_day_is_complete(self):
+        bundle = series_bundle(["0.04", "0.01"])
+        for row in bundle["price_series"][:9]:  # 10 檔中 9 檔缺前一交易日（最新日 bar 仍完整）
+            del row["bars"][-2]
+        result = build_turn_state(bundle, REBOUND_V2)
+        self.assertEqual(result["signals"]["coverage"], "1.000000")
+        self.assertEqual(result["signals"]["return_coverage"], "0.100000")
+        self.assertEqual(result["data_status"], "unavailable")
+        self.assertIn(TURN_STATE_UNAVAILABLE, result["flags"])
+        self.assertEqual(effective_state(result, {"turn_assessment": "turn_confirmed"}, None), "none")
+        self.assertEqual(facts(["0.04", "0.01"])["signals"]["return_coverage"], "1.000000")
 
     def test_a_bar_that_is_not_the_latest_trade_date_is_unavailable_not_an_exception(self):
         bundle = series_bundle(["0.04"])
@@ -157,6 +169,21 @@ class FinalizerTests(unittest.TestCase):
                 errors = []
                 validate_turn_state(bundle, policy, value, errors)
                 self.assertTrue(errors, label)
+
+    def test_a_v1_artifact_under_a_v2_policy_and_the_reverse_are_rejected(self):
+        bundle = series_bundle(["0.04", "0.01"])
+        v1_policy = {"position_sizing": {"rebound_participation": copy.deepcopy(REBOUND)}}
+        v2_policy = {"position_sizing": {"rebound_participation": copy.deepcopy(REBOUND_V2)}}
+        v1_state, v2_state = build_turn_state(bundle, REBOUND), build_turn_state(bundle, REBOUND_V2)
+        for label, policy, value in (("v1 形狀配 v2 Policy", v2_policy, v1_state), ("v2 形狀配 v1 Policy", v1_policy, v2_state)):
+            with self.subTest(label):
+                errors = []
+                validate_turn_state(bundle, policy, value, errors)
+                self.assertTrue(errors, label)
+        for policy, value in ((v1_policy, v1_state), (v2_policy, v2_state)):
+            errors = []
+            validate_turn_state(bundle, policy, value, errors)
+            self.assertEqual(errors, [])
 
     def test_the_bound_state_must_equal_the_agent_mapping_and_data_must_be_available(self):
         def check(bound, turn_state, assessment, floor="aggressive"):
