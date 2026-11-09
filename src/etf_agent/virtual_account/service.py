@@ -69,6 +69,31 @@ def ledger_nav_history_provider(ledger_root: Path, bundle: Mapping[str, object])
         history = VirtualAccountRepository(Path(ledger_root), account_id).nav_history(head_run_id)
         cache[head_run_id] = history
         return [dict(row) for row in history]
+    # exposure_rotation 重算持有天數要同一條帳本鏈：Finalizer 找不到明確的 holdings_history_provider 時取這個屬性，
+    # 所有已傳 nav_history_provider 的呼叫端（D-Plan 匯出、決策交付、CLI）不必另外接線。
+    provider.holdings_history = ledger_holdings_history_provider(ledger_root, bundle)  # type: ignore[attr-defined]
+    return provider
+
+
+def ledger_holdings_history_provider(ledger_root: Path, bundle: Mapping[str, object]) -> Callable[[str], List[Dict[str, object]]]:
+    """exposure_rotation 重算持有天數用的帳本持股歷史來源：與 ``ledger_nav_history_provider`` 同一條帳本鏈、同一個 head。
+
+    每列 ``{"run_id", "as_of", "symbols"}``（舊到新）；帳本、head 或雜湊鏈有問題時回傳的函式會拋例外
+    （由 DecisionFinalizer 轉為拒絕）；只在呼叫時才讀帳本，所以沒有該閘門的舊 run 不會碰到帳本。"""
+    cache: Dict[str, List[Dict[str, object]]] = {}
+
+    def provider(head_run_id: str) -> List[Dict[str, object]]:
+        if head_run_id in cache:
+            return [dict(row) for row in cache[head_run_id]]
+        snapshot = bundle.get("account_snapshot")
+        account_id = snapshot.get("account_id") if isinstance(snapshot, Mapping) else None
+        if not isinstance(account_id, str) or not account_id:
+            raise VirtualAccountError("DecisionInputBundle 缺少 account_snapshot.account_id，無法開啟帳本")
+        if not (Path(ledger_root).resolve() / account_id).is_dir():
+            raise VirtualAccountError("找不到帳本目錄：%s" % (Path(ledger_root).resolve() / account_id))
+        history = VirtualAccountRepository(Path(ledger_root), account_id).holdings_history(head_run_id)
+        cache[head_run_id] = history
+        return [dict(row) for row in history]
     return provider
 
 
@@ -379,6 +404,23 @@ class VirtualAccountRepository:
             seen.add(run_id)
             state = _read(self.verify(run_id) / "state.json", "state")
             history.append({"run_id": run_id, "as_of": str(state["as_of"]), "nav": str(state["nav"])})
+            run_id = state.get("provenance", {}).get("parent_run_id")
+        return list(reversed(history))
+
+    def holdings_history(self, head_run_id: Optional[str] = None) -> List[Dict[str, object]]:
+        """沿 parent_run_id 往回走到開帳，回傳每個狀態的持股代號（舊到新）；走法與 ``nav_history`` 相同。
+
+        exposure_rotation 由它算每檔的連續持有起點。不改 ``nav_history`` 的輸出（那份只含 run_id、as_of、nav）。"""
+        history: List[Dict[str, object]] = []
+        seen = set()
+        run_id: Optional[str] = head_run_id or self.latest()["run_id"]
+        while run_id:
+            if run_id in seen:
+                raise VirtualAccountError("帳本 parent_run_id 形成循環：%s" % run_id)
+            seen.add(run_id)
+            state = _read(self.verify(run_id) / "state.json", "state")
+            symbols = sorted({str(row["symbol"]).upper() for row in state.get("positions", []) if int(row.get("shares", 0)) > 0})
+            history.append({"run_id": run_id, "as_of": str(state["as_of"]), "symbols": symbols})
             run_id = state.get("provenance", {}).get("parent_run_id")
         return list(reversed(history))
 
