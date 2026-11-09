@@ -21,6 +21,7 @@ from .contracts import (
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review_policy
+from .rebound import apply_rebound, lifted_turnover_rate
 from .exposure import (
     SKIP_PORTFOLIO_SYMBOL, BetaModel, Fill, Victim, beta_model,
     conviction_gap_swap_enabled, exposure_rotation_gate, exposure_rotation_plan, holding_days_by_symbol, holding_weights,
@@ -33,7 +34,7 @@ from .sizing import (
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
     conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
-    high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, validate_position_sizing,
+    high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, slot_recycle_enabled, validate_position_sizing,
 )
 
 
@@ -943,6 +944,24 @@ class AllocationOrderEngine:
             flags.append({"symbol": symbol, "code": "%s_SKIPPED:%s" % (code, reason), "detail": detail or (
                 "未執行（%s）；交易 Agent 的意圖未被改寫" % reason)})
 
+        # rebound_participation 的現金放寬與換手上限在減碼日同樣生效（它們改的是現金比例與換手上限，不是換股參數），
+        # 所以旗標放在減碼日提前返回之前。
+        rebound_gate_obj = sizing.get("rebound_participation")
+        if isinstance(rebound_gate_obj, Mapping):
+            loosening = rebound_gate_obj.get("cash_loosening")
+            if isinstance(loosening, Mapping):
+                flags.append({
+                    "symbol": SKIP_PORTFOLIO_SYMBOL, "code": "REBOUND_CASH_LOOSENED:%s" % rebound_gate_obj.get("effective_state"),
+                    "detail": "雙鑰匙都同意轉向：防守姿態的現金比例由 %s 放寬為 %s（程式條件式覆寫風險 Agent 的 defensive 現金子等級，只放寬；"
+                              "回撤下限優先）" % (loosening.get("from"), loosening.get("to")),
+                })
+            if lifted_turnover_rate(self.policy) is not None:
+                flags.append({
+                    "symbol": SKIP_PORTFOLIO_SYMBOL, "code": "REBOUND_TURNOVER_RAISED:confirmed",
+                    "detail": "反彈參與已確認：總換手上限由 Policy 的 %s 放寬為 %s（放寬風控，由人在 by_state.confirmed.max_turnover_rate 設定）" % (
+                        format(decimal_value(self.policy["max_turnover_rate"], "max_turnover_rate"), ".0%"),
+                        format(lifted_turnover_rate(self.policy), ".0%")),
+                })
         if derisk_day:
             skip("EXPOSURE_ROTATION", "derisk_day", detail="當日由 drawdown_derisk 減碼，曝險換股與回撤減碼互斥，整個略過")
             if gap_on:
@@ -953,6 +972,14 @@ class AllocationOrderEngine:
         hold_tiers = sizing.get("hold_conviction_by_symbol")
         if not isinstance(hold_tiers, Mapping):
             raise DecisionToolError("DecisionPolicy 已啟用 exposure_rotation，但尚未綁定交易決策的 hold 信心（hold_conviction_by_symbol）")
+        # rebound_participation（版本閘門）：有效狀態不是 none 時，只放寬防守／中性停止線、換股檔數與持有天數（見 rebound.apply_rebound）。
+        gate, rebound_state = apply_rebound(gate, sizing)
+        if rebound_state != "none":
+            flags.append({
+                "symbol": SKIP_PORTFOLIO_SYMBOL, "code": "REBOUND_PARTICIPATION:%s" % rebound_state,
+                "detail": "反彈參與有效狀態為 %s（程式狀態與風險 Agent 列舉取較保守者）；曝險換股改用放寬後的停止線、換股檔數與持有天數，"
+                          "交易 Agent 的意圖未被改寫" % rebound_state,
+            })
         days = holding_days_by_symbol(self.policy, self.context.bundle)
         model = self._exposure_beta_model(gate)
         held_weights, _, _ = holding_weights(self.context.bundle)
@@ -1146,6 +1173,10 @@ class AllocationOrderEngine:
         if ratio is not None:
             result["high_conviction_cash_floor"] = HIGH_CONVICTION_CASH_FLOOR
             result["high_conviction_floor_ratio"] = ratio
+        # rebound_participation 的 confirmed 換手上限（選填、放寬風控、人設定）：只在有效狀態為 confirmed 時抬高，其餘沿用 Policy。
+        lifted = lifted_turnover_rate(self.policy)
+        if lifted is not None:
+            result["max_turnover_rate"] = lifted
         for key, raw in overrides.items():
             result[key] = int(raw) if key == "max_positions" else decimal_value(raw, key)
         return result
@@ -1160,6 +1191,7 @@ class AllocationOrderEngine:
         effective: Mapping[str, object],
         held_count: int,
         allowed_new: Optional[Set[str]] = None,
+        recycled: Optional[Set[str]] = None,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。
 
@@ -1175,8 +1207,15 @@ class AllocationOrderEngine:
 
         ``allowed_new``（exposure_rotation 試算用）：不為 None 時，換股釋出的新股名額只給集合內的新股，其餘新股記為 MAX_POSITIONS；
         省略時（含所有舊路徑）行為不變。
+
+        ``slot_recycle``（版本閘門 v1）：新股依配置權重算不出一個整張（預算為零或目標金額不足一張）時，這一檔不會成交，
+        卻已占掉名額；閘門開啟時把它從名額計數中移出、重算一次（``recycled`` 是遞迴累積的移出名單），讓後面的候選補位。
+        移出者權重記為 0（`_run` 照舊記 LOT_SIZE），入選總數仍受 ``slots``／``growth_left``／``swap_left``／``new_cap`` 限制，
+        不會超過持股上限。省略閘門的舊 Policy 一律不經過，``recycled`` 恆為空。
         """
+        max_positions_in = max_positions
         hard_max = max_positions
+        recycled = recycled or set()
         sizing = self.policy["position_sizing"]
         tiers = sizing.get("conviction_by_symbol")
         if tiers is None:
@@ -1214,6 +1253,8 @@ class AllocationOrderEngine:
             free_for_new = 0
         eligible: List[str] = []
         for symbol in ordered:
+            if symbol in recycled:
+                continue
             if symbol not in self.prices or len(eligible) >= slots:
                 continue
             if rotation is None:
@@ -1288,6 +1329,19 @@ class AllocationOrderEngine:
                 break
             held_frozen.update(over)
             eligible = [symbol for symbol in eligible if symbol not in over]
+        if slot_recycle_enabled(sizing):
+            dead = {
+                symbol for symbol in eligible
+                if symbol not in active_symbols
+                and self._shares_for_value(marked_nav * weights[symbol], self.prices[symbol]) <= 0
+            }
+            if dead:
+                return self._conviction_targets(
+                    candidates, active_symbols, target_shares, marked_nav, max_positions_in, effective, held_count,
+                    allowed_new, recycled | dead,
+                )
+            for symbol in sorted(recycled):
+                weights.setdefault(symbol, Decimal("0"))
         for symbol, (current_weight, _) in held_frozen.items():
             weights[symbol] = current_weight
         return ordered, weights, skipped, budget, held_frozen

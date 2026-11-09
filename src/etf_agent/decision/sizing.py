@@ -125,6 +125,9 @@ DRAWDOWN_DERISK_NO_READD_VERSIONS = (DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK
 # 依現有權重計入配置預算、目標權重就是現有權重、不建買單（RISK_HELD_WEIGHT），其他候選不再按高估的預算超配後
 # 再被 CASH_BUFFER／RISK_CASH_FIT 砍回。省略此欄位的舊 Policy／舊 Decision run 逐位維持原重建行為。
 HELD_WEIGHT_BUDGET = "v1"
+# 名額回收（slot_recycle 版本閘門，物件 {"version": "v1"}）：排名在前的新股因預算為零或目標金額不足一張而算不出整張
+# （LOT_SIZE）時，不再占著新增名額，讓後面的候選補位；總持股數仍不超過上限。省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。
+SLOT_RECYCLE = {"version": "v1"}
 DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction"}
 DRAWDOWN_DERISK_FRACTION = Decimal("0.25")
 # 2026-11-05 後新增（high_conviction_cash_floor 版本閘門，只由人設定）：高信心（high）買單可把現金用到
@@ -258,6 +261,14 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "v3 以上才能與 high_conviction_cash_floor／cash_ratio_range 同用；v4 另受 max_turnover_rate 約束",
     ),
     GateRule("held_weight_budget", allowed=(HELD_WEIGHT_BUDGET,)),
+    GateRule(
+        "rebound_participation",
+        requires=("exposure_rotation", "cash_stance_turn_facts", "drawdown_derisk"),
+        note="反彈參與：程式狀態 turn_state 與風險 Agent 的 turn_assessment 取較保守者，放寬防守姿態下的曝險換股；"
+             "exposure_rotation 須為 v3、cash_stance_turn_facts v1、drawdown_derisk v4（自訂檢查在 rebound.validate_rebound_gate）；"
+             "bundle 須為 typed_evidence_v1（建 turn_state 時檢查）；effective_state 由 apply_trade_decision 綁定；team_inputs 須為 2.8",
+    ),
+    GateRule("slot_recycle", allowed=(SLOT_RECYCLE,), note="物件 {\"version\": \"v1\"}；LOT_SIZE 候選釋出占用的新增名額"),
     GateRule(
         "high_conviction_cash_floor", requires=("cash_buffer_floor", "cash_fit_order"),
         derisk_versions=DRAWDOWN_DERISK_NO_READD_VERSIONS,
@@ -504,6 +515,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)
+    if "rebound_participation" in sizing:
+        from .rebound import validate_rebound_gate
+        validate_rebound_gate(sizing, errors)
 
 
 def _ratio_in_open_unit(raw: object, label: str, errors: List[str], allow_one: bool) -> None:
@@ -575,6 +589,29 @@ def _grid_point(raw: object, label: str) -> Decimal:
     if isinstance(raw, bool) or not isinstance(raw, str) or not _TWO_DECIMALS.match(raw):
         raise DecisionToolError("%s 必須是兩位小數字串（例如 \"0.15\"）" % label)
     return decimal_value(raw, label)
+
+
+def sizing_grid_raw(gate: Mapping[str, object], level: str, grade: str) -> str:
+    """cash_ratio_range.grid 的原字串（已由 cash_grade_grid 驗證格式）。"""
+    cash_grade_grid(gate)
+    return str(gate["grid"][level][grade])  # type: ignore[index]
+
+
+def _rebound_expected_cash(sizing: Mapping[str, object], stance: object, base: object, errors: List[str]) -> object:
+    """反彈參與的條件式現金放寬：回傳預期現金比例（沒放寬回原值），並核對閘門綁定的 ``cash_loosening``。"""
+    gate = sizing.get("rebound_participation")
+    if not isinstance(gate, Mapping):
+        return base
+    from .rebound import loosened_cash_buffer
+
+    try:
+        expected, loosening = loosened_cash_buffer(gate, stance, base)
+    except DecisionToolError as error:
+        errors.append(str(error))
+        return base
+    if gate.get("cash_loosening") != loosening and not (gate.get("cash_loosening") is None and loosening is None):
+        errors.append("rebound_participation.cash_loosening 必須與重算結果一致（%s）" % (loosening,))
+    return expected
 
 
 def cash_grade_grid(gate: Mapping[str, object]) -> Dict[str, Dict[str, Decimal]]:
@@ -852,6 +889,11 @@ def drawdown_derisk_v4(sizing: Mapping[str, object]) -> bool:
     return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V4
 
 
+def slot_recycle_enabled(sizing: Mapping[str, object]) -> bool:
+    """slot_recycle 閘門：只有剛好 {"version": "v1"} 才算開啟；其他值已被 validate_gate_prerequisites 拒絕。"""
+    return sizing.get("slot_recycle") == SLOT_RECYCLE
+
+
 def reentry_blocked_symbols(sizing: Mapping[str, object]) -> Optional[List[str]]:
     """reentry_cooldown 啟用且已綁定名單時回傳不得再買進的代號；沒有閘門或沒有名單回 None（不設冷卻）。"""
     cooldown = sizing.get("reentry_cooldown")
@@ -989,16 +1031,18 @@ def validate_position_sizing(
                 raise DecisionToolError("position_sizing.cash_grade 必須是 %s" % "／".join(CASH_GRADES))
             if grade not in allowed_cash_grades(gate)[str(stance)]:
                 errors.append("position_sizing.cash_grade %s 不在 %s 今日可選格點內" % (grade, stance))
-            if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != cash_grade_grid(gate)[str(stance)][str(grade)]:
-                errors.append("cash_buffer_rate 必須等於 cash_ratio_range.grid 中 cash_stance／cash_grade 對應的現金比例")
+            base_raw = sizing_grid_raw(gate, str(stance), str(grade))
+            expected = _rebound_expected_cash(sizing, stance, base_raw, errors)
+            if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != decimal_value(expected, "cash_buffer_rate"):
+                errors.append("cash_buffer_rate 必須等於 cash_ratio_range.grid 中 cash_stance／cash_grade 對應的現金比例"
+                              "（反彈參與條件式現金放寬生效時為放寬後的比例）")
         except DecisionToolError as error:
             errors.append(str(error))
     elif buffers is not None:
         try:
-            if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != decimal_value(
-                buffers[stance], "cash_buffer_by_stance.%s" % stance
-            ):
-                errors.append("cash_buffer_rate 必須等於 cash_stance 對應的現金緩衝")
+            expected = _rebound_expected_cash(sizing, stance, buffers[stance], errors)
+            if decimal_value(policy.get("cash_buffer_rate"), "cash_buffer_rate") != decimal_value(expected, "cash_buffer_rate"):
+                errors.append("cash_buffer_rate 必須等於 cash_stance 對應的現金緩衝（反彈參與條件式現金放寬生效時為放寬後的比例）")
         except DecisionToolError as error:
             errors.append(str(error))
     if not isinstance(tiers, Mapping):

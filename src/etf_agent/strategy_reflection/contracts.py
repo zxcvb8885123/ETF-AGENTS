@@ -161,6 +161,10 @@ FORBIDDEN_PREFIXES = (
     # 2026-11-09 新增：市場轉向時的持股曝險調整（beta 下限、換股上限、持有天數、hold 信心與信心差換股），切換程式路徑，
     # 只由人設定；hold_conviction_by_symbol 是綁定交易決策時由程式寫入的欄位。
     "exposure_rotation", "hold_conviction_by_symbol",
+    # 新增：名額回收（LOT_SIZE 候選釋出新增名額），切換程式路徑，只由人設定。
+    "slot_recycle",
+    # 反彈參與閘門：程式狀態與風險 Agent 列舉雙鑰匙放寬曝險換股，切換程式路徑，只由人設定（含綁定的 effective_state）。
+    "rebound_participation",
 )
 
 

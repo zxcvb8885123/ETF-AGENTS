@@ -76,6 +76,7 @@ from .exposure import (
     exposure_review_brief,
     validate_exposure_review,
 )
+from .rebound import build_turn_state, effective_state, validate_turn_state
 from .position_review import (
     POSITION_REVIEW_VERSION,
     build_position_review,
@@ -189,6 +190,9 @@ __all__ = [
     "build_exposure_review",
     "exposure_review_brief",
     "validate_exposure_review",
+    "build_turn_state",
+    "effective_state",
+    "validate_turn_state",
     "build_position_review",
     "position_review_brief",
     "validate_position_review",

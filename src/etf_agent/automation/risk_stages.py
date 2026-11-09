@@ -64,8 +64,15 @@ RECENCY_PROMPT = (
 
 TURN_FACTS_PROMPT = (
     "摘要含 turn_facts（程式依行情算的交易池轉向事實，是事實不是訊號）：另輸出 turn_assessment"
-    "（no_turn_evidence／turn_unconfirmed／turn_confirmed），只是紀錄你怎麼看，不要求與現金姿態一致，"
-    "規則見 cash-stance.md「turn_facts」節。"
+    "（no_turn_evidence／turn_unconfirmed／turn_confirmed），只是紀錄你怎麼看，不要求與現金姿態一致，不影響現金格點；"
+    "若摘要另附程式狀態機結果，你的列舉才會與程式狀態取較保守者、決定曝險換股是否放寬。規則見 cash-stance.md「turn_facts」節。"
+)
+
+
+TURN_STATE_PROMPT = (
+    "摘要另含 turn_state（程式狀態機的結果，只是背景，沒有證據編號、不可引用）：你的 turn_assessment 與它取較保守者，"
+    "才決定防守姿態下的曝險換股是否放寬；你認為尚未轉向就填 no_turn_evidence 或 turn_unconfirmed，不要為了配合它而升級，"
+    "規則見 cash-stance.md「turn_state」節。"
 )
 
 
@@ -124,6 +131,7 @@ class RiskStagesMixin:
         prior_context: Optional[Mapping[str, object]] = None,
         cash_stance_recency: Optional[Mapping[str, object]] = None,
         cash_stance_turn_facts: Optional[Mapping[str, object]] = None,
+        turn_state: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -165,6 +173,9 @@ class RiskStagesMixin:
             if not typed:
                 raise DailyPipelineError("position_sizing.cash_stance_turn_facts 只能用於 evidence_policy=typed_evidence_v1")
             turn_brief = {"turn_facts": turn_facts(bundle)}
+            if turn_state is not None:
+                # rebound_participation（版本閘門）：程式狀態機的結果只當背景（沒有 evidence_id，不可引用）。
+                turn_brief["turn_state"] = {"citable": False, **dict(turn_state)}
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
@@ -233,7 +244,8 @@ class RiskStagesMixin:
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
-            + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else ""),
+            + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else "")
+            + (TURN_STATE_PROMPT if turn_state is not None else ""),
             cash_stance_turn_facts_schema(graded, cash_stance_recency is not None) if cash_stance_turn_facts is not None
             else cash_stance_recency_schema(graded) if cash_stance_recency is not None
             else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA),

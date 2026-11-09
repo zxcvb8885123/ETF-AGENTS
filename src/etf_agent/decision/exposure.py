@@ -1,4 +1,4 @@
-"""市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1／v2 版本閘門，只由人設定）。
+"""市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1／v2／v3 版本閘門，只由人設定）。
 
 整條鏈全部是確定性程式，Agent 不輸出任何數字：
 
@@ -29,7 +29,10 @@ EXPOSURE_ROTATION = "v1"
 # v2（docs/exposure_rotation_v2_plan.md）：刪 max_rotation_fraction 與 min_new_conviction（沿用 rotation 的）、
 # release_margin 併進停止線 beta_target_by_stance；v1 路徑逐位元保留，沒有 v2 的舊 Policy／舊 run 行為不變。
 EXPOSURE_ROTATION_V2 = "v2"
-EXPOSURE_ROTATION_VERSIONS = (EXPOSURE_ROTATION, EXPOSURE_ROTATION_V2)
+# v3（docs/exposure_rotation_v2_plan.md 末節）：欄位集合與行為都同 v2，唯一差別是 beta_target_by_stance.defensive 可填數字
+# （v1／v2 只能 null）；defensive 為 null 時等同不觸發。v1／v2 路徑逐位元保留。
+EXPOSURE_ROTATION_V3 = "v3"
+EXPOSURE_ROTATION_VERSIONS = (EXPOSURE_ROTATION, EXPOSURE_ROTATION_V2, EXPOSURE_ROTATION_V3)
 HOLD_CONVICTION = "v1"
 CONVICTION_GAP_SWAP = "v1"
 EXPOSURE_REVIEW_VERSION = "1.0"
@@ -69,6 +72,15 @@ def exposure_rotation_gate(sizing: object) -> Optional[Mapping[str, object]]:
 
 def gate_is_v2(gate: Optional[Mapping[str, object]]) -> bool:
     return gate is not None and gate.get("version") == EXPOSURE_ROTATION_V2
+
+
+def gate_is_v3(gate: Optional[Mapping[str, object]]) -> bool:
+    return gate is not None and gate.get("version") == EXPOSURE_ROTATION_V3
+
+
+def gate_has_targets(gate: Optional[Mapping[str, object]]) -> bool:
+    """v2 與 v3 共用的欄位集合與配對規則（停止線 ``beta_target_by_stance``、無 release_margin）。"""
+    return gate_is_v2(gate) or gate_is_v3(gate)
 
 
 def hold_conviction_enabled(policy_or_sizing: object) -> bool:
@@ -115,7 +127,7 @@ def _decimal_in(value: object, label: str, errors: List[str], low: Decimal, high
 
 
 def _validate_beta_targets(gate: Mapping[str, object], prefix: str, errors: List[str]) -> None:
-    """v2 的停止線 ``beta_target_by_stance``：觸發與停止都是「含現金整體 beta ≥ 目標」；防守只能 null；進攻 ≥ 中性。"""
+    """v2／v3 的停止線 ``beta_target_by_stance``：觸發與停止都是「含現金整體 beta ≥ 目標」；防守在 v2 只能 null、v3 可為 null 或數字；進攻 ≥ 中性 ≥ 防守（有填的比較）。"""
     if "beta_target_by_stance" not in gate:
         return
     targets = gate["beta_target_by_stance"]
@@ -123,16 +135,21 @@ def _validate_beta_targets(gate: Mapping[str, object], prefix: str, errors: List
     if not isinstance(targets, Mapping) or set(targets) != set(STANCES):
         errors.append("%s 必須剛好包含 aggressive／neutral／defensive（不觸發請寫 null）" % label)
         return
-    if targets["defensive"] is not None:
-        errors.append("%s.defensive 只能是 null（防守姿態不觸發曝險換股）" % label)
+    v3 = gate_is_v3(gate)
+    if targets["defensive"] is not None and not v3:
+        errors.append("%s.defensive 只能是 null（防守姿態不觸發曝險換股；v3 才允許填數字）" % label)
     values: Dict[str, Decimal] = {}
-    for stance in ("aggressive", "neutral"):
+    for stance in (("aggressive", "neutral", "defensive") if v3 else ("aggressive", "neutral")):
         if targets[stance] is not None:
             number = _decimal_in(targets[stance], "%s.%s" % (label, stance), errors, Decimal(0), Decimal("2"))
             if number is not None:
                 values[stance] = number
     if "aggressive" in values and "neutral" in values and values["aggressive"] < values["neutral"]:
         errors.append("%s 必須 aggressive ≥ neutral（越進攻目標越高）" % label)
+    if v3 and "defensive" in values:
+        for other in ("neutral", "aggressive"):
+            if other in values and values[other] < values["defensive"]:
+                errors.append("%s 必須 %s ≥ defensive（越進攻目標越高）" % (label, other))
 
 
 def _validate_v1_fields(gate: Mapping[str, object], sizing: Mapping[str, object], prefix: str, errors: List[str]) -> None:
@@ -185,7 +202,7 @@ def validate_exposure_rotation_gate(sizing: Mapping[str, object], errors: List[s
     if not isinstance(gate, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    v2 = gate_is_v2(gate)
+    v2 = gate_has_targets(gate)  # v2／v3 同欄位集合
     reject_unknown_fields(gate, GATE_FIELDS_V2 if v2 else GATE_FIELDS, prefix, errors)
     missing = sorted((GATE_REQUIRED_FIELDS_V2 if v2 else GATE_REQUIRED_FIELDS) - set(gate))
     if missing:
@@ -598,7 +615,7 @@ def exposure_rotation_plan(
     信心差換股（``conviction_gap_swap`` 有開才做，不看姿態與 beta）：新股 high 對持股 low，沿用同一組上限（與曝險換股共用
     ``max_swaps_per_run`` 與賣出市值上限），曝險換股先。``afford(victim, fill)`` 是呼叫端的現金可行性檢查（有狀態，回 True 即已預扣）。
     """
-    v2 = gate_is_v2(gate)
+    v2 = gate_has_targets(gate)  # v3 沿用 v2 的全部配對規則，只有 defensive 可有數字目標
     max_swaps = int(gate["max_swaps_per_run"])
     if v2:
         # v2：沒有賣出市值比例上限（換手由 turnover_fit 把關）、沒有 release_margin；換入信心門檻沿用 rotation 的，由呼叫端傳入。

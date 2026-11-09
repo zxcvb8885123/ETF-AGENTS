@@ -22,6 +22,7 @@ from .exposure import hold_conviction_enabled
 from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
 from .recency import cash_stance_recency_gate
+from .rebound import bind_effective_state, loosened_cash_buffer, rebound_gate
 from .turn_facts import cash_stance_turn_facts_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
@@ -308,6 +309,17 @@ def apply_trade_decision(
         if invalid:
             raise DecisionToolError("Policy 已啟用 exposure_rotation，hold 必須有信心等級：" + "、".join(invalid))
         result["position_sizing"]["hold_conviction_by_symbol"] = holds
+    if rebound_gate(sizing) is not None:
+        # rebound_participation：有效狀態 = min(程式 turn_state, 風險 Agent turn_assessment)，回撤下限為 defensive 時恆 none；
+        # 由程式依 bundle 重算後綁進閘門，Finalizer 以 team_inputs 重算比對。
+        bound_gate = bind_effective_state(sizing, bundle, cash_stance, floor)
+        # 條件式現金放寬：雙鑰匙都同意轉向（有效狀態非 none）且姿態為 defensive 時，現金比例改用該態的 defensive_cash_buffer
+        # （只放寬；回撤下限為 defensive 時有效狀態恆 none，所以回撤下限優先）。前後值記進 cash_loosening 供稽核。
+        loosened, loosening = loosened_cash_buffer(bound_gate, level, result["cash_buffer_rate"])
+        if loosening is not None:
+            result["cash_buffer_rate"] = loosened
+            bound_gate = {**bound_gate, "cash_loosening": loosening}
+        result["position_sizing"]["rebound_participation"] = bound_gate
     if "positions_by_breadth" in sizing:
         breadth = cash_stance.get("breadth")
         if breadth not in POSITION_BREADTHS:
