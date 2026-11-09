@@ -7,7 +7,7 @@ import hashlib
 import io
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping
 from urllib.parse import urlparse
@@ -121,3 +121,39 @@ def capture_ogd_candidates(
             if not any(day.iterdir()):
                 day.rmdir()
     return manifest
+
+
+def capture_with_retry(
+    capture: Callable[[], Dict[str, object]],
+    *,
+    now: Callable[[], datetime],
+    sleep: Callable[[float], None],
+    stop_at: datetime,
+    interval_seconds: float = 1800,
+    log: Callable[[str], None] = lambda message: None,
+) -> Dict[str, object]:
+    """八份全成功才算成功：失敗先立刻再試一次，仍失敗就每 interval_seconds 重抓，直到成功或到 stop_at。
+
+    到期仍未成功時回傳最後一次的結果（或 status=failed 的占位），由呼叫端沿用舊封存並 fail-closed。"""
+
+    attempt = 0
+    last: Dict[str, object] = {"status": "failed", "sources": [], "reason": "尚未嘗試"}
+    while True:
+        attempt += 1
+        try:
+            last = capture()
+        except (OSError, ValueError) as error:
+            last = {"status": "failed", "sources": [], "reason": str(error)}
+        if last.get("status") == "captured_candidate_only":
+            if attempt > 1:
+                log("交易狀態資料第 %d 次嘗試抓到" % attempt)
+            return last
+        failed = [str(item.get("source_id")) for item in last.get("sources", []) if item.get("status") != "captured_candidate_only"]
+        log("交易狀態資料第 %d 次抓取未完整（失敗：%s%s）" % (attempt, "、".join(failed) or "全部", "" if not last.get("reason") else "；" + str(last["reason"])))
+        if attempt == 1:
+            continue  # 立刻再試一次
+        if now() + timedelta(seconds=interval_seconds) > stop_at:
+            log("已到重試期限，不再重抓")
+            return last
+        log("%d 分鐘後再抓" % int(interval_seconds // 60))
+        sleep(interval_seconds)

@@ -501,7 +501,7 @@ class RestoreSupersededDecisionTests(PendingDecisionFixture, unittest.TestCase):
         with mock.patch.object(module, "ROOT", app), \
                 mock.patch.object(module, "run_preflight", lambda *_a, **_k: []), \
                 mock.patch.object(module, "run_data_stage", fake_data_stage), \
-                mock.patch.object(module, "capture_trading_sources", lambda *_a: {}), \
+                mock.patch.object(module, "capture_trading_sources", lambda *_a: {"status": "captured_candidate_only", "run_id": "test"}), \
                 mock.patch.object(module, "refresh_inferred_closures", lambda *_a: None), \
                 mock.patch.object(module, "expected_latest_trade_date", lambda *_a: date(2026, 9, 18)), \
                 mock.patch.object(module, "data_already_fetched", lambda *_a: False), \

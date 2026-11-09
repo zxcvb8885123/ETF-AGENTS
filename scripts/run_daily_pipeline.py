@@ -17,6 +17,7 @@ import math
 import os
 import re
 import subprocess
+import time as time_module
 import sys
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -59,7 +60,7 @@ from etf_agent.data.supplemental_sources import SupplementalRepository  # noqa: 
 from etf_agent.data import MarketDataDatabase, UniverseLoader  # noqa: E402
 from etf_agent.data.inferred_closures import update_inferred_closed_days  # noqa: E402
 from etf_agent.data.trading_calendar import DECISION_DEADLINE  # noqa: E402
-from etf_agent.data.source_capture import capture_ogd_candidates  # noqa: E402
+from etf_agent.data.source_capture import capture_ogd_candidates, capture_with_retry  # noqa: E402
 from etf_agent.core.run_layout import day_from_run_id, find_run_dir, list_run_dirs, trade_date_from_session_start  # noqa: E402
 from etf_agent.core.timeutil import parse_aware_time  # noqa: E402
 from etf_agent.data.evidence import TAIPEI_TIMEZONE  # noqa: E402
@@ -553,6 +554,17 @@ def capture_trading_sources(captures_root: Path) -> dict:
     return capture_ogd_candidates(report, captures_root, keep_latest_only=True)
 
 
+CAPTURE_RETRY_MARGIN = timedelta(hours=1)  # 重試最晚停在交件期限前一小時，留時間跑決策鏈
+
+
+def capture_retry_stop_at(now: datetime) -> datetime:
+    """下一個 08:55 交件期限前一小時；重抓資料最晚做到這個時間。"""
+    deadline = datetime.combine(now.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
+    if now >= deadline - CAPTURE_RETRY_MARGIN:
+        deadline += timedelta(days=1)
+    return deadline - CAPTURE_RETRY_MARGIN
+
+
 def ensure_calendar_capture(captures_root: Path, now: datetime) -> bool:
     """還沒有開休市日期表（新環境或資料夾被清掉）就先去抓；抓不到則照原本流程報錯停止。"""
     try:
@@ -659,22 +671,69 @@ def auto_resume_blocker(errors, deadline, now: datetime) -> "str | None":
     return None
 
 
-def run_decision_chain(build, run, deadline, now, log, auto_resume=True):
+QUOTA_MARKERS = ("session limit", "usage limit", "hit your", "rate limit")
+QUOTA_RESET_PATTERN = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.IGNORECASE)
+QUOTA_RESET_MARGIN = timedelta(minutes=2)  # 重置時間後多等一下再續跑
+QUOTA_FALLBACK_WAIT = timedelta(minutes=30)  # 看不懂重置時間時的等待
+MAX_QUOTA_WAITS = 3
+
+
+def quota_wait(errors, now: datetime) -> "timedelta | None":
+    """錯誤是額度用完時，回傳該等多久才續跑；不是額度問題回 None。看不懂重置時間就等 30 分鐘。"""
+    text = "；".join(str(error) for error in errors)
+    if not any(marker in text.lower() for marker in QUOTA_MARKERS):
+        return None
+    match = QUOTA_RESET_PATTERN.search(text)
+    if match is None:
+        return QUOTA_FALLBACK_WAIT
+    hour = int(match.group(1)) % 12 + (12 if match.group(3).lower() == "pm" else 0)
+    local = now.astimezone(TAIPEI_TIMEZONE)
+    reset = local.replace(hour=hour, minute=int(match.group(2) or 0), second=0, microsecond=0)
+    if reset <= local:
+        reset += timedelta(days=1)
+    return reset - local + QUOTA_RESET_MARGIN
+
+
+def run_decision_chain(build, run, deadline, now, log, auto_resume=True, sleep=time_module.sleep):
     """跑決策鏈；失敗且 ``auto_resume_blocker`` 允許時，以 resume 沿用已驗證輸出自動續跑一次。
 
+    額度用完（5 小時額度等）時，等到重置時間再 resume，最多 MAX_QUOTA_WAITS 次，且必須來得及在交件期限前跑完。
     ``build(resume)`` 回傳 pipeline，``run(pipeline)`` 回傳 PipelineResult，``now()`` 回傳含時區現在時間。
-    回傳 (result, agent_calls, auto_resume)：agent_calls 合併兩次呼叫紀錄；auto_resume 為 None（未失敗或關閉）或紀錄。"""
+    回傳 (result, agent_calls, auto_resume)：agent_calls 合併各次呼叫紀錄；auto_resume 為 None（未失敗或關閉）或紀錄。"""
     first = run(build(False))
     if first.status == "completed" or not auto_resume:
         return first, list(first.agent_calls), None
-    blocker = auto_resume_blocker(first.errors, deadline, now())
-    if blocker is not None:
-        log("[續跑] 不自動續跑：%s" % blocker)
-        return first, list(first.agent_calls), {"attempted": False, "reason": blocker}
-    log("[續跑] 決策鏈失敗，沿用已驗證輸出自動續跑一次：%s" % "；".join(first.errors)[:300])
-    second = run(build(True))
-    record = {"attempted": True, "first_errors": [str(error)[:300] for error in first.errors[:5]], "status": second.status}
-    return second, list(first.agent_calls) + list(second.agent_calls), record
+    result, calls, waits, plain_resumes = first, list(first.agent_calls), [], 0
+    while result.status != "completed":
+        delay = quota_wait(result.errors, now())
+        if delay is not None:
+            if len(waits) >= MAX_QUOTA_WAITS:
+                blocker = "額度等待已達 %d 次" % MAX_QUOTA_WAITS
+            elif deadline is None or now() + delay + AUTO_RESUME_MIN_REMAINING > deadline:
+                blocker = "額度重置後距交件期限不足 %d 分鐘" % (AUTO_RESUME_MIN_REMAINING.total_seconds() // 60)
+            else:
+                blocker = None
+        elif plain_resumes:
+            blocker = "已續跑過一次"
+        else:
+            blocker = auto_resume_blocker(result.errors, deadline, now())
+        if blocker is not None:
+            log("[續跑] 不自動續跑：%s" % blocker)
+            attempted = bool(waits) or plain_resumes > 0
+            return result, calls, {"attempted": attempted, "reason": blocker, "quota_waits": waits}
+        if delay is not None:
+            waits.append(int(delay.total_seconds()))
+            log("[續跑] 額度用完，%d 分鐘後（重置時間）再續跑：%s" % (int(delay.total_seconds() // 60), "；".join(map(str, result.errors))[:200]))
+            sleep(delay.total_seconds())
+        else:
+            plain_resumes += 1
+            log("[續跑] 決策鏈失敗，沿用已驗證輸出自動續跑一次：%s" % "；".join(map(str, result.errors))[:300])
+        result = run(build(True))
+        calls += list(result.agent_calls)
+    record = {"attempted": True, "first_errors": [str(error)[:300] for error in first.errors[:5]], "status": result.status}
+    if waits:
+        record["quota_waits"] = waits
+    return result, calls, record
 
 
 def session_deadline(session):
@@ -1053,8 +1112,16 @@ def _main(args) -> int:
             # 交易狀態 CSV 必須在 Snapshot 固定 cutoff 之前封存，available_at 才不會晚於 cutoff。
             log("[0/4] 封存交易狀態與開休市政府開放 CSV")
             try:
-                capture = capture_trading_sources(captures_root)
+                capture = capture_with_retry(
+                    lambda: capture_trading_sources(captures_root),
+                    now=lambda: datetime.now(TAIPEI_TIMEZONE), sleep=time_module.sleep,
+                    stop_at=capture_retry_stop_at(datetime.now(TAIPEI_TIMEZONE)), log=log,
+                )
                 summary["trading_status_capture"] = capture.get("run_id")
+                if capture.get("status") != "captured_candidate_only":
+                    summary["trading_status_capture_error"] = "重試後仍未完整抓到：%s" % capture.get("reason", capture.get("status"))
+                    log("交易狀態封存重試後仍不完整，改用 cutoff 前最新的成功封存")
+                    notify("ETF Agent 每日決策", "交易狀態資料重試後仍抓不完整，沿用舊資料（可能被拒絕）")
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 summary["trading_status_capture_error"] = str(error)
                 log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
@@ -1103,6 +1170,10 @@ def _main(args) -> int:
         }
         trading_status_path = run_dir / "trading_status.json"
         write_json(trading_status_path, {"bundle": status_bundle, "assessment": assessment})
+        # Guard 的 TRADABILITY_COVERAGE 對任何 unknown 一律拒絕；先停下，不為注定被拒的決策花子 Agent 額度。
+        unknown_count = summary["trading_status"]["states"].get("unknown", 0)
+        if unknown_count:
+            raise RuntimeError("交易狀態有 %d 檔不明（資料沒抓齊或太舊），Guard 必定拒絕；已在呼叫子 Agent 前停止" % unknown_count)
 
         # 在呼叫任何子 Agent 前對帳，對不上就停，不耗用量。
         summary["datapack"] = datapack_gate(args, run_dir, account_path, session, previous_summary.get("datapack"), snapshot_path, stamp)

@@ -217,6 +217,7 @@ class ClaudeAgentRunner:
             "--json-schema", json.dumps(task.schema, ensure_ascii=False),
             "--tools", "Read",
             "--strict-mcp-config",  # 不載入使用者的 MCP 外掛；每次呼叫約少 4 萬 token 的固定開銷
+            "--setting-sources", "project",  # 不載入使用者個人設定與外掛；實測每次呼叫約少 1.1 萬 token
             "--settings", claude_read_deny_settings(task.deny_reads),
             "--add-dir", str(run_dir),
             "--max-budget-usd", str(self.max_budget_usd),

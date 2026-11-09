@@ -69,7 +69,7 @@ macOS `launchd` 排程樣板（`.plist.template`）。
 
 | 樣板 | Label | 時間（Asia/Taipei） | 執行內容 | 備註 |
 | --- | --- | --- | --- | --- |
-| `com.etf-agents.data.plist.template` | `com.etf-agents.data` | 平日 20:00 | `start.sh data`（即 `auto`，只更新資料） | 不呼叫決策 Agent |
+| `com.etf-agents.data.plist.template` | `com.etf-agents.data` | 平日 20:00、06:00 | `start.sh data`（即 `auto`，只更新資料） | 不呼叫決策 Agent |
 | `com.etf-agents.finmind-news.plist.template` | `com.etf-agents.finmind-news` | 平日 20:40 | `scripts/run_finmind_news.sh` | 離 20:00 財報請求隔 40 分鐘避開額度，且在 21:00 決策前抓完；需 `FINMIND_TOKEN` |
 | `com.etf-agents.reflection.plist.template` | `com.etf-agents.reflection` | 每週五 19:30 | `.venv/bin/python cli/strategy_reflection.py auto --no-apply --force` | 在週五 20:00 資料更新與 21:00 決策之前（報告涵蓋到週四收盤）產生診斷包與每週反思報告（`var/strategy_reflection/reports/weekly-<日期>.md`）並封存提案，**不套用**；決策日不足時不呼叫 Agent，仍會產生報告；排程固定加 `--force`，不受「距上一份不到 6 天」限制，確保每週都有報告；日誌在 `var/logs/strategy-reflection-launchd.log` |
 | `com.etf-agents.reflection-apply.plist.template` | `com.etf-agents.reflection-apply` | 每週六 10:00 | `.venv/bin/python cli/strategy_reflection.py apply-pending` | 套用週五封存、尚未套用且未過期（8 天內）的提案；仍要通過重建驗證、影子回放、取鎖與 20:50～09:00 不套用的保護；週日 21:00 是第一個讀到新策略的決策；日誌在 `var/logs/strategy-reflection-apply-launchd.log` |

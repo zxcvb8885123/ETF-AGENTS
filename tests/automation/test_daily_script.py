@@ -114,9 +114,15 @@ class ArgumentTests(unittest.TestCase):
             self.preflight_kwargs.append(kwargs)
             return [PreflightCheck("fake", False, "測試用預檢失敗")]
 
+        # 沒指定 root 時用暫存資料夾，避免碰到真排程正持有的 artifacts/daily/.lock。
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        if root is None:
+            root = Path(scratch.name)
+            (root / "artifacts" / "daily").mkdir(parents=True)
         with patch.object(self.module, "run_preflight", fake_preflight), \
                 patch.object(self.module, "notify", lambda *_args, **_kwargs: None), \
-                patch.object(self.module, "ROOT", root or ROOT), \
+                patch.object(self.module, "ROOT", root), \
                 patch("sys.argv", ["run_daily_pipeline.py", *argv]):
             code = self.module.main()
         return code, seen
@@ -683,9 +689,33 @@ class DataReuseTests(unittest.TestCase):
         # 額度用完時不續跑，只呼叫一次並記下原因。
         built.clear()
         result, calls, record = self.module.run_decision_chain(
-            lambda resume: built.append(resume), lambda _: outcome("failed", [], ["hit your session limit"]), deadline, now, logs.append)
+            lambda resume: built.append(resume), lambda _: outcome("failed", [], ["hit your session limit"]), deadline,
+            lambda: datetime.fromisoformat("2026-10-27T08:20:00+08:00"), logs.append, sleep=lambda _s: None)
         self.assertEqual(built, [False])
         self.assertFalse(record["attempted"])
+        # 額度用完但重置時間來得及：等到重置後 resume。
+        built.clear()
+        sleeps = []
+        night = lambda: datetime.fromisoformat("2026-10-26T23:30:00+08:00")
+        quota_deadline = datetime.fromisoformat("2026-10-27T08:55:00+08:00")
+        results = iter([outcome("failed", [], ["limit: You've hit your 5-hour limit · resets 11:50pm (Asia/Taipei)"]),
+                        outcome("failed", [], ["hit your session limit"]),
+                        outcome("completed", [])])
+        result, _, record = self.module.run_decision_chain(
+            lambda resume: built.append(resume) or resume, lambda _: next(results), quota_deadline, night, logs.append,
+            sleep=sleeps.append)
+        self.assertEqual(built, [False, True, True])
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(sleeps), 2)
+        self.assertEqual(len(record["quota_waits"]), 2)
+        # 額度重置後來不及交件就不等。
+        built.clear()
+        sleeps.clear()
+        late = lambda: datetime.fromisoformat("2026-10-27T08:20:00+08:00")
+        _, _, record = self.module.run_decision_chain(
+            lambda resume: built.append(resume), lambda _: outcome("failed", [], ["hit your session limit"]),
+            quota_deadline, late, logs.append, sleep=sleeps.append)
+        self.assertEqual((built, sleeps, record["attempted"]), ([False], [], False))
         # 關閉自動續跑或第一次就成功時不記錄。
         built.clear()
         _, _, record = self.module.run_decision_chain(
