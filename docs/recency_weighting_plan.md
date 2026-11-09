@@ -1,6 +1,6 @@
 # 風險 Agent 現金姿態：讓「越新的資料」分量更重
 
-狀態（2026-11-09）：**閘門 `position_sizing.cash_stance_recency` v1 已實作、測試通過，正式設定尚未開啟**（`config/decision_policy.json` 沒有此欄位）。契約見 [decision-contracts.md](decision-contracts.md#現金姿態的資料新舊cash_stance_recency)，啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
+狀態（2026-11-09）：**閘門 `position_sizing.cash_stance_recency` v1 已實作、測試通過，並已在 `config/decision_policy.json` 開啟**（人決定）。開啟後從 2026-11-10 07:00 的決策起生效；明顯變差由人刪除該欄位即回滾。契約見 [decision-contracts.md](decision-contracts.md#現金姿態的資料新舊cash_stance_recency)，啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
 
 ## 起因（事實）
 
@@ -22,9 +22,9 @@
 
 最近收盤後才出現的事件與新聞，走勢還沒反映，判斷「情況有沒有改變」時預設以它們為主，利多利空同樣適用，不採用須說明理由。隔夜行情仍只是背景；累積走勢不因較舊而作廢。風險：護盤失敗、續跌時可能多買（上界估計：11-09 若改選 `defensive/lower`，可動用現金約 NAV 的 3.6%，與 Agent 目前已有的權限相同）。沒有足夠歷史可驗證，只能看開啟後的即時紀錄。
 
-## 尚未決定（需人）
+## 開啟（2026-11-09 人決定）
 
-1. **何時開啟**：在 `config/decision_policy.json` 的 `position_sizing` 加 `"cash_stance_recency": {"version": "v1"}`；開啟後至少觀察 10 個決策日（`calibration.MIN_DECISION_DAYS`），每週檢視列舉值與姿態；明顯變差由人刪掉該欄位即回滾。
+已在 `config/decision_policy.json` 的 `position_sizing` 加 `"cash_stance_recency": {"version": "v1"}`。開啟後至少觀察 10 個決策日（`calibration.MIN_DECISION_DAYS`），每週檢視 `recency_reconciliation` 列舉值與姿態；明顯變差由人刪掉該欄位即回滾。
 
 ## 為什麼不做程式偵測「護盤事件」
 

@@ -51,7 +51,7 @@ from etf_agent.strategy_reflection.contracts import FORBIDDEN_PREFIXES, KNOBS
 
 from test_analysts import event_items, finding, report, technical_items
 from test_budget_and_derisk_gates import reseal, two_positions
-from test_cash_fit_and_limits import gated, production_policy, with_rules
+from test_cash_fit_and_limits import gated, live_production_policy, production_policy, with_rules
 from test_portfolio_decision_agent import refresh_artifact_hash
 from test_portfolio_risk_decision import chain_inputs, policy as base_policy, valid_inputs
 from test_position_sizing import SIZING, sized_inputs, sized_policy
@@ -413,6 +413,10 @@ class ProductionAllGatesTests(unittest.TestCase):
         """固定快照（不讀 live 檔）：配置程式任何無意的行為改變都會改掉這個雜湊。"""
         _, _, (_, body) = self.world(PRODUCTION_SIZING_2026_11_08)
         self.assertEqual(body["content_sha256"], PRODUCTION_SNAPSHOT_SHA256)
+
+    def test_live_config_enables_cash_stance_recency(self):
+        """2026-11-09 人決定開啟；要回滾就刪掉這個欄位，並同步改本測試與 docs/status.md。"""
+        self.assertEqual(live_production_policy()["position_sizing"].get("cash_stance_recency"), {"version": "v1"})
 
     def test_live_config_matches_the_snapshot_except_for_reflection_knobs(self):
         """live 樣板與快照只允許在策略反思旋鈕上不同；版本閘門不同代表快照（與本測試）需要人更新。"""

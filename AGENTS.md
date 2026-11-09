@@ -73,7 +73,7 @@
 - 回撤下限由 `decision/drawdown.py` 從帳本 NAV 歷史計算並綁進 `drawdown_control`，有 `history_ref` 時事後重建必須以帳本獨立重算，帳本讀不到或歷史不符一律拒絕。
 - 強制換股是每週論點檢視結論唯一影響配置之處：名單由 pipeline 綁進 Policy，重建只讀 Policy，且須有交易 Agent 本次採納的該股空頭 claim。
 - **版本閘門啟用狀態**（唯一出處與目前數值：[`docs/status.md`](docs/status.md#版本閘門啟用狀態)，2026-11-08 依 `config/decision_policy.json` 核對）。已開啟（判斷與配置）：`position_review`（只設 `loss_alert` 0.15）、`conviction_volatility_v2`（`volatility_exponent` 0）、`selection_ranking`、`limit_scaled_conviction`（alpha 0.6）、`held_add_priority`＋`rotation`、`forced_swap`＋`confirmation`、`typed_evidence_v1`。
-- 已開啟（現金與執行面）：`cash_buffer_floor`、`cash_ratio_range`、`cash_fit_order`、`high_conviction_cash_priority`、`held_weight_budget`、`cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`、`sector_fit`、`turnover_fit`、`reentry_cooldown`、`drawdown_derisk` v4。
+- 已開啟（現金與執行面）：`cash_buffer_floor`、`cash_ratio_range`、`cash_stance_recency`、`cash_fit_order`、`high_conviction_cash_priority`、`held_weight_budget`、`cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`、`sector_fit`、`turnover_fit`、`reentry_cooldown`、`drawdown_derisk` v4。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界

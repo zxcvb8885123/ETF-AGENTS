@@ -634,7 +634,7 @@ class ReplayTests(unittest.TestCase):
             set(notes),
             {"policy_id", "content_sha256", "available_at_overridden", "archived_cash_stance", "cash_stance", "stance_floor",
              "stance_raised_to_floor", "selection_ranking_applied", "breadth_unavailable", "cash_buffer_rate", "drawdown",
-             "cash_grade"},
+             "cash_grade", "cash_stance_recency"},  # 正式樣板已開 cash_stance_recency，回放多標略過；曝險換股不在其中
         )
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):
