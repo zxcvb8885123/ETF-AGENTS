@@ -15,6 +15,13 @@ INTENT_LABELS = {
     "exit": "出場", "forced_exit": "受規則要求出場", "no_trade": "暫不交易",
 }
 CONVICTION_LABELS = {"high": "高", "medium": "中", "low": "低", None: "不適用"}
+
+
+def conviction_label(item: Mapping[str, object]) -> str:
+    """信心欄的標籤：hold 帶信心（exposure_rotation 閘門）是「續抱信心」，其餘維持「買進信心」。"""
+    return "續抱信心" if item.get("intent") == "hold" and item.get("conviction") is not None else "買進信心"
+
+
 GRADE_LABELS = {
     "strong": "強", "moderate": "中", "weak": "弱", "none": "無",
     "high": "高", "medium": "中", "low": "低",
@@ -60,9 +67,12 @@ def render_trader_report(
     bundle: Mapping[str, object], momentum: Mapping[str, object],
     debate: Mapping[str, object], trade: Mapping[str, object],
     position_review: Optional[Mapping[str, object]] = None,
+    hold_conviction: bool = False,
 ) -> str:
     """保留原判斷，只將識別碼、等級與長段落轉成閱讀版。"""
-    errors = TradeDecisionValidator(bundle, momentum, debate, position_review=position_review).validate(trade)
+    errors = TradeDecisionValidator(
+        bundle, momentum, debate, position_review=position_review, hold_conviction=hold_conviction
+    ).validate(trade)
     if errors:
         raise DecisionToolError("交易整合結果驗證失敗：" + "；".join(errors))
     cutoff = parse_aware_time(bundle["decision_cutoff"], "decision_cutoff", error=DecisionToolError)
@@ -79,8 +89,8 @@ def render_trader_report(
     for item in trade["items"]:
         lines.extend([
             "## %s" % item["symbol"], "",
-            "**結論：%s｜買進信心：%s**" % (
-                INTENT_LABELS[item["intent"]], CONVICTION_LABELS[item.get("conviction")],
+            "**結論：%s｜%s：%s**" % (
+                INTENT_LABELS[item["intent"]], conviction_label(item), CONVICTION_LABELS[item.get("conviction")],
             ), "", "**為什麼這樣決定：**", "",
             _paragraphs(_readable_text(item["rationale"], claim_roles)), "",
         ])

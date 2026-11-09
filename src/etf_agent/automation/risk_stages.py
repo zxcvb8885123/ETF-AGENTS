@@ -11,6 +11,7 @@ from etf_agent.decision import (
 )
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
+from etf_agent.decision.recency import evidence_recency
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
 from etf_agent.decision.sizing import (
@@ -18,7 +19,9 @@ from etf_agent.decision.sizing import (
 )
 
 from .agent_runner import AgentTask, DailyPipelineError
-from .agent_schemas import CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES
+from .agent_schemas import (
+    CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
+)
 
 # 閘門段落只說「本次簡報含哪個欄位」並指向 cash-stance.md 的對應節；規則本身只寫在那裡（與 validate_cash_stance 同步）。
 OVERNIGHT_PROMPT = (
@@ -49,6 +52,12 @@ def _soft_floors(
         return {stance: str(Decimal(str(value)) * ratio) for stance, value in cash_buffers.items()}
     except InvalidOperation:
         raise DailyPipelineError("position_sizing.high_conviction_cash_floor.floor_ratio 無法解析")
+
+
+RECENCY_PROMPT = (
+    "摘要開頭含 evidence_recency（程式依內容時間分組的證據時間表）：另輸出 recency_reconciliation（列舉），"
+    "並在最新一組有證據時至少引用其中一個，規則見 cash-stance.md「evidence_recency」節。"
+)
 
 
 CASH_GRADE_PROMPT = (
@@ -104,6 +113,7 @@ class RiskStagesMixin:
         high_conviction_cash_floor: Optional[Mapping[str, object]] = None,
         cash_ratio_range: Optional[Mapping[str, object]] = None,
         prior_context: Optional[Mapping[str, object]] = None,
+        cash_stance_recency: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -133,9 +143,16 @@ class RiskStagesMixin:
         if graded and "anchor" not in cash_ratio_range:  # type: ignore[operator]
             raise DailyPipelineError("position_sizing.cash_ratio_range 尚未綁定 anchor（前次現金比例）")
         grade_brief = _grade_brief(cash_ratio_range) if graded else {}  # type: ignore[arg-type]
+        # cash_stance_recency（版本閘門）：簡報第一個鍵附程式算的證據時間表；沒有閘門時簡報與舊版逐鍵相同。
+        recency_brief: Dict[str, object] = {}
+        if cash_stance_recency is not None:
+            if not typed:
+                raise DailyPipelineError("position_sizing.cash_stance_recency 只能用於 evidence_policy=typed_evidence_v1")
+            recency_brief = {"evidence_recency": evidence_recency(bundle, context.market_evidence_ids)}
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
+                **recency_brief,
                 "regime_assessment": regime,
                 "analyst_outlooks": {
                     name: counts([item.get("outlook") for item in report.get("items", [])])
@@ -176,7 +193,8 @@ class RiskStagesMixin:
         def validate(stance: Mapping[str, object]) -> List[str]:
             errors: List[str] = []
             validate_cash_stance(
-                context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range, prior_context=prior_context
+                context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range, prior_context=prior_context,
+                recency_gate=cash_stance_recency,
             )
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
@@ -196,8 +214,10 @@ class RiskStagesMixin:
                CASH_GRADE_PROMPT if graded else "姿態對應的現金比例由 Policy 決定，你不得輸出百分比。",
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
-               TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES),
-            CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA,
+               TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
+            + (RECENCY_PROMPT if cash_stance_recency is not None else ""),
+            cash_stance_recency_schema(graded) if cash_stance_recency is not None
+            else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA),
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)
         self.save_artifact("cash_stance", stance)

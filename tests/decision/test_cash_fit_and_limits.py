@@ -57,8 +57,17 @@ def production_rules():
     return json.loads((ROOT / "config" / "decision_rules.json").read_text(encoding="utf-8"))
 
 
-def production_policy():
+def live_production_policy():
     return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+
+
+def production_policy():
+    """正式樣板去掉 cash_stance_recency：它只在風險 Agent 現金姿態驗證時要求 typed_evidence_v1 並多一個欄位，
+    不改配置結果；這些測試用的 bundle 不是 typed_evidence_v1，閘門本身由 test_cash_stance_recency 與
+    test_daily_pipeline.LiveTemplatePipelineTests 覆蓋。"""
+    policy = live_production_policy()
+    policy["position_sizing"].pop("cash_stance_recency", None)
+    return policy
 
 
 def with_rules(bundle, **changes):

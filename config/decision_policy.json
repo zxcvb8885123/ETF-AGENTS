@@ -56,6 +56,7 @@
       "max_daily_raise": "0.03",
       "selection_check": "v1"
     },
+    "cash_stance_recency": {"version": "v1"},
     "cash_ceiling_fix": "v1",
     "stock_limit_headroom": "v1",
     "buy_gap_reserve": "v1",

@@ -24,6 +24,8 @@
 - **`high_conviction_cash_floor_by_stance`**（Policy 啟用高信心現金下限）：該姿態下高信心買單可動用原有現金到這條較低的下限（姿態緩衝 × 固定比例，程式計算），中低信心仍只能用賣股收入；防守姿態的程式減碼也只補到這條線，所以防守的實際現金落點是這條下限而非完整緩衝，理由要反映這一點。
 - **`cash_grade_allowed_by_stance`**（Policy 啟用 `cash_ratio_range`，此時不附 `cash_buffer_by_stance`）：除了姿態，另選姿態內子等級 `cash_grade`：`lower`、`middle` 或 `upper`（由低到高），現金比例由 `cash_grade_grid` 對應。只能選 `cash_grade_allowed_by_stance` 列出的該姿態子等級：單日只限制現金拉高，今日上限 = max(該姿態 lower, `cash_ratio_anchor.ratio` + `max_daily_raise`)，往下不限，切到更防守的姿態時當天只到該姿態 lower；選了不可選的子等級即退回重答，程式不會替你夾到邊界。`cash_ratio_anchor` 是前次決策的現金比例（`status=account_cash` 時為本次起始現金比例），只是背景、不是證據、不可引用。防守姿態時程式會依 ATR 賣股把現金補到所選比例，子等級越高、當天被逼出的賣單越多；`rationale` 說明為何選這個子等級與這個代價。沒有此欄位時輸出裡沒有 `cash_grade`。
 
+- **`evidence_recency`**（Policy 啟用 `cash_stance_recency`，簡報第一個鍵；需 `typed_evidence_v1`）：程式依**內容時間**（新聞發布時間、時段收盤時間、資料日，不是抓取時間）把市場層級證據分三組，界線是台股最近交易日 13:30。`after_latest_close`＝最近收盤之後才出現的資料（週末新聞、美股與日韓收盤、VIX、夜盤）；`latest_session`＝最近交易日當天的資料；`accumulated`＝累積性走勢（`market-regime:pool-breadth`，MA20／MA60 廣度）。每筆附 `hours_before_cutoff`（距截止小時數，程式算）。另輸出列舉 `recency_reconciliation`：`newest_confirms`（最新一組與走勢方向一致）、`newest_contradicts`（相反）、`newest_insufficient`（最新一組沒有證據）。`after_latest_close` 有證據時不得填 `newest_insufficient`，且 `evidence_ids` 至少引用其中一個；沒有證據時只能填 `newest_insufficient`。`after_latest_close` 裡的事件與新聞（`kind=news`）發生在最近一次台股收盤之後，走勢與廣度還沒反映它們：判斷「情況有沒有改變」時，預設以這些事件與新聞為主，利多與利空同樣適用；不採用時，`rationale` 要說明理由（例如消息彼此矛盾、只是評論沒有新事實、措施尚未生效）。隔夜行情（`kind=overnight`）仍只是背景，不因為較新就升級成事件；累積走勢要看一段時間才有意義，不因為較舊就作廢。新不等於已被市場消化，也可能失敗，把這個風險寫進理由。列舉與姿態之間沒有對應要求，現金姿態與子等級仍由你判斷，程式不因為最新一組而放寬任何現金格點或上限。
+
 ## 正例
 
 - 市場狀態 neutral、全市場情緒 `negative`、回撤未達門檻、分析師看法分歧：`level=neutral`、`breadth=balanced`，`evidence_ids` 含情緒成分與 `market-regime:pool-breadth`，理由寫「情緒負面但廣度未轉弱，保留中性現金；看法分歧，持股維持平衡」。

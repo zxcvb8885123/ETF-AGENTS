@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time
+from etf_agent.decision.exposure import hold_conviction_enabled
 from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.core.run_layout import list_run_dirs
 from etf_agent.decision import (
@@ -182,7 +183,8 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
     prior = team.get("prior_decision_context") if isinstance(team.get("prior_decision_context"), Mapping) else None
     try:
         errors = TradeDecisionValidator(
-            bundle, momentum, files["debate"], prior_context=prior, position_review=team.get("position_review")
+            bundle, momentum, files["debate"], prior_context=prior, position_review=team.get("position_review"),
+            hold_conviction=hold_conviction_enabled(files["policy"]),
         ).validate(files["intent"])
     except DecisionToolError as error:
         errors = [str(error)]
@@ -230,6 +232,19 @@ def bind_replay_policy(
             # 舊封存的現金姿態沒有持股廣度：回放時拿掉樣板的 positions_by_breadth，沿用填滿 max_positions 的舊行為。
             base["position_sizing"] = {key: value for key, value in sizing.items() if key != "positions_by_breadth"}
             base["content_sha256"] = decision_policy_sha256(base)
+        # cash_stance_recency 只約束 Agent 當天的輸出（回放不重跑 LLM、也不影響配置）：樣板有閘門時回放略過它，
+        # 封存姿態若帶 recency_reconciliation 也拿掉；沒有閘門的舊回放 notes 與 policy 逐位元不變。
+        recency_ignored = isinstance(base.get("position_sizing"), Mapping) and "cash_stance_recency" in base["position_sizing"]
+        if recency_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "cash_stance_recency"}
+            base["content_sha256"] = decision_policy_sha256(base)
+        bound_stance = {key: value for key, value in bound_stance.items() if key != "recency_reconciliation"}
+        # exposure_rotation 需要封存 run 沒有的 hold 信心與帳本持有天數：樣板有閘門時回放略過它（不換股），
+        # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
+        exposure_ignored = isinstance(base.get("position_sizing"), Mapping) and "exposure_rotation" in base["position_sizing"]
+        if exposure_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "exposure_rotation"}
+            base["content_sha256"] = decision_policy_sha256(base)
         bound_stance, grade_note = _replay_cash_grade(base, bundle, bound_stance, raised)
         if grade_note is not None:
             base = bind_cash_ratio_anchor(base, bundle, None, None)
@@ -254,6 +269,10 @@ def bind_replay_policy(
     # cash_ratio_range：只在樣板有閘門或封存姿態帶 cash_grade 時才記錄，沒有閘門的舊回放 notes 逐鍵不變。
     if grade_note is not None:
         notes["cash_grade"] = grade_note
+    if recency_ignored:
+        notes["cash_stance_recency"] = "ignored_in_replay"
+    if exposure_ignored:
+        notes["exposure_rotation"] = "ignored_in_replay"
     return policy, notes
 
 

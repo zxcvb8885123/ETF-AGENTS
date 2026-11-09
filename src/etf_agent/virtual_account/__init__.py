@@ -2,9 +2,10 @@
 
 from .active import DEFAULT_ACCOUNT_ID, active_account_id, write_active_account
 from .service import (
-    VirtualAccountError, VirtualAccountRepository, VirtualAccountService, ledger_nav_history_provider,
+    VirtualAccountError, VirtualAccountRepository, VirtualAccountService, ledger_holdings_history_provider,
+    ledger_nav_history_provider,
 )
 
 __all__ = ["DEFAULT_ACCOUNT_ID", "VirtualAccountError", "VirtualAccountRepository", "VirtualAccountService",
-           "ledger_nav_history_provider",
+           "ledger_nav_history_provider", "ledger_holdings_history_provider",
            "active_account_id", "write_active_account"]

@@ -400,7 +400,10 @@ class PriorDecisionContextValidator:
             conviction = item.get("conviction")
             if intent in _SIZED_INTENTS and conviction not in CONVICTION_LEVELS:
                 errors.append("%s buy／add 必須有信心等級" % item_prefix)
-            if intent not in _SIZED_INTENTS and conviction is not None:
+            # exposure_rotation 閘門啟用的 run，hold 也帶信心等級（續抱信心）；舊 run 的 hold 一律沒有，維持原驗證。
+            if intent not in _SIZED_INTENTS and conviction is not None and not (
+                intent == "hold" and conviction in CONVICTION_LEVELS
+            ):
                 errors.append("%s 只有 buy／add 可以有信心等級" % item_prefix)
             try:
                 string_list(item, "invalidation_conditions")

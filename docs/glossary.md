@@ -37,6 +37,12 @@
 | `cash_buffer_by_stance` | aggressive／neutral／defensive 三種姿態各自對應的現金比例（沒有 `cash_ratio_range` 時使用） | policy；`decision/sizing.py`、`automation/risk_stages.py` | — |
 | `cash_ratio_range`（`version`、`grid`、`max_daily_raise`、流程綁入的 `anchor`） | 姿態內再分 lower／middle／upper 三格現金比例；單日只限制現金拉高幅度；`anchor` 是前次 run 的最終緩衝（沒有前次時為本次起始現金比例） | policy；`decision/cash_ratio.py`（`bind_cash_ratio_anchor`、`validate_cash_ratio_anchor`）、`decision/sizing.py`（`cash_grade_grid`、`allowed_cash_grades`） | — |
 | `cash_grade`（lower／middle／upper） | 風險 Agent 在姿態內選的現金子等級，仍是列舉、不含數字 | 風險 Agent 輸出 `cash_stance.cash_grade`（proposal 的 `position_sizing.cash_stance`）；驗證 `decision/sizing.py` `validate_cash_stance`、重算 `decision/finalization.py` | — |
+| `cash_stance_recency`（`{version: v1}`） | 風險 Agent 現金姿態的版本閘門：簡報首鍵附 `evidence_recency`（證據內容時間分組），輸出另填列舉 `recency_reconciliation`；需 `typed_evidence_v1`；尚未開啟 | `decision/recency.py` |
+| `exposure_rotation`（`version`、`beta_window_days`、`beta_floor_by_stance`、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`、`hold_conviction`、`conviction_gap_swap`） | 持股曝險換股的版本閘門：依持股 beta、持有天數與 hold 信心，換掉低 beta 或信心低的持股；尚未開啟 | `decision/exposure.py`、`decision/allocation.py` |
+| `hold_conviction_by_symbol`、`held_since_by_symbol` | 流程綁入 Policy：hold 持股的信心等級；持股連續持有起點（由帳本算） | `decision/trader.py`、`decision/exposure.py` |
+| `exposure_review`（team_inputs 2.7） | 程式算的持股 beta、up／down capture 與組合 beta | `decision/exposure.py` |
+| `RISK_EXPOSURE_ROTATION`、`EXPOSURE_ROTATION_FILL`、`RISK_CONVICTION_GAP_SWAP`、`CONVICTION_GAP_SWAP_FILL`、`…_SKIPPED:<原因>` | 曝險／信心差換股的旗標；SKIPPED 的 symbol 為 `PORTFOLIO` | `decision/allocation.py` |
+| `evidence_recency`、`recency_reconciliation`（`newest_confirms`／`newest_contradicts`／`newest_insufficient`） | 程式算的證據時間表（`after_latest_close`／`latest_session`／`accumulated`）與 Agent 對最新一組的表態列舉 | `decision/recency.py`、`automation/risk_stages.py` |
 | `cash_grade_grid`、`cash_grade_allowed_by_stance`、`cash_ratio_anchor` | 風險 Agent 簡報欄位：格點、今日各姿態可選的子等級、前次現金比例 | `automation/risk_stages.py` | — |
 | `cash_buffer_floor` | 現金已低於姿態緩衝時，緩衝只擋買單動用原有現金，不擋用本次賣款買的替補 | policy；`decision/allocation.py` | — |
 | `high_conviction_cash_floor`（`version`、`floor_ratio`）、簡報 `high_conviction_cash_floor_by_stance` | 高信心買單可動用原有現金到「姿態緩衝 × floor_ratio」；防守減碼的觸發與目標同改為這條線 | policy；`decision/sizing.py`（`high_conviction_floor_ratio`）、`decision/allocation.py`；簡報 `automation/risk_stages.py` | `RISK_CASH_SOFT_FLOOR` |

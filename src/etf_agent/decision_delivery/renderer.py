@@ -3,7 +3,7 @@
 import json
 from .tools import cell as _cell, percent, TAIPEI
 from etf_agent.core import parse_aware_time
-from etf_agent.decision.trader_report import INTENT_LABELS, CONVICTION_LABELS
+from etf_agent.decision.trader_report import INTENT_LABELS, CONVICTION_LABELS, conviction_label
 
 TEMPLATE_MARKER = "<!-- report_template: 5 -->"
 TEMPLATE_MARKER_V4 = "<!-- report_template: 4 -->"
@@ -191,7 +191,7 @@ def _overnight_line(channel):
 def _intent(item):
     if item is None:
         return ["原交易理由未提供，無法補寫。", ""]
-    result = ["原交易意圖：%s；買進信心：%s。" % (INTENT_LABELS[item["intent"]], CONVICTION_LABELS[item.get("conviction")]), "", cell(item["rationale"]), ""]
+    result = ["原交易意圖：%s；%s：%s。" % (INTENT_LABELS[item["intent"]], conviction_label(item), CONVICTION_LABELS[item.get("conviction")]), "", cell(item["rationale"]), ""]
     for key, title in (("unresolved_questions", "未解問題"), ("invalidation_conditions", "重估條件")):
         result.extend("- %s：%s" % (title, cell(value)) for value in item.get(key, []))
     return result + [""]

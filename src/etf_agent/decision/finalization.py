@@ -23,10 +23,12 @@ from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS, fundamental_period_policy, validate_fundamental_metrics
 from .prior_decision import PriorDecisionContextValidator
 from .drawdown import validate_drawdown_control
+from .exposure import exposure_rotation_gate, hold_conviction_enabled, validate_exposure_review, validate_held_since
 from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
 from .rotation import validate_portfolio_slots
 from .cash_ratio import validate_cash_ratio_anchor
+from .recency import cash_stance_recency_gate
 from .sizing import cash_ratio_gate, cash_ratio_selection_check, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
@@ -48,6 +50,10 @@ RANKING_TEAM_FIELDS = REVIEW_TEAM_FIELDS | {"selection_ranking"}
 # 沒有財報時為 null），Finalizer 以同一份決策輸入整份重算比對；沒有該閘門的舊 bundle／舊 run 維持 2.5 以前。
 FUNDAMENTAL_TEAM_VERSION = "2.6"
 FUNDAMENTAL_TEAM_FIELDS = RANKING_TEAM_FIELDS | {"fundamental_metrics"}
+# 2.7：再加程式計算的曝險檢視 ``exposure_review``（每檔 beta／捕捉與組合 beta），須與 position_sizing.exposure_rotation 閘門
+# 同時存在（雙向）；Finalizer 以 ``validate_exposure_review`` 整份重算比對。是 2.6 的超集，所以也須與 fundamental_period_policy 同時存在。
+EXPOSURE_TEAM_VERSION = "2.7"
+EXPOSURE_TEAM_FIELDS = FUNDAMENTAL_TEAM_FIELDS | {"exposure_review"}
 TEAM_FIELDS_BY_VERSION = {
     STANCE_SCHEMA_VERSION: TEAM_INPUT_FIELDS,
     INTEGRATED_TEAM_VERSION: INTEGRATED_TEAM_FIELDS,
@@ -56,15 +62,17 @@ TEAM_FIELDS_BY_VERSION = {
     REVIEW_TEAM_VERSION: REVIEW_TEAM_FIELDS,
     RANKING_TEAM_VERSION: RANKING_TEAM_FIELDS,
     FUNDAMENTAL_TEAM_VERSION: FUNDAMENTAL_TEAM_FIELDS,
+    EXPOSURE_TEAM_VERSION: EXPOSURE_TEAM_FIELDS,
 }
 # 2.2 起都附前次決策背景；2.3 再加程式算好的名額脈絡。
 # 2.4 再加程式算好的持股檢視（停損／停利警示），是 2.3 的超集。
 # 2.5 再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集。
-# 2.6 再加程式計算的基本面指標 ``fundamental_metrics``，是 2.5 的超集。
-MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
-SLOTS_TEAM_VERSIONS = (ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
-REVIEW_TEAM_VERSIONS = (REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
-RANKING_TEAM_VERSIONS = (RANKING_TEAM_VERSION, FUNDAMENTAL_TEAM_VERSION)
+# 2.6 再加程式計算的基本面指標 ``fundamental_metrics``，是 2.5 的超集；2.7 再加曝險檢視 ``exposure_review``，是 2.6 的超集。
+FUNDAMENTAL_TEAM_VERSIONS = (FUNDAMENTAL_TEAM_VERSION, EXPOSURE_TEAM_VERSION)
+MEMORY_TEAM_VERSIONS = (MEMORY_TEAM_VERSION, ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION) + FUNDAMENTAL_TEAM_VERSIONS
+SLOTS_TEAM_VERSIONS = (ROTATION_TEAM_VERSION, REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION) + FUNDAMENTAL_TEAM_VERSIONS
+REVIEW_TEAM_VERSIONS = (REVIEW_TEAM_VERSION, RANKING_TEAM_VERSION) + FUNDAMENTAL_TEAM_VERSIONS
+RANKING_TEAM_VERSIONS = (RANKING_TEAM_VERSION,) + FUNDAMENTAL_TEAM_VERSIONS
 _UNSET = object()
 
 
@@ -77,6 +85,7 @@ def build_team_inputs(
     position_review: Optional[Mapping[str, object]] = None,
     selection_ranking: Optional[Mapping[str, object]] = None,
     fundamental_metrics: object = _UNSET,
+    exposure_review: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
@@ -85,7 +94,8 @@ def build_team_inputs(
     2.3：再加程式算好的名額脈絡 ``portfolio_slots``（滿檔換股），是 2.2 的超集；
     2.4：再加程式算好的持股檢視 ``position_review``（停損／停利警示），是 2.3 的超集；
     2.5：再加交易 Agent 第二輪的入選排序 ``selection_ranking``（同信心等級內的先後），是 2.4 的超集；
-    2.6：再加程式計算的基本面指標 ``fundamental_metrics``（有傳入即為 2.6，沒有財報時傳 None 存為 null），是 2.5 的超集。
+    2.6：再加程式計算的基本面指標 ``fundamental_metrics``（有傳入即為 2.6，沒有財報時傳 None 存為 null），是 2.5 的超集；
+    2.7：再加程式計算的曝險檢視 ``exposure_review``（position_sizing.exposure_rotation 啟用才有），是 2.6 的超集。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
@@ -99,7 +109,13 @@ def build_team_inputs(
         raise DecisionToolError("team_inputs 2.6 的基本面指標必須與入選排序同時存在")
     if fundamental_metrics is not _UNSET and fundamental_metrics is not None and not isinstance(fundamental_metrics, Mapping):
         raise DecisionToolError("team_inputs 2.6 的 fundamental_metrics 必須是物件或 None")
-    if fundamental_metrics is not _UNSET:
+    if exposure_review is not None and fundamental_metrics is _UNSET:
+        raise DecisionToolError("team_inputs 2.7 的曝險檢視必須與基本面指標（2.6）同時存在")
+    if exposure_review is not None and not isinstance(exposure_review, Mapping):
+        raise DecisionToolError("team_inputs 2.7 的 exposure_review 必須是物件")
+    if exposure_review is not None:
+        version = EXPOSURE_TEAM_VERSION
+    elif fundamental_metrics is not _UNSET:
         version = FUNDAMENTAL_TEAM_VERSION
     elif selection_ranking is not None:
         version = RANKING_TEAM_VERSION
@@ -130,11 +146,16 @@ def build_team_inputs(
         team["selection_ranking"] = dict(selection_ranking)
     if fundamental_metrics is not _UNSET:
         team["fundamental_metrics"] = dict(fundamental_metrics) if fundamental_metrics is not None else None
+    if exposure_review is not None:
+        team["exposure_review"] = dict(exposure_review)
     return team
 
 
 # 以 ``history_ref.head_run_id`` 讀回帳本 NAV 歷史（舊到新，止於該 head）；讀不到須拋例外，Finalizer 視為驗證失敗。
 NavHistoryProvider = Callable[[str], Sequence[Mapping[str, object]]]
+# 以 ``drawdown_control.history_ref.head_run_id`` 讀回帳本逐狀態的持股（舊到新，止於該 head；每列 run_id、as_of、symbols），
+# exposure_rotation 重算持有天數用；讀不到須拋例外，Finalizer 視為驗證失敗。
+HoldingsHistoryProvider = Callable[[str], Sequence[Mapping[str, object]]]
 
 
 class DecisionFinalizer:
@@ -150,9 +171,12 @@ class DecisionFinalizer:
         team_inputs: Optional[Mapping[str, object]] = None,
         decision_repository: Optional[Path] = None,
         nav_history_provider: Optional[NavHistoryProvider] = None,
+        holdings_history_provider: Optional[HoldingsHistoryProvider] = None,
     ):
         self.decision_repository = decision_repository
         self.nav_history_provider = nav_history_provider
+        # 沒有明確傳入時，取 ledger_nav_history_provider 附的同帳本持股歷史來源（沒有帳本來源則為 None，閘門啟用即拒絕）。
+        self.holdings_history_provider = holdings_history_provider or getattr(nav_history_provider, "holdings_history", None)
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.policy = dict(policy)
@@ -246,6 +270,8 @@ class DecisionFinalizer:
     ) -> List[str]:
         errors: List[str] = []
         errors.extend(self._validate_drawdown_history())
+        # exposure_rotation（版本閘門）：持有天數以帳本獨立重算；沒有閘門的舊 policy 不碰帳本。
+        validate_held_since(self.policy, self.bundle, self.holdings_history_provider, errors)
         errors.extend(self._validate_cash_ratio_anchor())
         errors.extend(self._validate_team_chain())
         errors.extend(ProposalValidator(self.bundle, self.policy, self.intent).validate(proposal))
@@ -296,16 +322,23 @@ class DecisionFinalizer:
         if fields is None:
             return [
                 "team_inputs.schema_version 必須為 2.0（舊封存）、2.1（事件併入分析團隊）、"
-                "2.2（附前次決策背景）、2.3（再附名額脈絡）、2.4（再附持股檢視）、2.5（再附入選排序）或 2.6（再附基本面指標）"
+                "2.2（附前次決策背景）、2.3（再附名額脈絡）、2.4（再附持股檢視）、2.5（再附入選排序）、"
+                "2.6（再附基本面指標）或 2.7（再附曝險檢視）"
             ]
         if set(team) != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
         integrated = version != STANCE_SCHEMA_VERSION
         # 2.6 與 bundle 的 fundamental_period_policy 必須同時存在；基本面指標以同一份決策輸入整份重算比對。
         # 沒有該閘門的舊 bundle／舊 run 不重算基本面指標，行為與舊版相同。
-        if (version == FUNDAMENTAL_TEAM_VERSION) != (fundamental_period_policy(self.bundle) is not None):
-            errors.append("team_inputs 2.6 的基本面指標必須與 DecisionInputBundle.fundamental_period_policy 同時存在")
-        if version == FUNDAMENTAL_TEAM_VERSION:
+        if (version in FUNDAMENTAL_TEAM_VERSIONS) != (fundamental_period_policy(self.bundle) is not None):
+            errors.append("team_inputs 2.6／2.7 的基本面指標必須與 DecisionInputBundle.fundamental_period_policy 同時存在")
+        # 2.7 與 policy 的 position_sizing.exposure_rotation 必須同時存在（雙向）；曝險檢視以 bundle 與 policy 整份重算比對。
+        exposure_gate = exposure_rotation_gate(self.policy.get("position_sizing"))
+        if (version == EXPOSURE_TEAM_VERSION) != (exposure_gate is not None):
+            errors.append("DecisionPolicy 的 position_sizing.exposure_rotation 必須與 team_inputs 2.7 同時存在")
+        if version == EXPOSURE_TEAM_VERSION and exposure_gate is not None:
+            validate_exposure_review(self.bundle, self.policy, team.get("exposure_review"), errors)
+        if version in FUNDAMENTAL_TEAM_VERSIONS:
             errors.extend(
                 "team_inputs.fundamental_metrics：%s" % error
                 for error in validate_fundamental_metrics(self.bundle, team.get("fundamental_metrics"))
@@ -357,14 +390,18 @@ class DecisionFinalizer:
             errors.append(str(error))
         errors.extend(
             TradeDecisionValidator(
-                self.bundle, self.momentum, self.debate, prior_context=prior, position_review=review
+                self.bundle, self.momentum, self.debate, prior_context=prior, position_review=review,
+                hold_conviction=hold_conviction_enabled(self.policy),
             ).validate(self.intent)
         )
         stance = team.get("cash_stance")
         sizing = self.policy.get("position_sizing")
         # cash_ratio_range（版本閘門）：現金姿態另含 cash_grade，必須在 policy 綁定的 anchor 算出的今日可選格點內。
         gate = cash_ratio_gate(sizing) if isinstance(sizing, Mapping) else None
-        validate_cash_stance(self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate, prior_context=prior)
+        validate_cash_stance(
+            self.context, stance, "team_inputs.cash_stance", errors, cash_ratio_range=gate, prior_context=prior,
+            recency_gate=cash_stance_recency_gate(sizing),
+        )
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]
         expected = {
@@ -383,6 +420,12 @@ class DecisionFinalizer:
             expected["position_breadth"] = stance.get("breadth") if isinstance(stance, Mapping) else None
         if gate is not None:
             expected["cash_grade"] = stance.get("cash_grade") if isinstance(stance, Mapping) else None
+        if hold_conviction_enabled(sizing):
+            expected["hold_conviction_by_symbol"] = {
+                str(item.get("symbol", "")).upper(): item.get("conviction")
+                for item in self.intent.get("items", [])
+                if isinstance(item, Mapping) and item.get("intent") == "hold"
+            }
         # 入選排序與 policy 的 selection_ranking 必須同時存在；排序以交易決策重建驗證，名次由程式綁定。
         ranking = team.get("selection_ranking") if version in RANKING_TEAM_VERSIONS else None
         if (version in RANKING_TEAM_VERSIONS) != ("selection_ranking" in sizing):
@@ -417,10 +460,11 @@ class DecisionResultValidator:
         team_inputs: Optional[Mapping[str, object]] = None,
         decision_repository: Optional[Path] = None,
         nav_history_provider: Optional[NavHistoryProvider] = None,
+        holdings_history_provider: Optional[HoldingsHistoryProvider] = None,
     ):
         self.finalizer = DecisionFinalizer(
             bundle, policy, momentum_result, debate, intent_result, team_inputs, decision_repository,
-            nav_history_provider,
+            nav_history_provider, holdings_history_provider,
         )
 
     def validate(
