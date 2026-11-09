@@ -102,7 +102,7 @@ class GateShapeV2Tests(unittest.TestCase):
 
     def test_shape_violations_are_rejected(self):
         cases = {
-            "version 只允許": {"version": "v3"},
+            "version 只允許": {"version": "v4"},
             "beta_window_days": {"beta_window_days": 5},
             "max_swaps_per_run": {"max_swaps_per_run": 0},
             "min_holding_days": {"min_holding_days": -1},

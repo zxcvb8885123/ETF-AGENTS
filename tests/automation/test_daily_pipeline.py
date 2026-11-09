@@ -791,6 +791,7 @@ class LiveTemplatePipelineTests(unittest.TestCase):
         template["position_sizing"].pop("cash_stance_recency")
         template["position_sizing"].pop("cash_stance_turn_facts")  # 同上，需要 turn_assessment
         # exposure_rotation 需要帳本持股歷史與 team_inputs 2.7；整條鏈由 test_exposure_rotation_e2e 覆蓋。
+        template["position_sizing"].pop("rebound_participation")  # 需要 exposure_rotation 與 turn_facts，同上
         template["position_sizing"].pop("exposure_rotation")
         high_trade = copy.deepcopy(TRADE)
         high_trade["items"][0]["conviction"] = "high"

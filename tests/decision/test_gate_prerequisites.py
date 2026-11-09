@@ -419,10 +419,10 @@ class ProductionAllGatesTests(unittest.TestCase):
         self.assertEqual(live_production_policy()["position_sizing"].get("cash_stance_recency"), {"version": "v1"})
 
     def test_live_config_enables_exposure_rotation_with_the_agreed_numbers(self):
-        """2026-11-09 人決定開啟（17:50 由 v1 切到 v2）；數字改動或回滾（刪欄位）都要同步改本測試與 docs/status.md。"""
+        """2026-11-09 人決定開啟（17:50 由 v1 切到 v2，23:45 切到 v3 為 rebound_participation 的前提）；數字改動或回滾（刪欄位）都要同步改本測試與 docs/status.md。"""
         gate = live_production_policy()["position_sizing"].get("exposure_rotation")
         self.assertEqual(gate, {
-            "version": "v2", "beta_window_days": 60,
+            "version": "v3", "beta_window_days": 60,
             "beta_target_by_stance": {"aggressive": "0.90", "neutral": "0.55", "defensive": None},
             "max_swaps_per_run": 2, "min_holding_days": 5, "hold_conviction": "v1", "conviction_gap_swap": "v1",
         })

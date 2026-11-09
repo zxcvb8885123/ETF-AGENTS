@@ -187,7 +187,7 @@ class GateShapeTests(unittest.TestCase):
     def test_shape_violations_are_rejected(self):
         cases = {
             "未允許欄位": {"threshold": "1"},
-            "version 只允許": {"version": "v3"},
+            "version 只允許": {"version": "v4"},
             "hold_conviction": {"hold_conviction": "v2"},
             "conviction_gap_swap": {"conviction_gap_swap": "v2"},
             "beta_window_days": {"beta_window_days": 5},
