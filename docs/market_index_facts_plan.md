@@ -1,6 +1,6 @@
 # 大盤指數事實（`position_sizing.market_index_facts`）：只紀錄、不立規則
 
-狀態（2026-11-10）：**v1 已實作、尚未開啟**（`config/decision_policy.json` 沒有此欄位，由人決定何時加）。已有 13 個單元測試與全套測試通過。
+狀態（2026-11-10）：**v1 已實作並於 2026-11-10 開啟**（`config/decision_policy.json` 的 `position_sizing.market_index_facts`；回滾＝刪除該欄位）。已有 13 個單元測試與全套測試通過。
 
 ## 起因
 
