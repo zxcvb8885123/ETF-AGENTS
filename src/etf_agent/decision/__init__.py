@@ -70,6 +70,12 @@ from .finalization import (
     DecisionResultValidator,
     NavHistoryProvider,
 )
+from .exposure import (
+    bind_holding_days,
+    build_exposure_review,
+    exposure_review_brief,
+    validate_exposure_review,
+)
 from .position_review import (
     POSITION_REVIEW_VERSION,
     build_position_review,
@@ -179,6 +185,10 @@ __all__ = [
     "seal_selection_ranking",
     "selection_ranking_brief",
     "POSITION_REVIEW_VERSION",
+    "bind_holding_days",
+    "build_exposure_review",
+    "exposure_review_brief",
+    "validate_exposure_review",
     "build_position_review",
     "position_review_brief",
     "validate_position_review",

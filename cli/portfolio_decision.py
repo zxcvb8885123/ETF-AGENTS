@@ -172,7 +172,7 @@ class PortfolioDecisionApplication:
                 result = service.validate_momentum_file(args.input)
             else:
                 result = service.validate_trade_decision_file(
-                    args.momentum, args.debate, args.input, args.output
+                    args.momentum, args.debate, args.input, args.output, getattr(args, "policy", None)
                 )
             self.emit(result)
             return 0 if result["valid"] else 2
@@ -265,6 +265,8 @@ class PortfolioDecisionApplication:
         intent.add_argument("--debate", type=Path, required=True)
         intent.add_argument("--input", type=Path, required=True)
         intent.add_argument("--output", type=Path)
+        # 選填：Policy 啟用 exposure_rotation（hold 也必填 conviction）時，帶上 Policy 才會用對應規則驗證。
+        intent.add_argument("--policy", type=Path)
 
         build_policy = commands.add_parser(
             "build-policy", help="由策略樣板、bundle 硬性規則與官方產業分類建立 DecisionPolicy"

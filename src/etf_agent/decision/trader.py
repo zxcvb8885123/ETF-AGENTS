@@ -18,6 +18,7 @@ from .contracts import (
     string_list,
 )
 from .drawdown import stance_meets_floor
+from .exposure import hold_conviction_enabled
 from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
 from .recency import cash_stance_recency_gate
@@ -81,12 +82,17 @@ class TradeDecisionValidator:
         symbols: Optional[Sequence[str]] = None,
         prior_context: Optional[Mapping[str, object]] = None,
         position_review: Optional[Mapping[str, object]] = None,
+        hold_conviction: bool = False,
     ):
         """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
         交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。
 
         ``position_review`` 是程式算好的持股檢視（team_inputs 2.4）：其警示 ``review_id`` 與 claim 一樣
-        必須在 ``adopted_claim_ids`` 剛好處理一次、不可否決；沒有檢視的舊 run 傳 None，驗證不變。"""
+        必須在 ``adopted_claim_ids`` 剛好處理一次、不可否決；沒有檢視的舊 run 傳 None，驗證不變。
+
+        ``hold_conviction``（exposure_rotation 閘門）為 True 時，hold 也必填 conviction（持股還值得佔一個位置的程度）；
+        預設 False，hold 帶信心即拒絕（現行）。"""
+        self.hold_conviction = hold_conviction
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.debate = dict(debate)
@@ -162,8 +168,17 @@ class TradeDecisionValidator:
                 errors.append("%s %s 必須給 conviction（%s）" % (prefix, intent, "／".join(CONVICTION_LEVELS)))
             if symbol not in self.available:
                 errors.append("%s %s 需要 status=available 的動能資料" % (prefix, intent))
+        elif intent == "hold" and self.hold_conviction:
+            if item.get("conviction") not in CONVICTION_LEVELS:
+                errors.append(
+                    "%s hold 必須給 conviction（%s）：以目前資訊這檔還值得佔一個位置的程度，"
+                    "定義見 data-rules.md；不是為了買別檔而給" % (prefix, "／".join(CONVICTION_LEVELS))
+                )
         elif "conviction" in item and item.get("conviction") is not None:
-            errors.append("%s 只有 buy／add 可以給 conviction" % prefix)
+            errors.append(
+                "%s 只有 buy／add／hold 可以給 conviction" % prefix if self.hold_conviction
+                else "%s 只有 buy／add 可以給 conviction" % prefix
+            )
         try:
             rationale = required_string(item, "rationale")
             adopted = string_list(item, "adopted_claim_ids")
@@ -280,6 +295,17 @@ def apply_trade_decision(
             if item.get("intent") in SIZED
         },
     }
+    if hold_conviction_enabled(sizing):
+        # exposure_rotation：hold 持股的信心另綁一張表，不併入 conviction_by_symbol（forced_swap 與現金下限都讀那張）。
+        holds = {
+            str(item["symbol"]).upper(): item.get("conviction")
+            for item in decision.get("items", [])
+            if item.get("intent") == "hold"
+        }
+        invalid = sorted(symbol for symbol, level in holds.items() if level not in CONVICTION_LEVELS)
+        if invalid:
+            raise DecisionToolError("Policy 已啟用 exposure_rotation，hold 必須有信心等級：" + "、".join(invalid))
+        result["position_sizing"]["hold_conviction_by_symbol"] = holds
     if "positions_by_breadth" in sizing:
         breadth = cash_stance.get("breadth")
         if breadth not in POSITION_BREADTHS:

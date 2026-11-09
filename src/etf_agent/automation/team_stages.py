@@ -21,6 +21,7 @@ from etf_agent.decision import (
     prior_decision_brief,
     read_decision_run,
     position_review_brief,
+    exposure_review_brief,
     program_ranking,
     ranking_envelope,
     ranking_needs_agent,
@@ -70,6 +71,10 @@ _REVIEW_RULES = (
     "flags 內的 review_id 放進 adopted_claim_ids 剛好一次），依 data-rules.md「持股檢視」處理。"
 )
 
+_EXPOSURE_RULES = (
+    "本批輸入含 exposure_background 與各持股的 exposure（程式算好的 beta 與上行／下行捕捉，只是背景、沒有 evidence_id、不可引用）；"
+    "hold 的 conviction 必填，依 data-rules.md「hold 信心」處理。"
+)
 
 
 def _peer_deny_reads(role: str) -> Tuple[str, ...]:
@@ -312,6 +317,7 @@ class TeamStagesMixin:
         prior_context: Optional[Mapping[str, object]] = None,
         portfolio_slots: Optional[Mapping[str, object]] = None,
         position_review: Optional[Mapping[str, object]] = None,
+        exposure_review: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
@@ -319,7 +325,9 @@ class TeamStagesMixin:
         ``portfolio_slots`` 是 ``build_portfolio_slots`` 算好的名額脈絡（啟用 rotation 才有）：讓交易 Agent
         知道滿檔時買新股必須有持股出場。名額與配對仍由程式決定，Agent 不輸出任何數字。
         ``position_review`` 是 ``build_position_review`` 算好的持股檢視（policy 有 ``position_review`` 才有）：
-        警示 ``review_id`` 必須和 claim 一樣處理一次，停損／停利的判斷仍由 Agent 做，數字由程式算。"""
+        警示 ``review_id`` 必須和 claim 一樣處理一次，停損／停利的判斷仍由 Agent 做，數字由程式算。
+        ``exposure_review`` 是 ``build_exposure_review`` 算好的曝險檢視（policy 有 ``exposure_rotation`` 才有）：每檔持股的 beta 與捕捉
+        當背景事實附在 brief（不可引用），並讓 hold 也必填 conviction；換股由程式依帳本與 beta 決定，Agent 不輸出任何數字。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
         background, prior_by_symbol = prior_decision_brief(prior_context) if prior_context is not None else (None, {})
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
@@ -337,6 +345,8 @@ class TeamStagesMixin:
             for name, report in analyst_reports.items()
         }
         review_brief = position_review_brief(position_review) if position_review is not None else {}
+        exposure_brief = exposure_review_brief(exposure_review) if exposure_review is not None else {}
+        hold_conviction = exposure_review is not None
         lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
         thesis_verdicts = load_thesis_verdicts(self.root, bundle["decision_cutoff"])  # 每週論點檢視；只是背景，沒有可引用的 ID
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
@@ -357,6 +367,7 @@ class TeamStagesMixin:
                     **({"portfolio_slots": portfolio_slots} if portfolio_slots is not None else {}),
                     **({"position_review_background": {key: review_brief[key] for key in ("policy", "note")}}
                        if position_review is not None else {}),
+                    **({"exposure_background": exposure_brief["background"]} if exposure_review is not None else {}),
                     **({"prior_decision_background": background} if background is not None else {}),
                     **({"strategy_lessons": lessons_background} if lessons_background is not None else {}),
                     **({"thesis_review_background": thesis_background} if thesis_background is not None else {}),
@@ -373,24 +384,27 @@ class TeamStagesMixin:
                             **({"prior_decision": prior_by_symbol.get(symbol)} if background is not None else {}),
                             **({"position_review": review_brief["by_symbol"][symbol]}
                                if symbol in review_brief.get("by_symbol", {}) else {}),
+                            **({"exposure": exposure_brief["by_symbol"][symbol]}
+                               if symbol in exposure_brief.get("by_symbol", {}) else {}),
                         }
                         for symbol in batch["symbols"]
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review)
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
                 "再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔整合兩方論點、記錄每個論點的採納或否決，"
                 "再依持股與交易條件形成單一交易意圖；整合方式、理由寫法、欄位與限制都依參考文件。"
-                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s"
+                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), len(batch["symbols"]),
                     _PRIOR_RULES if background is not None else "",
                     _ROTATION_RULES if portfolio_slots is not None else "",
                     _REVIEW_RULES if position_review is not None else "",
+                    _EXPOSURE_RULES if exposure_review is not None else "",
                     _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
@@ -404,13 +418,14 @@ class TeamStagesMixin:
         outputs: List[List[Dict[str, object]]] = [partial["items"] for partial in partials]
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
         errors = TradeDecisionValidator(
-            bundle, momentum, debate, prior_context=prior_context, position_review=position_review
+            bundle, momentum, debate, prior_context=prior_context, position_review=position_review,
+            hold_conviction=hold_conviction,
         ).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("trade_decision", decision)
         (self.run_dir / "trader_report.md").write_text(
-            render_trader_report(bundle, momentum, debate, decision, position_review), encoding="utf-8"
+            render_trader_report(bundle, momentum, debate, decision, position_review, hold_conviction), encoding="utf-8"
         )
         return decision
 

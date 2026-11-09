@@ -36,6 +36,7 @@ from etf_agent.decision import (
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
+from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
@@ -108,9 +109,13 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         active_share_approvals_path: Optional[Path] = None,
         overnight_root: Optional[Path] = None,
         overnight_approvals_path: Optional[Path] = None,
+        holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> PipelineResult:
         """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
-        挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。"""
+        挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。
+
+        ``holdings_history`` 是帳本逐狀態的持股（舊到新，與 ``nav_history`` 同一條鏈）：只有 Policy 啟用
+        position_sizing.exposure_rotation 才用，沒有它時閘門啟用即拒絕。"""
         result = PipelineResult(status="failed")
         try:
             self._run(
@@ -122,6 +127,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 active_share_holdings_path=active_share_holdings_path,
                 active_share_approvals_path=active_share_approvals_path,
                 overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
+                holdings_history=holdings_history,
             )
             result.status = "completed"
         except Exception as error:
@@ -161,6 +167,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         active_share_approvals_path: Optional[Path] = None,
         overnight_root: Optional[Path] = None,
         overnight_approvals_path: Optional[Path] = None,
+        holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
@@ -206,7 +213,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self.save_artifact("perception_bundle", pair["bundle"])
             self.save_artifact("perception_result", pair["result"])
         self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id, nav_history,
-                     applied_decision_run_ids=applied_decision_run_ids)
+                     applied_decision_run_ids=applied_decision_run_ids, holdings_history=holdings_history)
 
     def run_from_bundle(
         self,
@@ -218,6 +225,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         nav_history: Optional[Sequence[Mapping[str, object]]] = None,
         stop_after: Optional[str] = None,
         applied_decision_run_ids: Optional[Sequence[str]] = None,
+        holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> PipelineResult:
         """從已封存的 DecisionInputBundle 重跑決策鏈（評測用）；不抓資料、不碰帳本，Bundle 先重新驗證。
 
@@ -234,7 +242,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(errors))
             self.save_artifact("decision_input", bundle)
             self._decide(result, bundle, database_path, policy_template_path, sector_path, decision_run_id,
-                         nav_history, stop_after, applied_decision_run_ids)
+                         nav_history, stop_after, applied_decision_run_ids, holdings_history)
             result.status = "completed"
         except Exception as error:
             self._finish_failed(result, error)
@@ -248,10 +256,11 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         policy_template_path: Path, sector_path: Path, decision_run_id: str,
         nav_history: Optional[Sequence[Mapping[str, object]]] = None, stop_after: Optional[str] = None,
         applied_decision_run_ids: Optional[Sequence[str]] = None,
+        holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         # 本次 policy 的 history_ref 由同一份 nav_history 綁定；重建驗證以它回應 head_run_id，其餘仍由 Validator 重算比對。
-        history_provider = _history_provider(nav_history)
+        history_provider = _history_provider(nav_history, holdings_history)
         decision = service(bundle, nav_history_provider=history_provider, decision_repository=self.decision_repository)
 
         self.log("[decision 2] 計算動能")
@@ -285,6 +294,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         base_policy = bind_forced_swap(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
         # 出場冷卻名單由決策庫確定性取得並綁進 policy；重建驗證只讀 policy，不重掃決策庫。
         base_policy = bind_reentry_cooldown(base_policy, self.decision_repository, bundle)
+        # 持有天數（exposure_rotation 版本閘門）：由帳本逐狀態的持股重算連續持有起點並綁進 policy；沒有閘門原樣不變，
+        # 有閘門而沒有帳本歷史（例如評測重跑）一律拒絕，不綁空名單。
+        base_policy = bind_holding_days(base_policy, bundle, holdings_history)
         # 前次決策背景先載入（只給交易 Agent）：cash_ratio_range 的前次現金比例必須取自同一個前次 run。
         prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
         # 姿態內現金子等級（版本閘門）：前次現金比例 anchor 由程式綁進 policy，只給風險 Agent 當背景；沒有閘門原樣不變。
@@ -304,10 +316,22 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 raise DailyPipelineError("policy 啟用 position_review 時也必須啟用 position_sizing.rotation（team_inputs 2.4 含名額脈絡）")
             self.save_artifact("position_review", position_review)
 
+        # 沒有 exposure_rotation 的樣板一律不建曝險檢視，team_inputs 維持 2.6、brief 與舊版逐位相同。
+        # 曝險檢視讀帳戶與同 Snapshot 行情（beta 對交易池等權）；team_inputs 2.7 是 2.6 的超集，所以也須有 fundamental_period_policy。
+        exposure_review = None
+        if exposure_rotation_gate(base_policy.get("position_sizing")) is not None:
+            if position_review is None:
+                raise DailyPipelineError("policy 啟用 exposure_rotation 時也必須啟用 position_review（hold 信心與曝險檢視建立在持股檢視之上）")
+            if fundamental_period_policy(bundle) is None:
+                raise DailyPipelineError("policy 啟用 exposure_rotation 時 bundle 必須有 fundamental_period_policy（team_inputs 2.7 是 2.6 的超集）")
+            exposure_review = build_exposure_review(bundle, base_policy)
+            self.save_artifact("exposure_review", exposure_review)
+
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
         with self._timed("trader"):
             trade = self.run_trader(
-                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots, position_review
+                bundle, momentum, analysts, debate, decision_run_id, prior_context, slots, position_review,
+                exposure_review,
             )
 
         # 樣板啟用 position_sizing.selection_ranking 才加這一步；沒有的樣板維持舊排序與 team_inputs 版本。
@@ -380,6 +404,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         team = build_team_inputs(
             analysts, None, stance, prior_context, slots, position_review, ranking,
             **({"fundamental_metrics": self.fundamental_metrics} if fundamental_period_policy(bundle) is not None else {}),
+            **({"exposure_review": exposure_review} if exposure_review is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history
@@ -409,8 +434,14 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
 
 
 
-def _history_provider(nav_history: Optional[Sequence[Mapping[str, object]]]):
-    """把本次綁定 policy 用的 NAV 歷史包成 NavHistoryProvider；head 不符即拒絕。沒有歷史時回傳 None。"""
+def _history_provider(
+    nav_history: Optional[Sequence[Mapping[str, object]]],
+    holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
+):
+    """把本次綁定 policy 用的 NAV 歷史包成 NavHistoryProvider；head 不符即拒絕。沒有歷史時回傳 None。
+
+    ``holdings_history`` 是同一條帳本鏈的逐狀態持股，附成 provider 的 ``holdings_history`` 屬性供 Finalizer
+    重算持有天數（沒有時不附，閘門啟用即被 Finalizer 拒絕）。"""
     if nav_history is None:
         return None
     rows = [dict(row) for row in nav_history]
@@ -419,6 +450,14 @@ def _history_provider(nav_history: Optional[Sequence[Mapping[str, object]]]):
         if not rows or rows[-1].get("run_id") != head_run_id:
             raise DailyPipelineError("帳本 NAV 歷史的最新一筆不是 history_ref.head_run_id：%s" % head_run_id)
         return rows
+    if holdings_history is not None:
+        held_rows = [dict(row) for row in holdings_history]
+
+        def holdings(head_run_id: str) -> List[Dict[str, object]]:
+            if not held_rows or held_rows[-1].get("run_id") != head_run_id:
+                raise DailyPipelineError("帳本持股歷史的最新一筆不是 history_ref.head_run_id：%s" % head_run_id)
+            return held_rows
+        provider.holdings_history = holdings  # type: ignore[attr-defined]
     return provider
 
 

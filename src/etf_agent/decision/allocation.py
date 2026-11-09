@@ -21,6 +21,11 @@ from .contracts import (
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review_policy
+from .exposure import (
+    SKIP_PORTFOLIO_SYMBOL, BetaModel, Fill, Victim, beta_model,
+    conviction_gap_swap_enabled, exposure_rotation_gate, exposure_rotation_plan, holding_days_by_symbol, holding_weights,
+    portfolio_beta,
+)
 from .momentum import MomentumEngine
 from .sizing import (
     BUY_GAP_RESERVE, CASH_BUFFER_FLOOR, CASH_CEILING_FIX, CASH_FIT_ORDER, CONVICTION_LEVELS, FORCED_SWAP_CONFIRMATION,
@@ -33,6 +38,9 @@ from .sizing import (
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
+# exposure_rotation（版本閘門）的旗標代碼：換出者、換入者；沒有閘門的 run 不會出現。
+EXPOSURE_VICTIM_CODES = ("RISK_EXPOSURE_ROTATION", "RISK_CONVICTION_GAP_SWAP")
+EXPOSURE_FILL_CODES = ("EXPOSURE_ROTATION_FILL", "CONVICTION_GAP_SWAP_FILL")
 # Active Share 低於門檻時，程式最多取消幾檔重疊的買進候選後重新配置。
 ACTIVE_SHARE_MAX_DROPS = 3
 MONEY = Decimal("1")
@@ -202,6 +210,9 @@ class DecisionPolicyValidator:
             validate_drawdown_control(policy, self.context.bundle, errors, nav_history)
         if "position_review" in policy:
             validate_position_review_policy(policy["position_review"], errors)
+        if isinstance(policy.get("position_sizing"), Mapping) and "exposure_rotation" in policy["position_sizing"] \
+                and "position_review" not in policy:
+            errors.append("position_sizing.exposure_rotation 必須與 position_review 同時存在（曝險檢視與 hold 信心建立在持股檢視之上）")
         if values.get("cash_buffer_rate", Decimal("0")) >= Decimal("1"):
             errors.append("DecisionPolicy.cash_buffer_rate 必須小於 1")
         rules = self.context.bundle.get("rules", {})
@@ -251,6 +262,7 @@ class AllocationOrderEngine:
         self.prices = self._latest_prices()
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
+        self._beta_model: Optional[BetaModel] = None
 
     def run(
         self,
@@ -340,7 +352,7 @@ class AllocationOrderEngine:
         turnover_fit = sizing.get("turnover_fit") == TURNOVER_FIT
         ceiling = decimal_value(self.policy["cash_weight_ceiling"], "cash_weight_ceiling")
         while True:
-            body = self._run(intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept, dropped)
+            body = self._run_exposure(intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept, dropped)
             need = minimum - len(body["allocation_proposal"]["positions"])
             code = "RISK_MIN_POSITIONS"
             if need <= 0:
@@ -378,6 +390,14 @@ class AllocationOrderEngine:
                 str(flag["symbol"]).upper() for flag in body.get("constraint_flags", []) if flag.get("code") == "RISK_FORCED_SWAP"
             }
         remaining = sorted(exits, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol))
+        if body is not None and exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
+            # exposure_rotation：程式自己換出的持股優先放回（優先序：交易 Agent 的 exit／trim ＞ forced_swap ＞ 曝險換股），
+            # 才輪到留住交易 Agent 的 exit；曝險換股可以被取消，交易 Agent 的賣出意圖不應為它讓路。
+            swapped = {
+                str(flag["symbol"]).upper() for flag in body.get("constraint_flags", []) if flag.get("code") in EXPOSURE_VICTIM_CODES
+            }
+            first = sorted(swapped, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol))
+            remaining = first + [symbol for symbol in remaining if symbol not in swapped]
         return [symbol for symbol in remaining if symbol in held and symbol not in kept and symbol not in untradable]
 
     def _forced_swap_confirmed(self) -> bool:
@@ -397,6 +417,35 @@ class AllocationOrderEngine:
             if isinstance(item, Mapping) and item.get("symbol") and str(item.get("state", "unknown")) != "allowed"
         }
 
+    def _run_exposure(
+        self,
+        intent_result: Mapping[str, object],
+        excluded_symbols: Optional[Set[str]],
+        overrides: Optional[Mapping[str, object]],
+        revision_count: int,
+        parent_proposal_id: Optional[str],
+        kept_exits: Mapping[str, str],
+        active_share_dropped: Mapping[str, str],
+    ) -> Dict[str, object]:
+        """exposure_rotation（版本閘門）的復原迴圈：換入者經現金／個股權重／換手等後續步驟後沒有買單（被取消），
+        就把它從換股配對排除並重跑，換出者因此不賣（不得出現只賣不買）。排除集合只會增加，所以必定收斂。
+        沒有閘門時只跑一次 ``_run``，與舊版逐位相同。"""
+        gated = exposure_rotation_gate(self.policy.get("position_sizing")) is not None
+        excluded_fills: Set[str] = set()
+        while True:
+            body = self._run(
+                intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept_exits,
+                active_share_dropped, excluded_fills if gated else None,
+            )
+            if not gated:
+                return body
+            fills = {str(flag["symbol"]).upper() for flag in body["constraint_flags"] if flag.get("code") in EXPOSURE_FILL_CODES}
+            bought = {str(order["symbol"]).upper() for order in body["order_proposal"]["orders"] if order["side"] == "buy"}
+            unfilled = fills - bought
+            if not unfilled:
+                return body
+            excluded_fills |= unfilled
+
     def _run(
         self,
         intent_result: Mapping[str, object],
@@ -406,8 +455,10 @@ class AllocationOrderEngine:
         parent_proposal_id: Optional[str],
         kept_exits: Mapping[str, str],
         active_share_dropped: Optional[Mapping[str, str]] = None,
+        exposure_excluded: Optional[Set[str]] = None,
     ) -> Dict[str, object]:
-        """``kept_exits`` 是程式留住續抱的 exit 持股及其旗標代碼（RISK_MIN_POSITIONS／RISK_CASH_CEILING）。"""
+        """``kept_exits`` 是程式留住續抱的 exit 持股及其旗標代碼（RISK_MIN_POSITIONS／RISK_CASH_CEILING）。
+        ``exposure_excluded`` 是 exposure_rotation 復原迴圈排除的換入者（只有閘門啟用時才傳）。"""
         excluded = {value.upper() for value in (excluded_symbols or set())}
         effective = self._effective_policy(overrides or {})
         intents = {
@@ -454,7 +505,10 @@ class AllocationOrderEngine:
                 })
                 continue
             # forced_swap.confirmation：被程式強制換出的持股（交易 Agent 標 hold）也可被留住，同樣要記旗標。
-            if symbol in kept_exits and (intent == "exit" or (intent == "hold" and self._forced_swap_confirmed())):
+            if symbol in kept_exits and (
+                intent == "exit"
+                or (intent == "hold" and (self._forced_swap_confirmed() or exposure_rotation_gate(self.policy.get("position_sizing")) is not None))
+            ):
                 if kept_exits[symbol] == "RISK_CASH_CEILING":
                     constraint_flags.append({
                         "symbol": symbol, "code": "RISK_CASH_CEILING",
@@ -578,10 +632,18 @@ class AllocationOrderEngine:
         for symbol, reason in sorted(unconfirmed.items()):
             constraint_flags.append({"symbol": symbol, "code": "RISK_FORCED_SWAP_UNCONFIRMED", "detail": reason})
         if "position_sizing" in self.policy:
-            candidates, sized_weights, skipped, budget, held_frozen = self._conviction_targets(
+            targets = self._conviction_targets(
                 candidates, active_symbols, target_shares, marked_nav, max_positions, effective,
                 len(current),
             )
+            if exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
+                # exposure_rotation（版本閘門）：forced_swap 之後、買單配置之前換股；沒有閘門的舊 run 不經過這裡。
+                targets = self._exposure_rotation(
+                    targets, current, active_symbols, target_shares, order_intents, intents, kept_exits, untradable,
+                    starting_cash, marked_nav, max_positions, effective, bool(derisk_flags), exposure_excluded or set(),
+                    constraint_flags,
+                )
+            candidates, sized_weights, skipped, budget, held_frozen = targets
             # held_weight_budget（版本閘門）：現有權重已高於等級份額的加碼持股，目標權重就是現有權重、不建買單；
             # 下面的 desired = max(current, desired) 會得到原持股數。沒有閘門時 held_frozen 一律為空。
             for symbol, (current_weight, sized_weight) in sorted(held_frozen.items()):
@@ -840,6 +902,157 @@ class AllocationOrderEngine:
             victims.append(symbol)
         return victims, unconfirmed
 
+    def _exposure_beta_model(self, gate: Mapping[str, object]) -> BetaModel:
+        if self._beta_model is None:
+            self._beta_model = beta_model(self.context.bundle, gate)
+        return self._beta_model
+
+    def _exposure_rotation(
+        self,
+        targets: Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]],
+        current: Mapping[str, int],
+        active_symbols: Set[str],
+        target_shares: Dict[str, int],
+        order_intents: Dict[str, str],
+        intents: Mapping[str, str],
+        kept_exits: Mapping[str, str],
+        untradable: Set[str],
+        starting_cash: Decimal,
+        marked_nav: Decimal,
+        max_positions: int,
+        effective: Mapping[str, object],
+        derisk_day: bool,
+        excluded_fills: Set[str],
+        flags: List[Dict[str, object]],
+    ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
+        """市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1，版本閘門）：在 forced_swap 之後、買單配置之前，
+        把「本次 buy 卻被名額擋下」的高 beta 新股，換掉交易 Agent 標 hold、信心不高、beta 偏低的持股，配對規則與上限見
+        ``exposure.exposure_rotation_plan``。換出者的訂單意圖標 ``exit``（交易 Agent 的意圖未被改寫），旗標
+        RISK_EXPOSURE_ROTATION／EXPOSURE_ROTATION_FILL（信心差換股另有 RISK_CONVICTION_GAP_SWAP／CONVICTION_GAP_SWAP_FILL）；
+        不換時留下 ``…_SKIPPED:<原因>`` 旗標（組合層級，symbol 為 PORTFOLIO）。
+
+        防守姿態不觸發、與 drawdown_derisk 互斥（減碼日整個略過，信心差換股同）；beta、持有天數、hold 信心缺資料一律拒絕，不補假值。
+        換股名額由程式重跑 ``_conviction_targets`` 驗證：換入者拿不到名額就捨棄該對，不會只賣不買。
+        回傳新的名額配置（有換股時為重跑結果）；有換股時就地更新 target_shares／active_symbols／order_intents。"""
+        sizing = self.policy["position_sizing"]
+        gate = exposure_rotation_gate(sizing)
+        assert gate is not None
+        gap_on = conviction_gap_swap_enabled(gate)
+
+        def skip(code: str, reason: str, symbol: str = SKIP_PORTFOLIO_SYMBOL, detail: Optional[str] = None) -> None:
+            flags.append({"symbol": symbol, "code": "%s_SKIPPED:%s" % (code, reason), "detail": detail or (
+                "未執行（%s）；交易 Agent 的意圖未被改寫" % reason)})
+
+        if derisk_day:
+            skip("EXPOSURE_ROTATION", "derisk_day", detail="當日由 drawdown_derisk 減碼，曝險換股與回撤減碼互斥，整個略過")
+            if gap_on:
+                skip("CONVICTION_GAP_SWAP", "derisk_day", detail="當日由 drawdown_derisk 減碼，信心差換股同樣略過")
+            return targets
+        ordered, weights, skipped, budget, held_frozen = targets
+        tiers = sizing["conviction_by_symbol"]
+        hold_tiers = sizing.get("hold_conviction_by_symbol")
+        if not isinstance(hold_tiers, Mapping):
+            raise DecisionToolError("DecisionPolicy 已啟用 exposure_rotation，但尚未綁定交易決策的 hold 信心（hold_conviction_by_symbol）")
+        days = holding_days_by_symbol(self.policy, self.context.bundle)
+        model = self._exposure_beta_model(gate)
+        held_weights, _, _ = holding_weights(self.context.bundle)
+        betas = {symbol: model.beta(symbol) for symbol in held_weights}
+        current_beta = portfolio_beta(held_weights, betas)
+        victims = [
+            Victim(
+                symbol, str(hold_tiers[symbol]), betas.get(symbol), held_weights[symbol],
+                Decimal(current[symbol]) * self.prices[symbol],
+            )
+            for symbol in sorted(current)
+            if intents.get(symbol, "hold") == "hold" and hold_tiers.get(symbol) is not None and symbol in held_weights
+            and symbol in active_symbols and target_shares.get(symbol, 0) > 0 and symbol in self.prices
+            and symbol not in untradable and symbol not in kept_exits
+            and days[symbol] >= int(gate["min_holding_days"])
+        ]
+        candidate_set = set(ordered)
+        for symbol in sorted(excluded_fills & candidate_set):
+            skip("EXPOSURE_ROTATION", "fill_cancelled", symbol, "換入者在現金、個股權重或換手配置後沒有買單，由程式取消該對換股")
+        fills = [
+            Fill(symbol, str(tiers[symbol]), model.beta(symbol))
+            for symbol in ordered
+            if symbol not in weights and symbol not in current and symbol in tiers
+            and symbol not in excluded_fills and symbol in self.prices
+        ]
+        # 現金可行性：與 _forced_swap_victims 同一套 room／proceeds（換出者的賣款只在 reuse_sell_proceeds 時可用）。
+        buffer = self._cash_floor(marked_nav, starting_cash, effective)
+        room = [starting_cash - buffer]
+        reuse = bool(effective["reuse_sell_proceeds"])
+        if reuse:
+            for symbol in sorted(current):
+                sold = current[symbol] - target_shares.get(symbol, 0)
+                if sold > 0:
+                    room[0] += decimal_value(self._order(symbol, "sell", sold, "exit", effective)["net_cash_impact"], "net_cash_impact")
+        lot = int(effective["lot_size"])
+        soft = effective.get("high_conviction_floor_ratio") is not None
+
+        def afford(victim: str, fill: str) -> bool:
+            proceeds = decimal_value(
+                self._order(victim, "sell", target_shares[victim], "exit", effective)["net_cash_impact"], "net_cash_impact"
+            ) if reuse else Decimal("0")
+            cost = -decimal_value(self._order(fill, "buy", lot, "buy", effective)["net_cash_impact"], "net_cash_impact")
+            extra = buffer - self._cash_floor(marked_nav, starting_cash, effective, tier="high") if soft and tiers.get(fill) == "high" else Decimal("0")
+            if room[0] + extra + proceeds < cost:
+                return False
+            room[0] += proceeds - cost
+            return True
+
+        plan = exposure_rotation_plan(gate, sizing.get("cash_stance"), current_beta, marked_nav, victims, fills, afford)
+        swaps = plan["swaps"]
+        accepted: List[Dict[str, str]] = []
+        result = targets
+        for count in range(len(swaps), 0, -1):  # type: ignore[arg-type]
+            chosen = swaps[:count]  # type: ignore[index]
+            trial_active = set(active_symbols) - {pair["victim"] for pair in chosen}
+            trial_target = dict(target_shares)
+            for pair in chosen:
+                trial_target[pair["victim"]] = 0
+            trial = self._conviction_targets(
+                ordered, trial_active, trial_target, marked_nav, max_positions, effective, len(current),
+                allowed_new=set(weights) | {pair["fill"] for pair in chosen},
+            )
+            if all(pair["fill"] in trial[1] for pair in chosen):
+                accepted, result = list(chosen), trial
+                break
+        reasons = plan["skipped"]  # type: ignore[assignment]
+        if reasons["exposure"] is not None:  # type: ignore[index]
+            skip("EXPOSURE_ROTATION", str(reasons["exposure"]))  # type: ignore[index]
+        if gap_on and reasons["gap"] is not None:  # type: ignore[index]
+            skip("CONVICTION_GAP_SWAP", str(reasons["gap"]))  # type: ignore[index]
+        if len(accepted) < len(swaps):  # type: ignore[arg-type]
+            skip("EXPOSURE_ROTATION", "fill_unavailable", detail="換入者拿不到換股名額，由程式捨棄該對換股（不會只賣不買）")
+        for pair in accepted:
+            victim, fill, kind = pair["victim"], pair["fill"], pair["kind"]
+            target_shares[victim] = 0
+            active_symbols.discard(victim)
+            order_intents[victim] = "exit"
+            if kind == "exposure":
+                flags.append({
+                    "symbol": victim, "code": "RISK_EXPOSURE_ROTATION",
+                    "detail": "含現金的整體 beta %s 低於姿態下限，由程式換出持有 %d 日、hold 信心 %s、beta %s 的持股，換入 %s（beta %s；"
+                              "交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % (
+                                  current_beta, days[victim], hold_tiers[victim], betas.get(victim), fill, model.beta(fill)),
+                })
+                flags.append({
+                    "symbol": fill, "code": "EXPOSURE_ROTATION_FILL",
+                    "detail": "原本被持股名額擋下；曝險換股換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % victim,
+                })
+            else:
+                flags.append({
+                    "symbol": victim, "code": "RISK_CONVICTION_GAP_SWAP",
+                    "detail": "信心差換股：新股 %s 的信心為 high、本持股 hold 信心為 low，由程式換出（持有 %d 日；"
+                              "交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % (fill, days[victim]),
+                })
+                flags.append({
+                    "symbol": fill, "code": "CONVICTION_GAP_SWAP_FILL",
+                    "detail": "原本被持股名額擋下；信心差換股換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % victim,
+                })
+        return result
+
     def _ordered_conviction_candidates(
         self,
         candidates: Sequence[str],
@@ -941,6 +1154,7 @@ class AllocationOrderEngine:
         max_positions: int,
         effective: Mapping[str, object],
         held_count: int,
+        allowed_new: Optional[Set[str]] = None,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。
 
@@ -953,6 +1167,9 @@ class AllocationOrderEngine:
         持股移出 eligible、以現有權重計入 held_outside 重新分配，直到沒有新的持股被凍結（每輪至少移出一檔，必定收斂）；
         它們的目標權重記為現有權重，held_frozen 回傳 {代號: (現有權重, 凍結時的等級份額)}。省略閘門時 held_frozen
         為空、只分配一輪，與原式逐位相同。
+
+        ``allowed_new``（exposure_rotation 試算用）：不為 None 時，換股釋出的新股名額只給集合內的新股，其餘新股記為 MAX_POSITIONS；
+        省略時（含所有舊路徑）行為不變。
         """
         hard_max = max_positions
         sizing = self.policy["position_sizing"]
@@ -1000,6 +1217,10 @@ class AllocationOrderEngine:
                         continue
                     free_for_new -= 1
             elif symbol not in active_symbols:
+                if allowed_new is not None and symbol not in allowed_new:
+                    # exposure_rotation：換股釋出的名額只給程式配對好的換入者，其餘新股仍視為被名額擋下。
+                    skipped[symbol] = "MAX_POSITIONS"
+                    continue
                 if new_cap <= 0 or (growth_left <= 0 and swap_left <= 0):
                     skipped[symbol] = "MAX_POSITIONS"
                     continue

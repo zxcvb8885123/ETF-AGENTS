@@ -156,6 +156,9 @@ FORBIDDEN_PREFIXES = (
     "cash_ratio_range", "cash_grade",
     # 2026-11-09 新增：風險 Agent 現金姿態的資料新舊時間表與 recency_reconciliation 列舉，切換程式路徑，只由人設定。
     "cash_stance_recency",
+    # 2026-11-09 新增：市場轉向時的持股曝險調整（beta 下限、換股上限、持有天數、hold 信心與信心差換股），切換程式路徑，
+    # 只由人設定；hold_conviction_by_symbol 是綁定交易決策時由程式寫入的欄位。
+    "exposure_rotation", "hold_conviction_by_symbol",
 )
 
 
