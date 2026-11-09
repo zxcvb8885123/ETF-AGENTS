@@ -47,6 +47,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 | 版本 | 內容 |
 | --- | --- |
+| 2.7 | 2.6 再加程式計算的曝險檢視 `exposure_review`；只在 `position_sizing.exposure_rotation` 啟用時存在，兩者缺一即拒絕 |
 | 2.6 | 2.5 再加程式計算的基本面指標 `fundamental_metrics`；只在 bundle 有 `fundamental_period_policy` 時，Finalizer 以 `validate_fundamental_metrics` 整份重算比對 |
 | 2.5 | 2.4 再加交易 Agent 第二輪的入選排序 `selection_ranking` |
 | 2.4 | 2.3 再加程式算好的持股檢視 `position_review` |
@@ -154,6 +155,15 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 風險 Agent 另填列舉 `recency_reconciliation`；最新一組（`after_latest_close`）非空時不得填 `newest_insufficient` 且須引用其中至少一個證據，為空時只能填 `newest_insufficient`。Skill 規定：最新一組的事件與新聞預設為判斷「情況有沒有改變」的主要依據，利多利空同樣適用，不採用須說明；隔夜行情仍只是背景。這條是給 Agent 的取捨規則，程式只驗引用與列舉，不要求列舉與姿態對應，不放寬任何現金格點、上限、Guard 或回撤下限。
 - `team_inputs` 不升版：閘門決定 `cash_stance` 允許的欄位（與 `cash_grade` 同做法），Finalizer 與 `apply_trade_decision` 以 bundle 重算時間表再驗；回放略過此閘門（notes 標 `cash_stance_recency: ignored_in_replay`）。
 - 省略此欄位的舊 Policy／舊 run 逐位元不變。
+
+### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1）
+
+- 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；目前未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。
+- hold 信心：閘門開啟時交易 Agent 對 `hold` 也必填 `conviction`，程式綁入 `hold_conviction_by_symbol`（不得與 `conviction_by_symbol` 重複）；沒開時 hold 帶信心被拒。
+- `exposure_review`（`team_inputs` 2.7）：程式依 `price_series` 對交易池等權基準算每檔 beta、up／down capture 與含現金的組合 beta；任何持股缺資料時組合層級為 null，不補假值。
+- 持有天數由帳本持股歷史算（連續持有、台北時區日曆日），Finalizer 以帳本獨立重算，讀不到或與 Policy 不符即拒絕。
+- 換股：姿態有非 null 下限且組合 beta 低於下限（遲滯 `release_margin`）時，把「本次 buy 被名額擋下」的高 beta 新股換掉「hold、信心非 high、持有天數足夠、beta 低於組合」的持股；`conviction_gap_swap` 另可在任何姿態以 high 新股換 low 持股。兩者共用 `max_swaps_per_run`、`max_rotation_fraction`，換出者的賣單由程式標 `exit`（旗標 `RISK_EXPOSURE_ROTATION`／`RISK_CONVICTION_GAP_SWAP`，不觸發時留 `…_SKIPPED:<原因>`），換入者拿不到名額就捨棄該對，絕不只賣不買。與 `drawdown_derisk` 互斥（減碼日整個略過）；`forced_swap` 與交易 Agent 的 exit／trim 優先。
+- 回放略過此閘門（notes 標 `exposure_rotation: ignored_in_replay`）；省略此欄位的舊 Policy／舊 run 逐位元不變。
 
 ### 2026-11-03 起的執行面閘門
 
