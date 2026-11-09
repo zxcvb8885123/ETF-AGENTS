@@ -156,6 +156,13 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - `team_inputs` 不升版：閘門決定 `cash_stance` 允許的欄位（與 `cash_grade` 同做法），Finalizer 與 `apply_trade_decision` 以 bundle 重算時間表再驗；回放略過此閘門（notes 標 `cash_stance_recency: ignored_in_replay`）。
 - 省略此欄位的舊 Policy／舊 run 逐位元不變。
 
+### 現金姿態的轉向事實（`cash_stance_turn_facts`）
+
+- 欄位 `{version: v1}`；只能用於 `evidence_policy: typed_evidence_v1`，與 `cash_stance_recency`、`cash_ratio_range` 互相獨立；目前尚未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。這是**紀錄工具，不是規則**。
+- 簡報在 `regime_assessment` 旁多一個鍵 `turn_facts`，由 `decision/turn_facts.py` 只依 `price_series` 重算：最近兩日池等權日報酬、連續上漲日數、站回 MA5／MA20 的股票比例、MA20／MA60 之上比例（呼叫 `MomentumEngine._regime`，與 regime 同一公式）、MA20 之上比例的 5 日變化、20 日新低比例、regime 連續 bear 天數（需 61 筆以上，被歷史長度截斷時標 `bear_streak_truncated`）。全部為字串或整數，沒有文字判斷；資料不足記入 `data_gaps`；任何 bar 晚於 `snapshot.latest_trade_date` 即拒絕。
+- 風險 Agent 另填列舉 `turn_assessment`（`no_turn_evidence`／`turn_unconfirmed`／`turn_confirmed`）；驗證只檢查必填與值域，不驗與姿態的對應、不驗文字品質，不放寬或收緊任何現金格點、`stance_floor` 或 Guard，也不改 `_regime`。
+- `team_inputs` 不升版；Finalizer 與 `apply_trade_decision` 以 bundle 重算再驗；回放略過此閘門（notes 標 `cash_stance_turn_facts: ignored_in_replay`）；策略反思不得改。省略此欄位的舊 Policy／舊 run 逐位元不變。
+
 ### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1）
 
 - 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；目前未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。

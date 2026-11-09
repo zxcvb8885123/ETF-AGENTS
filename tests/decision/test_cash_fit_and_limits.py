@@ -67,6 +67,7 @@ def production_policy():
     test_daily_pipeline.LiveTemplatePipelineTests 覆蓋。"""
     policy = live_production_policy()
     policy["position_sizing"].pop("cash_stance_recency", None)
+    policy["position_sizing"].pop("exposure_rotation", None)  # 需要帳本持股歷史與 team_inputs 2.7，由 test_exposure_rotation* 覆蓋
     return policy
 
 

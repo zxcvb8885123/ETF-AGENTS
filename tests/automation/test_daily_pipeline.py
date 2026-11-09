@@ -22,7 +22,7 @@ from test_decision_input_builder import builder_inputs, seed_history
 
 ROOT = Path(__file__).resolve().parents[2]
 # 正式樣板已開啟、會改變現金姿態 Schema（cash_grade）與配置的版本閘門。
-PRODUCTION_SIZING_GATES = ("limit_scaled_conviction", "cash_ratio_range", "cash_stance_recency")
+PRODUCTION_SIZING_GATES = ("limit_scaled_conviction", "cash_ratio_range", "cash_stance_recency", "exposure_rotation")
 
 
 def live_policy_template():
@@ -765,6 +765,8 @@ class LiveTemplatePipelineTests(unittest.TestCase):
         # cash_stance_recency 需要 typed_evidence_v1 的 bundle 與 recency_reconciliation，這份 fixture 沒有；
         # 它的整條鏈由 test_cash_stance_recency 覆蓋，這裡只驗另外兩個閘門。
         template["position_sizing"].pop("cash_stance_recency")
+        # exposure_rotation 需要帳本持股歷史與 team_inputs 2.7；整條鏈由 test_exposure_rotation_e2e 覆蓋。
+        template["position_sizing"].pop("exposure_rotation")
         high_trade = copy.deepcopy(TRADE)
         high_trade["items"][0]["conviction"] = "high"
         stance = dict(STANCE, cash_grade="middle")

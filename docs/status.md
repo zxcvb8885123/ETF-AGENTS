@@ -55,6 +55,7 @@
 | `rotation.forced_swap` | `version v1`、`min_new_conviction high`、`max_swaps_per_run 2`、`confirmation v1` |
 | `cash_buffer_floor` | `v1` |
 | `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
+| `exposure_rotation` | `version v1`（2026-11-09 開啟，見[計劃](exposure_rotation_plan.md)）；`beta_window_days 60`；`beta_floor_by_stance` aggressive 0.90／neutral 0.55／defensive null；`release_margin 0.10`；`max_swaps_per_run 2`；`max_rotation_fraction 0.08`；`min_holding_days 5`；`min_new_conviction medium`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
 | `cash_stance_recency` | `{version v1}`（2026-11-09 開啟；風險 Agent 簡報首鍵附證據時間表，另填 `recency_reconciliation`） |
 | `cash_buffer_by_stance` | aggressive 3%／neutral 10%／defensive 20%（`cash_ratio_range` 開啟時不影響配置） |
 | `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |
@@ -69,7 +70,7 @@
 | bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.6 |
 | `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
 
-未開啟：`high_conviction_cash_floor`；`exposure_rotation`（2026-11-09 已實作 v1，含 hold 信心與信心差換股、`team_inputs` 2.7，尚未寫入 `config/decision_policy.json`，由人決定何時開啟，見[計劃](exposure_rotation_plan.md)）。
+未開啟：`high_conviction_cash_floor`；`cash_stance_turn_facts`（2026-11-09 已實作 v1，紀錄用的轉向事實與 `turn_assessment` 列舉，不是規則；尚未寫入 `config/decision_policy.json`，見[計劃](turn_facts_plan.md)）。
 
 未開啟：
 

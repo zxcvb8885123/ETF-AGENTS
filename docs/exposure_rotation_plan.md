@@ -1,6 +1,6 @@
 # 市場轉向時的持股曝險調整（`position_sizing.exposure_rotation`）：設計計劃
 
-狀態（2026-11-09）：**v1 已實作（commit `df9a884`），正式設定尚未開啟**，開啟前不影響任何每日決策。尚未有端到端測試的路徑：Finalizer 整條鏈竄改 `exposure_review`、減碼日互斥、隔日冷卻、回放略過、換手與產業上限互動；開啟前須補。實作與本文不同處：持有天數用台北時區日曆日；交易 Schema 不依閘門切換（hold 信心由驗證器與提示詞要求）；`EXPOSURE_ROTATION_SKIPPED` 旗標的 symbol 用 `PORTFOLIO`。所有閘門只由人設定，策略反思不得改，沒有欄位的舊 Policy／舊 run 逐位元不變。本文取代 [信心換股計劃](conviction_swap_plan.md)（併入本文）。「事實」來自封存資料或程式；「推論」另外標示。
+狀態（2026-11-09）：**v1 已實作（commit `df9a884`），端到端測試已補（`tests/decision/test_exposure_rotation_e2e.py`），並已在 `config/decision_policy.json` 開啟**（人決定；數字用本文建議值，但 `max_rotation_fraction` 取 0.08）。開啟後從 2026-11-10 07:00 的決策起生效；明顯變差由人刪除該欄位即回滾。開啟後至少觀察 10 個決策日（`calibration.MIN_DECISION_DAYS`）。實作與本文不同處：持有天數用台北時區日曆日；交易 Schema 不依閘門切換（hold 信心由驗證器與提示詞要求）；`EXPOSURE_ROTATION_SKIPPED` 旗標的 symbol 用 `PORTFOLIO`。所有閘門只由人設定，策略反思不得改，沒有欄位的舊 Policy／舊 run 逐位元不變。本文取代 [信心換股計劃](conviction_swap_plan.md)（併入本文）。「事實」來自封存資料或程式；「推論」另外標示。
 
 ## 1. 要解決的問題
 
