@@ -63,7 +63,7 @@
 
 - `evidence_policy: typed_evidence_v1`（新 bundle 預設）：claim 填 `claim_kind`、分析師 finding 填 `finding_kind`（price／financial／revenue／material_event／news），程式依來源判定證據種類並核對對映；至少一個證據必須屬於該股票，市場層級與帳戶證據只能作補充。風險 Agent 的 brief 不附交易 Agent 的意圖與信心統計。驗證失敗的回饋用中性措辭、並列「降級」與「補依據」兩種修法，重試差異記在 `agent_calls.revision_diff`。
 - 基本面期別逐檔（`fundamental_period_policy`）：`team_inputs` 2.6 另存程式計算的 `fundamental_metrics`，Finalizer 以 `validate_fundamental_metrics` 整份重算。
-- 曝險換股（`position_sizing.exposure_rotation` v1，版本閘門，2026-11-09 已開啟）：交易 Agent 對 `hold` 也給 `conviction`；程式依持股 beta、持有天數（由帳本算）與交易 Agent 的信心，在姿態觸發或新股 high 對持股 low 時換股，有次數、比例與遲滯上限，賣單意圖由程式標 `exit`、不改寫交易 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買。細節見 [`docs/decision-contracts.md`](docs/decision-contracts.md)。
+- 曝險換股（`position_sizing.exposure_rotation` v1，版本閘門，2026-11-09 已開啟）：交易 Agent 對 `hold` 也給 `conviction`；程式依持股 beta、持有天數（由帳本算）與交易 Agent 的信心，在姿態觸發或新股 high 對持股 low 時換股，有次數與比例上限、死區（不是跨日遲滯），賣單意圖由程式標 `exit`、不改寫交易 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買。細節見 [`docs/decision-contracts.md`](docs/decision-contracts.md)。
 
 ### 程式配置與風控（Agent 不參與）
 

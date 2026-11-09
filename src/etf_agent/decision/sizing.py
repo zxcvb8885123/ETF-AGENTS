@@ -275,7 +275,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
     GateRule(
         "exposure_rotation",
         requires=("rotation", "held_add_priority", "selection_ranking", "reentry_cooldown", "turnover_fit", "cash_buffer_floor"),
-        note="持股 beta 事實＋hold 信心＋有上限有遲滯的曝險換股；position_review（Policy 頂層）由 DecisionPolicyValidator 檢查；"
+        note="持股 beta 事實＋hold 信心＋有上限有死區的曝險換股；position_review（Policy 頂層）由 DecisionPolicyValidator 檢查；"
              "held_since_by_symbol 由 pipeline 依帳本綁定（bind_holding_days），Finalizer 以帳本重算；team_inputs 須為 2.7；"
              "內含 hold_conviction（必填 v1）與 conviction_gap_swap（選填 v1）的值域由 validate_exposure_rotation_gate 檢查",
     ),

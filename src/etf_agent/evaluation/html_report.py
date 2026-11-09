@@ -274,6 +274,8 @@ def render_replay_html(report: Mapping[str, object]) -> str:
                 day.get("index"), "、".join(str(rule) for rule in day["guard"]["failed_rules"])))
         if (day.get("policy") or {}).get("available_at_overridden"):
             notes.append("第 %s 天：策略設定的版本比當天決策晚，重算時視為當天已生效" % day.get("index"))
+    if any((day.get("policy") or {}).get("exposure_rotation") == "ignored_in_replay" for day in report.get("days") or []):
+        notes.insert(0, "【未涵蓋】曝險換股在回放中一律略過：本報告的成績不能用來證明或否定曝險換股，只有比賽期間的即時紀錄算證據。")
     if report.get("not_replayed_run_ids"):
         notes.append("之後還沒重算的決策：%d 個" % len(report["not_replayed_run_ids"]))
     if notes:

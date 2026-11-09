@@ -423,8 +423,8 @@ class ProductionAllGatesTests(unittest.TestCase):
         gate = live_production_policy()["position_sizing"].get("exposure_rotation")
         self.assertEqual(gate, {
             "version": "v1", "beta_window_days": 60,
-            "beta_floor_by_stance": {"aggressive": "0.90", "neutral": "0.55", "defensive": None},
-            "release_margin": "0.10", "max_swaps_per_run": 2, "max_rotation_fraction": "0.08", "min_holding_days": 5,
+            "beta_floor_by_stance": {"aggressive": "1.00", "neutral": "0.65", "defensive": None},
+            "release_margin": "0.10", "max_swaps_per_run": 2, "max_rotation_fraction": "0.20", "min_holding_days": 5,
             "min_new_conviction": "medium", "hold_conviction": "v1", "conviction_gap_swap": "v1",
         })
 

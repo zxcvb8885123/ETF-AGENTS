@@ -7,7 +7,7 @@
 - 持有天數（``bind_holding_days``）：由帳本逐狀態的持股重算「連續持有起點」，綁進 Policy，Finalizer 以帳本獨立重算；
 - 換股配對（``exposure_rotation_plan``）：純函式，``AllocationOrderEngine`` 與測試共用；Finalizer 以整份配置重建驗證。
 
-誰判斷方向：維持風險 Agent 的現金姿態列舉；本模組只把姿態對映成「含現金整體 beta 下限」並做有上限、有遲滯的換股。
+誰判斷方向：維持風險 Agent 的現金姿態列舉；本模組只把姿態對映成「含現金整體 beta 下限」並做有上限、有死區的換股。
 交易 Agent 的意圖不被改寫：換出者在訂單意圖標 ``exit``，原因只留在旗標欄位。沒有 ``exposure_rotation`` 欄位的舊 Policy
 完全不經過本模組。
 """

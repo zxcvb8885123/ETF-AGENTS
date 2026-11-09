@@ -1,6 +1,6 @@
 # 市場轉向時的持股曝險調整（`position_sizing.exposure_rotation`）：設計計劃
 
-狀態（2026-11-09）：**v1 已實作（commit `df9a884`），端到端測試已補（`tests/decision/test_exposure_rotation_e2e.py`），並已在 `config/decision_policy.json` 開啟**（人決定；數字用本文建議值，但 `max_rotation_fraction` 取 0.08）。開啟後從 2026-11-10 07:00 的決策起生效；明顯變差由人刪除該欄位即回滾。開啟後至少觀察 10 個決策日（`calibration.MIN_DECISION_DAYS`）。實作與本文不同處：持有天數用台北時區日曆日；交易 Schema 不依閘門切換（hold 信心由驗證器與提示詞要求）；`EXPOSURE_ROTATION_SKIPPED` 旗標的 symbol 用 `PORTFOLIO`。所有閘門只由人設定，策略反思不得改，沒有欄位的舊 Policy／舊 run 逐位元不變。本文取代 [信心換股計劃](conviction_swap_plan.md)（併入本文）。「事實」來自封存資料或程式；「推論」另外標示。
+狀態（2026-11-09）：**v1 已實作（commit `df9a884`），端到端測試已補（`tests/decision/test_exposure_rotation_e2e.py`），並已在 `config/decision_policy.json` 開啟**（人決定；上線值與下方 JSON 範例不同：`beta_floor_by_stance` 進攻 1.00／中性 0.65（實際觸發線 0.90／0.55），`max_rotation_fraction` 0.20——8% 會讓單檔超過 8% 的持股永遠換不出去，而單檔上限是 10%，且已有 2 檔與換手率 30% 把關，所以取設定允許的最大值）。開啟後從 2026-11-10 07:00 的決策起生效；明顯變差由人刪除該欄位即回滾。開啟後至少觀察 10 個決策日（`calibration.MIN_DECISION_DAYS`）。實作與本文不同處：持有天數用台北時區日曆日；交易 Schema 不依閘門切換（hold 信心由驗證器與提示詞要求）；`EXPOSURE_ROTATION_SKIPPED` 旗標的 symbol 用 `PORTFOLIO`。所有閘門只由人設定，策略反思不得改，沒有欄位的舊 Policy／舊 run 逐位元不變。本文取代 [信心換股計劃](conviction_swap_plan.md)（併入本文）。「事實」來自封存資料或程式；「推論」另外標示。
 
 ## 1. 要解決的問題
 
@@ -25,7 +25,7 @@
 - 現有 regime（`momentum.py` 的池廣度）是趨勢確認器不是轉折偵測器：全池同步上漲，bear→neutral 要約 3～5 個交易日（+15% 以上），到 bull 要超過兩週。不改它（動它會讓舊 run 重建失敗）。
 - 07:00 能用的資料是 T−1 收盤與隔夜；**盤中轉向最早在下一個決策日才看得到**，至少落後一個交易日。
 - 證據很少：`cross_market_study` 只支持隔夜訊號預測開盤跳空；比賽期間 9 個交易日、1 個上漲日、風險 Agent 從未選過 aggressive。沒有證據支持能提前辨認轉向。
-- **設計原則：不押注判斷對，押注判斷錯也付得起**：每次換手有上限、有遲滯、方向對稱、不由單一程式訊號自動觸發。誰判斷方向：**維持風險 Agent**（既有現金姿態列舉，已有 typed evidence、回撤下限與 `cash_stance_recency` 護欄）；程式只做對映與執行；LLM 不輸出任何數字。
+- **設計原則：不押注判斷對，押注判斷錯也付得起**：每次換手有上限、有死區、方向對稱、不由單一程式訊號自動觸發。誰判斷方向：**維持風險 Agent**（既有現金姿態列舉，已有 typed evidence、回撤下限與 `cash_stance_recency` 護欄）；程式只做對映與執行；LLM 不輸出任何數字。
 
 ## 5. 方案與推薦
 
@@ -60,7 +60,7 @@
 
 - 數字只由人設定。`beta_floor_by_stance` 是**含現金的整體 beta 下限**（對交易池等權）；`defensive: null` 表示不觸發；回撤下限 `stance_floor` 照舊先約束姿態。
 - 為什麼下限不是 0.70：使用者要吃到接近大盤的漲幅，進攻狀態下限 0.90；含現金 3～8% 時，投資部位 beta 約 1.0。中性 0.55 是折衷。這些值上線前由人再決定，程式不寫死。
-- `release_margin`：遲滯，beta 低於下限才觸發、補到「下限 − margin」以上就停，避免每日來回。
+- `release_margin`：**死區，不是遲滯**。程式只在 beta 低於「下限 − margin」才開始換，換到「下限 − margin」就停，起止同一條線、沒有跨日狀態；所以 `beta_floor_by_stance` 是「下限」，實際觸發線要再減 margin（2026-11-09 上線值：中性 0.65 → 0.55、進攻 1.00 → 0.90）。想要真遲滯（跌破才開始、補到更高才停）要加跨日狀態或改停止線，尚未做。
 - 前提（登記於 `sizing.GATE_PREREQUISITES`）：`rotation`、`held_add_priority`、`selection_ranking`、`position_review`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor`；`hold_conviction` 必須與 `exposure_rotation` 同時出現；`FORBIDDEN_PREFIXES` 加 `exposure_rotation`。
 
 ### 6.2 確定性模組 `decision/exposure.py`
@@ -105,7 +105,7 @@
 
 - 無閘門：Schema、提示詞、簡報、配置結果、team_inputs 版本逐位元不變；hold 帶信心被拒；缺 `hold_conviction` 被拒。
 - 有閘門（fail-closed）：`exposure_review` 竄改或缺檔、`held_since_by_symbol` 預填或與帳本不符或帳本讀不到，Finalizer 全部拒絕；hold 缺信心被拒。
-- 觸發與遲滯：defensive 或 beta 已達標不換；`下限 − margin` 邊界。
+- 觸發與死區：defensive 或 beta 已達標不換；`下限 − margin` 邊界。
 - 排除：add／trim／exit／no_trade、hold high、持有天數不足、不可交易、被留住的出場、beta 不低於組合；換入的對應反例。
 - 上限：檔數、`max_rotation_fraction`、名額優先序、`turnover_fit`、`min_positions`、`sector_fit`；**不得出現只賣不買**。
 - 與 `drawdown_derisk` 互斥；換出者次日在 `reentry_cooldown`；回放舊 run 不換。
