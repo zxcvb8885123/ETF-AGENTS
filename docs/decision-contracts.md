@@ -176,7 +176,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 換股：姿態有非 null 下限且組合 beta 低於「下限 − `release_margin`」（死區，起止同一條線，沒有跨日狀態）時，把「本次 buy 被名額擋下」的高 beta 新股換掉「hold、信心非 high、持有天數足夠、beta 低於組合」的持股；`conviction_gap_swap` 另可在任何姿態以 high 新股換 low 持股。兩者共用 `max_swaps_per_run`、`max_rotation_fraction`（v2 沒有後者），換出者的賣單由程式標 `exit`（旗標 `RISK_EXPOSURE_ROTATION`／`RISK_CONVICTION_GAP_SWAP`，不觸發時留 `…_SKIPPED:<原因>`），換入者拿不到名額就捨棄該對，絕不只賣不買。首個換入候選無可負擔的配對時，依原信心／名次繼續嘗試後續候選，不讓昂貴候選擋住整條配對；失敗嘗試不預扣資金。與 `drawdown_derisk` 互斥（減碼日整個略過）；`forced_swap` 與交易 Agent 的 exit／trim 優先。
 - 回放略過此閘門（notes 標 `exposure_rotation: ignored_in_replay`）；省略此欄位的舊 Policy／舊 run 逐位元不變。
 
-### 反彈參與（`position_sizing.rebound_participation` v1 已開啟；v2 已實作、尚未開啟）
+### 反彈參與（`position_sizing.rebound_participation` v1 已開啟；v2 已開啟）
 
 動機、定義、過擬合風險與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md)。版本閘門，只由人設定，策略反思不得改（`FORBIDDEN_PREFIXES`）；沒有此欄位的舊 Policy／舊 run 逐位元不變。
 
@@ -190,7 +190,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 風險 Agent 簡報附 `turn_state`（`citable=false`、無 `evidence_id`，只當背景）；簡報與 Skill 不寫特定日期案例。回放略過此閘門（notes 標 `rebound_participation: ignored_in_replay`）；用新 Policy 重跑較早 cutoff 屬反事實評測（`evaluation_mode: counterfactual`）。
 - **證據等級**：門檻是以只有極少數大漲日的歷史擬合出來的（n ≤ 3），重放全部是 `replay_reference_only`，不是對 LLM 的前瞻驗證；只有比賽期間的即時紀錄算證據。
 
-#### v2（已實作、尚未開啟）：只算事實、由風險 Agent 單獨決定
+#### v2（2026-11-10 01:37 已開啟）：只算事實、由風險 Agent 單獨決定
 
 動機與取捨見 [rebound_participation_v2_plan.md](rebound_participation_v2_plan.md)。v1 保留不動（舊 Policy／舊 run 逐位元重建）；v2 是同一欄位的另一個版本，依 `version` 分派。
 

@@ -774,11 +774,13 @@ class TurnoverCapTests(unittest.TestCase):
 
 class LiveConfigTests(unittest.TestCase):
     def test_the_live_config_enables_only_the_confirmed_state(self):
-        """2026-11-09 23:45 開啟：candidate 實質不動、confirmed 才放寬，且不填兩個放寬風控的選填欄位。"""
+        """2026-11-09 23:45 開 v1、2026-11-10 切到 v2：candidate 實質不動、confirmed 才放寬，且不填兩個放寬風控的選填欄位。"""
         from test_gate_prerequisites import live_production_policy
 
         sizing = live_production_policy()["position_sizing"]
         gate = sizing["rebound_participation"]
+        self.assertEqual(gate["version"], "v2")
+        self.assertEqual(set(gate), {"version", "min_coverage", "by_state"})  # v2 沒有任何轉向門檻
         self.assertEqual(sizing["exposure_rotation"]["version"], "v3")
         self.assertIsNone(sizing["exposure_rotation"]["beta_target_by_stance"]["defensive"])
         self.assertEqual(gate["by_state"]["candidate"]["defensive_target"], "0.01")

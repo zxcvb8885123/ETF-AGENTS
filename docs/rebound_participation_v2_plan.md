@@ -1,6 +1,6 @@
 # 反彈參與閘門 v2：只算事實、由風險 Agent 單獨決定
 
-狀態（2026-11-10）：**已實作、尚未開啟**。正式設定仍是 v1（只開 confirmed）；要開 v2 由人把 `config/decision_policy.json` 的 `position_sizing.rebound_participation` 換成 v2 欄位，回滾＝換回 v1 樣板（舊樣板保存在 `config/policy_versions/2026-11-09-rebound-before.json` 的做法同前）。本檔不改設定。
+狀態（2026-11-10）：**已於 01:37 開啟**（人決定；`policy_id` strategy-2026-11-10-rebound-v2-1）。正式設定的 `rebound_participation` 換成 v2 欄位（`version`、`min_coverage`、`by_state`，值沿用 v1，仍只有 confirmed 實質放寬）；回滾＝把 `config/policy_versions/2026-11-10-rebound-v1.json` 的該區塊換回去。v2 沒有重放驗證，開啟是人承擔風險的決定，不代表驗證通過。
 
 ## 為什麼要有 v2
 
