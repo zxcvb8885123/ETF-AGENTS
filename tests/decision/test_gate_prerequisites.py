@@ -103,7 +103,7 @@ PRODUCTION_SNAPSHOT_SHA256 = "4e5b131dcde6a9e527a0bf105faf202cf6d8f44532ba5b12cd
 
 
 def anchored_sizing(bundle, sizing=None, **overrides):
-    """正式 position_sizing（預設讀 live 樣板）加上 account_cash anchor（測試不經決策庫）與覆寫欄位。"""
+    """固定版本 position_sizing 加上 account_cash anchor（測試不經決策庫）與覆寫欄位。"""
     result = copy.deepcopy(sizing if sizing is not None else production_policy()["position_sizing"])
     result["cash_ratio_range"]["anchor"] = {"status": "account_cash", "ratio": account_cash_ratio(bundle), "source": None}
     result.update(overrides)
@@ -417,6 +417,16 @@ class ProductionAllGatesTests(unittest.TestCase):
     def test_live_config_enables_cash_stance_recency(self):
         """2026-11-09 人決定開啟；要回滾就刪掉這個欄位，並同步改本測試與 docs/status.md。"""
         self.assertEqual(live_production_policy()["position_sizing"].get("cash_stance_recency"), {"version": "v1"})
+
+    def test_live_config_enables_exposure_rotation_with_the_agreed_numbers(self):
+        """2026-11-09 人決定開啟；數字改動或回滾（刪欄位）都要同步改本測試與 docs/status.md。"""
+        gate = live_production_policy()["position_sizing"].get("exposure_rotation")
+        self.assertEqual(gate, {
+            "version": "v1", "beta_window_days": 60,
+            "beta_floor_by_stance": {"aggressive": "1.00", "neutral": "0.65", "defensive": None},
+            "release_margin": "0.10", "max_swaps_per_run": 2, "max_rotation_fraction": "0.20", "min_holding_days": 5,
+            "min_new_conviction": "medium", "hold_conviction": "v1", "conviction_gap_swap": "v1",
+        })
 
     def test_live_config_matches_the_snapshot_except_for_reflection_knobs(self):
         """live 樣板與快照只允許在策略反思旋鈕上不同；版本閘門不同代表快照（與本測試）需要人更新。"""

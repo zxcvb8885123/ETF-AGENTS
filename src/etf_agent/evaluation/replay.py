@@ -239,6 +239,12 @@ def bind_replay_policy(
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "cash_stance_recency"}
             base["content_sha256"] = decision_policy_sha256(base)
         bound_stance = {key: value for key, value in bound_stance.items() if key != "recency_reconciliation"}
+        # cash_stance_turn_facts 同理：只是 Agent 當天的紀錄欄位，回放略過閘門並拿掉封存姿態的 turn_assessment。
+        turn_facts_ignored = isinstance(base.get("position_sizing"), Mapping) and "cash_stance_turn_facts" in base["position_sizing"]
+        if turn_facts_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "cash_stance_turn_facts"}
+            base["content_sha256"] = decision_policy_sha256(base)
+        bound_stance = {key: value for key, value in bound_stance.items() if key != "turn_assessment"}
         # exposure_rotation 需要封存 run 沒有的 hold 信心與帳本持有天數：樣板有閘門時回放略過它（不換股），
         # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
         exposure_ignored = isinstance(base.get("position_sizing"), Mapping) and "exposure_rotation" in base["position_sizing"]
@@ -271,6 +277,8 @@ def bind_replay_policy(
         notes["cash_grade"] = grade_note
     if recency_ignored:
         notes["cash_stance_recency"] = "ignored_in_replay"
+    if turn_facts_ignored:
+        notes["cash_stance_turn_facts"] = "ignored_in_replay"
     if exposure_ignored:
         notes["exposure_rotation"] = "ignored_in_replay"
     return policy, notes

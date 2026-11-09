@@ -63,7 +63,7 @@
 
 - `evidence_policy: typed_evidence_v1`（新 bundle 預設）：claim 填 `claim_kind`、分析師 finding 填 `finding_kind`（price／financial／revenue／material_event／news），程式依來源判定證據種類並核對對映；至少一個證據必須屬於該股票，市場層級與帳戶證據只能作補充。風險 Agent 的 brief 不附交易 Agent 的意圖與信心統計。驗證失敗的回饋用中性措辭、並列「降級」與「補依據」兩種修法，重試差異記在 `agent_calls.revision_diff`。
 - 基本面期別逐檔（`fundamental_period_policy`）：`team_inputs` 2.6 另存程式計算的 `fundamental_metrics`，Finalizer 以 `validate_fundamental_metrics` 整份重算。
-- 曝險換股（`position_sizing.exposure_rotation` v1，版本閘門，**未開啟**）：交易 Agent 對 `hold` 也給 `conviction`；程式依持股 beta、持有天數（由帳本算）與交易 Agent 的信心，在姿態觸發或新股 high 對持股 low 時換股，有次數、比例與遲滯上限，賣單意圖由程式標 `exit`、不改寫交易 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買。細節見 [`docs/decision-contracts.md`](docs/decision-contracts.md)。
+- 曝險換股（`position_sizing.exposure_rotation` v1，版本閘門，2026-11-09 已開啟）：交易 Agent 對 `hold` 也給 `conviction`；程式依持股 beta、持有天數（由帳本算）與交易 Agent 的信心，在姿態觸發或新股 high 對持股 low 時換股，有次數與比例上限、死區（不是跨日遲滯），賣單意圖由程式標 `exit`、不改寫交易 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買。細節見 [`docs/decision-contracts.md`](docs/decision-contracts.md)。
 
 ### 程式配置與風控（Agent 不參與）
 
@@ -73,7 +73,9 @@
 - 回撤下限由 `decision/drawdown.py` 從帳本 NAV 歷史計算並綁進 `drawdown_control`，有 `history_ref` 時事後重建必須以帳本獨立重算，帳本讀不到或歷史不符一律拒絕。
 - 強制換股是每週論點檢視結論唯一影響配置之處：名單由 pipeline 綁進 Policy，重建只讀 Policy，且須有交易 Agent 本次採納的該股空頭 claim。
 - **版本閘門啟用狀態**（唯一出處與目前數值：[`docs/status.md`](docs/status.md#版本閘門啟用狀態)，2026-11-08 依 `config/decision_policy.json` 核對）。已開啟（判斷與配置）：`position_review`（只設 `loss_alert` 0.15）、`conviction_volatility_v2`（`volatility_exponent` 0）、`selection_ranking`、`limit_scaled_conviction`（alpha 0.6）、`held_add_priority`＋`rotation`、`forced_swap`＋`confirmation`、`typed_evidence_v1`。
+- 已開啟（曝險）：`exposure_rotation`（2026-11-09，只在姿態為 neutral／aggressive 或信心差換股時動作）。
 - 已開啟（現金與執行面）：`cash_buffer_floor`、`cash_ratio_range`、`cash_stance_recency`、`cash_fit_order`、`high_conviction_cash_priority`、`held_weight_budget`、`cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`、`sector_fit`、`turnover_fit`、`reentry_cooldown`、`drawdown_derisk` v4。
+- 已開啟（紀錄）：`cash_stance_turn_facts`（2026-11-09，紀錄工具，簡報附交易池轉向事實、風險 Agent 多填列舉 `turn_assessment`，列舉與姿態不設對應，見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)）。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界

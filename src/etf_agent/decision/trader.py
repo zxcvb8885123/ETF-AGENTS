@@ -22,6 +22,7 @@ from .exposure import hold_conviction_enabled
 from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
 from .recency import cash_stance_recency_gate
+from .turn_facts import cash_stance_turn_facts_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -265,6 +266,7 @@ def apply_trade_decision(
     validate_cash_stance(
         DecisionContext(bundle), cash_stance, "cash_stance", stance_errors, cash_ratio_range=gate, prior_context=prior_context,
         recency_gate=cash_stance_recency_gate(policy.get("position_sizing") or {}),
+        turn_facts_gate=cash_stance_turn_facts_gate(policy.get("position_sizing") or {}),
     )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))

@@ -20,6 +20,7 @@ from etf_agent.core.run_layout import find_run_dir, list_run_dirs
 from .answers import score_runs
 from .compare import compare_outputs, load_outputs, pairwise_stability, process_stats, summarize
 from .contracts import EVALUATION_SCHEMA_VERSION, REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, STOP_STAGES, EvaluationError
+from .ledger_context import capture_ledger_context, validate_ledger_context
 
 
 EVALUATION_ROOT = Path("artifacts") / "evaluation"
@@ -80,6 +81,9 @@ def build_suite(root: Path, name: str, run_ids: Optional[Sequence[str]] = None) 
         if case["bundle_sha256"] in seen:
             continue
         seen.add(case["bundle_sha256"])
+        context = capture_ledger_context(Path(root), directory, _read(Path(case["bundle_path"]), "DecisionInputBundle"))
+        if context is not None:
+            case["ledger_context"] = context
         cases.append(case)
     if not cases:
         raise EvaluationError("沒有可當考卷的每日 run")
@@ -97,7 +101,8 @@ def _eval_template(policy_template_path: Path, decision_cutoff: str) -> Tuple[Di
     if overridden:
         template["available_at"] = decision_cutoff
     return template, {"policy_id": template.get("policy_id"), "original_available_at": original, "available_at_overridden": overridden,
-                      "template_sha256": canonical_sha256(template)}
+                      "template_sha256": canonical_sha256(template),
+                      "evaluation_mode": "counterfactual" if overridden else "as_available"}
 
 
 def eval_policy_template(policy_template_path: Path, decision_cutoff: str, output: Path) -> Dict[str, object]:
@@ -128,6 +133,10 @@ def _check_resumable(eval_dir: Path, suite: Mapping[str, object], repeats: int, 
         previous = recorded.get(case["case_id"])
         if previous and previous.get("bundle_sha256") not in (None, case["bundle_sha256"]):
             raise EvaluationError("考卷 %s 的輸入雜湊與原評測不同，不能續跑" % case["case_id"])
+        context = case.get("ledger_context")
+        context_hash = context.get("content_sha256") if isinstance(context, Mapping) else None
+        if previous and previous.get("ledger_context_sha256") != context_hash:
+            raise EvaluationError("考卷 %s 的帳本快照與原評測不同，不能續跑" % case["case_id"])
     return manifest
 
 
@@ -172,13 +181,24 @@ def run_suite(
             raise EvaluationError("評測 run 已存在，不覆寫：%s" % eval_dir)
         manifest = {"schema_version": EVALUATION_SCHEMA_VERSION, "eval_id": eval_id, "suite": suite.get("name"),
                     "repeats": int(repeats), "stop_after": stop_after, "started_at": now, "cases": []}
+    # 全套考卷先做無用量前置檢查；後面的案例缺帳本時也不能先花掉前面案例的 Agent 用量。
+    prepared = []
     for case in suite["cases"]:
         bundle_path = Path(case["bundle_path"])
         if hashlib.sha256(bundle_path.read_bytes()).hexdigest() != case["bundle_sha256"]:
             raise EvaluationError("考卷 %s 的輸入檔已改變，請重建評測集" % case["case_id"])
+        template, policy = _eval_template(root / "config" / "decision_policy.json", str(case["decision_cutoff"]))
+        context = case.get("ledger_context")
+        if context is not None:
+            context = validate_ledger_context(context, _read(bundle_path, "DecisionInputBundle"))
+        sizing = template.get("position_sizing")
+        if stop_after == "full" and isinstance(sizing, Mapping) and "exposure_rotation" in sizing and context is None:
+            raise EvaluationError("考卷 %s 缺少封存帳本快照，exposure_rotation 完整評測不能執行；請重建含當時帳本的評測集，或明確只評測分析師" % case["case_id"])
+        prepared.append((case, template, policy, context))
+    for case, template, policy, context in prepared:
+        bundle_path = Path(case["bundle_path"])
         case_dir = eval_dir / case["case_id"]
         template_path = case_dir / "policy_template.json"
-        template, policy = _eval_template(root / "config" / "decision_policy.json", str(case["decision_cutoff"]))
         if template_path.is_file():
             if canonical_sha256(_read(template_path, "評測用策略樣板")) != policy["template_sha256"]:
                 raise EvaluationError("考卷 %s 的評測用策略樣板與目前設定不同，不能續跑；請建立新的評測 run" % case["case_id"])
@@ -201,6 +221,8 @@ def run_suite(
                 bundle_path, root / "var" / "etf_agent.db", template_path,
                 root / "data" / "sector_classification.json", "decision-%s-r%d" % (stamp, repeat),
                 stop_after=None if stop_after == "full" else stop_after,
+                nav_history=context["nav_history"] if context is not None else None,
+                holdings_history=context["holdings_history"] if context is not None else None,
             )
             record: Dict[str, object] = {"repeat": repeat, "run_dir": str(run_dir), "status": result.status, "errors": result.errors,
                                          "agent_calls": result.agent_calls, "stage_durations": result.stage_durations,
@@ -211,6 +233,8 @@ def run_suite(
             runs.append(record)
             _write(run_dir / "eval_result.json", record)
         entry = {"case_id": case["case_id"], "bundle_sha256": case["bundle_sha256"], "policy": policy, "runs": runs}
+        if context is not None:
+            entry["ledger_context_sha256"] = context["content_sha256"]
         # 續跑時保留先前已完成的案例，只替換這次重做的那一筆，中途再當掉也不會讓清單縮水。
         kept = [row for row in manifest["cases"] if row.get("case_id") != case["case_id"]]
         manifest["cases"] = kept + [entry]
@@ -345,7 +369,7 @@ def render_report(report: Mapping[str, object]) -> str:
         lines.append("### %s" % case["case_id"])
         lines.append("")
         if case["policy"]["available_at_overridden"]:
-            lines.append("- 策略設定版本晚於考卷，評測時把 available_at 提前到考卷 cutoff。")
+            lines.append("- 反事實評測（counterfactual）：策略設定版本晚於考卷，僅在評測副本把 available_at 提前到 cutoff；不是當時可用策略的還原。")
         for item in case["failed_runs"]:
             lines.append("- 第 %d 次失敗：%s" % (item["repeat"], "；".join(item["errors"]) or "未知"))
         for item in case["process"]:

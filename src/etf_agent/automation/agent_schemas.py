@@ -8,6 +8,7 @@ from etf_agent.decision.recency import RECENCY_RECONCILIATIONS
 from etf_agent.decision.sizing import CASH_GRADES, CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS
 from etf_agent.decision.stance import STRENGTHS
 from etf_agent.decision.trader import TRADE_INTENTS
+from etf_agent.decision.turn_facts import TURN_ASSESSMENTS
 
 from .agent_runner import _TEXT, _object, _strings
 
@@ -109,6 +110,16 @@ def cash_stance_recency_schema(graded: bool) -> dict:
     return _object(
         {**base["properties"], "recency_reconciliation": {"enum": list(RECENCY_RECONCILIATIONS)}},
         tuple(base["required"]) + ("recency_reconciliation",),
+    )
+
+
+# 只在 Policy 啟用 position_sizing.cash_stance_turn_facts（版本閘門）時使用：另加列舉 turn_assessment（不是數字）。
+# recency 表示同時啟用 cash_stance_recency（也含 recency_reconciliation）。沒有此閘門時沿用上面的 Schema，逐位元不變。
+def cash_stance_turn_facts_schema(graded: bool, recency: bool = False) -> dict:
+    base = cash_stance_recency_schema(graded) if recency else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA)
+    return _object(
+        {**base["properties"], "turn_assessment": {"enum": list(TURN_ASSESSMENTS)}},
+        tuple(base["required"]) + ("turn_assessment",),
     )
 
 

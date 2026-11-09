@@ -15,6 +15,7 @@ from etf_agent.evaluation import (
 )
 from etf_agent.evaluation.replay import DECISION_DECIMAL_PRECISION, _trade_date_for, replay_body_sha256
 from etf_agent.evaluation.replay_market import ReplayMarket
+from etf_agent.evaluation.html_report import render_replay_html
 from test_daily_pipeline import gateless_policy_template
 from test_team_chain import finalize, team_world, tradable_bundle
 from test_virtual_account_daily import create_prices
@@ -162,6 +163,10 @@ class PolicyReplayTests(unittest.TestCase):
         self.assertIn("Content-Security-Policy", page)
         self.assertNotIn("<script", page)
         self.assertIn("策略重算報告：", page)
+        self.assertNotIn("【未涵蓋】", page)  # 樣板沒有曝險換股時不出現
+        ignored = copy.deepcopy(report)
+        ignored["days"][0]["policy"]["exposure_rotation"] = "ignored_in_replay"
+        self.assertIn("【未涵蓋】曝險換股", render_replay_html(ignored))
         self.assertTrue((run_dir / "d01_proposal.json").exists())
         result = verify_replay(self.root, replay_id)
         self.assertTrue(result["valid"], result["errors"])

@@ -600,6 +600,7 @@ class ReplayTests(unittest.TestCase):
         for factory in (live_policy_template, gateless_policy_template):
             with self.subTest(factory.__name__):
                 plain = self.template(factory)
+                plain["position_sizing"].pop("exposure_rotation", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
                 plain_policy, plain_notes = self.replay(plain)
                 self.assertNotIn("exposure_rotation", plain_notes)
                 gated = copy.deepcopy(plain)
@@ -628,13 +629,13 @@ class ReplayTests(unittest.TestCase):
         plain_policy, _ = self.replay(self.template(live_policy_template))
         self.assertEqual(AllocationOrderEngine(self.bundle, plain_policy).run(self.intent)["content_sha256"], body["content_sha256"])
 
-    def test_replay_without_the_gate_keeps_the_legacy_notes(self):
+    def test_replay_of_the_live_template_notes_ignored_gates(self):
         _, notes = self.replay(self.template(live_policy_template))
         self.assertEqual(
             set(notes),
             {"policy_id", "content_sha256", "available_at_overridden", "archived_cash_stance", "cash_stance", "stance_floor",
              "stance_raised_to_floor", "selection_ranking_applied", "breadth_unavailable", "cash_buffer_rate", "drawdown",
-             "cash_grade", "cash_stance_recency"},  # 正式樣板已開 cash_stance_recency，回放多標略過；曝險換股不在其中
+             "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation"},  # 正式樣板已開這些閘門，回放各標一次略過
         )
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):

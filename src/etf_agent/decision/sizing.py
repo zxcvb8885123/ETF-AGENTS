@@ -275,7 +275,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
     GateRule(
         "exposure_rotation",
         requires=("rotation", "held_add_priority", "selection_ranking", "reentry_cooldown", "turnover_fit", "cash_buffer_floor"),
-        note="持股 beta 事實＋hold 信心＋有上限有遲滯的曝險換股；position_review（Policy 頂層）由 DecisionPolicyValidator 檢查；"
+        note="持股 beta 事實＋hold 信心＋有上限有死區的曝險換股；position_review（Policy 頂層）由 DecisionPolicyValidator 檢查；"
              "held_since_by_symbol 由 pipeline 依帳本綁定（bind_holding_days），Finalizer 以帳本重算；team_inputs 須為 2.7；"
              "內含 hold_conviction（必填 v1）與 conviction_gap_swap（選填 v1）的值域由 validate_exposure_rotation_gate 檢查",
     ),
@@ -283,6 +283,11 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         "cash_stance_recency",
         note="風險 Agent 簡報附 evidence_recency（內容時間分組）並多填 recency_reconciliation 列舉；"
              "前提 evidence_policy=typed_evidence_v1 在重建現金姿態時檢查（Policy 看不到 bundle）；與 cash_ratio_range 可獨立開關",
+    ),
+    GateRule(
+        "cash_stance_turn_facts",
+        note="風險 Agent 簡報附 turn_facts（交易池轉向事實，紀錄用）並多填 turn_assessment 列舉，列舉與姿態不設對應；"
+             "前提 evidence_policy=typed_evidence_v1 在重建現金姿態時檢查；與 cash_stance_recency、cash_ratio_range 可獨立開關",
     ),
 )
 GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
@@ -336,6 +341,7 @@ def validate_cash_stance(
     cash_ratio_range: Optional[Mapping[str, object]] = None,
     prior_context: Optional[Mapping[str, object]] = None,
     recency_gate: Optional[Mapping[str, object]] = None,
+    turn_facts_gate: Optional[Mapping[str, object]] = None,
 ) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
 
@@ -347,13 +353,17 @@ def validate_cash_stance(
     有閘門時 ``cash_grade`` 必填，且必須在該姿態今日可選的格點內；超出即拒絕、不夾到邊界。
     ``prior_context`` 是本次的前次決策背景（PriorDecisionContext）；有閘門時其前次 decision_id 也列入理由的禁用識別碼。
     ``recency_gate`` 是 cash_stance_recency 閘門物件；為 None 時欄位白名單與舊版完全相同（出現 recency_reconciliation 即拒絕）。
-    有閘門時必須是 typed_evidence_v1，且 ``recency_reconciliation`` 必填、依程式重算的時間表驗證。"""
+    有閘門時必須是 typed_evidence_v1，且 ``recency_reconciliation`` 必填、依程式重算的時間表驗證。
+    ``turn_facts_gate`` 是 cash_stance_turn_facts 閘門物件；為 None 時欄位白名單與舊版完全相同（出現 turn_assessment 即拒絕）。
+    有閘門時必須是 typed_evidence_v1，且 ``turn_assessment`` 必填，只驗列舉值域，不驗與姿態的對應。"""
     if not isinstance(stance, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
     fields = {"level", "breadth", "rationale", "evidence_ids"}
     if recency_gate is not None:
         fields = fields | {"recency_reconciliation"}
+    if turn_facts_gate is not None:
+        fields = fields | {"turn_assessment"}
     if cash_ratio_range is not None:
         fields = fields | {"cash_grade"}
         _validate_cash_grade(cash_ratio_range, stance, prefix, errors, prior_context)
@@ -376,6 +386,8 @@ def validate_cash_stance(
     if context.evidence_policy is None:
         if recency_gate is not None:
             errors.append("%s：cash_stance_recency 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
+        if turn_facts_gate is not None:
+            errors.append("%s：cash_stance_turn_facts 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
         return
     if recency_gate is not None:
         from .recency import evidence_recency, validate_recency_reconciliation
@@ -385,6 +397,13 @@ def validate_cash_stance(
             errors.append("%s：%s" % (prefix, error))
         else:
             validate_recency_reconciliation(recency, stance, evidence, prefix, errors)
+    if turn_facts_gate is not None:
+        from .turn_facts import turn_facts, validate_turn_assessment
+        try:
+            turn_facts(context.bundle)
+        except DecisionToolError as error:
+            errors.append("%s：%s" % (prefix, error))
+        validate_turn_assessment(stance, prefix, errors)
     if evidence and not set(evidence) & context.market_evidence_ids:
         errors.append(
             "%s 至少要引用一個市場層級證據（market_level_evidence_ids：全市場情緒、恐懼貪婪成分、隔夜市場或市場狀態編號）；"
@@ -479,6 +498,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "cash_stance_recency" in sizing:
         from .recency import validate_cash_stance_recency_gate
         validate_cash_stance_recency_gate(sizing, errors)
+    if "cash_stance_turn_facts" in sizing:
+        from .turn_facts import validate_cash_stance_turn_facts_gate
+        validate_cash_stance_turn_facts_gate(sizing, errors)
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)

@@ -239,6 +239,55 @@ class PortfolioDecisionAgentTests(unittest.TestCase):
         errors = DecisionInputValidator(bundle).validate()
         self.assertTrue(any("decision_cutoff 後行情" in error for error in errors))
 
+    def test_future_trade_date_is_rejected_even_with_past_availability_and_valid_hashes(self):
+        bundle = decision_bundle()
+        for series in bundle["price_series"]:
+            series["bars"][-1]["trade_date"] = "2099-01-01"
+        for row in bundle["snapshot"]["latest_prices"]:
+            row["trade_date"] = "2099-01-01"
+        bundle["snapshot"]["latest_trade_date"] = "2099-01-01"
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        refresh_bundle_hashes(bundle)
+        errors = DecisionInputValidator(bundle).validate()
+        self.assertTrue(any("收盤內容時間晚於 decision_cutoff" in error for error in errors), errors)
+        self.assertFalse(any("sha256" in error for error in errors), errors)
+
+    def test_trade_dates_must_be_canonical_dates_and_match_the_snapshot(self):
+        for value in ("20260919", "2026-09-19T00:00:00", "2026-02-30", None):
+            with self.subTest(value=value):
+                bundle = decision_bundle()
+                bundle["price_series"][0]["bars"][-1]["trade_date"] = value
+                refresh_bundle_hashes(bundle)
+                errors = DecisionInputValidator(bundle).validate()
+                self.assertTrue(any("必須是 YYYY-MM-DD" in error for error in errors), errors)
+        bundle = decision_bundle()
+        bundle["snapshot"]["latest_trade_date"] = "2026-09-18"
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        refresh_bundle_hashes(bundle)
+        errors = DecisionInputValidator(bundle).validate()
+        self.assertTrue(any("與 snapshot.latest_trade_date 不一致" in error for error in errors), errors)
+        self.assertTrue(any("晚於 snapshot.latest_trade_date" in error for error in errors), errors)
+
+    def test_daily_close_cannot_be_available_before_the_session_closes(self):
+        bundle = decision_bundle()
+        bundle["price_series"][0]["bars"][-1]["available_at"] = "2026-09-19T05:29:59+00:00"
+        refresh_bundle_hashes(bundle)
+        errors = DecisionInputValidator(bundle).validate()
+        self.assertTrue(any("早於該交易日收盤內容時間" in error for error in errors), errors)
+
+    def test_content_cutoff_uses_taipei_timezone_and_close_time(self):
+        validator = DecisionInputValidator(decision_bundle())
+        from etf_agent.core import parse_aware_time
+
+        for cutoff, expected_errors in (("2026-09-19T05:29:59+00:00", True),
+                                         ("2026-09-19T05:30:00+00:00", False),
+                                         ("2026-09-18T16:30:00+00:00", True)):
+            with self.subTest(cutoff=cutoff):
+                validator.cutoff = parse_aware_time(cutoff, "cutoff")
+                errors = []
+                validator._trade_date("2026-09-19", "trade_date", errors)
+                self.assertEqual(bool(errors), expected_errors)
+
     def test_price_series_tampering_breaks_hashes(self):
         bundle = decision_bundle()
         bundle["price_series"][0]["bars"][0]["close"] = "999"

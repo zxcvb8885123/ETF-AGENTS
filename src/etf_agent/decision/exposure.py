@@ -7,7 +7,7 @@
 - 持有天數（``bind_holding_days``）：由帳本逐狀態的持股重算「連續持有起點」，綁進 Policy，Finalizer 以帳本獨立重算；
 - 換股配對（``exposure_rotation_plan``）：純函式，``AllocationOrderEngine`` 與測試共用；Finalizer 以整份配置重建驗證。
 
-誰判斷方向：維持風險 Agent 的現金姿態列舉；本模組只把姿態對映成「含現金整體 beta 下限」並做有上限、有遲滯的換股。
+誰判斷方向：維持風險 Agent 的現金姿態列舉；本模組只把姿態對映成「含現金整體 beta 下限」並做有上限、有死區的換股。
 交易 Agent 的意圖不被改寫：換出者在訂單意圖標 ``exit``，原因只留在旗標欄位。沒有 ``exposure_rotation`` 欄位的舊 Policy
 完全不經過本模組。
 """
@@ -554,14 +554,16 @@ def exposure_rotation_plan(
         """依序配對；回傳沒有配到任何一對時的原因（至少配到一對回 None）。"""
         nonlocal sold
         made = 0
+        attempted_fills: Set[str] = set()
         reason = "no_eligible_victim" if not victim_pool else "no_eligible_fill" if not fill_pool else "cash_infeasible"
         while not stop():
             if len(swaps) >= max_swaps:
                 reason = "max_swaps" if not made else reason
                 break
-            fill = next((f for f in fill_pool if f.symbol not in used_fills), None)
+            fill = next((f for f in fill_pool if f.symbol not in used_fills | attempted_fills), None)
             if fill is None:
-                reason = "no_eligible_fill" if not made else reason
+                if not attempted_fills and not made:
+                    reason = "no_eligible_fill"
                 break
             chosen: Optional[Victim] = None
             blocked = "no_eligible_victim"
@@ -578,7 +580,8 @@ def exposure_rotation_plan(
                 break
             if chosen is None:
                 reason = blocked if not made else reason
-                break
+                attempted_fills.add(fill.symbol)
+                continue
             used_victims.add(chosen.symbol)
             used_fills.add(fill.symbol)
             sold += chosen.value

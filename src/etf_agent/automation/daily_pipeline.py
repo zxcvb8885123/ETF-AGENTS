@@ -263,6 +263,22 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         history_provider = _history_provider(nav_history, holdings_history)
         decision = service(bundle, nav_history_provider=history_provider, decision_repository=self.decision_repository)
 
+        # 完整鏈先驗策略與帳本前提，缺資料時不可先花分析師／研究員用量；只評測分析師不需要交易策略。
+        base_policy = None
+        if stop_after != "analysts":
+            base_policy = build_decision_policy(
+                service.read_json(policy_template_path, " 策略樣板"), bundle,
+                service.read_json(sector_path, " 產業分類"),
+            )
+            base_policy = bind_drawdown(base_policy, bundle, nav_history)
+            base_policy = bind_holding_days(base_policy, bundle, holdings_history)
+            if exposure_rotation_gate(base_policy.get("position_sizing")) is not None and fundamental_period_policy(bundle) is None:
+                raise DailyPipelineError("policy 啟用 exposure_rotation 時 bundle 必須有 fundamental_period_policy（team_inputs 2.7 是 2.6 的超集）")
+            base_policy["content_sha256"] = decision_policy_sha256(base_policy)
+            errors = DecisionPolicyValidator(bundle).validate(base_policy, nav_history)
+            if errors:
+                raise DailyPipelineError("策略與帳本前置驗證失敗：" + "；".join(errors))
+
         self.log("[decision 2] 計算動能")
         momentum = MomentumEngine(bundle).run()
         self.save_artifact("momentum", momentum)
@@ -280,23 +296,12 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         with self._timed("research"):
             debate = self.run_research_team(bundle, momentum, analysts, research, decision_run_id)
 
-        # 基礎 policy 在交易階段之前建立：啟用 rotation 時交易 Agent 需要程式算好的名額脈絡。
-        # build_decision_policy 與 bind_drawdown 都是純函式，提前建立不改變內容，只讓樣板錯誤
-        # 在花費子 Agent 呼叫之前就被發現；policy_base artifact 仍在 decision 6 保存。
-        base_policy = build_decision_policy(
-            service.read_json(policy_template_path, " 策略樣板"),
-            bundle,
-            service.read_json(sector_path, " 產業分類"),
-        )
-        # 回撤由程式從帳本 NAV 歷史計算並綁進 policy；風險 Agent 只看到結果與現金姿態下限。
-        base_policy = bind_drawdown(base_policy, bundle, nav_history)
+        # 策略與帳本已在 Agent 呼叫前綁定；以下背景仍在研究完成後建立。
+        assert base_policy is not None
         # 強制換股只認「論點被推翻」名單；名單綁進 policy，重建驗證不讀結論檔。
         base_policy = bind_forced_swap(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
         # 出場冷卻名單由決策庫確定性取得並綁進 policy；重建驗證只讀 policy，不重掃決策庫。
         base_policy = bind_reentry_cooldown(base_policy, self.decision_repository, bundle)
-        # 持有天數（exposure_rotation 版本閘門）：由帳本逐狀態的持股重算連續持有起點並綁進 policy；沒有閘門原樣不變，
-        # 有閘門而沒有帳本歷史（例如評測重跑）一律拒絕，不綁空名單。
-        base_policy = bind_holding_days(base_policy, bundle, holdings_history)
         # 前次決策背景先載入（只給交易 Agent）：cash_ratio_range 的前次現金比例必須取自同一個前次 run。
         prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
         # 姿態內現金子等級（版本閘門）：前次現金比例 anchor 由程式綁進 policy，只給風險 Agent 當背景；沒有閘門原樣不變。
@@ -352,7 +357,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                           (base_policy.get("position_sizing") or {}).get("high_conviction_cash_floor"),
                                           (base_policy.get("position_sizing") or {}).get("cash_ratio_range"),
                                           prior_context,
-                                          (base_policy.get("position_sizing") or {}).get("cash_stance_recency"))
+                                          (base_policy.get("position_sizing") or {}).get("cash_stance_recency"),
+                                          (base_policy.get("position_sizing") or {}).get("cash_stance_turn_facts"))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)

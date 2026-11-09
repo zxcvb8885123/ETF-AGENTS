@@ -54,11 +54,13 @@ uv python install 3.12
 
 - **分工**：Agent 只提出有證據的解讀、買賣意圖與信心等級；權重、股數、費稅與比賽限制全由 Python 計算和驗證。
 - **時間一致**：所有輸入都必須是決策截止時間之前「當時已經看得到」的資料，防止偷看未來。
+- **審查修正**：日行情同時核對交易日、台北收盤內容時間與可得時間；完整決策在呼叫 Agent 前先驗策略及帳本前提。完整評測使用考卷凍結的當時帳本，缺少時提前拒絕，不暗中關掉換股；詳見 [`evaluation/README.md`](src/etf_agent/evaluation/README.md)。策略版本與生效時間見[目前狀態](docs/status.md#版本閘門啟用狀態)，舊樣板保存在 [`config/policy_versions/`](config/policy_versions/)。
 - **失敗處理**：資料不足或風控不過就停止或明確降級，不填假值。
 - **驗證邊界**：官方執行價採交易所來源白名單，財報須與來源證據一致；有主辦方資料包時，D-Plan 的股數換算與最終比例檢查使用同一份官方 NAV。帳本重建先在暫存區驗證，再發布結果，失敗恢復範圍見[日常操作](docs/operations.md)。
 
 - **配置閘門（2026-11-05 已實作與測試）**：高信心份額下限 `limit_scaled_conviction`（正式設定已開啟，alpha 0.6）；高信心現金下限 `high_conviction_cash_floor`（正式設定未開啟，與 `cash_ratio_range` 互斥），計劃與重放見 [`docs/cash_buffer_high_conviction_plan.md`](docs/cash_buffer_high_conviction_plan.md)、[`docs/limit_aware_conviction_weights_plan.md`](docs/limit_aware_conviction_weights_plan.md)。姿態內現金子等級 `cash_ratio_range`（同日已實作第一階段，正式設定已開啟）：風險 Agent 除了姿態另選 lower／middle／upper 子等級（仍是列舉、不輸出數字），程式依格點對應現金比例，現金每天最多比前次決策高 3 個百分點、往下不限；與高信心現金下限互斥，計劃見 [`docs/agent_cash_ratio_range_plan.md`](docs/agent_cash_ratio_range_plan.md)。開啟時（目前已開啟）以 `cli/portfolio_decision.py` 重跑 finalize／validate-decision 時，程式預設讀 `artifacts/decisions` 重讀前次決策，也可用 `--decision-repository` 指定。另外，風險審查修正動作 `increase_cash_buffer` 的值一律必須在現金上限之下留 3 個百分點邊際（比賽上限 25% 時最高 22%），因為整張取整與現金分配會讓現金高於緩衝。
-- **曝險換股閘門（2026-11-09 已實作，正式設定未開啟）**：`position_sizing.exposure_rotation` v1 讓交易 Agent 對 hold 也給信心，程式依持股 beta（對交易池等權基準）、帳本算的持有天數與信心，在姿態觸發或新股 high 對持股 low 時換股；有次數、比例與遲滯上限，不改寫 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買；`team_inputs` 升為 2.7（多存 `exposure_review`）。計劃見 [`docs/exposure_rotation_plan.md`](docs/exposure_rotation_plan.md)。
+- **轉向事實閘門（2026-11-09 已實作並開啟）**：`position_sizing.cash_stance_turn_facts` v1 是紀錄工具，不是規則：風險 Agent 簡報附程式算的交易池轉向事實（池等權報酬、站回均線比例、MA20 之上比例變化、新低比例、連續 bear 天數），Agent 多填列舉 `turn_assessment`，與現金姿態不設對應；計劃見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)。
+- **曝險換股閘門（2026-11-09 已實作並開啟）**：`position_sizing.exposure_rotation` v1 讓交易 Agent 對 hold 也給信心，程式依持股 beta（對交易池等權基準）、帳本算的持有天數與信心，在姿態觸發或新股 high 對持股 low 時換股；有次數與比例上限、死區（不是跨日遲滯），不改寫 Agent 意圖，與 `drawdown_derisk` 互斥，不會只賣不買；`team_inputs` 升為 2.7（多存 `exposure_review`）。計劃見 [`docs/exposure_rotation_plan.md`](docs/exposure_rotation_plan.md)。
 
 完整說明見[每日決策架構](docs/architecture.md)與[決策流程細節](docs/decision-details.md)。
 

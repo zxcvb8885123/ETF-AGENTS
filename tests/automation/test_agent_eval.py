@@ -177,7 +177,14 @@ class AgentEvaluationTests(unittest.TestCase):
         suite = build_suite(self.root, "fixture")
         manifest = run_suite(self.root, suite, self.pipelines([team_outputs()]), repeats=1, log=lambda _: None)
         self.assertTrue(manifest["cases"][0]["policy"]["available_at_overridden"])
+        self.assertEqual(manifest["cases"][0]["policy"]["evaluation_mode"], "counterfactual")
+        self.assertEqual(manifest["cases"][0]["policy"]["original_available_at"], template["available_at"])
         self.assertEqual(manifest["cases"][0]["runs"][0]["status"], "completed")
+        report = evaluate(self.root, manifest["eval_id"])
+        from etf_agent.evaluation.service import render_report
+
+        self.assertIn("反事實評測", render_report(report))
+        self.assertEqual(json.loads(policy_path.read_text(encoding="utf-8"))["available_at"], template["available_at"])
 
 
 class CompareTests(unittest.TestCase):

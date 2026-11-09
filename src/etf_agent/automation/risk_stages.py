@@ -12,6 +12,7 @@ from etf_agent.decision import (
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
 from etf_agent.decision.recency import evidence_recency
+from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
 from etf_agent.decision.sizing import (
@@ -21,6 +22,7 @@ from etf_agent.decision.sizing import (
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import (
     CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
+    cash_stance_turn_facts_schema,
 )
 
 # 閘門段落只說「本次簡報含哪個欄位」並指向 cash-stance.md 的對應節；規則本身只寫在那裡（與 validate_cash_stance 同步）。
@@ -57,6 +59,13 @@ def _soft_floors(
 RECENCY_PROMPT = (
     "摘要開頭含 evidence_recency（程式依內容時間分組的證據時間表）：另輸出 recency_reconciliation（列舉），"
     "並在最新一組有證據時至少引用其中一個，規則見 cash-stance.md「evidence_recency」節。"
+)
+
+
+TURN_FACTS_PROMPT = (
+    "摘要含 turn_facts（程式依行情算的交易池轉向事實，是事實不是訊號）：另輸出 turn_assessment"
+    "（no_turn_evidence／turn_unconfirmed／turn_confirmed），只是紀錄你怎麼看，不要求與現金姿態一致，"
+    "規則見 cash-stance.md「turn_facts」節。"
 )
 
 
@@ -114,6 +123,7 @@ class RiskStagesMixin:
         cash_ratio_range: Optional[Mapping[str, object]] = None,
         prior_context: Optional[Mapping[str, object]] = None,
         cash_stance_recency: Optional[Mapping[str, object]] = None,
+        cash_stance_turn_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -149,11 +159,18 @@ class RiskStagesMixin:
             if not typed:
                 raise DailyPipelineError("position_sizing.cash_stance_recency 只能用於 evidence_policy=typed_evidence_v1")
             recency_brief = {"evidence_recency": evidence_recency(bundle, context.market_evidence_ids)}
+        # cash_stance_turn_facts（版本閘門）：regime_assessment 旁附程式算的轉向事實；沒有閘門時簡報與舊版逐鍵相同。
+        turn_brief: Dict[str, object] = {}
+        if cash_stance_turn_facts is not None:
+            if not typed:
+                raise DailyPipelineError("position_sizing.cash_stance_turn_facts 只能用於 evidence_policy=typed_evidence_v1")
+            turn_brief = {"turn_facts": turn_facts(bundle)}
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
                 **recency_brief,
                 "regime_assessment": regime,
+                **turn_brief,
                 "analyst_outlooks": {
                     name: counts([item.get("outlook") for item in report.get("items", [])])
                     for name, report in analyst_reports.items()
@@ -194,7 +211,7 @@ class RiskStagesMixin:
             errors: List[str] = []
             validate_cash_stance(
                 context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range, prior_context=prior_context,
-                recency_gate=cash_stance_recency,
+                recency_gate=cash_stance_recency, turn_facts_gate=cash_stance_turn_facts,
             )
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
@@ -215,8 +232,10 @@ class RiskStagesMixin:
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
-            + (RECENCY_PROMPT if cash_stance_recency is not None else ""),
-            cash_stance_recency_schema(graded) if cash_stance_recency is not None
+            + (RECENCY_PROMPT if cash_stance_recency is not None else "")
+            + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else ""),
+            cash_stance_turn_facts_schema(graded, cash_stance_recency is not None) if cash_stance_turn_facts is not None
+            else cash_stance_recency_schema(graded) if cash_stance_recency is not None
             else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA),
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)

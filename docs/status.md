@@ -40,7 +40,9 @@
 
 ### 版本閘門啟用狀態
 
-這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-08 依 `config/decision_policy.json`（`policy_id: strategy-2026-10-28`，`available_at: 2026-11-03T20:30:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-09 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-09-review-v1`，`available_at: 2026-11-09T13:42:11+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+
+本次只更新策略識別與真實可得時間，不變更任何策略門檻或閘門開關。審查前樣板原樣保存在 `config/policy_versions/2026-11-09-before-review.json`；該檔是當日審查前的內容快照，**不是**其中舊 `available_at` 日期當時的策略還原。封存 run 仍讀自己保存的 Policy，不改寫歷史。用新版策略重跑較早 cutoff 僅能是明確標示的反事實評測。
 
 已開啟：
 
@@ -55,6 +57,7 @@
 | `rotation.forced_swap` | `version v1`、`min_new_conviction high`、`max_swaps_per_run 2`、`confirmation v1` |
 | `cash_buffer_floor` | `v1` |
 | `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
+| `exposure_rotation` | `version v1`（2026-11-09 開啟，見[計劃](exposure_rotation_plan.md)）；`beta_window_days 60`；`beta_floor_by_stance` aggressive 1.00／neutral 0.65／defensive null（實際觸發線＝下限 − `release_margin`：進攻 0.90、中性 0.55）；`release_margin 0.10`；`max_swaps_per_run 2`；`max_rotation_fraction 0.08`；`min_holding_days 5`；`min_new_conviction medium`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
 | `cash_stance_recency` | `{version v1}`（2026-11-09 開啟；風險 Agent 簡報首鍵附證據時間表，另填 `recency_reconciliation`） |
 | `cash_buffer_by_stance` | aggressive 3%／neutral 10%／defensive 20%（`cash_ratio_range` 開啟時不影響配置） |
 | `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |
@@ -66,10 +69,12 @@
 | `drawdown_control` | `neutral_at 0.05`、`defensive_at 0.10`、`release_neutral_below 0.03`、`release_defensive_below 0.07`；`history_ref` 由 pipeline 綁定 |
 | `stock_weight_fit` | `v1`（單股上限減碼不依此欄位開關，一律由程式執行） |
 | rules | `max_turnover_rate 0.3`（policy）、`max_sector_weight 0.6`、`reuse_sell_proceeds true`、`minimum_active_share 0.15`、現金 `< 0.25`、持股 20～30 檔、單股 10%（2330 為 25%） |
-| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.6 |
+| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.7（`exposure_rotation` 開啟時） |
 | `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
 
-未開啟：`high_conviction_cash_floor`；`exposure_rotation`（2026-11-09 已實作 v1，含 hold 信心與信心差換股、`team_inputs` 2.7，尚未寫入 `config/decision_policy.json`，由人決定何時開啟，見[計劃](exposure_rotation_plan.md)）。
+未開啟：`high_conviction_cash_floor`。
+
+已開啟（紀錄用）：`cash_stance_turn_facts` v1（2026-11-09 開啟，轉向事實與 `turn_assessment` 列舉，不是規則，與姿態不設對應，見[計劃](turn_facts_plan.md)）。
 
 未開啟：
 

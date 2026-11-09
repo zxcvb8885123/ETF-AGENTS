@@ -25,6 +25,7 @@
 | `compare.py` | 讀出可比較的結論並計算相同比例、相反次數與過程統計 | `load_outputs`、`compare_outputs`、`pairwise_stability`、`summarize`、`process_stats` |
 | `answers.py` | 考卷答案（之後的官方均價超額報酬）與命中率；沿用 `calibration` 的價格與樣本門檻 | `answer_key`、`score_day`、`pool_scores`、`score_runs` |
 | `service.py` | 建立評測集、重跑（可續跑）、產生報告 | `build_suite`、`run_suite`、`unfinished_runs`、`evaluate`、`render_report`、`eval_policy_template` |
+| `ledger_context.py` | 沿封存 Policy 的帳本 head 凍結並驗證考卷帳本；不讀今日 latest | `capture_ledger_context`、`validate_ledger_context` |
 | `grid.py` | 回測格子：讀封存 run 成觀測、逐日逐檔算報酬與兩種超額、分組統計、不可變封存與重算驗證 | `build_grid`、`save_grid`、`read_grid`、`verify_grid`、`GridRepository`、`GRID_ROOT` |
 | `html_report.py` | 一頁自包含 HTML（純標準庫、inline SVG／style、CSP、全文 `html.escape`）；只排版 JSON，不重算 | `render_replay_html`、`render_grid_html`、`render_eval_html` |
 | `replay_market.py` | 回放自己的模擬帳本（沿用 `ledger`）與官方成交價來源（沿用 `OfficialCloseMarket`，只看 `as_of` 前抓到的列、拒絕前視價格） | `ReplayLedger`、`ReplayMarket` |
@@ -37,8 +38,9 @@
 
 - 考卷：完成、未還原、有 `decision_input.json` 與 `intent.json` 的每日 run；同一份輸入只收一次，輸入檔改變就拒絕重跑。
 - 重跑用 `DailyDecisionPipeline.run_from_bundle`：Bundle 重新驗證後才跑，不抓資料。分析師的資料可用性說明仍讀目前的資料庫（只算 cutoff 前的資料），文字可能和當時略有不同。
-- 策略設定版本晚於考卷 cutoff 時，把 `available_at` 提前到考卷 cutoff 才能重建 Policy，並在報告標示；其他設定不變。
-- 帳本歷史不傳入，回撤控制記為 unavailable。
+- 策略設定版本晚於考卷 cutoff 時，只在評測副本把 `available_at` 提前到 cutoff；JSON 標 `evaluation_mode: counterfactual`、保留 `original_available_at`，Markdown 明寫反事實評測，不能宣稱還原了當時可用策略。正式設定與封存 run 不改動。
+- 建考卷時，參考 Policy 有 `drawdown_control.history_ref` 就沿它的 `head_run_id` 讀已驗證帳本，把 NAV 與持股歷史存進 `case.ledger_context`（含 Snapshot、cutoff、帳戶、原參照及內容雜湊）。讀不到或不同步即拒絕建卷，不改讀今日 latest。
+- 重跑重新驗證凍結帳本，傳入完整每日鏈；不重讀今日帳本、不回填資料。新版策略需要 `exposure_rotation`、但舊考卷沒有帳本快照時，在任何 Agent 呼叫前拒絕整套完整評測；需重建有當時錨點的評測集，或明確選 `--stop-after analysts`。不需此閘門的舊考卷維持回撤 unavailable；不暗中移除閘門。
 - 只跑分析師（`--stop-after analysts`）時，交易、現金姿態與委託不比較。
 - 準度沿用 `calibration`：成交日 T 是 cutoff 後第一個有官方收盤的交易日，報酬 = T+h 日均價 ÷ T 日均價 − 1，減去同日交易池平均；窗口內除權息的股票不計，有價格的股票不到八成時當天不給答案。超額報酬剛好為 0 的不算命中也不算錯。
 - 完整決策日少於 `calibration.MIN_DECISION_DAYS`（10）天時只給天數與筆數，不給命中率；同一天重跑多次只算一天。報告另列單日結果，只供參考。
@@ -58,7 +60,7 @@
 ### 斷點續跑（`--resume`）
 
 - 只重跑沒有 `eval_result.json` 或狀態不是 `completed` 的卷次；已完成的沿用原紀錄。重跑的卷次以 `resume=True` 建 pipeline：卷次目錄內先前的原始 Agent 輸出（`*_raw_N.json`）以**目前的** Validator 重驗，通過就沿用、不再呼叫 Agent；輸入改變時 envelope 對不上自然重跑。
-- 續跑前核對：評測集名稱、`repeats`、`stop_after`、manifest 已記錄的每卷 `bundle_sha256`、評測用策略樣板（`policy_template.json` 與目前 `config/decision_policy.json` 經 cutoff 調整後的 canonical 雜湊）任一不符即停止，不會建立任何 pipeline；要換設定請建新的評測 run。
+- 續跑前核對：評測集名稱、`repeats`、`stop_after`、manifest 已記錄的每卷 `bundle_sha256`、`ledger_context_sha256`（有帳本時）、評測用策略樣板（`policy_template.json` 與目前 `config/decision_policy.json` 經 cutoff 調整後的 canonical 雜湊）任一不符即停止，不會建立任何 pipeline；要換設定請建新的評測 run。
 - 卷次紀錄多 `resumed_from_attempts`（續跑前已有的原始輸出份數）與 `resumed_at`；manifest 多 `resumes[]`（每次續跑時間與重跑卷次）；報告標示續跑。
 
 ## 回測格子（run × symbol，零 token）
