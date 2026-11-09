@@ -532,7 +532,14 @@ class ProviderServiceTests(unittest.TestCase):
 
 def with_trade_date(bundle, trade_date=LATEST_TRADE_DATE):
     bundle = copy.deepcopy(bundle)
+    shift = date.fromisoformat(trade_date) - date.fromisoformat(bundle["snapshot"]["latest_trade_date"])
     bundle["snapshot"]["latest_trade_date"] = trade_date
+    for row in bundle["snapshot"]["latest_prices"]:
+        row["trade_date"] = (date.fromisoformat(row["trade_date"]) + shift).isoformat()
+    for series in bundle["price_series"]:
+        for bar in series["bars"]:
+            bar["trade_date"] = (date.fromisoformat(bar["trade_date"]) + shift).isoformat()
+        series["series_sha256"] = canonical_sha256(series["bars"])
     bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
     bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
     return bundle

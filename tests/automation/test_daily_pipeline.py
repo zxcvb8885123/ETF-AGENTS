@@ -30,11 +30,15 @@ def live_policy_template():
     return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
 
 
+def fixed_policy_template():
+    """固定版本的測試樣板；正式設定變更不能改變舊行為測試世界。"""
+    return json.loads((ROOT / "config/policy_versions/2026-11-09-before-review.json").read_text(encoding="utf-8"))
+
+
 def gateless_policy_template():
-    """正式樣板去掉 PRODUCTION_SIZING_GATES：只測閘門以外行為的測試明確使用這份，
-    不隱性依賴 live 檔目前是否開啟閘門；閘門開啟的整條鏈由 LiveTemplatePipelineTests 等測試另行覆蓋。"""
-    template = live_policy_template()
-    for field in PRODUCTION_SIZING_GATES:
+    """固定樣板移除會改變 Agent Schema 的閘門；live 整合測試必須明確選用 live_policy_template。"""
+    template = fixed_policy_template()
+    for field in ("limit_scaled_conviction", "cash_ratio_range", "cash_stance_recency", "exposure_rotation"):
         template["position_sizing"].pop(field, None)
     return template
 
@@ -177,6 +181,24 @@ class PipelineWorld:
 
 
 class DailyPipelineTests(unittest.TestCase):
+    def test_fixed_fixture_does_not_read_the_live_policy(self):
+        expected = gateless_policy_template()
+        with patch(__name__ + ".live_policy_template", side_effect=AssertionError("不應讀 live 設定")):
+            self.assertEqual(gateless_policy_template(), expected)
+            with tempfile.TemporaryDirectory() as directory:
+                world = PipelineWorld(Path(directory), approved_status=True)
+                self.assertEqual(json.loads(world.paths["template"].read_text(encoding="utf-8"))["position_sizing"],
+                                 expected["position_sizing"])
+
+    def test_missing_exposure_history_fails_before_any_agent_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True, template=fixed_policy_template())
+            runner = FakeRunner({})
+            result = world.run(runner)
+            self.assertEqual(result.status, "failed")
+            self.assertTrue(any("帳本持股歷史" in error for error in result.errors), result.errors)
+            self.assertEqual(runner.prompts, [])
+
     def test_team_chain_seals_approved_decision_with_team_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             world = PipelineWorld(Path(directory), approved_status=True)
@@ -273,6 +295,8 @@ class DailyPipelineTests(unittest.TestCase):
         from test_overnight_market import approvals, captures
         world = PipelineWorld(Path(directory), approved_status=True)
         world.snapshot["latest_trade_date"] = "2026-09-18"
+        for row in world.snapshot["latest_prices"]:
+            row["trade_date"] = "2026-09-18"
         world.paths["snapshot"].write_text(json.dumps(world.snapshot, ensure_ascii=False), encoding="utf-8")
         cutoff = datetime.fromisoformat(world.snapshot["decision_cutoff"])
         rows = captures(available=(cutoff - timedelta(minutes=5)).isoformat())

@@ -265,6 +265,14 @@ class RegimeFormulaTests(unittest.TestCase):
 
 
 class CutoffTests(unittest.TestCase):
+    def test_historical_brief_and_skill_have_no_unbound_examples_or_return_numbers(self):
+        facts = turn_facts(fixture({"A": [10, 11, 12]}))
+        self.assertNotRegex(facts["note"], r"\d")
+        reference = (ROOT / "tradeagent/risk/portfolio-risk-review/references/cash-stance.md").read_text(encoding="utf-8")
+        for text in (facts["note"], reference):
+            for forbidden in ("2026-10-28", "19.4%", "9%～19%", "0.585%"):
+                self.assertNotIn(forbidden, text)
+
     def test_bar_after_the_latest_trade_date_is_rejected(self):
         value = fixture({"A": [10, 11, 12], "B": [10, 10, 10]})
         value["snapshot"]["latest_trade_date"] = dates(3)[1]

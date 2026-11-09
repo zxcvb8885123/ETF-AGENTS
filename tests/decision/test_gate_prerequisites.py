@@ -103,7 +103,7 @@ PRODUCTION_SNAPSHOT_SHA256 = "4e5b131dcde6a9e527a0bf105faf202cf6d8f44532ba5b12cd
 
 
 def anchored_sizing(bundle, sizing=None, **overrides):
-    """正式 position_sizing（預設讀 live 樣板）加上 account_cash anchor（測試不經決策庫）與覆寫欄位。"""
+    """固定版本 position_sizing 加上 account_cash anchor（測試不經決策庫）與覆寫欄位。"""
     result = copy.deepcopy(sizing if sizing is not None else production_policy()["position_sizing"])
     result["cash_ratio_range"]["anchor"] = {"status": "account_cash", "ratio": account_cash_ratio(bundle), "source": None}
     result.update(overrides)

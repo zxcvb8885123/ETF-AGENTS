@@ -150,7 +150,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 ### 現金姿態的資料新舊（`cash_stance_recency`）
 
-- 欄位 `{version: v1}`；只能用於 `evidence_policy: typed_evidence_v1`，可與 `cash_ratio_range` 獨立開關；目前尚未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。
+- 欄位 `{version: v1}`；只能用於 `evidence_policy: typed_evidence_v1`，可與 `cash_ratio_range` 獨立開關；啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
 - 簡報第一個鍵 `evidence_recency` 由程式依 bundle 重算：市場層級證據的內容時間（新聞 `published_at`、隔夜時段 `session_end`、恐懼貪婪資料日）、距截止小時數與三個分組，界線是台股最近交易日 13:30；內容時間晚於截止即拒絕，找不到內容時間的證據記入 `data_gaps`；不含新聞文字。
 - 風險 Agent 另填列舉 `recency_reconciliation`；最新一組（`after_latest_close`）非空時不得填 `newest_insufficient` 且須引用其中至少一個證據，為空時只能填 `newest_insufficient`。Skill 規定：最新一組的事件與新聞預設為判斷「情況有沒有改變」的主要依據，利多利空同樣適用，不採用須說明；隔夜行情仍只是背景。這條是給 Agent 的取捨規則，程式只驗引用與列舉，不要求列舉與姿態對應，不放寬任何現金格點、上限、Guard 或回撤下限。
 - `team_inputs` 不升版：閘門決定 `cash_stance` 允許的欄位（與 `cash_grade` 同做法），Finalizer 與 `apply_trade_decision` 以 bundle 重算時間表再驗；回放略過此閘門（notes 標 `cash_stance_recency: ignored_in_replay`）。
@@ -161,16 +161,23 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 欄位 `{version: v1}`；只能用於 `evidence_policy: typed_evidence_v1`，與 `cash_stance_recency`、`cash_ratio_range` 互相獨立；目前尚未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。這是**紀錄工具，不是規則**。
 - 簡報在 `regime_assessment` 旁多一個鍵 `turn_facts`，由 `decision/turn_facts.py` 只依 `price_series` 重算：最近兩日池等權日報酬、連續上漲日數、站回 MA5／MA20 的股票比例、MA20／MA60 之上比例（呼叫 `MomentumEngine._regime`，與 regime 同一公式）、MA20 之上比例的 5 日變化、20 日新低比例、regime 連續 bear 天數（需 61 筆以上，被歷史長度截斷時標 `bear_streak_truncated`）。全部為字串或整數，沒有文字判斷；資料不足記入 `data_gaps`；任何 bar 晚於 `snapshot.latest_trade_date` 即拒絕。
 - 風險 Agent 另填列舉 `turn_assessment`（`no_turn_evidence`／`turn_unconfirmed`／`turn_confirmed`）；驗證只檢查必填與值域，不驗與姿態的對應、不驗文字品質，不放寬或收緊任何現金格點、`stance_floor` 或 Guard，也不改 `_regime`。
+- 簡報 note 與 Agent Skill 只保留一般性風險提醒，不硬寫特定日期案例、後續報酬或未由本次資料計算的交易成本；歷史重跑也不得取得 cutoff 之後的案例。
 - `team_inputs` 不升版；Finalizer 與 `apply_trade_decision` 以 bundle 重算再驗；回放略過此閘門（notes 標 `cash_stance_turn_facts: ignored_in_replay`）；策略反思不得改。省略此欄位的舊 Policy／舊 run 逐位元不變。
 
 ### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1）
 
-- 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；目前未開啟（見 [status.md](status.md#版本閘門啟用狀態)）。
+- 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
 - hold 信心：閘門開啟時交易 Agent 對 `hold` 也必填 `conviction`，程式綁入 `hold_conviction_by_symbol`（不得與 `conviction_by_symbol` 重複）；沒開時 hold 帶信心被拒。
 - `exposure_review`（`team_inputs` 2.7）：程式依 `price_series` 對交易池等權基準算每檔 beta、up／down capture 與含現金的組合 beta；任何持股缺資料時組合層級為 null，不補假值。
 - 持有天數由帳本持股歷史算（連續持有、台北時區日曆日），Finalizer 以帳本獨立重算，讀不到或與 Policy 不符即拒絕。
 - 換股：姿態有非 null 下限且組合 beta 低於「下限 − `release_margin`」（死區，起止同一條線，沒有跨日狀態）時，把「本次 buy 被名額擋下」的高 beta 新股換掉「hold、信心非 high、持有天數足夠、beta 低於組合」的持股；`conviction_gap_swap` 另可在任何姿態以 high 新股換 low 持股。兩者共用 `max_swaps_per_run`、`max_rotation_fraction`，換出者的賣單由程式標 `exit`（旗標 `RISK_EXPOSURE_ROTATION`／`RISK_CONVICTION_GAP_SWAP`，不觸發時留 `…_SKIPPED:<原因>`），換入者拿不到名額就捨棄該對，絕不只賣不買。首個換入候選無可負擔的配對時，依原信心／名次繼續嘗試後續候選，不讓昂貴候選擋住整條配對；失敗嘗試不預扣資金。與 `drawdown_derisk` 互斥（減碼日整個略過）；`forced_swap` 與交易 Agent 的 exit／trim 優先。
 - 回放略過此閘門（notes 標 `exposure_rotation: ignored_in_replay`）；省略此欄位的舊 Policy／舊 run 逐位元不變。
+
+### 輸入時間與評測帳本的前置驗證
+
+- 日行情日期須為 `YYYY-MM-DD`，Snapshot 的逐檔最新日須等於 `latest_trade_date`，各歷史 bar 不得晚於它；日收盤內容時間以台北交易日 13:30 計，內容時間不得晚於 cutoff，`available_at` 不得早於內容時間或晚於 cutoff。重新計算雜湊不能略過這些語意檢查。
+- 完整每日鏈在首次 Agent 呼叫前建立基礎 Policy、綁定回撤與持有天數並驗證前提；只跑分析師時不要求交易策略或帳本。
+- 完整 Agent 評測在建考卷時沿封存 Policy 的 `history_ref.head_run_id` 讀已驗證帳本，凍結同鏈的 NAV 與持股歷史；時間、持股、Snapshot、帳戶與參照雜湊均須一致。重跑只讀這份快照、不讀今日 latest，續跑另比對快照雜湊。所有考卷的缺帳本檢查先於任何 Agent 呼叫；需要曝險換股而沒有快照時明確拒絕，不默默關閘門。舊考卷可明確選只跑分析師；完整評測須重建有可核對錨點的評測集，不猜歷史。
 
 ### 2026-11-03 起的執行面閘門
 

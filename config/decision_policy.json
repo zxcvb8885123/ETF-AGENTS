@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-10-28",
-  "available_at": "2026-11-03T20:30:00+08:00",
+  "policy_id": "strategy-2026-11-09-review-v1",
+  "available_at": "2026-11-09T13:42:11+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",

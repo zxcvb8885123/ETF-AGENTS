@@ -516,6 +516,26 @@ class PlanTests(unittest.TestCase):
         none = self.plan(victims, [fill("F", "high", "2")], afford=lambda *_: False)
         self.assertEqual((none["swaps"], none["skipped"]["exposure"]), ([], "cash_infeasible"))
 
+    def test_cash_infeasible_top_fill_does_not_block_an_affordable_later_fill(self):
+        victims = [victim("V1", "low", "0.01"), victim("V2", "low", "0.02")]
+        fills = [fill("EXPENSIVE", "high", "2"), fill("AFFORDABLE", "medium", "2")]
+        calls = []
+
+        def afford(v, f):
+            calls.append((v, f))
+            return f == "AFFORDABLE"
+
+        result = self.plan(victims, fills, gate=self.exposure_only(), afford=afford)
+        self.assertEqual([(s["victim"], s["fill"]) for s in result["swaps"]], [("V1", "AFFORDABLE")])
+        self.assertEqual(calls, [("V1", "EXPENSIVE"), ("V2", "EXPENSIVE"), ("V1", "AFFORDABLE")])
+
+    def test_gap_swap_also_tries_the_next_fill_and_keeps_the_swap_cap(self):
+        victims = [victim("V1", "low", "0.01"), victim("V2", "low", "0.02")]
+        fills = [fill(s, "high", "2") for s in ("EXPENSIVE", "F2", "F3")]
+        result = self.plan(victims, fills, stance_name="defensive", gate=gate_with(max_swaps_per_run=1),
+                           afford=lambda v, f: f != "EXPENSIVE")
+        self.assertEqual([(s["kind"], s["fill"]) for s in result["swaps"]], [("gap", "F2")])
+
     def test_a_victim_and_a_fill_are_used_at_most_once_and_pairs_are_balanced(self):
         victims = [victim("V1", "low", "0.01"), victim("V2", "low", "0.02")]
         result = self.plan(victims, [fill("F1", "high", "2")], gate=gate_with(max_swaps_per_run=2))

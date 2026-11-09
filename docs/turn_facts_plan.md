@@ -16,7 +16,7 @@
 
 - `decision/turn_facts.py` 的 `turn_facts(bundle)` 只依 `price_series` 與 `snapshot.latest_trade_date` 重算交易池層級數字（字串或整數）：最近兩日池等權日報酬、連續上漲日數、站回 MA5／MA20 比例、MA20／MA60 之上比例（呼叫 `MomentumEngine._regime`，不另寫定義）、MA20 之上比例 5 日變化、20 日新低比例、regime 連續 bear 天數。資料不足記 `data_gaps`，bar 晚於最近交易日即拒絕。
 - 風險 Agent 多填 `turn_assessment`：`no_turn_evidence`／`turn_unconfirmed`／`turn_confirmed`。驗證只看必填與值域，列舉與姿態之間不設對應。
-- Skill 提醒：這些是事實不是訊號；`regime_assessment` 是累積水位，反彈初期必然落後（離開 bear 時池常已反彈 9%～19%）；假反彈有代價（來回費稅約 0.585%，反彈失敗時多投的部分會虧；2026-10-28 池 +2.8%、站回 MA5 比例 0.79，之後 7 個交易日池 -19.4%）。
+- Skill 與簡報 note 只保留一般性提醒：這些是事實不是訊號；均線廣度可能落後短期變化，反彈也可能失敗。不得硬寫特定日期案例、後續報酬或固定費稅數字，避免把 cutoff 之後的資訊帶進歷史重跑。
 - 不改 `MomentumEngine._regime`、不動現金格點、`cash_ratio_range`、`stance_floor` 與 Guard；`team_inputs` 不升版。
 
 ## 觀察期與要蒐集的指標

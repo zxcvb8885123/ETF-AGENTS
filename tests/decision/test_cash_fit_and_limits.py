@@ -8,6 +8,7 @@
 import copy
 import json
 import unittest
+from unittest.mock import patch
 from decimal import Decimal
 from pathlib import Path
 
@@ -62,10 +63,8 @@ def live_production_policy():
 
 
 def production_policy():
-    """正式樣板去掉 cash_stance_recency：它只在風險 Agent 現金姿態驗證時要求 typed_evidence_v1 並多一個欄位，
-    不改配置結果；這些測試用的 bundle 不是 typed_evidence_v1，閘門本身由 test_cash_stance_recency 與
-    test_daily_pipeline.LiveTemplatePipelineTests 覆蓋。"""
-    policy = live_production_policy()
+    """固定版本配置夾具，排除需要額外 Agent／帳本輸入的閘門；live 驗證另用 live_production_policy。"""
+    policy = json.loads((ROOT / "config/policy_versions/2026-11-09-before-review.json").read_text(encoding="utf-8"))
     policy["position_sizing"].pop("cash_stance_recency", None)
     policy["position_sizing"].pop("exposure_rotation", None)  # 需要帳本持股歷史與 team_inputs 2.7，由 test_exposure_rotation* 覆蓋
     return policy
@@ -102,6 +101,21 @@ def sizing_errors(**fields):
 
 
 class ProductionConfigTests(unittest.TestCase):
+    def test_fixed_policy_fixture_is_independent_of_the_live_configuration(self):
+        expected = production_policy()
+        with patch(__name__ + ".live_production_policy", side_effect=AssertionError("舊 fixture 不得讀 live")):
+            self.assertEqual(production_policy(), expected)
+
+    def test_review_policy_has_its_own_identity_and_preserves_the_old_snapshot(self):
+        from etf_agent.core import canonical_sha256, parse_aware_time
+
+        archived = json.loads((ROOT / "config/policy_versions/2026-11-09-before-review.json").read_text(encoding="utf-8"))
+        self.assertEqual(canonical_sha256(archived), "11f94abcd3d50043a4856065d5aa06d136f30ed1eb1bae5e7f2a232750c109a0")
+        live = live_production_policy()
+        self.assertNotEqual(live["policy_id"], archived["policy_id"])
+        self.assertGreater(parse_aware_time(live["available_at"], "available_at"),
+                           parse_aware_time(archived["available_at"], "available_at"))
+
     def test_production_rules_reuse_sell_proceeds_true_with_new_version(self):
         rules = production_rules()
         self.assertIs(rules["reuse_sell_proceeds"], True)

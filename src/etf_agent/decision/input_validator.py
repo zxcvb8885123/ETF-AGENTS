@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Mapping, Optional, Set, Tuple
 
@@ -45,6 +45,7 @@ FUNDAMENTAL_PERIOD_POLICIES = (FUNDAMENTAL_PERIOD_PER_SYMBOL,)
 EVIDENCE_POLICY_FIELD = "evidence_policy"
 EVIDENCE_POLICY_TYPED = "typed_evidence_v1"
 EVIDENCE_POLICIES = (EVIDENCE_POLICY_TYPED,)
+TAIPEI = timezone(timedelta(hours=8))
 
 
 class DecisionInputValidator:
@@ -58,6 +59,21 @@ class DecisionInputValidator:
             else {}
         )
         self.cutoff: Optional[datetime] = None
+
+    def _trade_date(self, value: object, label: str, errors: List[str]) -> Optional[date]:
+        """日期必須是 YYYY-MM-DD；日收盤資料不得出現在內容時間之前。"""
+        try:
+            if not isinstance(value, str):
+                raise ValueError
+            parsed = date.fromisoformat(value)
+            if parsed.isoformat() != value:
+                raise ValueError
+        except ValueError:
+            errors.append("%s 必須是 YYYY-MM-DD 日期" % label)
+            return None
+        if self.cutoff is not None and datetime.combine(parsed, time(13, 30), TAIPEI) > self.cutoff:
+            errors.append("%s 的收盤內容時間晚於 decision_cutoff" % label)
+        return parsed
 
     def validate(self) -> List[str]:
         errors: List[str] = []
@@ -185,6 +201,7 @@ class DecisionInputValidator:
         if not self.snapshot:
             errors.append("snapshot 必須是物件")
             return
+        self._trade_date(self.snapshot.get("latest_trade_date"), "snapshot.latest_trade_date", errors)
         reject_unknown_fields(
             self.snapshot,
             {
@@ -338,6 +355,10 @@ class DecisionInputValidator:
             if not isinstance(row, Mapping):
                 errors.append("snapshot.latest_prices[%d] 必須是物件" % index)
                 continue
+            label = "snapshot.latest_prices[%d].trade_date" % index
+            self._trade_date(row.get("trade_date"), label, errors)
+            if row.get("trade_date") != self.snapshot.get("latest_trade_date"):
+                errors.append("%s 與 snapshot.latest_trade_date 不一致" % label)
             reject_unknown_fields(
                 row,
                 {
@@ -703,10 +724,10 @@ class DecisionInputValidator:
                     errors,
                 )
                 trade_date = str(bar.get("trade_date", ""))
-                try:
-                    datetime.fromisoformat(trade_date)
-                except ValueError:
-                    errors.append("%s.trade_date 格式錯誤" % bar_prefix)
+                content_date = self._trade_date(bar.get("trade_date"), bar_prefix + ".trade_date", errors)
+                latest_date = self.snapshot.get("latest_trade_date")
+                if isinstance(latest_date, str) and trade_date > latest_date:
+                    errors.append("%s.trade_date 晚於 snapshot.latest_trade_date" % bar_prefix)
                 if previous_date and trade_date <= previous_date:
                     errors.append("%s.trade_date 必須嚴格遞增" % bar_prefix)
                 previous_date = trade_date
@@ -714,6 +735,8 @@ class DecisionInputValidator:
                     available = parse_time(bar.get("available_at"), "%s.available_at" % bar_prefix)
                     if self.cutoff is not None and available > self.cutoff:
                         errors.append("%s 使用 decision_cutoff 後行情" % bar_prefix)
+                    if content_date is not None and available < datetime.combine(content_date, time(13, 30), TAIPEI):
+                        errors.append("%s.available_at 早於該交易日收盤內容時間" % bar_prefix)
                 except DecisionToolError as error:
                     errors.append(str(error))
                 values: Dict[str, Decimal] = {}

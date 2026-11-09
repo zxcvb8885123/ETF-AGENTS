@@ -554,14 +554,16 @@ def exposure_rotation_plan(
         """依序配對；回傳沒有配到任何一對時的原因（至少配到一對回 None）。"""
         nonlocal sold
         made = 0
+        attempted_fills: Set[str] = set()
         reason = "no_eligible_victim" if not victim_pool else "no_eligible_fill" if not fill_pool else "cash_infeasible"
         while not stop():
             if len(swaps) >= max_swaps:
                 reason = "max_swaps" if not made else reason
                 break
-            fill = next((f for f in fill_pool if f.symbol not in used_fills), None)
+            fill = next((f for f in fill_pool if f.symbol not in used_fills | attempted_fills), None)
             if fill is None:
-                reason = "no_eligible_fill" if not made else reason
+                if not attempted_fills and not made:
+                    reason = "no_eligible_fill"
                 break
             chosen: Optional[Victim] = None
             blocked = "no_eligible_victim"
@@ -578,7 +580,8 @@ def exposure_rotation_plan(
                 break
             if chosen is None:
                 reason = blocked if not made else reason
-                break
+                attempted_fills.add(fill.symbol)
+                continue
             used_victims.add(chosen.symbol)
             used_fills.add(fill.symbol)
             sold += chosen.value
