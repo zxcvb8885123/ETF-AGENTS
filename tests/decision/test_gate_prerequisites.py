@@ -424,7 +424,7 @@ class ProductionAllGatesTests(unittest.TestCase):
         self.assertEqual(gate, {
             "version": "v3", "beta_window_days": 60,
             "beta_target_by_stance": {"aggressive": "0.90", "neutral": "0.55", "defensive": None},
-            "max_swaps_per_run": 2, "min_holding_days": 5, "hold_conviction": "v1", "conviction_gap_swap": "v1",
+            "max_swaps_per_run": 2, "min_holding_days": 5, "hold_conviction": "v1",  # 2026-11-10 20:10 agent_swap v2 開啟時移除 conviction_gap_swap（互斥）
         })
 
     def test_live_config_matches_the_snapshot_except_for_reflection_knobs(self):

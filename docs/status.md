@@ -55,7 +55,7 @@
 | `limit_scaled_conviction` | `{version v1, alpha 0.6}` |
 | `positions_by_breadth` | concentrated 22／balanced 26／diversified 30 |
 | `held_add_priority`＋`rotation` | `v1`；`max_swaps_per_run 5`、`min_new_conviction medium` |
-| `rotation.forced_swap` | `version v1`、`min_new_conviction high`、`max_swaps_per_run 2`、`confirmation v1` |
+| `rotation.forced_swap` | **已於 2026-11-10 20:10 移除**（與 `agent_swap` v2 互斥；回滾樣板 `config/policy_versions/2026-11-10-before-agent-swap-v2.json`） |
 | `cash_buffer_floor` | `v1` |
 | `cash_ratio_range` | `version v1`；`grid` aggressive 3／5／8%、neutral 8／10／13%、defensive 15／18／21%；`max_daily_raise 0.03`；`anchor` 由 pipeline 每次綁定 |
 | `exposure_rotation` | `version v2`（2026-11-09 開啟 v1、同日 17:50 切到 v2，見[計劃](exposure_rotation_plan.md)與[v2 計劃](exposure_rotation_v2_plan.md)）；`beta_window_days 60`；`beta_target_by_stance` aggressive 0.90／neutral 0.55／defensive null（觸發與停止線，與 v1 的「下限 − margin」數值相同）；`max_swaps_per_run 2`；`min_holding_days 5`；換入者最低信心沿用 `rotation.min_new_conviction`；`hold_conviction v1`；`conviction_gap_swap v1`；`held_since_by_symbol` 由 pipeline 依帳本綁定；`team_inputs` 2.7 |
@@ -94,7 +94,7 @@ v1 影子已於 2026-11-10 19:45 開啟（`policy_id strategy-2026-11-10-exposur
 | 閘門 | 說明 |
 | --- | --- |
 | `position_sizing.high_conviction_cash_floor` | 與 `cash_ratio_range` 互斥，目前正式設定沒有這個欄位；行為見[決策鏈契約](decision-contracts.md#高信心現金下限high_conviction_cash_floor)，只在人改設定時才生效 |
-| `agent_swap` v2（換股改由提名配置） | **已實作、尚未開啟**（正式設定目前是 v1 影子）：配置依交易 Agent 的有序提名換股，換出者由程式標 `exit`＋`AGENT_SWAP`、換入者 `AGENT_SWAP_FILL`；提名可行性取消只取消該對並留 `AGENT_SWAP_CANCELLED:<原因>`，換出者不賣；與 `rotation.forced_swap`、`exposure_rotation.conviction_gap_swap` 互斥，`exposure_rotation` 的換股步驟停用（`EXPOSURE_ROTATION_SKIPPED:agent_swap`）；pipeline 綁 `nominated_pairs`／`nomination_ref`，`portfolio_slots` 升 1.1。是否切 v2 由人在影子期後決定（見[計畫](agent_nominated_rotation_plan.md#6-需人決定事項)） |
+| `agent_swap` v2（換股改由提名配置） | **已於 2026-11-10 20:10 開啟**（使用者決定、未等影子期；同時移除 `rotation.forced_swap` 與 `exposure_rotation.conviction_gap_swap`；`policy_id strategy-2026-11-10-agent-swap-v2-1`）：配置依交易 Agent 的有序提名換股，換出者由程式標 `exit`＋`AGENT_SWAP`、換入者 `AGENT_SWAP_FILL`；提名可行性取消只取消該對並留 `AGENT_SWAP_CANCELLED:<原因>`，換出者不賣；與 `rotation.forced_swap`、`exposure_rotation.conviction_gap_swap` 互斥，`exposure_rotation` 的換股步驟停用（`EXPOSURE_ROTATION_SKIPPED:agent_swap`）；pipeline 綁 `nominated_pairs`／`nomination_ref`，`portfolio_slots` 升 1.1。是否切 v2 由人在影子期後決定（見[計畫](agent_nominated_rotation_plan.md#6-需人決定事項)） |
 
 已開啟（2026-11-10，目前值見上表；以下為行為說明）：
 

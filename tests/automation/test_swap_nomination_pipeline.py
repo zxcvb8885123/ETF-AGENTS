@@ -264,8 +264,8 @@ class ShadowRunTests(unittest.TestCase):
         def to_v2(policy):
             sizing = policy["position_sizing"]
             sizing["agent_swap"]["version"] = "v2"
-            sizing["rotation"].pop("forced_swap")  # v2 與舊換股路徑互斥
-            sizing["exposure_rotation"].pop("conviction_gap_swap")
+            sizing["rotation"].pop("forced_swap", None)  # v2 與舊換股路徑互斥
+            sizing["exposure_rotation"].pop("conviction_gap_swap", None)
 
         v2 = sealed(art["policy"], to_v2)
         # 與 held_since 未綁定的前例相同：重建配置的驗證器讀到未綁定的 v2 時由引擎拋 DecisionToolError，沒有任何路徑能 approved。
