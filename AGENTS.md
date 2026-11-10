@@ -79,6 +79,7 @@
 - 已開啟（紀錄）：`market_index_facts` v1（風險 Agent 簡報附加權指數事實，背景、不可引用、不改配置；見 [`docs/market_index_facts_plan.md`](docs/market_index_facts_plan.md)）。
 - 已開啟（反彈）：`rebound_participation` v2（前提 `exposure_rotation` v3）：程式只整理事實，風險 Agent 的 `turn_assessment` 單獨決定是否放寬防守姿態下的曝險換股，缺資料恆為 none、永不升級；不放寬現金與換手。v1 保留供舊 run 重建；見 [`docs/rebound_participation_v2_plan.md`](docs/rebound_participation_v2_plan.md)。
 - 已實作、尚未開啟：`slot_recycle`。把它的行為當成現行行為是錯的。
+- 已實作、尚未開啟：`quality_dip_facts`（優質股被大盤拖累的第一階段事實，紀錄用、不影響配置；見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md)）。把它的行為當成現行行為是錯的。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界

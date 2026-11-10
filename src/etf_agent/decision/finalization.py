@@ -32,6 +32,7 @@ from .recency import cash_stance_recency_gate
 from .rebound import rebound_gate, validate_effective_state, validate_turn_state
 from .turn_facts import cash_stance_turn_facts_gate
 from .swap_nomination import SWAP_NOMINATION_KEY, agent_swap_gate, validate_team_swap_nomination
+from .dip_facts import DIP_FACTS_KEY, quality_dip_facts_gate, validate_dip_facts
 from .sizing import cash_ratio_gate, cash_ratio_selection_check, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
@@ -104,6 +105,7 @@ def build_team_inputs(
     fundamental_metrics: object = _UNSET,
     exposure_review: Optional[Mapping[str, object]] = None,
     turn_state: Optional[Mapping[str, object]] = None,
+    dip_facts: Optional[Mapping[str, object]] = None,
     swap_nomination: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
@@ -117,6 +119,9 @@ def build_team_inputs(
     2.7：再加程式計算的曝險檢視 ``exposure_review``（position_sizing.exposure_rotation 啟用才有），是 2.6 的超集；
     2.8：再加程式計算的反彈參與狀態 ``turn_state``（position_sizing.rebound_participation 啟用才有），是 2.7 的超集；
     2.9：再加交易 Agent 第二輪的換股提名 ``swap_nomination``（position_sizing.agent_swap 啟用才有），是 2.8 的超集。
+
+    選配鍵 ``dip_facts``（position_sizing.quality_dip_facts 啟用才有）：不升版本、不排進線性版本鏈，只要求 2.6 以上
+    （需要 fundamental_metrics）；Finalizer 以 Policy 閘門雙向檢查。沒有傳入時 team_inputs 與舊版逐鍵相同。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
@@ -138,6 +143,8 @@ def build_team_inputs(
         raise DecisionToolError("team_inputs 2.8 的反彈參與狀態必須與曝險檢視（2.7）同時存在")
     if turn_state is not None and not isinstance(turn_state, Mapping):
         raise DecisionToolError("team_inputs 2.8 的 turn_state 必須是物件")
+    if dip_facts is not None and (fundamental_metrics is _UNSET or not isinstance(dip_facts, Mapping)):
+        raise DecisionToolError("team_inputs 的 dip_facts 必須是物件，且只能用於 2.6 以上（需要基本面指標）")
     if swap_nomination is not None and turn_state is None:
         raise DecisionToolError("team_inputs 2.9 的換股提名必須與反彈參與狀態（2.8）同時存在")
     if swap_nomination is not None and not isinstance(swap_nomination, Mapping):
@@ -185,6 +192,8 @@ def build_team_inputs(
         team["turn_state"] = dict(turn_state)
     if swap_nomination is not None:
         team[SWAP_NOMINATION_KEY] = dict(swap_nomination)
+    if dip_facts is not None:
+        team[DIP_FACTS_KEY] = dict(dip_facts)
     return team
 
 
@@ -362,8 +371,17 @@ class DecisionFinalizer:
                 "2.2（附前次決策背景）、2.3（再附名額脈絡）、2.4（再附持股檢視）、2.5（再附入選排序）、"
                 "2.6（再附基本面指標）、2.7（再附曝險檢視）、2.8（再附反彈參與狀態）或 2.9（再附換股提名）"
             ]
-        if set(team) != fields:
+        # quality_dip_facts（版本閘門）的 dip_facts 是選配鍵：與 Policy 閘門雙向同時存在；沒有閘門的舊 run 欄位檢查與舊版相同。
+        dip_gate = quality_dip_facts_gate(self.policy.get("position_sizing"))
+        if set(team) - {DIP_FACTS_KEY} != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
+        if (DIP_FACTS_KEY in team) != (dip_gate is not None):
+            errors.append("DecisionPolicy 的 position_sizing.quality_dip_facts 必須與 team_inputs.dip_facts 同時存在")
+        elif dip_gate is not None:
+            if version not in FUNDAMENTAL_TEAM_VERSIONS:
+                errors.append("team_inputs.dip_facts 只能用於 2.6 以上（需要基本面指標）")
+            else:
+                validate_dip_facts(self.bundle, self.policy, team, errors)
         integrated = version != STANCE_SCHEMA_VERSION
         # 2.6 與 bundle 的 fundamental_period_policy 必須同時存在；基本面指標以同一份決策輸入整份重算比對。
         # 沒有該閘門的舊 bundle／舊 run 不重算基本面指標，行為與舊版相同。
@@ -442,6 +460,7 @@ class DecisionFinalizer:
             TradeDecisionValidator(
                 self.bundle, self.momentum, self.debate, prior_context=prior, position_review=review,
                 hold_conviction=hold_conviction_enabled(self.policy),
+                dip_facts=team.get(DIP_FACTS_KEY) if dip_gate is not None else None,
             ).validate(self.intent)
         )
         stance = team.get("cash_stance")

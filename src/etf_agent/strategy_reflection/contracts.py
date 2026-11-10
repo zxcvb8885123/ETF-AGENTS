@@ -160,6 +160,8 @@ FORBIDDEN_PREFIXES = (
     "cash_stance_turn_facts",
     # 大盤指數事實：風險 Agent 簡報附證交所加權指數事實（紀錄用），切換程式路徑，只由人設定。
     "market_index_facts",
+    # 優質股被大盤拖累的事實（quality_dip_facts，第一階段紀錄用）：切換程式路徑與 team_inputs 欄位，只由人設定。
+    "quality_dip_facts",
     # 2026-11-09 新增：市場轉向時的持股曝險調整（beta 下限、換股上限、持有天數、hold 信心與信心差換股），切換程式路徑，
     # 只由人設定；hold_conviction_by_symbol 是綁定交易決策時由程式寫入的欄位。
     "exposure_rotation", "hold_conviction_by_symbol",

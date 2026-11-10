@@ -77,6 +77,13 @@ from .exposure import (
     validate_exposure_review,
 )
 from .rebound import build_turn_state, effective_state, validate_turn_state
+from .dip_facts import (
+    analyst_dip_view,
+    build_dip_facts,
+    dip_background_brief,
+    quality_dip_facts_gate,
+    validate_dip_facts,
+)
 from .position_review import (
     POSITION_REVIEW_VERSION,
     build_position_review,
@@ -193,6 +200,11 @@ __all__ = [
     "build_turn_state",
     "effective_state",
     "validate_turn_state",
+    "analyst_dip_view",
+    "build_dip_facts",
+    "dip_background_brief",
+    "quality_dip_facts_gate",
+    "validate_dip_facts",
     "build_position_review",
     "position_review_brief",
     "validate_position_review",

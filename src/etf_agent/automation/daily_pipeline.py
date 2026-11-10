@@ -38,6 +38,7 @@ from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
+from etf_agent.decision.dip_facts import build_dip_facts, quality_dip_facts_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, bind_thesis_hints, unsupported_gate_version
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
@@ -290,7 +291,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
 
         self.log("[decision 3] 分析團隊：技術／基本面／事件（逐批），情緒無核准來源時 unavailable")
         with self._timed("analysts"):
-            analysts = self.run_analyst_team(bundle, momentum, database_path)
+            # quality_dip_facts（版本閘門）：技術／基本面分析師簡報多附程式事實；沒有閘門（或只評測分析師）時簡報與舊版逐鍵相同。
+            dip_gate = quality_dip_facts_gate((base_policy or {}).get("position_sizing"))
+            analysts = (self.run_analyst_team(bundle, momentum, database_path, dip_gate=dip_gate) if dip_gate is not None
+                        else self.run_analyst_team(bundle, momentum, database_path))
         if stop_after == "analysts":
             return
 
@@ -349,11 +353,20 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             turn_state = build_turn_state(bundle, rebound)
             self.save_artifact("turn_state", turn_state)
 
+        # quality_dip_facts：完整事實（含事件面一項、price_pattern 與 candidate）在多空研究完成後才建立與存檔，研究員看不到；
+        # 只給交易 Agent 當背景，另存進 team_inputs.dip_facts 供 Finalizer 整份重算。沒有閘門時不建立，team_inputs 逐鍵不變。
+        dip_facts = None
+        if dip_gate is not None:
+            if fundamental_period_policy(bundle) is None:
+                raise DailyPipelineError("policy 啟用 quality_dip_facts 時 bundle 必須有 fundamental_period_policy（team_inputs 2.6 以上）")
+            dip_facts = build_dip_facts(bundle, dip_gate, self.fundamental_metrics, analysts["event"])
+            self.save_artifact("dip_facts", dip_facts)
+
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
         with self._timed("trader"):
             trade = self.run_trader(
                 bundle, momentum, analysts, debate, decision_run_id, prior_context, slots, position_review,
-                exposure_review,
+                exposure_review, **({"dip_facts": dip_facts} if dip_facts is not None else {}),
             )
 
         # 樣板啟用 position_sizing.selection_ranking 才加這一步；沒有的樣板維持舊排序與 team_inputs 版本。
@@ -444,6 +457,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"exposure_review": exposure_review} if exposure_review is not None else {}),
             **({"turn_state": turn_state} if turn_state is not None else {}),
             **({"swap_nomination": swap_nomination} if swap_nomination is not None else {}),
+            **({"dip_facts": dip_facts} if dip_facts is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history

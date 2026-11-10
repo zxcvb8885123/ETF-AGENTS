@@ -185,6 +185,7 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
         errors = TradeDecisionValidator(
             bundle, momentum, files["debate"], prior_context=prior, position_review=team.get("position_review"),
             hold_conviction=hold_conviction_enabled(files["policy"]),
+            dip_facts=team.get("dip_facts") if isinstance(team.get("dip_facts"), Mapping) else None,
         ).validate(files["intent"])
     except DecisionToolError as error:
         errors = [str(error)]

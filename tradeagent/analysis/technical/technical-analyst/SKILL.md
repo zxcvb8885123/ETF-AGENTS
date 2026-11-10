@@ -21,4 +21,8 @@ description: 閱讀台股歷史走勢或經驗證的抽樣錨點，逐檔判斷�
 
 正例：「二十日與六十日均線同向上，近五日回檔未跌破二十日均線，量能未放大」→ 上升，風險寫「若放量跌破二十日均線需重看」。「`momentum.status` 不是 `available`」→ unknown，`data_gaps` 寫缺哪段行情。
 
+## 優質股被大盤拖累的事實
+
+只有 policy 開啟 `quality_dip_facts` 時才有：摘要頂層多一個 `dip_facts_background`，每檔多 `market_attribution` 與 `price_position`，全部由程式計算、不可改寫。`market_attribution` 是 20 日報酬、相對交易池與加權指數的差、評估視窗**之前** 60 日估的 beta、扣掉「beta × 交易池」後的殘差與交易池內由弱到強的名次；`price_position` 是距近 60／120 日收盤高點的回檔、收盤相對 MA20／MA60 與是否創 20 日新低。區塊本身沒有 evidence_id：要寫進 finding 時引用該列附的該股行情證據（`finding_kind: price`）。殘差只說「跌幅能不能由大盤解釋」，不說原因；殘差接近零時兩種說法沒有實質差別。這是價格位置，不是估值，不得寫便宜或低估。
+
 執行時先讀 [資料與輸出規則](references/data-rules.md)（含 `momentum_only` 與 `unknown` 的欄位規則），依主控要求交付資料。數字使用程式提供的結果，每個判斷附上該股票的資料依據；只做趨勢分析，買賣由下游決定。內部英文欄位不放進對外說明。

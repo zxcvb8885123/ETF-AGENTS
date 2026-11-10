@@ -327,6 +327,13 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="風險 Agent 簡報附 market_index_facts（證交所加權指數收盤、漲跌、近 5／20 日報酬與離高點回檔，紀錄用、不可引用）；"
              "不新增 Agent 輸出欄位、不影響配置，所以 Finalizer 不需重算；與其他現金姿態閘門可獨立開關",
     ),
+    GateRule(
+        "quality_dip_facts",
+        note="優質股被大盤拖累的事實（第一階段，紀錄用）：程式算全交易池的視窗前 beta 殘差、價格位置與財報三個清單，"
+             "以背景給技術／基本面分析師與交易 Agent（不給多空研究員），不新增 Agent 輸出欄位、不影響配置；"
+             "bundle 須有 fundamental_period_policy（建事實時檢查，事實讀 team_inputs 2.6 的基本面指標）；"
+             "team_inputs 另存 dip_facts（選配鍵，與本閘門雙向同時存在），Finalizer 整份重算",
+    ),
 )
 GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
 POSITION_SIZING_FIELDS = (
@@ -542,6 +549,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "market_index_facts" in sizing:
         from .market_index import validate_market_index_facts_gate
         validate_market_index_facts_gate(sizing, errors)
+    if "quality_dip_facts" in sizing:
+        from .dip_facts import validate_quality_dip_facts_gate
+        validate_quality_dip_facts_gate(sizing, errors)
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)

@@ -24,6 +24,8 @@ from etf_agent.decision import (
     read_decision_run,
     position_review_brief,
     exposure_review_brief,
+    analyst_dip_view,
+    dip_background_brief,
     program_ranking,
     ranking_envelope,
     ranking_needs_agent,
@@ -92,6 +94,16 @@ _EXPOSURE_RULES = (
 )
 
 
+_DIP_ANALYST_RULES = (
+    "本批輸入含 dip_facts_background 與各股的 %s（程式算的事實，不是訊號，數字不可改寫；區塊本身沒有 evidence_id，"
+    "引用時用各列附的該股既有證據編號），依 SKILL.md「優質股被大盤拖累的事實」節處理。"
+)
+_DIP_TRADER_RULES = (
+    "本批輸入含 dip_background 與各股的 dip（程式算的價格事實、財報三個清單與候選標示，只是背景、沒有 evidence_id、不可引用，"
+    "也不得寫進理由），依 data-rules.md「優質股被大盤拖累的事實」處理。"
+)
+
+
 def _peer_deny_reads(role: str) -> Tuple[str, ...]:
     peer = "bear" if role == "bull" else "bull"
     # 續跑時 run 目錄可能已有後段產物（含對方論點的 debate、交易與 team_inputs），一併擋掉；不用 ``decision*``，會擋到共同輸入。
@@ -102,9 +114,13 @@ class TeamStagesMixin:
     """由 ``DailyDecisionPipeline`` 組合；依賴 ``PipelineBase`` 的 save_*、agent_step 與 _run_jobs。"""
 
     def run_analyst_team(
-        self, bundle: Mapping[str, object], momentum: Mapping[str, object], database_path: Optional[Path] = None
+        self, bundle: Mapping[str, object], momentum: Mapping[str, object], database_path: Optional[Path] = None,
+        dip_gate: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, Dict[str, object]]:
-        """三位分析師逐批執行；事件與市場情緒共用一位 Agent、一份報告。"""
+        """三位分析師逐批執行；事件與市場情緒共用一位 Agent、一份報告。
+
+        ``dip_gate`` 是 position_sizing.quality_dip_facts 閘門物件：有時技術分析師多拿逐檔 ``market_attribution``／``price_position``、
+        基本面分析師多拿 ``fundamental_flags``（不含 price_pattern／candidate）；沒有閘門時簡報與舊版逐鍵相同。"""
         metrics = compute_fundamental_metrics(bundle)
         # bundle 有 fundamental_period_policy 時，指標另進 team_inputs 2.6 供 Finalizer 重算比對（沒有財報時為 None）。
         self.fundamental_metrics = metrics
@@ -121,12 +137,15 @@ class TeamStagesMixin:
                                           for channel in row["channels"]] for row in inventory["symbols"]}
         plans: Dict[str, Tuple[Dict[str, object], List[Dict[str, object]], List[Dict[str, object]]]] = {}
         jobs: List[Tuple[str, Callable[[], Dict[str, object]]]] = []
+        dip_view = analyst_dip_view(bundle, dip_gate, metrics) if dip_gate is not None else None
         for analyst in LLM_ANALYSTS:
             brief = build_analyst_brief(
                 bundle, momentum, analyst, metrics, event_market_scope=analyst == "event",
                 technical_gate=self.technical_gate and analyst == "technical",
                 compact_technical=analyst == "technical",
             )
+            if dip_view is not None and analyst in ("technical", "fundamental"):
+                brief = _with_dip_view(brief, dip_view, analyst)
             if "technical_gate" in brief:
                 self.log("  [技術閘門] 趨勢一致 %d 檔只附 momentum，其餘 %d 檔附完整歷史" % (
                     len(brief["technical_gate"]["momentum_only_symbols"]), brief["technical_gate"]["full_history_symbols"]))
@@ -177,6 +196,10 @@ class TeamStagesMixin:
     ) -> List[Tuple[str, Callable[[], Dict[str, object]]]]:
         """每批一個任務；任務各自綁定本批的 brief、Validator 與提示，可安全同時執行。"""
         typed = evidence_policy(bundle) is not None
+        dip_rules = (
+            _DIP_ANALYST_RULES % ("market_attribution 與 price_position" if analyst == "technical" else "fundamental_flags")
+            if "dip_facts_background" in brief else ""
+        )
 
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             members = set(batch["symbols"])
@@ -201,7 +224,8 @@ class TeamStagesMixin:
                 % (
                     analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]),
-                    _SHARED_RULES + (_EVENT_RULES if analyst == "event" else "") + (_FINDING_KIND_RULES if typed else ""),
+                    _SHARED_RULES + (_EVENT_RULES if analyst == "event" else "") + (_FINDING_KIND_RULES if typed else "")
+                    + dip_rules,
                 ),
                 event_analyst_schema(typed) if analyst == "event" else analyst_schema(typed),
             )
@@ -333,6 +357,7 @@ class TeamStagesMixin:
         portfolio_slots: Optional[Mapping[str, object]] = None,
         position_review: Optional[Mapping[str, object]] = None,
         exposure_review: Optional[Mapping[str, object]] = None,
+        dip_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
@@ -361,6 +386,8 @@ class TeamStagesMixin:
         }
         review_brief = position_review_brief(position_review) if position_review is not None else {}
         exposure_brief = exposure_review_brief(exposure_review) if exposure_review is not None else {}
+        # quality_dip_facts：整份事實以 dip_background 附上（citable=false、沒有 evidence_id）；沒有閘門時簡報逐鍵不變。
+        dip_brief = dip_background_brief(dip_facts) if dip_facts is not None else {}
         hold_conviction = exposure_review is not None
         lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
         thesis_verdicts = load_thesis_verdicts(self.root, bundle["decision_cutoff"])  # 每週論點檢視；只是背景，沒有可引用的 ID
@@ -383,6 +410,7 @@ class TeamStagesMixin:
                     **({"position_review_background": {key: review_brief[key] for key in ("policy", "note")}}
                        if position_review is not None else {}),
                     **({"exposure_background": exposure_brief["background"]} if exposure_review is not None else {}),
+                    **({"dip_background": dip_brief["background"]} if dip_facts is not None else {}),
                     **({"prior_decision_background": background} if background is not None else {}),
                     **({"strategy_lessons": lessons_background} if lessons_background is not None else {}),
                     **({"thesis_review_background": thesis_background} if thesis_background is not None else {}),
@@ -401,18 +429,20 @@ class TeamStagesMixin:
                                if symbol in review_brief.get("by_symbol", {}) else {}),
                             **({"exposure": exposure_brief["by_symbol"][symbol]}
                                if symbol in exposure_brief.get("by_symbol", {}) else {}),
+                            **({"dip": dip_brief["by_symbol"][symbol]}
+                               if symbol in dip_brief.get("by_symbol", {}) else {}),
                         }
                         for symbol in batch["symbols"]
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction)
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
                 "再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔整合兩方論點、記錄每個論點的採納或否決，"
                 "再依持股與交易條件形成單一交易意圖；整合方式、理由寫法、欄位與限制都依參考文件。"
-                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s"
+                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), len(batch["symbols"]),
@@ -420,6 +450,7 @@ class TeamStagesMixin:
                     _ROTATION_RULES if portfolio_slots is not None else "",
                     _REVIEW_RULES if position_review is not None else "",
                     _EXPOSURE_RULES if exposure_review is not None else "",
+                    _DIP_TRADER_RULES if dip_facts is not None else "",
                     _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
@@ -434,7 +465,7 @@ class TeamStagesMixin:
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
         errors = TradeDecisionValidator(
             bundle, momentum, debate, prior_context=prior_context, position_review=position_review,
-            hold_conviction=hold_conviction,
+            hold_conviction=hold_conviction, dip_facts=dip_facts,
         ).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
@@ -548,3 +579,12 @@ class TeamStagesMixin:
             raise DailyPipelineError("SwapNomination 驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("swap_nomination", nomination)
         return nomination
+
+
+def _with_dip_view(brief: Mapping[str, object], view: Mapping[str, object], analyst: str) -> Dict[str, object]:
+    """把分析師階段的事實接進簡報：頂層 ``dip_facts_background`` 放在 symbols 之前，逐檔加該分析師的區塊。"""
+    per_symbol = view[analyst]
+    output = {key: value for key, value in brief.items() if key != "symbols"}
+    output["dip_facts_background"] = view["background"]
+    output["symbols"] = [{**row, **per_symbol.get(row["symbol"], {})} for row in brief["symbols"]]
+    return output
