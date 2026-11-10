@@ -138,6 +138,20 @@ SWAP_NOMINATION_EXPOSURE_SCHEMA = _object(
     },
     ("nominations", "lower_conviction_review", "thesis_hint_responses", "no_nomination_reason"),
 )
+# 只在 Policy 另啟用 position_sizing.agent_swap.quality_dip（優質股第三階段，前提 agent_swap.exposure）時使用：purpose 列舉多 quality_dip，
+# 其餘欄位與 SWAP_NOMINATION_EXPOSURE_SCHEMA 相同。沒有此閘門時沿用上面兩個 Schema，逐位元不變。
+_SWAP_PAIR_QUALITY_DIP = _object(
+    {**_SWAP_PAIR["properties"], "purpose": {"enum": ["thesis", "exposure", "quality_dip"]}}, tuple(_SWAP_PAIR["required"]) + ("purpose",),
+)
+SWAP_NOMINATION_QUALITY_DIP_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR_QUALITY_DIP},
+        "lower_conviction_review": {"type": "array", "items": _LOWER_CONVICTION_ENTRY},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "no_nomination_reason": {"type": "string"},
+    },
+    ("nominations", "lower_conviction_review", "thesis_hint_responses", "no_nomination_reason"),
+)
 # 回撤減碼的釋出順序（position_sizing.drawdown_derisk v5）：只有代號、依據識別碼與文字，沒有任何數字欄位；順序就是陣列順序。
 _RELEASE_ENTRY = _object(
     {"symbol": _TEXT, "basis_ids": _strings(1), "reason": _TEXT}, ("symbol", "basis_ids", "reason"),

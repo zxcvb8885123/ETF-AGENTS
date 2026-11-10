@@ -94,7 +94,16 @@ prior_decision_background 與各股 prior_decision 來自上一個交易時段�
 - `stock_specific`：多跌有個股原因（財報、事件、產業）。
 - `undetermined`：無法判斷。該股 `dip.price_pattern` 為 `unavailable`（歷史不足、窗內缺行情、交易池覆蓋不足）時**只能**填這個。
 
-別為了好看而填 `market_driven`：這個欄位不會讓買單更容易成交，也不是買進依據；買不買仍只由本次多空 claim 決定。理由裡不得引用 `dip_background`、`dip_facts`（見上節）。
+別為了好看而填 `market_driven`：這個欄位不會讓買單更容易成交，也不是買進依據；買不買仍只由本次多空 claim 決定。理由裡不得引用 `dip_background`、`dip_facts`（見上節）。若之後的換股提名簡報有 `quality_dip_swap` 區塊，`purpose=quality_dip` 會核對這個列舉與候選標示是否相符（見 swap-nomination.md）；那條路的限制比 `thesis` 更多，不是捷徑。
+
+### 估值位置（valuation_background）
+
+只有 policy 開啟 `valuation_facts` 時才有：每批輸入多一個 `valuation_background`，列出本批股票的 PER／PBR 在自身歷史區間的位置（近 250、近 750 個資料列與全部可得歷史三個視窗並列；百分位＝不高於當日值的筆數 ÷ 樣本數）。
+
+- 它是**背景**（`citable=false`、沒有 evidence_id），不是依據；不得放進 `adopted_claim_ids`，行動仍須由本次 claim 支持。
+- 不得寫便宜、低估、貴或低於合理價值；要提到時寫明指標與視窗（例如「PER 位於近 250 個資料列的第 12 百分位」），並記得位置低可能來自盈餘下修、PER 下降也可能來自盈餘上修。三個視窗的位置可能完全相反，不得只挑一個。
+- `status: unavailable`（授權範圍未核准、核對不符、上櫃股、資料不足）或視窗 `insufficient_history` 只代表不知道，不是利空也不是利多。
+- 程式檢查：rationale、unresolved_questions、invalidation_conditions 出現 `valuation_background`、`valuation_facts` 或這份事實的識別碼就拒絕整批。
 
 ## 2. 如何處理兩方的每個論點
 

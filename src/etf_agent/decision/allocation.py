@@ -41,6 +41,7 @@ from .sizing import (
     reentry_cooldown_hint_only, reentry_hint_id,
 )
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
+from .quality_dip_swap import PURPOSE_QUALITY_DIP, quality_dip_swap_binding, turn_allows
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -54,7 +55,13 @@ AGENT_SWAP_FILL_CODE = "AGENT_SWAP_FILL"
 AGENT_SWAP_UNFILLED_REASONS = {
     "RISK_CASH_FIT": "cash_fit", "CASH_BUFFER": "cash_fit", "RISK_CASH_SOFT_FLOOR": "cash_fit",
     "RISK_STOCK_WEIGHT": "stock_weight", "RISK_SECTOR_WEIGHT": "sector_fit", "TURNOVER_LIMIT": "turnover",
+    # agent_swap.quality_dip v2：買進權重上限或「買進不超過換出賣款」把換入者縮到不足一張（沒有閘門的 run 不會出現）。
+    "RISK_QUALITY_DIP_ENTRY": "quality_dip_entry",
 }
+QUALITY_DIP_ENTRY_CODE = "RISK_QUALITY_DIP_ENTRY"
+OVERSOLD_ASSESSMENT = "oversold_cause_unclear"
+MARKET_DRIVEN_ASSESSMENT = "market_driven"
+
 # Active Share 低於門檻時，程式最多取消幾檔重疊的買進候選後重新配置。
 ACTIVE_SHARE_MAX_DROPS = 3
 MONEY = Decimal("1")
@@ -670,6 +677,7 @@ class AllocationOrderEngine:
         candidates = [symbol for symbol in candidates if symbol not in (active_share_dropped or {})]
         sized_weights: Optional[Dict[str, Decimal]] = None
         skipped: Dict[str, str] = {}
+        quality_fills: Dict[str, Tuple[str, Decimal]] = {}
         rotation = (self.policy.get("position_sizing") or {}).get("rotation")
         budget: Optional[Decimal] = None
         confirmation = self._forced_swap_confirmed()
@@ -706,11 +714,16 @@ class AllocationOrderEngine:
             swap_binding = agent_swap_binding(self.policy.get("position_sizing"))
             if swap_binding is not None:
                 # agent_swap v2（版本閘門）：取代 forced_swap 的位置、在曝險換股之前，依交易 Agent 第二輪提名換股；
-                # v1（影子）與沒有閘門的舊 run 不經過這裡。
+                # v1（影子）與沒有閘門的舊 run 不經過這裡。agent_swap.quality_dip v2 成交的換入者記在 quality_fills
+                # （換入者 → (換出者, 買進權重上限)），下面計算股數時再套買進權重與「不超過換出賣款」兩個上限。
+                assessments = {
+                    str(item.get("symbol", "")).upper(): item.get("dip_assessment")
+                    for item in intent_result.get("items", []) if isinstance(item, Mapping)
+                }
                 targets = self._agent_swap(
                     targets, swap_binding, current, active_symbols, target_shares, order_intents, intents, kept_exits,
                     untradable, marked_nav, max_positions, effective, bool(derisk_flags), agent_cancelled or {},
-                    active_share_dropped or {}, excluded, constraint_flags,
+                    active_share_dropped or {}, excluded, constraint_flags, quality_fills, assessments,
                 )
             if exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
                 # exposure_rotation（版本閘門）：forced_swap 之後、買單配置之前換股；沒有閘門的舊 run 不經過這裡。
@@ -751,6 +764,14 @@ class AllocationOrderEngine:
                 min(default_weight, limit) if sized_weights is None else sized_weights[symbol]
             )
             desired = self._shares_for_value(marked_nav * target_weight, self.prices[symbol])
+            if symbol in quality_fills:
+                # agent_swap.quality_dip v2：買進權重不超過 max_entry_weight，且買進金額（含費）不超過該對換出者的賣款淨額；
+                # 只會縮減，縮到不足一張就沒有買單，復原迴圈因此取消該對、換出者不賣（不會只賣不買）。
+                desired, detail = self._quality_dip_entry(symbol, desired, quality_fills[symbol], current, marked_nav, effective)
+                if detail is not None:
+                    constraint_flags.append({"symbol": symbol, "code": QUALITY_DIP_ENTRY_CODE, "detail": detail})
+                if desired <= 0:
+                    continue
             if symbol in current:
                 desired = max(current[symbol], desired)
             if desired > 0:
@@ -997,8 +1018,14 @@ class AllocationOrderEngine:
         active_share_dropped: Mapping[str, str],
         excluded: Set[str],
         flags: List[Dict[str, object]],
+        quality_fills: Optional[Dict[str, Tuple[str, Decimal]]] = None,
+        assessments: Optional[Mapping[str, object]] = None,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """換股改由交易 Agent 提名（``position_sizing.agent_swap`` v2，版本閘門；docs/agent_nominated_rotation_plan.md 2.6 B 段）。
+
+        ``agent_swap.quality_dip``（優質股第三階段，版本閘門）：v1 影子整個略過 ``purpose: quality_dip`` 的配對（不會被當成 thesis 成交）；
+        v2 在回撤下限 stance_floor 為 defensive 或帳本歷史不可用、turn_assessment 低於 min_turn_assessment、或賣款不可再用時取消全部
+        quality_dip 配對（換出者不賣），其餘依閘門對數上限（超跌另有自己的上限）從清單尾端取消；成交的換入者記進 ``quality_fills``。
 
         在名額配對（不含提名）之後、曝險換股之前，依 Agent 的先後使用提名配對 (換入, 換出)；程式不挑人，只檢查可行性：
         提名狀態為 exhausted／unavailable 留 ``AGENT_SWAP_SKIPPED:nomination_*``，減碼日整個略過（``derisk_day``）；
@@ -1026,12 +1053,24 @@ class AllocationOrderEngine:
         # v2 在 keep_defensive 時取消全部 exposure 配對（換出者不賣），其餘依 max_pairs_by_view 限制取用對數。沒有閘門時不經過這裡。
         exposure_binding = exposure_swap_binding(self.policy.get("position_sizing"))
         exposure_pairs: Set[Tuple[str, str]] = set()
+        # agent_swap.quality_dip（優質股第三階段，前提 agent_swap.exposure）：purpose 與 exposure 合用同一個列舉，先依原清單對齊。
+        # v1（影子）整個略過 quality_dip 配對、不留旗標（不會被當成 thesis 配對成交）；v2 標記後另套本閘門的條件與上限。
+        quality_binding = quality_dip_swap_binding(self.policy.get("position_sizing"))
+        quality_pairs: Set[Tuple[str, str]] = set()
         if exposure_binding is not None:
-            labelled = list(zip(pairs, exposure_binding["purposes"]))  # type: ignore[arg-type]
+            purpose_of = dict(zip(pairs, exposure_binding["purposes"]))  # type: ignore[arg-type]
+            if quality_binding is not None:
+                quality_all = {pair for pair in pairs if purpose_of.get(pair) == PURPOSE_QUALITY_DIP}
+                if quality_binding["version"] == "v1":
+                    pairs = [pair for pair in pairs if pair not in quality_all]
+                else:
+                    quality_pairs = quality_all
+            elif any(purpose == PURPOSE_QUALITY_DIP for purpose in purpose_of.values()):
+                raise DecisionToolError("nominated_pairs 含 purpose=quality_dip，但 Policy 沒有 agent_swap.quality_dip")
             if exposure_binding["version"] == "v1":
-                pairs = [pair for pair, purpose in labelled if purpose != PURPOSE_EXPOSURE]
+                pairs = [pair for pair in pairs if purpose_of.get(pair) != PURPOSE_EXPOSURE]
             else:
-                exposure_pairs = {pair for pair, purpose in labelled if purpose == PURPOSE_EXPOSURE}
+                exposure_pairs = {pair for pair in pairs if purpose_of.get(pair) == PURPOSE_EXPOSURE}
         if not pairs:
             return targets
         if derisk_day:
@@ -1045,6 +1084,29 @@ class AllocationOrderEngine:
             exposure_pairs = set()
             if not pairs:
                 return targets
+        if quality_pairs:
+            # quality_dip v2 的整體條件（任一不成立即取消全部 quality_dip 配對，換出者不賣、程式不補挑）：回撤下限不是 defensive 且
+            # 帳本歷史可用、風險 Agent 的 turn_assessment 不低於 min_turn_assessment、賣款可再用（買進金額才能以賣款為上限）。
+            control = self.policy.get("drawdown_control")
+            if not isinstance(control, Mapping) or control.get("status") not in ("available", "unavailable"):
+                raise DecisionToolError("agent_swap.quality_dip v2 需要已綁定本次回撤的 drawdown_control（stance_floor）")
+            reason = None
+            if control.get("status") != "available":
+                reason = "quality_dip_drawdown_unavailable"
+            elif control.get("stance_floor") == "defensive":
+                reason = "quality_dip_stance_floor"
+            elif not turn_allows(quality_binding):  # type: ignore[arg-type]
+                reason = "quality_dip_turn"
+            elif not bool(effective["reuse_sell_proceeds"]):
+                reason = "quality_dip_proceeds"
+            if reason is not None:
+                for buy, sell in pairs:
+                    if (buy, sell) in quality_pairs:
+                        cancel(buy, sell, reason)
+                pairs = [pair for pair in pairs if pair not in quality_pairs]
+                quality_pairs = set()
+                if not pairs:
+                    return targets
         ordered, weights, skipped, budget, held_frozen = targets
         candidate_set = set(ordered)
         needed: List[Tuple[str, str]] = []
@@ -1080,6 +1142,27 @@ class AllocationOrderEngine:
                     used += 1
                 kept_pairs.append((buy, sell))
             needed = kept_pairs
+        entry_weights: Dict[Tuple[str, str], Decimal] = {}
+        if quality_pairs:
+            # quality_dip 的對數上限（人設的硬上限，超跌另有自己的上限且合計仍受本閘門封頂）；超過的從清單尾端取消。
+            # dip_assessment 必須與候選類別相符（5c Validator 已檢查）；不符一律取消，不猜。
+            used, oversold_used, kept_pairs = 0, 0, []
+            oversold = quality_binding["oversold"]  # type: ignore[index]
+            for buy, sell in needed:
+                if (buy, sell) in quality_pairs:
+                    assessment = (assessments or {}).get(buy)
+                    is_oversold = assessment == OVERSOLD_ASSESSMENT
+                    if assessment not in (MARKET_DRIVEN_ASSESSMENT, OVERSOLD_ASSESSMENT) or (is_oversold and oversold is None):
+                        cancel(buy, sell, "quality_dip_assessment")
+                        continue
+                    if used >= int(quality_binding["cap"]) or (is_oversold and oversold_used >= int(oversold["cap"])):  # type: ignore[index]
+                        cancel(buy, sell, "quality_dip_cap")
+                        continue
+                    used += 1
+                    oversold_used += int(is_oversold)
+                    entry_weights[(buy, sell)] = oversold["entry_weight"] if is_oversold else quality_binding["entry_weight"]  # type: ignore[index]
+                kept_pairs.append((buy, sell))
+            needed = kept_pairs
         limit = int((self.policy["position_sizing"]["agent_swap"])["max_swaps_per_run"])
         for buy, sell in needed[limit:]:
             cancel(buy, sell, "swap_cap")
@@ -1107,9 +1190,39 @@ class AllocationOrderEngine:
             active_symbols.discard(sell)
             order_intents[sell] = "exit"
             note(AGENT_SWAP_VICTIM_CODE, sell, "交易 Agent 第二輪提名換出，換入 %s（程式只檢查可行性；交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % buy
-                 + ("；目的：曝險（風險 Agent 的 exposure_view 為 %s）" % exposure_binding["view"] if (buy, sell) in exposure_pairs else ""))  # type: ignore[index]
+                 + ("；目的：曝險（風險 Agent 的 exposure_view 為 %s）" % exposure_binding["view"] if (buy, sell) in exposure_pairs else "")  # type: ignore[index]
+                 + ("；目的：優質股被大盤拖累（買進權重上限 %s、買進金額不超過本筆賣款）" % format(entry_weights[(buy, sell)], ".2%")
+                    if (buy, sell) in entry_weights else ""))
             note(AGENT_SWAP_FILL_CODE, buy, "原本被持股名額擋下；交易 Agent 第二輪提名換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % sell)
+            if (buy, sell) in entry_weights and quality_fills is not None:
+                quality_fills[buy] = (sell, entry_weights[(buy, sell)])
         return result
+
+    def _quality_dip_entry(
+        self,
+        symbol: str,
+        desired: int,
+        fill: Tuple[str, Decimal],
+        current: Mapping[str, int],
+        marked_nav: Decimal,
+        effective: Mapping[str, object],
+    ) -> Tuple[int, Optional[str]]:
+        """agent_swap.quality_dip v2 換入者的股數上限：權重不超過 max_entry_weight，且買進金額（含手續費）不超過換出者全部賣出的淨額。
+        只會縮減、以整張為單位；回傳 (股數, 旗標說明或 None)。"""
+        sell, entry_weight = fill
+        lot = int(effective["lot_size"])
+        capped = min(desired, self._shares_for_value(marked_nav * entry_weight, self.prices[symbol]))
+        proceeds = decimal_value(self._order(sell, "sell", int(current[sell]), "exit", effective)["net_cash_impact"], "net_cash_impact")
+        while capped > 0 and -decimal_value(self._order(symbol, "buy", capped, "buy", effective)["net_cash_impact"], "net_cash_impact") > proceeds:
+            capped -= lot
+        capped = max(capped, 0)
+        if capped >= desired:
+            return desired, None
+        return capped, (
+            "優質股換股的換入者：買進權重上限 %s、買進金額不超過換出 %s 的賣款淨額，股數由 %d 縮為 %d"
+            "（只會縮減；不足一張即不買，該對由程式取消、換出者不賣；交易 Agent 的意圖未被改寫）"
+            % (format(entry_weight, ".2%"), sell, desired, capped)
+        )
 
     def _exposure_beta_model(self, gate: Mapping[str, object]) -> BetaModel:
         if self._beta_model is None:

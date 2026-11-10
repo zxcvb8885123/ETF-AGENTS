@@ -24,6 +24,8 @@ from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS, fundamental_
 from .prior_decision import PriorDecisionContextValidator
 from .drawdown import validate_drawdown_control
 from .exposure_swap import EXPOSURE_SWAP_V2, exposure_swap_gate
+from .quality_dip_swap import QUALITY_DIP_SWAP_V2, quality_dip_swap_gate
+from .valuation_facts import VALUATION_FACTS_KEY, validate_valuation_facts, valuation_facts_gate, valuation_root_for
 from .exposure import exposure_rotation_gate, hold_conviction_enabled, validate_exposure_review, validate_held_since
 from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
@@ -118,6 +120,7 @@ def build_team_inputs(
     exposure_facts: Optional[Mapping[str, object]] = None,
     release_order: Optional[Mapping[str, object]] = None,
     held_weight_facts: Optional[Mapping[str, object]] = None,
+    valuation_facts: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
@@ -143,6 +146,9 @@ def build_team_inputs(
 
     選配鍵 ``held_weight_facts``（position_sizing.held_weight_budget=v2 才有）：程式算的持股權重事實，做法同 dip_facts，不升版本，
     只要求 2.5 以上；Finalizer 以 Policy 閘門雙向檢查並整份重算。沒有傳入時 team_inputs 逐鍵不變。
+
+    選配鍵 ``valuation_facts``（position_sizing.valuation_facts 才有，估值 V2）：程式算的 PER／PBR 位置事實，做法同 dip_facts，
+    不升版本、不要求特定版本；Finalizer 以 Policy 閘門雙向檢查，並以同一個估值資料夾整份重算。沒有傳入時 team_inputs 逐鍵不變。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
@@ -227,6 +233,10 @@ def build_team_inputs(
         team[RELEASE_ORDER_KEY] = dict(release_order)
     if held_weight_facts is not None:
         team[HELD_WEIGHT_FACTS_KEY] = dict(held_weight_facts)
+    if valuation_facts is not None:
+        if not isinstance(valuation_facts, Mapping):
+            raise DecisionToolError("team_inputs 的 valuation_facts 必須是物件")
+        team[VALUATION_FACTS_KEY] = dict(valuation_facts)
     return team
 
 
@@ -429,7 +439,7 @@ class DecisionFinalizer:
             ]
         # quality_dip_facts（版本閘門）的 dip_facts 是選配鍵：與 Policy 閘門雙向同時存在；沒有閘門的舊 run 欄位檢查與舊版相同。
         dip_gate = quality_dip_facts_gate(self.policy.get("position_sizing"))
-        if set(team) - {DIP_FACTS_KEY, EXPOSURE_FACTS_KEY, RELEASE_ORDER_KEY, HELD_WEIGHT_FACTS_KEY} != fields:
+        if set(team) - {DIP_FACTS_KEY, EXPOSURE_FACTS_KEY, RELEASE_ORDER_KEY, HELD_WEIGHT_FACTS_KEY, VALUATION_FACTS_KEY} != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
         # drawdown_derisk v5（版本閘門）的 release_order 也是選配鍵：與 Policy 閘門雙向同時存在、須 2.5 以上，整份重建驗證並比對 Policy 綁定。
         # 沒有 v5 的舊 run 完全不碰這段。
@@ -458,6 +468,13 @@ class DecisionFinalizer:
                 errors.append("team_inputs.exposure_facts 只能用於 2.7 以上（需要曝險檢視）")
             else:
                 validate_exposure_facts(self.bundle, self.policy, team, errors)
+        # valuation_facts（估值 V2，版本閘門）也是選配鍵：與 Policy 閘門雙向同時存在，以同一個估值資料夾（由決策庫位置推得）整份重算。
+        # 沒有閘門的舊 run 完全不碰這段、不讀估值資料夾。
+        valuation_gate = valuation_facts_gate(self.policy.get("position_sizing"))
+        if (VALUATION_FACTS_KEY in team) != (valuation_gate is not None):
+            errors.append("DecisionPolicy 的 position_sizing.valuation_facts 必須與 team_inputs.valuation_facts 同時存在")
+        elif valuation_gate is not None:
+            validate_valuation_facts(valuation_root_for(self.decision_repository), self.bundle, self.policy, team, errors)
         if (DIP_FACTS_KEY in team) != (dip_gate is not None):
             errors.append("DecisionPolicy 的 position_sizing.quality_dip_facts 必須與 team_inputs.dip_facts 同時存在")
         elif dip_gate is not None:
@@ -546,6 +563,7 @@ class DecisionFinalizer:
                 dip_facts=team.get(DIP_FACTS_KEY) if dip_gate is not None else None,
                 reentry_hint_symbols=reentry_hint_symbols(self.policy.get("position_sizing")),
                 dip_assessment=quality_dip_assessment_gate(self.policy.get("position_sizing")) is not None,
+                valuation_facts=team.get(VALUATION_FACTS_KEY) if valuation_facts_gate(self.policy.get("position_sizing")) is not None else None,
             ).validate(self.intent)
         )
         stance = team.get("cash_stance")
@@ -610,6 +628,15 @@ class DecisionFinalizer:
             expected_view = stance.get("exposure_view") if isinstance(stance, Mapping) and exposure_swap.get("version") == EXPOSURE_SWAP_V2 else None
             if bound_view != expected_view:
                 errors.append("DecisionPolicy.position_sizing.agent_swap.exposure.view 與現金姿態的 exposure_view 不一致")
+        # agent_swap.quality_dip v2（版本閘門）：Policy 綁定的 turn_assessment 必須等於風險 Agent 現金姿態的 turn_assessment。
+        # v1（影子）不綁定（sizing 驗證已拒絕預填）；沒有閘門的舊 run 完全不碰這段。
+        quality_swap = quality_dip_swap_gate(sizing)
+        if quality_swap is not None:
+            v2 = quality_swap.get("version") == QUALITY_DIP_SWAP_V2
+            bound_turn = quality_swap.get("turn_assessment") if v2 else None
+            expected_turn = stance.get("turn_assessment") if isinstance(stance, Mapping) and v2 else None
+            if bound_turn != expected_turn or (v2 and expected_turn is None):
+                errors.append("DecisionPolicy.position_sizing.agent_swap.quality_dip.turn_assessment 與現金姿態的 turn_assessment 不一致")
         return errors
 
 

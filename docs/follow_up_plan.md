@@ -13,6 +13,12 @@
 > - 現金三個 v2、`reentry_cooldown` v2、`drawdown_derisk` v5 已於 17:40／17:58 開啟；`reentry_cooldown` v3、`slot_recycle` 的「觀察 10 個決策日」在 11/24 前無法完成，是否縮短由人另行決定。
 > - 因 v2 已開，下文所有「現在可以開：沒有」只代表撰寫當時（19:24）的結論；開啟後請看 `AGENT_SWAP`、`AGENT_SWAP_CANCELLED` 旗標與換股成交。
 
+> **工作包 P11、P12 實作更新（2026-11-10，使用者下令；閘門都沒有開，`config/decision_policy.json` 未改）**：
+> - P11 優質股第 3 階段：已實作為子閘門 `position_sizing.agent_swap.quality_dip`（v1 影子／v2 正式，預設不存在＝關閉），`purpose` 列舉多 `quality_dip`、前提含 `agent_swap.exposure`；未決事項取最保守（換出依據同 thesis、對數只在配置時從尾端取消等），理由與「目前不會多給名額來源」的代價見 [quality_dip_plan.md 第 10.4 節](quality_dip_plan.md#104-第三階段實作紀錄2026-11-10第七版)。
+> - P12 估值 V2：已實作為 `position_sizing.valuation_facts` v1（預設關閉）；V1 紀錄的授權範圍只到收集與稽核，開了也全部不可用，須人先核准用途；進入條件（連續相符天數、EPS 基準）仍未滿足。見第 10.5 節。
+> - 估值 V3：**未實作**；計畫標為未定且會動證據政策，需要人決定的事列在 [第 10.6 節](quality_dip_plan.md#106-v3-需要人決定的事2026-11-10第七版本次未實作)。
+> - 下文第 1.4 節、第 2.8／2.9 節、第 3 節與 P11、P12 的「未寫」以本段為準。
+
 閘門啟用狀態的唯一出處仍是 [status.md](status.md#版本閘門啟用狀態) 與 `config/decision_policy.json`；本檔與它們衝突時以它們為準。
 
 ## 1. 目前狀態
@@ -340,12 +346,16 @@ git diff --check
 
 ### P11 優質股第 3 階段實作（進入條件：使用者定案 `purpose` 列舉並下令開工）
 
+狀態（2026-11-10）：**已實作、尚未開啟**（子閘門 `agent_swap.quality_dip`，見 quality_dip_plan.md 第 10.4 節）。
+
 - **輸入**：quality_dip_plan.md 第 4.2、10.3 節；agent_led_exposure_plan.md 第 11 節。
 - **要改的檔案**（實作時確認）：`src/etf_agent/decision/swap_nomination.py`、`exposure_swap.py` 或新模組、`sizing.py`（閘門登記與前提）、`strategy_reflection/contracts.py`（禁區）、`allocation.py`、Skill `tradeagent/trading/trader/references/swap-nomination.md`、對應測試與文件。
 - **驗收條件**：預設關閉；先只做影子（配置不讀）；結構條件逐條有 fail-closed 測試；沒有閘門的 Policy 與舊封存逐位元不變；三個測試指令通過；新增或大改 Skill 時另跑 `quick_validate.py`。
 - **禁止事項**：共用規定；不開閘門；不新增程式挑股或排序的路徑；不放寬現金、換手、檔數。
 
 ### P12 估值 V2 實作（進入條件：使用者指定連續相符天數且達標、口徑釐清、下令開工）
+
+狀態（2026-11-10）：**已實作、尚未開啟**（`valuation_facts` v1，見 quality_dip_plan.md 第 10.5 節）；使用者下令開工，但連續相符天數與 EPS 基準兩個條件仍未滿足，授權範圍另需人核准，所以閘門沒有開。
 
 - **輸入**：P4 的彙總、quality_dip_plan.md 第 2.6 節。
 - **要改的檔案**（實作時確認）：估值位置事實的新模組、`sizing.py`（`valuation_facts` 閘門）、`strategy_reflection/contracts.py`、分析師與交易 Agent 簡報接線、Finalizer、Skill `fundamental-analyst` 與 `trader`、測試與文件。

@@ -56,7 +56,7 @@
 - 目前（2026-11-10 起）是 **v1 影子期**：提名被封存並由 Finalizer 重建驗證，配置完全不讀提名；唯讀統計用 `cli/calibration.py shadow-swap`。
 - v2（已實作、尚未開啟）才讓程式依提名換股：換出者標 `exit`、旗標 `AGENT_SWAP`／`AGENT_SWAP_FILL`，不可行的對由程式取消（`AGENT_SWAP_CANCELLED:<原因>`），換出者不賣。
 
-`agent_swap.exposure`（已實作、尚未開啟）讓提名每對多 `purpose`，v2 依風險 Agent 的 `exposure_view` 取用曝險配對（見[曝險計畫](agent_led_exposure_plan.md)）。
+`agent_swap.exposure`（已實作、尚未開啟）讓提名每對多 `purpose`，v2 依風險 Agent 的 `exposure_view` 取用曝險配對（見[曝險計畫](agent_led_exposure_plan.md)）。`agent_swap.quality_dip`（優質股第三階段，已實作、尚未開啟）讓 `purpose` 多一個 `quality_dip`，5c 另讀 `dip_facts` 驗結構，v2 配置時另加對數、買進權重、買進不超過賣款與轉向跡象的上限（見[優質股計畫](quality_dip_plan.md#104-第三階段實作紀錄2026-11-10第七版)）。
 
 設計見[換股提名計畫](agent_nominated_rotation_plan.md)，契約見[決策鏈契約](decision-contracts.md#換股提名agent_swap)。
 
@@ -213,6 +213,8 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：程式算的優質股被大盤拖累事實，**不升版本、不排進上表的線性鏈**，只要求 2.6 以上（讀基本面指標）；與閘門雙向檢查，Finalizer 以 bundle、`fundamental_metrics` 與事件報告整份重算。沒有閘門的舊 run 欄位白名單與重建行為不變。之所以不做成「2.9 ＝ 2.8 加 dip_facts」，是線性鏈會讓這個紀錄用閘門依賴 `rebound_participation`，關掉反彈參與就得一起關它。見[計畫](quality_dip_plan.md)。
 
 優質股第二階段（`quality_dip_assessment`、`event_direction`，已實作、尚未開啟）**不改 `team_inputs` 版本與欄位白名單**：`dip_assessment` 在交易決策的每個 buy／add 內（不進 Policy 綁定），事件 `direction` 在事件分析報告內（報告不新增 `schema_version`）；Finalizer 依 Policy 閘門重建驗證。
+
+選配鍵 `valuation_facts`（`position_sizing.valuation_facts` v1，估值 V2，已實作、尚未開啟）：分析師階段前由程式讀估值 V1 已保存的 run 算 PER／PBR 位置，以背景給基本面分析師與交易 Agent；做法同 `dip_facts`——不升版本、不要求特定版本，與閘門雙向檢查，Finalizer 以決策庫旁的 `valuation_collection` 資料夾與封存的 `source.run_id` 整份重算。
 
 選配鍵 `exposure_facts`（`position_sizing.exposure_view` v1，2026-11-10 已開啟，純紀錄、不影響配置）：程式算的組合曝險、產業權重、上漲日報酬與非持股 beta 事實，做法同 `dip_facts`——**不升版本、不排進上表的線性鏈**，只要求 2.7 以上（與 `exposure_review` 同一個 beta 口徑）；與閘門雙向檢查，Finalizer 以 bundle 與 Policy 整份重算。風險 Agent 的 `exposure_view` 列舉放在現金姿態內（同 `turn_assessment`）。沒有閘門的舊 run 欄位白名單與重建不變。
 

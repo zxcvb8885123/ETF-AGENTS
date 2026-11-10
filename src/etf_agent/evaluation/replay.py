@@ -267,9 +267,17 @@ def bind_replay_policy(
         if dip_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key not in dip_ignored}
             base["content_sha256"] = decision_policy_sha256(base)
+        # valuation_facts（估值 V2）只把背景放進 Agent 簡報與 team_inputs，不影響配置：回放略過並標一次；沒有閘門的舊回放逐位元不變。
+        valuation_ignored = isinstance(base.get("position_sizing"), Mapping) and "valuation_facts" in base["position_sizing"]
+        if valuation_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "valuation_facts"}
+            base["content_sha256"] = decision_policy_sha256(base)
         # agent_swap 依賴 exposure_rotation／rebound_participation（回放都略過）與封存 run 沒有的換股提名：必須先於它們移除，
         # 否則前提驗證會失敗；沒有閘門的舊回放 notes 與 policy 逐位元不變。
         swap_ignored = isinstance(base.get("position_sizing"), Mapping) and "agent_swap" in base["position_sizing"]
+        # agent_swap.quality_dip（優質股第三階段）隨 agent_swap 一起略過，另標一次讓讀者知道封存的優質股換股沒有被回放。
+        quality_swap_ignored = swap_ignored and isinstance(base["position_sizing"]["agent_swap"], Mapping) and (
+            "quality_dip" in base["position_sizing"]["agent_swap"])
         if swap_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "agent_swap"}
             base["content_sha256"] = decision_policy_sha256(base)
@@ -327,6 +335,10 @@ def bind_replay_policy(
         notes["rebound_participation"] = "ignored_in_replay"
     if swap_ignored:
         notes["agent_swap"] = "ignored_in_replay"
+    if quality_swap_ignored:
+        notes["agent_swap.quality_dip"] = "ignored_in_replay"
+    if valuation_ignored:
+        notes["valuation_facts"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
     for field in dip_ignored:

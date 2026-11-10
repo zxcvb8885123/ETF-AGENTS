@@ -1,6 +1,8 @@
 # 優質股被大盤拖累時的進場判斷（`quality_dip`）：設計計畫
 
-狀態（2026-11-10，第六版）：**第二階段（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，2026-11-10 已掛進資料排程）已實作；第二階段並於 2026-11-10 隨第一階段一起由使用者開啟（純紀錄、不影響配置；回滾＝刪掉三個欄位，樣板快照 `config/policy_versions/2026-11-10-before-quality-dip.json`）；第三階段改走換股提名、尚未實作（見第 10 章）；V2、V3 與資料 A／B 未做。**
+狀態（2026-11-10，第七版）：**第三階段（改走換股提名，子閘門 `position_sizing.agent_swap.quality_dip`）與估值 V2（閘門 `position_sizing.valuation_facts`）已實作、閘門預設不存在＝關閉、尚未開啟**（見第 10.4、10.5 節；正式設定未改）；**估值 V3 未實作**，需要人先決定的事列在第 10.6 節。
+
+第六版狀態：**第二階段（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，2026-11-10 已掛進資料排程）已實作；第二階段並於 2026-11-10 隨第一階段一起由使用者開啟（純紀錄、不影響配置；回滾＝刪掉三個欄位，樣板快照 `config/policy_versions/2026-11-10-before-quality-dip.json`）；第三階段改走換股提名、尚未實作（見第 10 章）；V2、V3 與資料 A／B 未做。**
 
 第五版狀態：**第一階段（事實與標示，閘門 `position_sizing.quality_dip_facts` v1）已實作、閘門預設關閉、尚未開啟**——正式設定沒有這個欄位，是否開啟由人決定；第二、三階段與估值（V1～V3）、資料 A／B 都尚未實作。實作紀錄與待確認項目的結論見第 9 章。以下第四版內容保留原樣（第 1～8 章的「尚未實作」指第四版當時）。
 
@@ -519,3 +521,63 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 - 買進側依據仍須是新股已採納的多頭論點；候選標示與 `dip_assessment` 只是簡報背景，不是依據。第 4.2 節第 4～7 項（無新壞事、非價格多頭 claim、`turn_assessment` 至少 `turn_unconfirmed`、可交易且不在冷卻）改成提名 Validator 與配置前置的結構檢查（程式只驗結構，不判斷理由好壞）；超跌候選預設排除的規則與 `oversold` 區塊照第 4.2 節。
 - 現金下限、換手上限、檔數、單股上限、回撤下限、減碼日略過一律不放寬；買進金額不超過賣款。
 - **前提與阻礙**：`agent_swap` 目前只有 v1 影子（配置不讀提名），v2 未開啟；曝險階段 2（`purpose`）正由另一個工作階段實作中（同一批檔案：`swap_nomination.py`、`allocation.py`）。所以本階段**不在這次寫程式**，避免與它衝突；等曝險階段 2 落地、`purpose` 列舉定案，且第 1、2 階段累積數個決策日的紀錄後，由人決定開工。
+
+### 10.4 第三階段實作紀錄（2026-11-10，第七版）
+
+狀態：**已實作、閘門預設不存在＝關閉、尚未開啟**（`config/decision_policy.json` 未改）。程式在 `src/etf_agent/decision/quality_dip_swap.py`，接線在 `swap_nomination.py`（5c 事實、簡報、Validator）、`allocation.py`（`_agent_swap` 與股數上限）、`trader.py`（綁定 `turn_assessment`）、`finalization.py`（比對綁定）、`automation/team_stages.py`／`daily_pipeline.py`（5c 另讀 `dip_facts`、Schema `SWAP_NOMINATION_QUALITY_DIP_SCHEMA`）。測試：`tests/decision/test_quality_dip_swap.py`。Skill：`tradeagent/trading/trader/references/swap-nomination.md`「purpose=quality_dip」節、`data-rules.md` 的 dip_assessment 一句。
+
+**閘門形狀**：`position_sizing.agent_swap.quality_dip = {"version": "v1"|"v2", "max_swaps_per_run", "max_entry_weight", "min_new_conviction", "min_holding_days", "min_turn_assessment"}`，全部必填、程式不給預設（數字由人填）；選填 `oversold: {"max_swaps_per_run", "max_entry_weight"}`（都不得高於上一層）；v2 另有 pipeline 綁定的 `turn_assessment`。`max_swaps_per_run` 為 0～`agent_swap.max_swaps_per_run`、`max_entry_weight` 為 (0,1) 的數字字串、`min_turn_assessment` 只允許 `turn_unconfirmed`／`turn_confirmed`。前提（`GATE_PREREQUISITES`）：`agent_swap`、`agent_swap.exposure`、`quality_dip_facts`、`quality_dip_assessment`、`cash_stance_turn_facts`；v2 另需 `agent_swap` v2。只由人設定（`agent_swap` 前綴已在策略反思禁區）；回放隨 `agent_swap` 一起略過，notes 另標 `agent_swap.quality_dip: ignored_in_replay`；`team_inputs` 仍是 2.9、不升版。
+
+**行為**：
+
+- 5c 結構檢查（Validator，失敗走修正循環、回饋並列「改用 thesis」與「刪除該對」兩種修法）：換入者除 thesis 的全部資格外，信心不低於 `min_new_conviction`；`dip_facts` 整份可用、該股 `price_pattern` 為下跌、`new_adverse_facts` 為空；`candidate` 為 `market_dragged` 時 `dip_assessment` 必須是 `market_driven`，`oversold` 只有寫了 `oversold` 區塊才可、且必須是 `oversold_cause_unclear`；`buy_basis_ids` 至少一個是該股已採納、`claim_kind` 不是 `price` 的多頭 claim（沒填 `claim_kind` 不算）。換出者：thesis 的換出依據規則不變，另需第一輪 `hold`／`low`、持有天數不少於本閘門的 `min_holding_days`。提名理由寫出 `dip_background`／`dip_facts` 或事實識別碼即拒絕。
+- 簡報（v1／v2 相同，不告知影子期）：新股與持股多 `quality_dip_nominable`／`quality_dip_blocked_reasons`，新股另附 `dip` 背景（候選標示、價格型態、交易 Agent 的 `dip_assessment`，`citable=false`），頂層 `quality_dip_swap` 區塊；數字上限不給 Agent。
+- v1（影子）：配置完全略過 quality_dip 配對、不留旗標——**不會被當成 thesis 配對成交**（曝險 v1 的過濾原本只濾 `exposure`，已改為依原清單對齊 purpose 再分別處理）。
+- v2：配置時另檢查（任一不成立即取消全部 quality_dip 配對、換出者不賣）：回撤下限 `stance_floor` 不是 defensive 且帳本歷史可用（`quality_dip_stance_floor`／`quality_dip_drawdown_unavailable`）、風險 Agent 的 `turn_assessment` 不低於 `min_turn_assessment`（`quality_dip_turn`）、`reuse_sell_proceeds` 為 true（`quality_dip_proceeds`）；對數超過上限從清單尾端取消（`quality_dip_cap`，超跌另有自己的上限、合計仍受本閘門封頂）；`dip_assessment` 與候選類別不符即取消（`quality_dip_assessment`）。成交的換入者股數另以「權重不超過 `max_entry_weight`（超跌用 `oversold.max_entry_weight`）且買進金額含費不超過換出者全部賣出的淨額」為上限（只縮減，旗標 `RISK_QUALITY_DIP_ENTRY`）；縮到不足一張就沒有買單，復原迴圈取消該對（`AGENT_SWAP_CANCELLED:quality_dip_entry`）、換出者不賣。減碼日由 `_agent_swap` 整個略過；現金下限、`max_turnover_rate`、單股、產業、Active Share、檔數照舊是後段上限。換出者賣單由程式標 `exit`＋`AGENT_SWAP`（說明寫明目的與上限），交易 Agent 意圖不改寫。
+
+**第 7 節 fail-closed 清單對應的測試**：不只賣不買（權重過小、換手不足、轉向不足、stance_floor 時換出者都不賣）、減碼日與 `stance_floor` 防守略過、買進金額不超過賣款（逐筆比對 `net_cash_impact`）、不突破 `max_turnover_rate` 與現金下限、不改寫交易 Agent 意圖、缺資料不通過也不否決（同一檔改用 thesis 照樣通過）；另有 v1 影子逐位元不變、v2 未綁 `turn_assessment` 拒絕、沒有閘門時配置與 purpose 允許值不變、正式樣板回歸。
+
+**未決事項的保守取捨（第 4.2、10.3 節沒寫死、也沒有人決定的部分；理由一併記錄）**：
+
+1. **列舉加不加 `quality_dip`**：加，但只在本子閘門存在時才是合法值；所以前提要求 `agent_swap.exposure`（`purpose` 的宿主），不另開欄位、也不讓沒有閘門的 Policy 多一個值。理由：第 10.3 節要求合用同一個列舉；只在閘門存在時才合法，舊 Policy 逐位元不變。
+2. **換出依據**：沿用 thesis 規則（換出股自己已採納的空頭論點、持股檢視警示或持股事實），**沒有**照第 4.2 節的程式路徑放寬成「hold／low 即可、不需空頭依據」，另外再加上第 4.2 節的 hold／low 與持有天數。理由：第 10.3 節沒有對換出側開例外（曝險配對有明文例外，這裡沒有），放寬屬於規則變更、應由人決定。**代價（如實說明）**：quality_dip 配對的每一條都比 thesis 配對嚴格（多結構條件、多買進權重上限、買進不超過賣款），所以它不會讓任何原本 thesis 換不成的股票換成；它目前的作用是讓交易 Agent 標示目的、讓程式在這類配對上加防線並留下紀錄。若要它真的「多給一個名額來源」，需要人決定下列兩項之一：換出側是否改用 hold／low 不需空頭依據，或換入側是否允許低於 `rotation.min_new_conviction`。
+3. **對數上限檢查放在哪裡**：只在配置時從清單尾端取消，5c 不因提名對數超過本閘門上限而退回（與曝險配對相同；清單是「有序候選」）。
+4. **`turn_assessment` 何時檢查**：5c 時風險 Agent 還沒跑，所以只在配置時檢查（由 `apply_trade_decision` 綁進 Policy，Finalizer 以現金姿態比對）。
+5. **回撤歷史不可用時**：視同不能確認不在強制防守，整批取消；`drawdown_control` 未綁定時拋錯。
+6. **買進金額上限的口徑**：換入者「成交價含滑價的金額＋手續費」不超過換出者全部股數「成交價含滑價的金額－手續費－證交稅」；`reuse_sell_proceeds` 為 false 時賣款不能用，整批取消。
+
+**開啟前需要人決定**：`max_swaps_per_run`（計畫建議 1）、`max_entry_weight`（計畫建議不高於 low 信心份額）、`min_new_conviction`、`min_holding_days`、`min_turn_assessment` 的數字；是否另開 `oversold`；先開 v1 影子還是直接 v2；以及上面第 2 項是否要放寬。開啟仍須先存樣板到 `config/policy_versions/`、改 `policy_id` 與真實 `available_at`。
+
+### 10.5 估值 V2 實作紀錄（2026-11-10，第七版）
+
+狀態：**已實作、閘門預設不存在＝關閉、尚未開啟**。程式在 `src/etf_agent/decision/valuation_facts.py`，接線在 `automation/daily_pipeline.py`（分析師階段前建事實並存 `valuation_facts.json`）、`automation/team_stages.py`（基本面分析師與交易 Agent 簡報）、`decision/trader.py`（文字欄位不得寫背景識別碼）、`decision/finalization.py`（`team_inputs.valuation_facts` 選配鍵與重算）、`evaluation/replay.py`（略過，notes 標 `valuation_facts: ignored_in_replay`）。測試：`tests/decision/test_valuation_facts.py`、`tests/automation/test_valuation_facts_pipeline.py`。Skill：`fundamental-analyst`「估值位置」節、`trader` 的 `data-rules.md`「估值位置」節。
+
+- **閘門**：`position_sizing.valuation_facts = {"version": "v1"}`，沒有 Policy 層前提；只由人設定（策略反思禁區 `valuation_facts`）；`GATE_PREREQUISITES` 已登記。沒有欄位的舊 Policy／舊 run：簡報、Schema、`team_inputs` 與重建逐位元不變。
+- **資料**：只讀估值 V1 已不可變保存的 run（資料夾由決策庫位置推得：`artifacts/decisions` 旁的 `artifacts/valuation_collection`，pipeline 與 Finalizer 用同一個推法）。取 run 時間不晚於 `decision_cutoff` 的最新一個，先以 `validate_valuation_run` 依原始回應整份重建；不合格、`fetched_at` 晚於 cutoff、資料日晚於 Snapshot 最近交易日、或沒有 run 時整份 `unavailable` 並記 `data_gaps`，不往前找舊 run、不補值、不讓當天決策失敗。
+- **內容**：只算 PER 與 PBR（殖利率的股利基準未確認，不進簡報）；上櫃股一律 `OTC_NOT_COLLECTED`；核對不符沿用 V1 的拒絕原因；PER 非正或未提供時該指標 `null` 並附原因、PBR 獨立可用。三個寫死的視窗並列：`rows_250`、`rows_750`（資料列，不是日曆日）、`all`（全部可得歷史）；固定視窗資料列不足時 `insufficient_history`、不算數字；`all` 至少 2 筆。每個視窗給起訖日、樣本數、最小／中位／最大與百分位（不高於當日值的筆數 ÷ 樣本數，含當日，小數 4 位）。只有資料日當天與官方核對過，之前的 FinMind 歷史一律標未逐日核對。不提供交易池橫斷面名次（跨產業比較沒有意義，金融股不得與其他產業並列）。
+- **簡報**：基本面分析師簡報頂層 `valuation_background`（每批只附本批股票）、交易 Agent 每批 `valuation_background`；都 `citable=false`、沒有 evidence_id、facts_id 與 run_id。交易 Agent 文字欄位寫出 `valuation_background`、`valuation_facts`、facts_id 或 run_id 即拒絕；分析師的 finding 本來就只能引用 evidence_id，背景沒有可引用的編號（不另加文字檢查，見下方限制）。多空研究員與風險 Agent 不直接拿；研究員讀得到基本面分析師的簡報檔（與 `dip_facts` 相同的已知性質）。
+- **重算**：Finalizer 以同一個資料夾與 `source.run_id` 整份重算 `team_inputs.valuation_facts`；欄位被改、run 事後被改（manifest 或重建不符）、讀不到資料夾、或閘門與鍵不雙向同時存在一律拒絕。
+
+**與計畫不符或保守之處（如實說明）**：
+
+1. **授權範圍擋住實際使用**：V1 收集器記錄的 `license_scope` 是 `valuation_v1_collection_and_audit_only`（只收集與稽核）。V2 只接受允許「背景進簡報」的範圍（程式常數 `APPROVED_LICENSE_SCOPES = ("valuation_v2_background_brief",)`），所以**目前的紀錄即使開了閘門也全部是 `LICENSE_SCOPE_NOT_APPROVED`、整份 unavailable**。要讓它有內容，須由人核准新的用途範圍，**而且要改 V1 的契約**：不能只改收集器的 `LICENSE_SCOPE` 常數——`build_symbol_record` 把當下的常數寫進每筆紀錄且納入 `content_sha256`，`validate_valuation_run` 以原始回應重建時也用當下的常數，所以一改常數，**所有既有 run 的重建都會失敗**（已實測：「records 與原始回應重建結果不一致」），連帶讓 `cli/valuation_collect.py validate` 與引用舊 run 的決策重建失敗。可行的做法（由人選）：(a) 把核准的範圍寫進每次收集保存的輸入（例如 `official_raw`／收集參數），重建時從資料讀而不是讀常數；(b) 依 `fetched_at` 查一張有日期的核准表；(c) 升 `MAPPING_VERSION`，每個版本對映自己的範圍。本次沒有替使用者做這件事，也沒有改 V1 程式。
+2. **進入條件未滿足**：第 2.6 節 (5) 的「V1 連續核對相符達人指定天數」「EPS 基準釐清」仍未成立（天數沒有指定、全部相符 0 天）；本次依使用者下令實作程式，但閘門沒有開，開不開仍由人依這些條件決定。
+3. **視窗長度**：V1 預設每次只補約 14 天歷史，`rows_250`／`rows_750` 在建立長歷史（`--history-start`）之前都是 `insufficient_history`；只有 `all` 有數字，且樣本很小。
+4. **已知限制（重建）**：事實為 unavailable 且沒有選到 run（例如 `NO_VALUATION_RUN`）時，Finalizer 不釘住 run、重新挑選；若事後才存進一個時間不晚於 cutoff 的 run，之後重新驗證這份決策會被拒絕。另外，決策重建從此依賴估值資料夾：刪掉或搬走舊 run，引用它的決策重建會被拒絕。驗證端（`competition/dplan.py`、`decision_delivery/provider.py` 等）沒有傳決策庫路徑時推不出估值資料夾，閘門開啟後會一律拒絕；正式流程 `scripts/run_daily_pipeline.py` 傳的是 `artifacts/decisions`，推得的位置就是 `cli/valuation_collect.py` 寫入的 `artifacts/valuation_collection`。
+5. **分析師文字沒有加識別碼檢查**：分析報告的驗證（含辯論驗證）看不到 Policy，加閘門依賴的檢查會牽動舊報告驗證；因為背景沒有任何可引用的編號，這裡維持不加，靠 Skill 規則。
+
+### 10.6 V3 需要人決定的事（2026-11-10，第七版；本次未實作）
+
+第 2.6 節 (5) 與第 7 節把 V3 標為「未定、V2 開啟後有即時紀錄再由人決定」，而且它會改證據政策（`typed_evidence_v1` 的種類對映）的既有行為，所以本次**沒有寫程式**。開工前需要人逐項決定：
+
+1. **前提**：V2 要先開啟並累積幾個決策日的即時紀錄（目前 0 天；且 V2 的授權範圍見第 10.5 節第 1 項）。選項：(a) 沿用 `calibration.MIN_DECISION_DAYS` 10 天；(b) 人另指定天數；(c) 比賽結束前不做 V3。
+2. **證據政策版本**：可引用就必須出新版本、舊 bundle 不變。選項：(a) 新增 `typed_evidence_v2`＝v1 全部規則＋估值文件種類；(b) 不出新版本，V3 只在 bundle 帶新欄位時生效（不建議：等於讓同一個版本有兩種對映）。
+3. **種類對映**：(a) 對映既有的 `price`（第 2.6 節 (4) 的建議：不改 `CLAIM_KINDS`、自動適用「單獨價格論點不構成買進依據」）；(b) 新增 `valuation` 種類（要改 `CLAIM_KINDS`、全部 Schema 與 Skill，並決定它能否單獨支持買進）。
+4. **估值證據算不算「屬於該股票」**：現行規則要求至少一個證據屬於該股，市場層級與帳戶證據只能補充。選項：(a) 算（它是該股的每日價格衍生值）；(b) 不算、只能補充。
+5. **未逐日核對的歷史能不能被引用**：(a) 只有資料日當天（與官方核對過）的值可被引用，位置百分位不能；(b) 位置百分位也可引用，但證據要標「歷史未核對」；(c) 等官方可指定日期的查詢確認後再談。
+6. **證據的形狀**：(a) 每檔每資料日一個文件、附 run_id 與紀錄雜湊、`available_at`＝抓取時間；(b) 每個位置事實一個文件。要不要進 Snapshot／DecisionInputBundle（現行證據都在 bundle 內，V2 的資料在 bundle 外，Finalizer 從資料夾讀）也需決定：進 bundle 會改 bundle 契約與雜湊，不進則證據來源不在 bundle 內、與現行規則不一致。
+7. **授權範圍**：V3 的引用屬於正式計算的一部分，需要比 V2「背景進簡報」更明確的用途登記（核准人、核准日、用途）。
+8. **殖利率與上櫃股**：殖利率的股利基準與上櫃端點確認前，V3 是否只做 PER／PBR 與上市股（建議是）。
+9. **誰可以引用**：只有基本面分析師的 finding，或多空研究員的 claim 也可直接引用；後者會改共同輸入與 `shared_input_sha256` 的組成。
+
+在這些決定之前，V2 維持背景、不可引用；任何 Skill、簡報與報告仍不得寫便宜、低估。

@@ -23,6 +23,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .exposure_facts import EXPOSURE_VIEWS
 from .fields import DecisionToolError, reject_unknown_fields
+from .quality_dip_swap import nomination_purposes
 
 EXPOSURE_SWAP_V1 = "v1"  # 階段 2：影子（配置不讀 exposure 配對）
 EXPOSURE_SWAP_V2 = "v2"  # 階段 3：正式（配置依 exposure_view 取用 exposure 配對）
@@ -126,8 +127,9 @@ def exposure_swap_binding(sizing: object) -> Optional[Dict[str, object]]:
     if not isinstance(pairs, list):
         raise DecisionToolError("DecisionPolicy 啟用 agent_swap v2，但尚未綁定換股提名（nominated_pairs／nomination_ref）")
     purposes = [str(pair.get("purpose")) for pair in pairs]
-    if any(purpose not in PURPOSES for purpose in purposes):
-        raise DecisionToolError("agent_swap.exposure 啟用時 nominated_pairs 每對必須有 purpose（%s）" % "／".join(PURPOSES))
+    allowed = nomination_purposes(sizing)  # agent_swap.quality_dip 啟用時多 quality_dip；沒有時就是 PURPOSES
+    if any(purpose not in allowed for purpose in purposes):
+        raise DecisionToolError("agent_swap.exposure 啟用時 nominated_pairs 每對必須有 purpose（%s）" % "／".join(allowed))
     if gate.get("version") == EXPOSURE_SWAP_V1:
         return {"version": EXPOSURE_SWAP_V1, "purposes": purposes, "view": None, "caps": None}
     view = gate.get("view")

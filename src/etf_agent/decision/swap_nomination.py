@@ -44,6 +44,11 @@ from .exposure_swap import (
     HIGH_CONVICTION, LOWER_CONVICTIONS, EXPOSURE_BASIS_NOTE, EXPOSURE_SWAP_NOTE, PURPOSE_EXPOSURE, PURPOSE_THESIS, PURPOSES, exposure_basis_by_symbol,
     exposure_basis_id, exposure_swap_gate, is_exposure_basis_id, validate_lower_conviction_review,
 )
+from .quality_dip_swap import (
+    PURPOSE_QUALITY_DIP, QUALITY_DIP_SWAP_NOTE, buy_reasons as quality_dip_buy_reasons, claim_kinds, nomination_purposes,
+    quality_dip_swap_gate, sell_reasons as quality_dip_sell_reasons, validate_quality_dip_pair,
+)
+from .dip_facts import DIP_FACTS_KEY, dip_reference_tokens
 from .selection_ranking import rank_by_symbol
 from .sizing import (
     CONVICTION_LEVELS,
@@ -229,8 +234,12 @@ def nomination_facts(
     position_review: Optional[Mapping[str, object]],
     exposure_review: Optional[Mapping[str, object]],
     exposure_facts: Optional[Mapping[str, object]] = None,
+    dip_facts: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """提名的全部確定性事實；簡報、``not_needed`` 判定與 Validator 共用。缺任何必要輸入拋 ``DecisionToolError``（fail-closed）。
+
+    ``dip_facts`` 是 ``team_inputs.dip_facts``（已由 Finalizer 整份重算）；只有 ``agent_swap.quality_dip`` 啟用時才讀，此時缺少即拋錯，
+    新股與持股另附 ``quality_dip_reasons``／``quality_dip_nominable``（不改變 thesis 的資格與 ``not_needed`` 判定）。沒有該閘門時完全不讀。
 
     ``exposure_facts`` 是 ``team_inputs.exposure_facts``（已由 Finalizer 整份重算）；只有 ``agent_swap.exposure`` 啟用時才讀，
     此時缺少即拋錯。沒有該閘門時完全不讀，回傳內容與舊版逐鍵相同。
@@ -296,6 +305,18 @@ def nomination_facts(
         if not isinstance(exposure_facts, Mapping):
             raise DecisionToolError("agent_swap.exposure 啟用時換股提名需要 team_inputs.exposure_facts")
         exposure_basis = exposure_basis_by_symbol(bundle, exposure_facts)
+    quality_gate = quality_dip_swap_gate(sizing)
+    kinds: Dict[str, Optional[str]] = {}
+    if quality_gate is not None:
+        if not isinstance(dip_facts, Mapping):
+            raise DecisionToolError("agent_swap.quality_dip 啟用時換股提名需要 team_inputs.dip_facts")
+        kinds = claim_kinds(debate)
+        for row in candidates:
+            symbol = str(row["symbol"])
+            quality = quality_dip_buy_reasons(
+                symbol, row["conviction"], row["basis_ids"], quality_gate, dip_facts, items[symbol].get("dip_assessment"), kinds)  # type: ignore[arg-type]
+            row["quality_dip_reasons"] = quality
+            row["quality_dip_nominable"] = bool(row["nominable"]) and not quality
 
     victims: List[Dict[str, object]] = []
     for symbol in sorted(held):
@@ -330,6 +351,10 @@ def nomination_facts(
                 "exposure_basis_id": exposure_basis_id(symbol), "exposure_reasons": exposure_reasons,
                 "exposure_nominable": not exposure_reasons,
             })
+        if quality_gate is not None:
+            # purpose=quality_dip：thesis 換出資格（含空頭依據）之外，另需 hold／low 與本閘門的持有天數。
+            quality = quality_dip_sell_reasons(item.get("conviction"), days[symbol], quality_gate)
+            row.update({"quality_dip_reasons": quality, "quality_dip_nominable": not reasons and not quality})
         victims.append(row)
 
     exits = sorted(
@@ -516,8 +541,12 @@ def swap_nomination_brief(
     exposure_review: Mapping[str, object],
     verdicts: Optional[Mapping[str, object]] = None,
     exposure_facts: Optional[Mapping[str, object]] = None,
+    dip_facts: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """5c 給交易 Agent 的簡報（全部由程式算）。不讀 ``agent_swap.version``：影子與正式的簡報完全相同。
+
+    ``agent_swap.quality_dip`` 啟用時（需 ``dip_facts``）新股與持股多附 ``quality_dip_nominable``／``quality_dip_blocked_reasons``，
+    新股另附候選標示背景 ``dip``（``citable=false``），頂層另有 ``quality_dip_swap`` 區塊；不讀 quality_dip 的版本，影子與正式相同。
 
     ``agent_swap.exposure`` 啟用時（需 ``exposure_facts``）持股多附 ``exposure_nominable``、``exposure_blocked_reasons`` 與可引用的
     ``exposure_basis``（曝險事實編號、事實與行情 evidence_id），另有頂層 ``exposure_swap`` 區塊說明 ``purpose`` 與逐檔交代的規則；
@@ -525,8 +554,13 @@ def swap_nomination_brief(
 
     ``verdicts`` 是 ``thesis_verdicts.load_thesis_verdicts`` 的結果；只有其雜湊與 Policy 綁定的 ``verdicts_ref`` 一致時，
     才附上提示持股的檢視摘要（背景，``citable=false``），否則只列代號。"""
-    facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, exposure_facts)
+    facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, exposure_facts, dip_facts)
     exposure_gate = exposure_swap_gate(policy.get("position_sizing"))
+    quality_gate = quality_dip_swap_gate(policy.get("position_sizing"))
+    dip_rows = {
+        str(item["symbol"]).upper(): item for item in (dip_facts or {}).get("items", []) if isinstance(item, Mapping)  # type: ignore[union-attr]
+    } if quality_gate is not None else {}
+    trade_items = {str(item["symbol"]).upper(): item for item in trade_decision.get("items", []) if isinstance(item, Mapping)}
     exposure_basis = exposure_basis_by_symbol(bundle, exposure_facts) if exposure_gate is not None and exposure_facts is not None else {}
     estimator = SwapEstimator(bundle, policy, trade_decision)
     texts = _claim_texts(debate)
@@ -557,6 +591,14 @@ def swap_nomination_brief(
         }
         if row["nominable"]:
             entry["one_lot_cost"] = str(estimator.buy_one_lot_cost(symbol).quantize(MONEY, rounding=ROUND_CEILING))
+        if quality_gate is not None:
+            dip_row = dip_rows.get(symbol, {})
+            entry["quality_dip_nominable"] = row["quality_dip_nominable"]
+            entry["quality_dip_blocked_reasons"] = row["quality_dip_reasons"]
+            entry["dip"] = {
+                "citable": False, "candidate": dip_row.get("candidate"), "price_pattern": dip_row.get("price_pattern"),
+                "dip_assessment": trade_items.get(symbol, {}).get("dip_assessment"),
+            }
         candidates.append(entry)
     holdings = []
     for row in facts["victims"]:  # type: ignore[union-attr]
@@ -577,6 +619,9 @@ def swap_nomination_brief(
             entry_row["exposure_blocked_reasons"] = row["exposure_reasons"]
             if symbol in exposure_basis:
                 entry_row["exposure_basis"] = exposure_basis[symbol]
+        if quality_gate is not None:
+            entry_row["quality_dip_nominable"] = row["quality_dip_nominable"]
+            entry_row["quality_dip_blocked_reasons"] = row["quality_dip_reasons"]
         holdings.append(entry_row)
     gate = _gate(policy)
     ref = gate.get("verdicts_ref")
@@ -595,6 +640,10 @@ def swap_nomination_brief(
             "lower_conviction_symbols": facts["lower_conviction_symbols"],
             "high_conviction_symbols": facts["high_conviction_exposure_symbols"],
         }}
+    if quality_gate is not None:
+        exposure_block["quality_dip_swap"] = {
+            "note": QUALITY_DIP_SWAP_NOTE, "oversold_enabled": isinstance(quality_gate.get("oversold"), Mapping),
+        }
     return {
         **exposure_block,
         "note": BRIEF_NOTE,
@@ -654,6 +703,7 @@ class SwapNominationValidator:
         exposure_review: Optional[Mapping[str, object]],
         prior_context: Optional[Mapping[str, object]] = None,
         exposure_facts: Optional[Mapping[str, object]] = None,
+        dip_facts: Optional[Mapping[str, object]] = None,
     ):
         self.bundle = dict(bundle)
         self.policy = policy
@@ -668,6 +718,12 @@ class SwapNominationValidator:
         self.exposure_facts = exposure_facts
         if self.exposure_gate is not None:
             self.prior_tokens = set(self.prior_tokens) | set(exposure_reference_tokens(exposure_facts))
+        # agent_swap.quality_dip（版本閘門）：另需 team_inputs.dip_facts；候選標示背景的識別碼不得出現在理由。沒有閘門時完全不讀。
+        self.quality_gate = quality_dip_swap_gate(policy.get("position_sizing")) if isinstance(policy, Mapping) else None
+        self.dip_facts = dip_facts
+        if self.quality_gate is not None:
+            self.prior_tokens = set(self.prior_tokens) | set(dip_reference_tokens(dip_facts))
+            self.kinds = claim_kinds(debate)
 
     def validate(self, nomination: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
@@ -695,7 +751,7 @@ class SwapNominationValidator:
         try:
             facts = nomination_facts(
                 self.bundle, self.policy, self.trade, self.ranking, self.debate, self.position_review, self.exposure_review,
-                self.exposure_facts)
+                self.exposure_facts, self.dip_facts)
         except (DecisionToolError, KeyError, TypeError, ValueError) as error:
             return errors + ["SwapNomination 無法以共同輸入重算事實：%s" % error]
         needed = needs_nomination(facts)
@@ -762,8 +818,9 @@ class SwapNominationValidator:
             reject_unknown_fields(entry, NOMINATION_FIELDS | (EXPOSURE_NOMINATION_FIELDS if exposure else set()), prefix, errors)
             purpose = PURPOSE_THESIS
             if exposure:
-                if entry.get("purpose") not in PURPOSES:
-                    errors.append("%s.purpose 必須是 %s" % (prefix, "／".join(PURPOSES)))
+                allowed = nomination_purposes(self.policy.get("position_sizing"))
+                if entry.get("purpose") not in allowed:
+                    errors.append("%s.purpose 必須是 %s" % (prefix, "／".join(allowed)))
                 else:
                     purpose = str(entry["purpose"])
             buy, sell = entry.get("buy_symbol"), entry.get("sell_symbol")
@@ -786,6 +843,9 @@ class SwapNominationValidator:
                 errors.append("%s.buy_basis_ids 不得放曝險事實編號（它只能作為 purpose=exposure 的換出依據）" % prefix)
             self._check_basis(prefix, "buy_basis_ids", buy_ids, buy, {"bull"}, candidates, roles, items, errors)
             self._check_sell_basis(prefix, entry.get("sell_basis_ids"), sell, purpose, victims, roles, items, errors)
+            if purpose == PURPOSE_QUALITY_DIP:
+                # 優質股第三階段：thesis 的全部規則之外另驗結構條件（候選標示、dip_assessment、非價格多頭論點、換出者 hold／low）。
+                validate_quality_dip_pair(prefix, buy_ids, candidates.get(buy), victims.get(sell), self.kinds, errors)
             if not _text(entry.get("reason")):
                 errors.append("%s.reason 必須是非空字串" % prefix)
             else:
@@ -853,7 +913,7 @@ class SwapNominationValidator:
         label = "%s.sell_basis_ids" % prefix
         exposure_ids = [item for item in value if is_exposure_basis_id(item)]
         rest = [item for item in value if not is_exposure_basis_id(item)]
-        if purpose == PURPOSE_THESIS:
+        if purpose != PURPOSE_EXPOSURE:  # thesis 與 quality_dip 的換出依據規則相同
             if exposure_ids:
                 errors.append("%s 不得放曝險事實編號（只能用於 purpose=exposure）：%s" % (label, ", ".join(sorted(map(str, exposure_ids)))))
             self._check_basis(prefix, "sell_basis_ids", rest, symbol, wanted, victims, roles, items, errors)
@@ -1043,10 +1103,12 @@ def validate_team_swap_nomination(
     prior = team.get("prior_decision_context")
     try:
         facts = team.get(EXPOSURE_FACTS_KEY)
+        dip = team.get(DIP_FACTS_KEY)
         problems = SwapNominationValidator(
             bundle, policy, trade_decision, ranking, debate, review, exposure,  # type: ignore[arg-type]
             prior_context=prior if isinstance(prior, Mapping) else None,
             exposure_facts=facts if isinstance(facts, Mapping) else None,
+            dip_facts=dip if isinstance(dip, Mapping) else None,
         ).validate(nomination)
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:
         problems = ["無法重建驗證：%s" % error]

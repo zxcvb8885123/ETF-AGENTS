@@ -42,6 +42,8 @@ from etf_agent.decision.dip_facts import build_dip_facts, event_direction_gate, 
 from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, apply_swap_nomination, bind_thesis_hints
+from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate
+from etf_agent.decision.valuation_facts import build_valuation_facts, valuation_facts_gate, valuation_root_for
 from etf_agent.decision.release_order import apply_release_order
 from etf_agent.decision.sizing import drawdown_derisk_v5, held_weight_facts_gate, reentry_hint_symbols
 from etf_agent.decision.held_weight_facts import build_held_weight_facts
@@ -295,8 +297,16 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             # quality_dip_facts（版本閘門）：技術／基本面分析師簡報多附程式事實；沒有閘門（或只評測分析師）時簡報與舊版逐鍵相同。
             dip_gate = quality_dip_facts_gate((base_policy or {}).get("position_sizing"))
             direction = event_direction_gate((base_policy or {}).get("position_sizing")) is not None
-            analysts = (self.run_analyst_team(bundle, momentum, database_path, dip_gate=dip_gate, event_direction=direction)
-                        if dip_gate is not None else self.run_analyst_team(bundle, momentum, database_path))
+            # valuation_facts（估值 V2，版本閘門）：讀估值 V1 已保存的 run 算 PER／PBR 位置，以背景給基本面分析師與交易 Agent，
+            # 另存進 team_inputs.valuation_facts 供 Finalizer 整份重算；資料不可用時整份 unavailable、不讓決策失敗。沒有閘門時不建立。
+            valuation_gate = valuation_facts_gate((base_policy or {}).get("position_sizing"))
+            valuation_facts = None
+            if valuation_gate is not None:
+                valuation_facts = build_valuation_facts(valuation_root_for(self.decision_repository), bundle, valuation_gate)
+                self.save_artifact("valuation_facts", valuation_facts)
+            extra = {"valuation_facts": valuation_facts} if valuation_facts is not None else {}
+            analysts = (self.run_analyst_team(bundle, momentum, database_path, dip_gate=dip_gate, event_direction=direction, **extra)
+                        if dip_gate is not None else self.run_analyst_team(bundle, momentum, database_path, **extra))
         if stop_after == "analysts":
             return
 
@@ -390,6 +400,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 **({"held_weight_facts": held_weight_facts} if held_weight_facts is not None else {}),
                 **({"reentry_hint_symbols": reentry_hints} if reentry_hints is not None else {}),
                 **({"dip_assessment": True} if quality_dip_assessment_gate((base_policy or {}).get("position_sizing")) is not None else {}),
+                **({"valuation_facts": valuation_facts} if valuation_facts is not None else {}),
             )
 
         # 樣板啟用 position_sizing.selection_ranking 才加這一步；沒有的樣板維持舊排序與 team_inputs 版本。
@@ -413,7 +424,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             with self._timed("swap_nomination"):
                 swap_nomination = self.run_swap_nomination(
                     bundle, base_policy, trade, ranking, debate, position_review, exposure_review, prior_context, decision_run_id,
-                    **({"exposure_facts": exposure_facts, "turn_state": turn_state} if exposure_facts is not None else {}))
+                    **({"exposure_facts": exposure_facts, "turn_state": turn_state} if exposure_facts is not None else {}),
+                    # agent_swap.quality_dip（優質股第三階段）：提名另讀 dip_facts；沒有閘門時不傳，呼叫與舊版相同。
+                    **({"dip_facts": dip_facts} if quality_dip_swap_gate(base_policy.get("position_sizing")) is not None else {}))
             base_policy = apply_swap_nomination(base_policy, swap_nomination)
             base_policy["content_sha256"] = decision_policy_sha256(base_policy)
 
@@ -504,6 +517,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"exposure_facts": exposure_facts} if exposure_facts is not None else {}),
             **({"release_order": release_order} if release_order is not None else {}),
             **({"held_weight_facts": held_weight_facts} if held_weight_facts is not None else {}),
+            **({"valuation_facts": valuation_facts} if valuation_facts is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history

@@ -59,6 +59,17 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 - 程式依風險 Agent 的 `exposure_view` 決定這些 `exposure` 配對今天用不用、最多用幾對；你不必也不得考慮這件事，只要提名你真的認為值得的配對。
 - 文字欄位不得寫出曝險事實區塊或前次決策的識別碼。
 
+## `purpose=quality_dip`（簡報有 `quality_dip_swap` 區塊時才適用）
+
+簡報含 `quality_dip_swap` 時，`purpose` 另可填 `quality_dip`：換入者是你第一輪判為「被大盤拖累」而被名額卡住的新股。沒有這個區塊就完全不適用。
+
+- 只有簡報標 `quality_dip_nominable: true` 的新股與持股可以用這個目的；`quality_dip_blocked_reasons` 列出不能用的原因（例如 `new_adverse_facts`、`assessment_mismatch`、`no_non_price_bull_basis`、`hold_conviction_not_low`）。
+- 換入者：候選標示（`dip.candidate`）與你第一輪的 `dip_assessment` 要相符——被大盤拖累（`market_dragged`）對 `market_driven`；超跌（`oversold`）只有 `quality_dip_swap.oversold_enabled` 為 true 時才可，且要填 `oversold_cause_unclear`。`buy_basis_ids` 至少一個是該股已採納、`claim_kind` 不是 `price` 的多頭論點：「跌幅可由大盤解釋」單獨不構成買進依據，要有它自己的營運或事件論點。
+- 換出者：第一輪必須是 `hold`／`low`，`sell_basis_ids` 規則與 `thesis` 完全相同（自己已採納的空頭論點或持股事實）；不得放曝險事實編號。
+- `dip` 區塊（候選標示、價格型態、你的 `dip_assessment`）**只是背景**（`citable=false`），不是依據；不得寫便宜、低估，超跌的原因要如實寫「原因不明」。
+- 條件不符時改用 `thesis`（照上面原本的規則）或刪除該對；缺資料只是不知道，不是否決，也不算通過。
+- 這個目的在配置時另有程式的硬性界線（每次對數、每檔買進權重、買進金額不超過換出賣款、需要轉向跡象、回撤強制防守與減碼日不換）；你不需要也不得輸出任何數字，只要提名你真的認為值得的配對。
+
 ## 輸出
 
 只輸出 JSON：
@@ -81,4 +92,4 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 
 理由用簡短繁體中文，不寫英文等級或識別碼以外的程式用語。
 
-簡報有 `exposure_swap` 時，每對另有 `"purpose": "thesis"` 或 `"exposure"`，頂層另有 `"lower_conviction_review": []`（或逐檔交代，見上節）。
+簡報有 `exposure_swap` 時，每對另有 `"purpose": "thesis"` 或 `"exposure"`，頂層另有 `"lower_conviction_review": []`（或逐檔交代，見上節）。簡報另有 `quality_dip_swap` 時，`purpose` 也可以是 `"quality_dip"`（見上節）。
