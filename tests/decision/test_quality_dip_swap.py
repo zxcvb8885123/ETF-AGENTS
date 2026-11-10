@@ -545,8 +545,9 @@ class ProductionTemplateTests(unittest.TestCase):
     def test_the_live_template_has_no_quality_dip_gate_and_the_nomination_contract_is_unchanged(self):
         live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         sizing = live["position_sizing"]
-        self.assertIsNone(quality_dip_swap_gate(sizing))
-        self.assertEqual(nomination_purposes(sizing), ("thesis", "exposure"))
+        # 2026-11-10 23:05 正式樣板開啟 agent_swap.quality_dip v1、23:25 切到 v2；契約本身不變，只確認閘門形狀。
+        self.assertEqual(quality_dip_swap_gate(sizing)["version"], "v2")
+        self.assertEqual(nomination_purposes(sizing), ("thesis", "exposure", "quality_dip"))
         pair = SWAP_NOMINATION_EXPOSURE_SCHEMA["properties"]["nominations"]["items"]
         self.assertEqual(pair["properties"]["purpose"], {"enum": ["thesis", "exposure"]})
         self.assertNotIn("purpose", SWAP_NOMINATION_SCHEMA["properties"]["nominations"]["items"]["properties"])

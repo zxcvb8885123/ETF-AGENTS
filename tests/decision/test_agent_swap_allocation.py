@@ -381,6 +381,9 @@ class ReplayTests(unittest.TestCase):
                 sizing["rotation"].pop("forced_swap", None)
                 sizing["exposure_rotation"].pop("conviction_gap_swap", None)
             sizing["agent_swap"]["version"] = version
+            if version == "v1":  # 正式樣板的曝險子閘門是 v2（只允許配 agent_swap v2），v1 對照組降回影子
+                sizing["agent_swap"]["exposure"] = {"version": "v1"}
+                sizing["agent_swap"]["quality_dip"]["version"] = "v1"  # 同理：v2 只允許配 agent_swap v2
             return bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])
 
         v1_policy, v1_notes = replay("v1")

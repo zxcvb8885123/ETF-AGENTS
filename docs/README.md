@@ -37,6 +37,7 @@
 - [agent_autonomy_plan.md](agent_autonomy_plan.md)：把策略裁量還給 Agent 的分階段計畫；階段 0（`intent-landing` 統計）已實作，已開啟（2026-11-10）：`agent_swap` v1 影子、`reentry_cooldown` v2、`drawdown_derisk` v5、現金三個 v2；已實作、尚未開啟：`agent_swap` v2、`reentry_cooldown` v3。
 - [agent_nominated_rotation_plan.md](agent_nominated_rotation_plan.md)：換股由交易 Agent 提名（階段 3）的詳細設計；v1 影子已開啟、v2 配置與 `shadow-swap` 報告已實作、尚未開啟。
 - [follow_up_plan.md](follow_up_plan.md)：Agent 自主權線的後續優化與上線計畫（2026-11-10）；目前狀態、依證據排序的項目、「現在可以開」清單（撰寫時為沒有）與 12 個工作包。
+- [agent_vs_code_audit.md](agent_vs_code_audit.md)：誰在做決定的唯讀盤點（2026-11-10）；從資料到訂單 46 個決定點的分工、仍由程式或人設數字替 Agent 判斷的清單、反方檢視與 11/24 前的下一步。
 - [runtime-artifacts.md](runtime-artifacts.md)：執行時產物資料夾。
 
 ### 操作
