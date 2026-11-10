@@ -197,6 +197,8 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：程式算的優質股被大盤拖累事實，**不升版本、不排進上表的線性鏈**，只要求 2.6 以上（讀基本面指標）；與閘門雙向檢查，Finalizer 以 bundle、`fundamental_metrics` 與事件報告整份重算。沒有閘門的舊 run 欄位白名單與重建行為不變。之所以不做成「2.9 ＝ 2.8 加 dip_facts」，是線性鏈會讓這個紀錄用閘門依賴 `rebound_participation`，關掉反彈參與就得一起關它。見[計畫](quality_dip_plan.md)。
 
+選配鍵 `exposure_facts`（`position_sizing.exposure_view` v1，2026-11-10 已開啟，純紀錄、不影響配置）：程式算的組合曝險、產業權重、上漲日報酬與非持股 beta 事實，做法同 `dip_facts`——**不升版本、不排進上表的線性鏈**，只要求 2.7 以上（與 `exposure_review` 同一個 beta 口徑）；與閘門雙向檢查，Finalizer 以 bundle 與 Policy 整份重算。風險 Agent 的 `exposure_view` 列舉放在現金姿態內（同 `turn_assessment`）。沒有閘門的舊 run 欄位白名單與重建不變。
+
 ### 日期資料夾
 
 `artifacts/decisions/<date>/` 與 `artifacts/daily/<date>/` 的日期是**目標交易日**（台北時間），與 `artifacts/competition_d_plan/` 一致；晚上做隔天備案時就是隔天。缺目標時段（評測重跑、行事曆缺漏）才用執行當天。日期只是佈局，不影響編號、封印或雜湊；查找既有 run 一律全域掃描。

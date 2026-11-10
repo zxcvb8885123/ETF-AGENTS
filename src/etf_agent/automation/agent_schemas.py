@@ -140,6 +140,17 @@ def cash_stance_turn_facts_schema(graded: bool, recency: bool = False) -> dict:
     )
 
 
+# 只在 Policy 啟用 position_sizing.exposure_view（版本閘門）時使用：在既有現金姿態 Schema 上另加列舉 exposure_view（不是數字）。
+# 沒有此閘門時沿用上面的 Schema，逐位元不變。
+def exposure_view_schema(base: dict) -> dict:
+    from etf_agent.decision.exposure_facts import EXPOSURE_VIEWS
+
+    return _object(
+        {**base["properties"], "exposure_view": {"enum": list(EXPOSURE_VIEWS)}},
+        tuple(base["required"]) + ("exposure_view",),
+    )
+
+
 # Codex strict JSON Schema 要求 properties 內宣告的欄位全部列入 required，但 revision_actions 的
 # symbol 與 value 只有部分 type 適用，不適用者必須能送出空字串；因此這兩個欄位不套用 _TEXT 的
 # minLength 1（_TEXT 其他用途不變）。條件必填由 RiskReviewValidator._validate_action 負責。

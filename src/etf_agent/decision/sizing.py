@@ -334,6 +334,14 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "bundle 須有 fundamental_period_policy（建事實時檢查，事實讀 team_inputs 2.6 的基本面指標）；"
              "team_inputs 另存 dip_facts（選配鍵，與本閘門雙向同時存在），Finalizer 整份重算",
     ),
+    GateRule(
+        "exposure_view",
+        requires=("exposure_rotation", "cash_stance_turn_facts", "market_index_facts"),
+        note="Agent 主導曝險階段 1（事實與紀錄）：風險 Agent 簡報附組合曝險與產業權重事實（背景、不可引用）並多填 exposure_view 列舉"
+             "（keep_defensive／start_rebuild／rebuild，純紀錄、不接進配置）；agent_swap 也開啟時換股提名簡報另附轉向、加權指數、"
+             "組合曝險、上漲日報酬與新股 beta 事實（不改提名驗證）；需 typed_evidence_v1（驗證現金姿態時檢查）；"
+             "team_inputs 另存 exposure_facts（選配鍵，與本閘門雙向同時存在、須 2.7 以上），Finalizer 整份重算",
+    ),
 )
 GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
 POSITION_SIZING_FIELDS = (
@@ -387,8 +395,14 @@ def validate_cash_stance(
     prior_context: Optional[Mapping[str, object]] = None,
     recency_gate: Optional[Mapping[str, object]] = None,
     turn_facts_gate: Optional[Mapping[str, object]] = None,
+    exposure_view_gate: Optional[Mapping[str, object]] = None,
+    exposure_facts: Optional[Mapping[str, object]] = None,
 ) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
+
+    ``exposure_view_gate`` 是 exposure_view 閘門物件；為 None 時欄位白名單與舊版完全相同（出現 exposure_view 即拒絕）。
+    有閘門時必須是 typed_evidence_v1，``exposure_view`` 必填、非 keep_defensive 須引用市場層級證據，理由不得寫出背景識別碼
+    （``exposure_facts`` 是本次的組合曝險事實，有傳入時其 facts_id 也列入禁用識別碼）。純紀錄，不驗與姿態的對應。
 
     舊 bundle（無 ``evidence_policy``）維持「市場層級可引用任一股票」的原行為；``typed_evidence_v1`` 下
     至少一個證據必須是市場層級（全市場情緒／恐懼貪婪／隔夜／市場狀態編號），個股行情不得單獨成立，
@@ -409,6 +423,8 @@ def validate_cash_stance(
         fields = fields | {"recency_reconciliation"}
     if turn_facts_gate is not None:
         fields = fields | {"turn_assessment"}
+    if exposure_view_gate is not None:
+        fields = fields | {"exposure_view"}
     if cash_ratio_range is not None:
         fields = fields | {"cash_grade"}
         _validate_cash_grade(cash_ratio_range, stance, prefix, errors, prior_context)
@@ -433,6 +449,8 @@ def validate_cash_stance(
             errors.append("%s：cash_stance_recency 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
         if turn_facts_gate is not None:
             errors.append("%s：cash_stance_turn_facts 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
+        if exposure_view_gate is not None:
+            errors.append("%s：exposure_view 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
         return
     if recency_gate is not None:
         from .recency import evidence_recency, validate_recency_reconciliation
@@ -449,6 +467,9 @@ def validate_cash_stance(
         except DecisionToolError as error:
             errors.append("%s：%s" % (prefix, error))
         validate_turn_assessment(stance, prefix, errors)
+    if exposure_view_gate is not None:
+        from .exposure_facts import validate_exposure_view
+        validate_exposure_view(stance, evidence, context.market_evidence_ids, exposure_facts, prefix, errors)
     if evidence and not set(evidence) & context.market_evidence_ids:
         errors.append(
             "%s 至少要引用一個市場層級證據（market_level_evidence_ids：全市場情緒、恐懼貪婪成分、隔夜市場或市場狀態編號）；"
@@ -552,6 +573,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "quality_dip_facts" in sizing:
         from .dip_facts import validate_quality_dip_facts_gate
         validate_quality_dip_facts_gate(sizing, errors)
+    if "exposure_view" in sizing:
+        from .exposure_facts import validate_exposure_view_gate
+        validate_exposure_view_gate(sizing, errors)
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)

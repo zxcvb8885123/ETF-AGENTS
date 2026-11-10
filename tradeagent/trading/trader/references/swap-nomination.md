@@ -43,6 +43,10 @@
 
 正例：新股的多頭論點已回應主要風險、重估條件可檢查；持股的空頭論點（營收連續下滑）在第一輪已被採納，且持股事實顯示帳面報酬已回吐——理由寫「新股的風險已被回應，持股買進當時的營收理由已被新資料推翻，兩邊依據各自成立」。
 
+## `exposure_facts`（簡報有這個區塊時才適用）
+
+Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：程式算的交易池轉向事實（`turn_facts`、`turn_state`）、加權指數事實（`market_index_facts`）、組合 beta／低 beta 占比／現金權重（`portfolio`）、持股產業權重（`sectors`）、最近一個交易池上漲日的池報酬與持股當日報酬及貢獻（`up_day`、`holdings`），以及提名候選新股的 beta 與上行／下行捕捉（`candidate_betas`）。它**全部是背景**（`citable=false`、沒有 evidence_id），只幫你看清組合與市場的處境；不可放進 `buy_basis_ids`／`sell_basis_ids`，也不改變上面任何一條提名規則。持股當日貢獻是以本次決策的起始權重估計，缺資料的欄位為 null，不要自行補數字。
+
 ## 輸出
 
 只輸出 JSON：

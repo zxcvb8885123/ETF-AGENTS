@@ -50,6 +50,7 @@ def template(gate=GATE):
     value = live_policy_template()
     value["position_sizing"].pop("cash_stance_recency")
     value["position_sizing"].pop("agent_swap", None)  # 正式樣板已含 agent_swap：先移除，再依 gate 明確加回
+    value["position_sizing"].pop("exposure_view", None)  # 正式樣板已含 exposure_view（純紀錄）；整條鏈由 test_exposure_view 覆蓋
     if gate is not None:
         value["position_sizing"]["agent_swap"] = copy.deepcopy(gate)
     return value

@@ -59,6 +59,8 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：不升版本、不屬於上表的線性鏈，只要求 2.6 以上；與閘門雙向檢查（閘門在而鍵缺、或鍵在而閘門缺都拒絕），Finalizer 以 `validate_dip_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
 
+選配鍵 `exposure_facts`（`position_sizing.exposure_view` v1，2026-11-10 已開啟）：同 `dip_facts` 的做法，不升版本、只要求 2.7 以上；與閘門雙向檢查，Finalizer 以 `validate_exposure_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
+
 `portfolio_slots` 由 `decision/rotation.py` 以帳戶、policy 與同一份 debate 計算，只讀 `apply_trade_decision` 不會改動的欄位，Finalizer 以最終 policy 重算整份比對；`citable=false`、沒有 evidence_id，交易 Agent 不得寫進文字欄位。
 
 ### 持股檢視（停損／停利）
@@ -95,6 +97,16 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 分析師階段事件報告尚未完成：技術分析師拿 `market_attribution`／`price_position`、基本面分析師拿不含事件一項的 `fundamental_flags`（`event_check: not_applied`），兩者都不含 `price_pattern`／`candidate`，區塊本身沒有 evidence_id，finding 引用各列附的該股既有證據。完整事實在多空研究完成後才建立與存檔（`dip_facts.json`，研究員拒讀），交易 Agent 以 `dip_background` 讀到（`citable=false`、沒有 evidence_id），文字欄位出現 `dip_background`、`dip_facts` 或事實識別碼即拒絕。多空研究員不拿，`shared_input_sha256` 不變。
 - 任何 bar 晚於最近交易日、bar 或文件可得時間缺時區、bar 可得時間晚於 cutoff 一律拒絕；晚於 cutoff 的文件不計入；bundle 須有 `fundamental_period_policy`。
 - 不新增 Agent 輸出欄位、不影響名額／權重／股數／現金／排序／Guard；回放不讀它（樣板帶閘門時 policy 照樣綁，配置不受影響）。
+
+### 組合曝險事實與風險 Agent 的回補意見（`position_sizing.exposure_view` v1，Agent 主導曝險階段 1，紀錄用）
+
+設計見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md)；啟用狀態見 status.md（已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`）。前提 `exposure_rotation`、`cash_stance_turn_facts`、`market_index_facts`（GATE_PREREQUISITES）與 `typed_evidence_v1`（驗證現金姿態時檢查）。閘門存在時：
+
+- `decision/exposure_facts.py` 只依 bundle 與 Policy 中配置前後相同的欄位（`exposure_rotation.beta_window_days`、`sector_by_symbol`）重算，不讀任何 Agent 輸出：組合曝險直接重用 `build_exposure_review`（同口徑）再加持股數與低 beta 檔數；產業權重依 Policy 綁定的 `sector_by_symbol`，金融保險（`industry:17`）另列，缺代碼歸 `unknown`；上漲日＝最近 20 個交易日內最近一個交易池等權報酬（與 `turn_facts` 同一個函式）大於 0 的日子，持股當日貢獻＝Σ（本次決策起始權重 × 當日收盤報酬），任一持股缺行情即 null（不當成 0），沒有上漲日即 `unavailable`；非持股的 beta 用同一個 `BetaModel`。
+- 任何 bar 晚於最近交易日、bar 可得時間缺時區或晚於 cutoff 一律拒絕。
+- 風險 Agent 簡報附 `exposure_facts`（背景、`citable=false`、沒有 facts_id 與 evidence_id；不含交易 Agent 的意圖與信心統計），輸出多一個必填列舉 `exposure_view`（`keep_defensive`／`start_rebuild`／`rebuild`）：值域外或缺少即拒絕；非 `keep_defensive` 時 `evidence_ids` 須含市場層級證據（專屬檢查）；理由寫出 `exposure_facts` 鍵名或 facts_id 即拒絕；沒有閘門時輸出帶此欄位即拒絕。三個驗證點（風險階段、`apply_trade_decision`、Finalizer）用同一個 `validate_cash_stance`。
+- `agent_swap` 也開啟時，換股提名簡報多一個 `exposure_facts` 區塊（轉向、`turn_state`、加權指數、組合曝險、產業權重、上漲日與持股當日報酬、提名候選的 beta），全部是背景；**不改 `swap_nomination.py` 的提名驗證規則與既有欄位**（`purpose`、曝險事實編號與 `lower_conviction_review` 是階段 2）。
+- 純紀錄：不影響名額、權重、股數、現金、換股與 Guard；回放略過閘門（notes 標 `exposure_view: ignored_in_replay`）並拿掉封存姿態的 `exposure_view`。
 
 ### 論點檢視背景與策略教訓
 

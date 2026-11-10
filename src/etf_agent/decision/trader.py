@@ -25,6 +25,7 @@ from .dip_facts import dip_reference_tokens
 from .recency import cash_stance_recency_gate
 from .rebound import bind_effective_state, loosened_cash_buffer, rebound_gate
 from .turn_facts import cash_stance_turn_facts_gate
+from .exposure_facts import exposure_view_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -282,6 +283,7 @@ def apply_trade_decision(
         DecisionContext(bundle), cash_stance, "cash_stance", stance_errors, cash_ratio_range=gate, prior_context=prior_context,
         recency_gate=cash_stance_recency_gate(policy.get("position_sizing") or {}),
         turn_facts_gate=cash_stance_turn_facts_gate(policy.get("position_sizing") or {}),
+        exposure_view_gate=exposure_view_gate(policy.get("position_sizing") or {}),
     )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))

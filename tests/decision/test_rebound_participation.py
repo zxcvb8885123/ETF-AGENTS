@@ -618,6 +618,7 @@ class BriefAndReplayTests(unittest.TestCase):
         template = live_policy_template()
         template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
         template["position_sizing"].pop("agent_swap", None)  # 依賴另兩個閘門，要先拿掉
+        template["position_sizing"].pop("exposure_view", None)  # 依賴 exposure_rotation，同上
         template["position_sizing"].pop("rebound_participation", None)
         template["position_sizing"].pop("exposure_rotation", None)
         _, plain_notes = bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])

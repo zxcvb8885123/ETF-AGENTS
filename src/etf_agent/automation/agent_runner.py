@@ -72,6 +72,7 @@ LATER_STAGE_GLOBS = (
     "trader_*", "brief_trader_*", "team_inputs*", "selection_ranking*",
     "dip_facts*",  # quality_dip_facts 的完整事實（含候選標示）只給交易 Agent，研究員不得讀
     "swap_nomination*", "swap_nominator*",  # 5c 換股提名（agent_swap）的輸出與嘗試紀錄，研究員不得讀
+    "exposure_facts*",  # exposure_view 的組合曝險事實只給風險 Agent 與換股提名，研究員不得讀
 )
 
 

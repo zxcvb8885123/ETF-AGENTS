@@ -603,6 +603,7 @@ class ReplayTests(unittest.TestCase):
                 plain = self.template(factory)
                 plain["position_sizing"].pop("rebound_participation", None)
                 plain["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation，要先於它拿掉
+                plain["position_sizing"].pop("exposure_view", None)  # 同上
                 plain["position_sizing"].pop("exposure_rotation", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
                 plain_policy, plain_notes = self.replay(plain)
                 self.assertNotIn("exposure_rotation", plain_notes)
@@ -640,7 +641,7 @@ class ReplayTests(unittest.TestCase):
             set(notes),
             {"policy_id", "content_sha256", "available_at_overridden", "archived_cash_stance", "cash_stance", "stance_floor",
              "stance_raised_to_floor", "selection_ranking_applied", "breadth_unavailable", "cash_buffer_rate", "drawdown",
-             "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation", "rebound_participation", "agent_swap"},  # 正式樣板已開這些閘門，回放各標一次略過
+             "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation", "rebound_participation", "agent_swap", "exposure_view"},  # 正式樣板已開這些閘門，回放各標一次略過
         )
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):

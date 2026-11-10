@@ -40,6 +40,9 @@ from etf_agent.decision import (
 )
 from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_market_report
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
+from etf_agent.decision.exposure_facts import EXPOSURE_FACTS_KEY, nomination_exposure_brief
+from etf_agent.decision.market_index import market_index_facts
+from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.stance import STANCE_ROLES
 from etf_agent.decision.swap_nomination import (
     STATUS_EXHAUSTED,
@@ -530,6 +533,8 @@ class TeamStagesMixin:
         exposure_review: Mapping[str, object],
         prior_context: Optional[Mapping[str, object]],
         run_id: str,
+        exposure_facts: Optional[Mapping[str, object]] = None,
+        turn_state: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """5c 換股提名（agent_swap 閘門）：交易 Agent 在入選排序之後，提名「用哪檔新股換掉哪檔持股」的有序清單。
 
@@ -552,6 +557,14 @@ class TeamStagesMixin:
                     bundle, policy, trade_decision, ranking, debate, position_review, exposure_review,
                     load_thesis_verdicts(self.root, bundle["decision_cutoff"]),
                 )
+                if exposure_facts is not None:
+                    # exposure_view（版本閘門，Agent 主導曝險階段 1）：附轉向、加權指數、組合曝險、上漲日報酬與新股 beta 事實
+                    # （背景、不可引用）；不改提名的驗證規則。沒有閘門時簡報與提示逐鍵不變。
+                    brief = dict(brief)
+                    brief[EXPOSURE_FACTS_KEY] = nomination_exposure_brief(
+                        exposure_facts, [str(row["symbol"]) for row in brief["candidates"]],
+                        turn_facts(bundle), market_index_facts(bundle), turn_state,
+                    )
             except (DecisionToolError, KeyError, TypeError, ValueError) as error:
                 raise DailyPipelineError("換股提名簡報建立失敗：%s" % error) from error
             brief_path = self.save_brief("brief_swap_nomination", brief)
@@ -561,7 +574,8 @@ class TeamStagesMixin:
                 "第一輪與入選排序已完成；你只決定「若需要名額，依序用哪檔新股換掉哪檔持股」，輸出有先後的配對清單，"
                 "每一對引用簡報列出的依據識別碼並附白話理由；沒有合適的配對就輸出空清單並說明原因。"
                 "簡報的 thesis_hints 每檔都必須在 thesis_hint_responses 回應一次。%s"
-                % (self.root / "tradeagent/trading/trader/references/swap-nomination.md", brief_path, _SHARED_RULES),
+                % (self.root / "tradeagent/trading/trader/references/swap-nomination.md", brief_path, _SHARED_RULES)
+                + (NOMINATION_EXPOSURE_PROMPT if exposure_facts is not None else ""),
                 SWAP_NOMINATION_SCHEMA,
             )
             fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
@@ -579,6 +593,12 @@ class TeamStagesMixin:
             raise DailyPipelineError("SwapNomination 驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("swap_nomination", nomination)
         return nomination
+
+
+NOMINATION_EXPOSURE_PROMPT = (
+    "簡報含 exposure_facts（程式算的轉向、加權指數、組合曝險、產業權重、上漲日報酬與新股 beta 事實）：全部是背景、沒有 evidence_id、"
+    "不可放進依據，也不改變上面的提名規則，用法見 swap-nomination.md「exposure_facts」節。"
+)
 
 
 def _with_dip_view(brief: Mapping[str, object], view: Mapping[str, object], analyst: str) -> Dict[str, object]:

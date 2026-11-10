@@ -1,6 +1,6 @@
 # 市場轉向時的持股曝險：由 Agent 判斷、程式守界線
 
-狀態（2026-11-10）：**只有計畫，尚未實作，沒有任何閘門；開工需使用者另行下令**。第 7 節五項設計取捨已由使用者於 2026-11-10 決定；這只決定了設計，不是實作或開啟閘門的指令。本檔不改程式、設定、Skill 與既有文件。文中新名稱（`exposure_view`、`purpose`、`review:<代號>:exposure` 等）全部是提案、名稱暫定。
+狀態（2026-11-10）：**階段 1（事實與紀錄）已實作，閘門 `position_sizing.exposure_view` 已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`**（使用者 2026-11-10 下令開工階段 1；實作紀錄見第 10 節）；階段 2、3 尚未實作，開工需使用者另行下令。第 7 節五項設計取捨已由使用者於 2026-11-10 決定；這只決定了設計；開啟閘門是使用者另行決定的。第 1～9 節是計畫原文（撰寫時不改程式、設定、Skill 與既有文件）；文中 `exposure_view` 已照暫名實作，`purpose`、`review:<代號>:exposure` 等其餘新名稱仍是提案、名稱暫定。
 
 數字是用 2026-11-10 封存 run（`decision-20261109T230435Z`）的 `team_inputs.json`、`intent.json`、`debate.json`、`decision_input.json` 以暫存腳本唯讀重算的，證據等級一律是 `replay_reference_only`：只說明「當天 Agent 會看到什麼事實」，不代表 Agent 會怎麼判斷，也不代表改了績效會更好。
 
@@ -262,3 +262,15 @@ Agent 的輸出只有列舉、代號、識別碼與文字，沒有數字。
 - 反省的回答：分界目前偏向程式，幾個近期閘門把判斷寫成了公式；硬性界線與驗證不該動。
 - 已決定：高信心持股可以曝險理由讓位，但要先逐檔交代中、低信心持股，且排在清單最後；程式只驗結構。與中、低信心同一階段上線；「先處理」指先交代，不要求先成交。
 - 其餘四項也已決定照建議：併入換股提名、新增 `exposure_view`、換出依據用曝險事實編號、每次對數上限維持現行。全部尚未實作，開工需使用者另行下令。
+
+## 10. 階段 1 實作紀錄（2026-11-10）
+
+使用者 2026-11-10 下令開工階段 1。只做第 6 節表的第 1 列；第 7 節的決定不變。實作時閘門預設關閉；**使用者 2026-11-10 決定開啟**：`config/decision_policy.json` 的 `position_sizing.exposure_view: {"version": "v1"}`，純紀錄、不影響配置，回滾＝刪掉該欄位。
+
+- **閘門**：`position_sizing.exposure_view: {"version": "v1"}`（沿用第 4.1 節的暫名），形狀只有 version。前提（`GATE_PREREQUISITES`）：`exposure_rotation`（同一個 beta 口徑與 `exposure_review`）、`cash_stance_turn_facts` 與 `market_index_facts`（提名簡報要附的轉向與加權指數事實由它們算）；`typed_evidence_v1` 在驗證現金姿態時檢查。不要求 `agent_swap`：單獨開啟時只有風險 Agent 那一半。策略反思不得改（`FORBIDDEN_PREFIXES`）；回放略過閘門並拿掉封存姿態的 `exposure_view`（notes 標 `ignored_in_replay`）。
+- **事實**（`src/etf_agent/decision/exposure_facts.py`）：只讀 bundle 與 Policy 中配置前後相同的欄位，不讀任何 Agent 輸出。組合曝險重用 `build_exposure_review`；產業權重讀 Policy 綁定的 `sector_by_symbol`（不在執行時讀 `data/sector_classification.json`），金融保險為 `industry:17`；上漲日用 `turn_facts` 的池報酬函式，往回最多 20 個交易日；持股當日貢獻＝Σ（本次決策起始權重 × 當日收盤報酬），這個口徑能重現第 5.1 節的 +0.67%（用前一日回推的權重是 +0.57%、只算持股部位是 +0.70%）；非持股的 beta 全部存起來，提名簡報只列候選。
+- **風險 Agent**：簡報多 `exposure_facts`（背景、不可引用、沒有 facts_id）；輸出多必填列舉 `exposure_view`。非 `keep_defensive` 時須引用市場層級證據（專屬檢查與訊息；在 `typed_evidence_v1` 下原本就要求至少一個市場層級證據，所以這條是重申）；理由寫出 `exposure_facts` 或 facts_id 即拒絕。純紀錄，配置不讀。
+- **換股提名簡報**：`agent_swap` 也開啟時多一個 `exposure_facts` 區塊。接在 `automation/team_stages.py`，**沒有改 `swap_nomination.py`**，提名的驗證規則、輸出欄位與封存都不變；Skill 的禁令句子也沒改，只在 `swap-nomination.md` 加一節說明這個區塊是背景。
+- **team_inputs**：選配鍵 `exposure_facts`（做法同 `dip_facts`），不升版、須 2.7 以上，與閘門雙向檢查，Finalizer 整份重算。`exposure_view` 放在現金姿態內（同 `turn_assessment`）。與 `agent_swap` 的 2.9 白名單不衝突：選配鍵在版本白名單之外另行檢查。
+- **封存資料唯讀重算**（2026-11-10 `decision-20261109T230435Z`，`replay_reference_only`）：組合 beta 0.105601、持股 beta 0.128716、低 beta 占比 0.635254（18／27 檔）、現金 0.179580、金融保險 8 檔 0.260000、上漲日為 11-09（最近交易日）池報酬 +0.055064、持股當日貢獻 +0.006667，與第 5.1 節一致；第 5.1 節表中 7 檔的權重、beta、當日報酬也一致（`tests/decision/test_exposure_view.py`）。
+- **階段 2 待辦**（本次刻意不做）：提名的 `purpose`、曝險事實編號 `review:<代號>:exposure`、`lower_conviction_review`、提名理由的背景識別碼檢查（需要改 `SwapNominationValidator`，屬於換股提名的驗證規則），以及第 4.3 節 1、2 項對換股提名計畫與 Skill 禁令句子的同步修改。

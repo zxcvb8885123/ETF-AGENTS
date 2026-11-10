@@ -171,6 +171,8 @@ FORBIDDEN_PREFIXES = (
     "rebound_participation",
     # 換股改由交易 Agent 提名：版本、對數上限、最短持有天數與綁定的 thesis_hint_symbols／verdicts_ref，切換程式路徑，只由人設定。
     "agent_swap",
+    # Agent 主導曝險階段 1：風險 Agent 簡報附組合曝險事實並多填 exposure_view 列舉（紀錄用），切換程式路徑與 team_inputs 欄位，只由人設定。
+    "exposure_view",
 )
 
 

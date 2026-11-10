@@ -39,6 +39,7 @@ from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
 from etf_agent.decision.dip_facts import build_dip_facts, quality_dip_facts_gate
+from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, bind_thesis_hints, unsupported_gate_version
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
@@ -353,6 +354,15 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             turn_state = build_turn_state(bundle, rebound)
             self.save_artifact("turn_state", turn_state)
 
+        # exposure_view（版本閘門，Agent 主導曝險階段 1）：程式算組合曝險、產業權重、上漲日與非持股 beta 事實，只給風險 Agent
+        # 與換股提名當背景；另存進 team_inputs.exposure_facts 供 Finalizer 整份重算。沒有閘門時不建立，team_inputs 逐鍵不變。
+        exposure_facts = None
+        if exposure_view_gate(base_policy.get("position_sizing")) is not None:
+            if exposure_review is None:
+                raise DailyPipelineError("policy 啟用 exposure_view 時也必須啟用 exposure_rotation（同一個 beta 口徑，team_inputs 2.7 以上）")
+            exposure_facts = build_exposure_facts(bundle, base_policy)
+            self.save_artifact("exposure_facts", exposure_facts)
+
         # quality_dip_facts：完整事實（含事件面一項、price_pattern 與 candidate）在多空研究完成後才建立與存檔，研究員看不到；
         # 只給交易 Agent 當背景，另存進 team_inputs.dip_facts 供 Finalizer 整份重算。沒有閘門時不建立，team_inputs 逐鍵不變。
         dip_facts = None
@@ -388,7 +398,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self.log("[decision 5c] 交易 Agent 第三步：換股提名（有先後的配對清單）")
             with self._timed("swap_nomination"):
                 swap_nomination = self.run_swap_nomination(
-                    bundle, base_policy, trade, ranking, debate, position_review, exposure_review, prior_context, decision_run_id)
+                    bundle, base_policy, trade, ranking, debate, position_review, exposure_review, prior_context, decision_run_id,
+                    **({"exposure_facts": exposure_facts, "turn_state": turn_state} if exposure_facts is not None else {}))
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         self.save_artifact("policy_base", base_policy)
@@ -402,7 +413,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                           (base_policy.get("position_sizing") or {}).get("cash_stance_recency"),
                                           (base_policy.get("position_sizing") or {}).get("cash_stance_turn_facts"),
                                           turn_state,
-                                          (base_policy.get("position_sizing") or {}).get("market_index_facts"))
+                                          (base_policy.get("position_sizing") or {}).get("market_index_facts"),
+                                          **({"exposure_view_gate": exposure_view_gate(base_policy.get("position_sizing")),
+                                              "exposure_facts": exposure_facts} if exposure_facts is not None else {}))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
@@ -458,6 +471,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"turn_state": turn_state} if turn_state is not None else {}),
             **({"swap_nomination": swap_nomination} if swap_nomination is not None else {}),
             **({"dip_facts": dip_facts} if dip_facts is not None else {}),
+            **({"exposure_facts": exposure_facts} if exposure_facts is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history
