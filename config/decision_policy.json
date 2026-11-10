@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-09-rebound-v1-1",
-  "available_at": "2026-11-09T23:45:00+08:00",
+  "policy_id": "strategy-2026-11-10-rebound-v2-1",
+  "available_at": "2026-11-10T01:37:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -69,19 +69,10 @@
       "conviction_gap_swap": "v1"
     },
     "rebound_participation": {
-      "version": "v1",
-      "candidate_return": "0.03",
-      "candidate_ma5_share": "0.30",
-      "confirm_return": "0",
-      "confirm_ma5_share": "0.50",
-      "confirm_new_low_share_max": "0.10",
-      "candidate_expiry_days": 3,
-      "retreat_return": "-0.04",
-      "retreat_window_days": 3,
-      "retreat_ma5_share": "0.30",
+      "version": "v2",
       "min_coverage": "0.80",
       "by_state": {
-        "candidate": {"defensive_target": "0.01", "max_swaps_per_run": 2, "min_holding_days": 5},
+        "candidate": {"defensive_target": "0.30", "max_swaps_per_run": 2, "min_holding_days": 5},
         "confirmed": {"defensive_target": "0.55", "max_swaps_per_run": 4, "min_holding_days": 0}
       }
     },

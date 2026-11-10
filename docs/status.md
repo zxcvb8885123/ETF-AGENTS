@@ -64,7 +64,7 @@
 | `cash_fit_order` | `v1`，`cash_fit_min_fill_ratio 0.5` |
 | `high_conviction_cash_priority` | `v1`（2026-11-06 新增） |
 | `held_weight_budget` | `v1`（2026-11-08 新增） |
-| `rebound_participation` | v1 **2026-11-09 23:45 已開啟，只開 confirmed 一檔**（candidate 的 `defensive_target` 設 0.01、換股 2 檔、持有 5 天＝實質不動；confirmed 為 0.55、4 檔、持有 0 天；**沒有**填選填的 `defensive_cash_buffer` 與 `confirmed.max_turnover_rate`，所以不放寬現金與換手；之前樣板存於 `config/policy_versions/2026-11-09-rebound-before.json`，回滾＝刪除此欄位並把 `exposure_rotation.version` 改回 v2）：程式狀態機 `turn_state` 與風險 Agent 的 `turn_assessment` 取較保守者，放寬防守姿態下的曝險換股（選填：防守現金比例條件式放寬、confirmed 換手上限，皆放寬風控、只由人設定）；前提 `exposure_rotation` v3（正式設定已是 v3）、`cash_stance_turn_facts`、`drawdown_derisk` v4、`typed_evidence_v1`；`team_inputs` 2.8；計劃與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md) |
+| `rebound_participation` | v1 **2026-11-09 23:45 已開啟（2026-11-10 已切到 v2，以下 v1 描述保留供舊 run 重建）**，只開 confirmed 一檔（candidate 的 `defensive_target` 設 0.01、換股 2 檔、持有 5 天＝實質不動；confirmed 為 0.55、4 檔、持有 0 天；**沒有**填選填的 `defensive_cash_buffer` 與 `confirmed.max_turnover_rate`，所以不放寬現金與換手；之前樣板存於 `config/policy_versions/2026-11-09-rebound-before.json`，回滾＝刪除此欄位並把 `exposure_rotation.version` 改回 v2）：程式狀態機 `turn_state` 與風險 Agent 的 `turn_assessment` 取較保守者，放寬防守姿態下的曝險換股（選填：防守現金比例條件式放寬、confirmed 換手上限，皆放寬風控、只由人設定）；前提 `exposure_rotation` v3（正式設定已是 v3）、`cash_stance_turn_facts`、`drawdown_derisk` v4、`typed_evidence_v1`；`team_inputs` 2.8；計劃與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md)；**v2 已於 2026-11-10 01:37 開啟（正式設定已切到 v2，`by_state` 與 `min_coverage` 沿用 v1 的值；**2026-11-10 起 candidate 的 `defensive_target` 由 0.01 改為 0.30**，因 0.01 低於持股 beta 而恆為 `beta_at_target`、候選狀態實質不動，仍不放寬現金與換手；v1 樣板存於 `config/policy_versions/2026-11-10-rebound-v1.json`，回滾＝換回該檔的區塊）**：拿掉固定門檻，程式只整理事實與資料品質，`turn_assessment` 單獨決定、缺資料恆 none，與 v1 差異（regime 不是 bear 不再擋）見[v2 計劃](rebound_participation_v2_plan.md) |
 | `slot_recycle` | v1 已實作、尚未開啟（正式設定沒有此欄位）：LOT_SIZE／預算為零的新股釋出新增名額給後面的候選 |
 | `cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`（`buy_gap_reserve_rate 0.03`）、`sector_fit`、`turnover_fit` | 皆 `v1`；`insufficient_funds_policy void_batch` |
 | `reentry_cooldown` | `{version v1, days 3}` |
@@ -72,13 +72,13 @@
 | `drawdown_control` | `neutral_at 0.05`、`defensive_at 0.10`、`release_neutral_below 0.03`、`release_defensive_below 0.07`；`history_ref` 由 pipeline 綁定 |
 | `stock_weight_fit` | `v1`（單股上限減碼不依此欄位開關，一律由程式執行） |
 | rules | `max_turnover_rate 0.3`（policy）、`max_sector_weight 0.6`、`reuse_sell_proceeds true`、`minimum_active_share 0.15`、現金 `< 0.25`、持股 20～30 檔、單股 10%（2330 為 25%） |
-| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.7（`exposure_rotation` 開啟時） |
+| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.8（`exposure_rotation` 開啟為 2.7、`rebound_participation` 再開啟為 2.8，目前兩者皆開） |
 | `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
 
 未開啟：`high_conviction_cash_floor`。
 
 已開啟（紀錄用）：`cash_stance_turn_facts` v1（2026-11-09 開啟，轉向事實與 `turn_assessment` 列舉，不是規則，與姿態不設對應，見[計劃](turn_facts_plan.md)）。
-已實作、尚未開啟（紀錄用）：`market_index_facts` v1（風險 Agent 簡報附證交所加權指數收盤、當日漲跌、近 5／20 日報酬與離高點回檔，背景事實、不可引用；補上晚間決策看不到隔夜行情的缺口；不新增輸出欄位、不影響配置；要開啟由人在 `config/decision_policy.json` 的 `position_sizing` 加 `"market_index_facts": {"version": "v1"}`，見[計畫](market_index_facts_plan.md)）。把它的行為當成現行行為是錯的。
+已開啟（2026-11-10，紀錄用）：`market_index_facts` v1（風險 Agent 簡報附證交所加權指數收盤、當日漲跌、近 5／20 日報酬與離高點回檔，背景事實、不可引用；補上晚間決策看不到隔夜行情的缺口；不新增輸出欄位、不影響配置；設定在 `config/decision_policy.json` 的 `position_sizing.market_index_facts`，回滾＝刪除該欄位，見[計畫](market_index_facts_plan.md)）。
 
 未開啟：
 

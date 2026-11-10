@@ -12,6 +12,9 @@
   ``drawdown_control.stance_floor`` 為 defensive 時恆 none（回撤下限優先）；減碼日（drawdown_derisk）由配置整個略過曝險換股。
 - 對映寫在 Policy 的 ``by_state``，只會放寬（beta 停止線取較大、換股檔數取較大、持有天數取較小），不會收緊現行設定。
 
+v2（``docs/rebound_participation_v2_plan.md``）：不再有狀態機與轉向門檻，程式只整理事實與資料品質（``data_status``），
+``effective_state`` 只由風險 Agent 的 ``turn_assessment`` 對映，資料缺漏或回撤下限為 defensive 時壓回 none；v1 函式本體保持不動。
+
 誰判斷方向：程式只算事實與狀態；有效狀態只是在既有曝險換股規則上調整三個參數，賣單仍標 ``exit``、不改寫交易 Agent 意圖、
 不只賣不買，``turnover_fit`` 仍是最終上限。
 """
@@ -25,7 +28,12 @@ from .fields import DecisionToolError, decimal_value, reject_unknown_fields
 from .turn_facts import TURN_ASSESSMENTS, _Pool
 
 REBOUND_PARTICIPATION = "v1"
+# v2：程式不再用固定門檻推進狀態機，只算事實（最近幾日的池報酬、站回 MA5 比例、新低比例、regime 與資料品質）交給風險 Agent；
+# 有效狀態只由 Agent 的 turn_assessment 對映決定，資料缺漏時恆 none。v1 完全保留（舊 Policy／舊 run 逐位元重建）。
+REBOUND_PARTICIPATION_V2 = "v2"
+REBOUND_VERSIONS = (REBOUND_PARTICIPATION, REBOUND_PARTICIPATION_V2)
 TURN_STATE_VERSION = "1.0"
+TURN_STATE_VERSION_V2 = "2.0"
 TURN_STATES = ("none", "candidate", "confirmed")
 # 風險 Agent 既有列舉 → 狀態上限（列舉本身不含數字）；名稱與 turn_facts.TURN_ASSESSMENTS 同。
 AGENT_STATE_BY_ASSESSMENT = {
@@ -42,6 +50,9 @@ GATE_REQUIRED_FIELDS = {
 # effective_state 由 apply_trade_decision 綁定（不得預填），重建時 Finalizer 以 team_inputs.turn_state 與風險 Agent 的列舉重算。
 # cash_loosening 也由程式綁定（防守姿態的現金比例被放寬時記下前後值，供稽核與 Finalizer 重算）。
 GATE_FIELDS = GATE_REQUIRED_FIELDS | {"effective_state", "cash_loosening"}
+# v2 只留資料品質數字 min_coverage（不是判斷）與 by_state 對映；沒有任何轉向門檻。
+GATE_REQUIRED_FIELDS_V2 = {"version", "min_coverage", "by_state"}
+GATE_FIELDS_V2 = GATE_REQUIRED_FIELDS_V2 | {"effective_state", "cash_loosening"}
 STATE_REQUIRED_FIELDS = {"defensive_target", "max_swaps_per_run", "min_holding_days"}
 # 選填：defensive_cash_buffer（兩態皆可）＝防守姿態的現金比例放寬目標；max_turnover_rate 只有 confirmed 可填＝總換手上限。
 # 兩者都放寬風控，只由人設定；省略即不放寬。
@@ -55,6 +66,11 @@ TURN_STATE_FIELDS = {
     "cumulative_return_since_candidate", "signals", "flags", "recent_path", "note",
 }
 SIGNAL_FIELDS = {"pool_return_latest", "share_above_ma5", "new_low_20d_share", "return_window", "coverage"}
+TURN_STATE_FIELDS_V2 = {
+    "schema_version", "version", "as_of", "data_status", "regime", "signals", "flags", "recent_path", "note",
+}
+SIGNAL_FIELDS_V2 = {"pool_return_latest", "share_above_ma5", "new_low_20d_share", "coverage", "return_coverage"}
+DATA_STATUSES = ("available", "unavailable")
 RECENT_PATH_DAYS = 5
 QUANTUM = Decimal("0.000001")
 TURN_STATE_NOTE = (
@@ -62,6 +78,12 @@ TURN_STATE_NOTE = (
     "只是背景：沒有證據編號、不可引用。有效狀態取程式狀態與你的 turn_assessment 對映中較保守者，"
     "所以兩邊都同意轉向時才會放寬防守姿態下的曝險換股；它不改現金姿態、持股廣度或任何硬性規則。"
     "反彈可能失敗，缺資料時程式一律回 none。"
+)
+TURN_STATE_NOTE_V2 = (
+    "turn_state（v2）只是程式整理的事實與資料品質，沒有狀態、沒有門檻、沒有證據編號、不可引用。"
+    "是否轉向由你的 turn_assessment 單獨決定：turn_unconfirmed 對映候選、turn_confirmed 對映確認，"
+    "程式只在資料缺漏（data_status 為 unavailable）或回撤下限為 defensive 時把有效狀態壓回 none；regime 不是 bear 不擋。"
+    "你的 turn_confirmed 會放寬防守姿態下的曝險換股、現金比例與換手上限（依 Policy），反彈可能失敗，缺資料時不要升級。"
 )
 
 
@@ -110,24 +132,27 @@ def validate_rebound_gate(sizing: Mapping[str, object], errors: List[str]) -> No
     if not isinstance(gate, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    reject_unknown_fields(gate, GATE_FIELDS, prefix, errors)
-    missing = sorted(GATE_REQUIRED_FIELDS - set(gate))
+    v2 = gate.get("version") == REBOUND_PARTICIPATION_V2
+    # v1／v2 欄位集不同：v2 帶 v1 的轉向門檻、或 v1 缺門檻都拒絕（不混用）。
+    reject_unknown_fields(gate, GATE_FIELDS_V2 if v2 else GATE_FIELDS, prefix, errors)
+    missing = sorted((GATE_REQUIRED_FIELDS_V2 if v2 else GATE_REQUIRED_FIELDS) - set(gate))
     if missing:
         errors.append("%s 缺少必要欄位（由人設定，程式不提供預設值）：%s" % (prefix, "、".join(missing)))
-    if gate.get("version") != REBOUND_PARTICIPATION:
-        errors.append("%s.version 只允許 %s" % (prefix, REBOUND_PARTICIPATION))
-    _number(gate, "candidate_return", errors, Decimal("0.005"), Decimal("0.2"), prefix)
-    _number(gate, "candidate_ma5_share", errors, Decimal(0), Decimal(1), prefix)
-    _number(gate, "confirm_return", errors, Decimal("-0.1"), Decimal("0.2"), prefix)
-    _number(gate, "confirm_ma5_share", errors, Decimal(0), Decimal(1), prefix)
-    _number(gate, "confirm_new_low_share_max", errors, Decimal(0), Decimal(1), prefix)
-    _number(gate, "retreat_return", errors, Decimal("-0.3"), Decimal("-0.005"), prefix)
-    _number(gate, "retreat_ma5_share", errors, Decimal(0), Decimal(1), prefix)
+    if gate.get("version") not in REBOUND_VERSIONS:
+        errors.append("%s.version 只允許 %s" % (prefix, "／".join(REBOUND_VERSIONS)))
+    if not v2:
+        _number(gate, "candidate_return", errors, Decimal("0.005"), Decimal("0.2"), prefix)
+        _number(gate, "candidate_ma5_share", errors, Decimal(0), Decimal(1), prefix)
+        _number(gate, "confirm_return", errors, Decimal("-0.1"), Decimal("0.2"), prefix)
+        _number(gate, "confirm_ma5_share", errors, Decimal(0), Decimal(1), prefix)
+        _number(gate, "confirm_new_low_share_max", errors, Decimal(0), Decimal(1), prefix)
+        _number(gate, "retreat_return", errors, Decimal("-0.3"), Decimal("-0.005"), prefix)
+        _number(gate, "retreat_ma5_share", errors, Decimal(0), Decimal(1), prefix)
+        if "candidate_expiry_days" in gate:
+            _integer(gate["candidate_expiry_days"], "%s.candidate_expiry_days" % prefix, errors, 2, 10)
+        if "retreat_window_days" in gate:
+            _integer(gate["retreat_window_days"], "%s.retreat_window_days" % prefix, errors, 2, 10)
     _number(gate, "min_coverage", errors, Decimal("0.5"), Decimal(1), prefix)
-    if "candidate_expiry_days" in gate:
-        _integer(gate["candidate_expiry_days"], "%s.candidate_expiry_days" % prefix, errors, 2, 10)
-    if "retreat_window_days" in gate:
-        _integer(gate["retreat_window_days"], "%s.retreat_window_days" % prefix, errors, 2, 10)
     _validate_by_state(gate, sizing, prefix, errors)
     if "effective_state" in gate and gate["effective_state"] not in TURN_STATES:
         errors.append("%s.effective_state 必須是 %s（只能由程式綁定）" % (prefix, "／".join(TURN_STATES)))
@@ -345,6 +370,64 @@ def _unavailable_state(trade_date: object, gate: Mapping[str, object], reason: s
     }
 
 
+def _unavailable_facts_v2(trade_date: object, gate: Mapping[str, object], reason: str) -> Dict[str, object]:
+    return {
+        "schema_version": TURN_STATE_VERSION_V2, "version": gate["version"], "as_of": trade_date, "data_status": "unavailable",
+        "regime": None, "signals": {name: None for name in sorted(SIGNAL_FIELDS_V2)}, "flags": [TURN_STATE_UNAVAILABLE, reason],
+        "recent_path": [], "note": TURN_STATE_NOTE_V2,
+    }
+
+
+def _return_coverage(pool: _Pool, index: int) -> Decimal:
+    """池日報酬實際用到的股票占交易池的比例（當日與前一個交易日都有收盤者）。``coverage`` 只看當日有 bar，
+    前一日缺很多檔時報酬只由少數檔算出，必須另外看這個比例（v2 專用，不改 turn_facts 的 pool_return）。"""
+    if index < 1 or not pool.size:
+        return Decimal(0)
+    today, before = pool.days[index], pool.days[index - 1]
+    used = sum(1 for dates in pool.dates_by_symbol.values() if today in dates and before in dates)
+    return Decimal(used) / Decimal(pool.size)
+
+
+def _turn_facts_v2(pool: _Pool, gate: Mapping[str, object], trade_date: str) -> Dict[str, object]:
+    """v2：只整理最近 ``RECENT_PATH_DAYS`` 日的事實與資料品質（沒有門檻、沒有狀態）；缺資料標 unavailable，永不補假值。"""
+    date_sets = {symbol: set(dates) for symbol, dates in pool.dates_by_symbol.items()}
+    start = max(0, len(pool.days) - RECENT_PATH_DAYS)
+    records = [_day_record(pool, index, gate, date_sets) for index in range(start, len(pool.days))]
+    return_coverage = [_return_coverage(pool, index) for index in range(start, len(pool.days))]
+    last = records[-1]
+    reasons = [last["unavailable"]] if last["unavailable"] is not None else []
+    if return_coverage[-1] < _gate_decimal(gate, "min_coverage"):
+        reasons.append("pool_return_sample")  # 前一交易日缺很多檔：報酬只由少數檔算出，不可當事實
+    unavailable = bool(reasons)
+    flags: List[str] = [TURN_STATE_UNAVAILABLE, "無法計算：%s" % "、".join(reasons)] if unavailable else []
+
+    def text(value: object) -> Optional[str]:
+        return _q(value) if isinstance(value, Decimal) else None  # type: ignore[arg-type]
+
+    return {
+        "schema_version": TURN_STATE_VERSION_V2,
+        "version": gate["version"],
+        "as_of": trade_date,
+        "data_status": "unavailable" if unavailable else "available",
+        "regime": last["regime"],
+        "signals": {
+            "pool_return_latest": text(last["ret"]),
+            "share_above_ma5": text(last["ma5"]),
+            "new_low_20d_share": text(last["new_low"]),
+            "coverage": _q(last["coverage"]),  # type: ignore[arg-type]
+            "return_coverage": _q(return_coverage[-1]),
+        },
+        "flags": flags,
+        "recent_path": [
+            {"date": row["date"], "pool_return": text(row["ret"]), "share_above_ma5": text(row["ma5"]),
+             "new_low_20d_share": text(row["new_low"]), "regime": row["regime"], "coverage": _q(row["coverage"]),  # type: ignore[arg-type]
+             "return_coverage": _q(sample)}
+            for row, sample in zip(records, return_coverage)
+        ],
+        "note": TURN_STATE_NOTE_V2,
+    }
+
+
 def build_turn_state(bundle: Mapping[str, object], gate: Mapping[str, object]) -> Dict[str, object]:
     """依 bundle 的 ``price_series`` 重算程式狀態（整份輸出會存進 team_inputs 2.8，Finalizer 整份重算比對）。
 
@@ -356,14 +439,18 @@ def build_turn_state(bundle: Mapping[str, object], gate: Mapping[str, object]) -
     trade_date = snapshot.get("latest_trade_date") if isinstance(snapshot, Mapping) else None
     if not isinstance(trade_date, str) or not isinstance(bundle.get("price_series"), list):
         raise DecisionToolError("turn_state 需要 snapshot.latest_trade_date 與 price_series")
+    v2 = gate.get("version") == REBOUND_PARTICIPATION_V2
+    unavailable = _unavailable_facts_v2 if v2 else _unavailable_state
     try:
         pool = _Pool(bundle, trade_date)
     except DecisionToolError as error:
-        return _unavailable_state(trade_date, gate, str(error))
+        return unavailable(trade_date, gate, str(error))
     if not pool.days:
-        return _unavailable_state(trade_date, gate, "price_series 沒有任何行情")
+        return unavailable(trade_date, gate, "price_series 沒有任何行情")
     if pool.days[-1] != trade_date:
-        return _unavailable_state(trade_date, gate, "行情最後一個交易日 %s 不是 snapshot.latest_trade_date %s" % (pool.days[-1], trade_date))
+        return unavailable(trade_date, gate, "行情最後一個交易日 %s 不是 snapshot.latest_trade_date %s" % (pool.days[-1], trade_date))
+    if v2:
+        return _turn_facts_v2(pool, gate, trade_date)
     records = state_path(pool, gate)
     last = records[-1]
     flags: List[str] = []
@@ -400,11 +487,13 @@ def validate_turn_state(
     if not isinstance(turn_state, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    reject_unknown_fields(turn_state, TURN_STATE_FIELDS, prefix, errors)
     gate = rebound_gate(policy.get("position_sizing"))
     if gate is None:
         errors.append("%s 只能用於啟用 position_sizing.rebound_participation 的 Policy" % prefix)
         return
+    reject_unknown_fields(
+        turn_state, TURN_STATE_FIELDS_V2 if gate.get("version") == REBOUND_PARTICIPATION_V2 else TURN_STATE_FIELDS, prefix, errors,
+    )
     try:
         expected = build_turn_state(bundle, gate)
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:
@@ -422,8 +511,17 @@ def effective_state(
     """``min(程式 turn_state, 風險 Agent turn_assessment 對映)``；回撤下限為 defensive 時恆 none（回撤下限優先）。
 
     stance 缺 turn_assessment 或值不在列舉內即拒絕（雙鑰匙缺一把就不給放寬，也不猜）。"""
-    state = turn_state.get("state")
     assessment = stance.get("turn_assessment")
+    if turn_state.get("version") == REBOUND_PARTICIPATION_V2:
+        # v2：Agent 的列舉是唯一的鑰匙；程式只在資料缺漏或回撤下限為 defensive 時壓回 none（regime 不是 bear 不擋）。
+        if turn_state.get("data_status") not in DATA_STATUSES:
+            raise DecisionToolError("turn_state.data_status 必須是 %s" % "／".join(DATA_STATUSES))
+        if assessment not in TURN_ASSESSMENTS:
+            raise DecisionToolError("現金姿態必須有 turn_assessment（%s），反彈參與閘門才能算有效狀態" % "／".join(TURN_ASSESSMENTS))
+        if turn_state["data_status"] != "available" or stance_floor == "defensive":
+            return "none"
+        return AGENT_STATE_BY_ASSESSMENT[str(assessment)]
+    state = turn_state.get("state")
     if state not in TURN_STATES:
         raise DecisionToolError("turn_state.state 必須是 %s" % "／".join(TURN_STATES))
     if assessment not in TURN_ASSESSMENTS:

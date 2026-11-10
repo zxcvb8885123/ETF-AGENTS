@@ -8,7 +8,7 @@
 
 ## 設計
 
-定義、前提、對映與雙鑰匙見 [decision-contracts.md](decision-contracts.md#反彈參與positionsizingrebound_participation-v1已實作尚未開啟)。要點：程式狀態機 `turn_state`（none／candidate／confirmed，只在 regime 為 bear 時有意義）與風險 Agent 既有 `turn_assessment` 取較保守者；只放寬防守姿態的曝險換股；缺資料永不升級；`team_inputs` 2.8。
+定義、前提、對映與雙鑰匙見 [decision-contracts.md](decision-contracts.md#反彈參與positionsizingrebound_participation-v1-已開啟v2-已開啟)。要點：程式狀態機 `turn_state`（none／candidate／confirmed，只在 regime 為 bear 時有意義）與風險 Agent 既有 `turn_assessment` 取較保守者；只放寬防守姿態的曝險換股；缺資料永不升級；`team_inputs` 2.8。
 
 實作時的解讀選擇（規格沒寫死）：「轉向日之後累積池報酬 ≥ 0」不含轉向日當天；candidate 第 1 日為轉向日，第 2、3 日可確認，第 4 日仍未確認回 none，期間再大漲不重設；`stance_floor` 只有為 defensive 時才強制 none（floor 為 neutral 時現行規則本來就允許 0.55 目標）；對映取「只放寬」（停止線取大、檔數取大、持有天數取小）。regime 離開 bear 即回 none：真實反彈常使 MA20 廣度快速站上 40%，confirmed 可能因此提早結束。
 

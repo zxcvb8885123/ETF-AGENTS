@@ -353,7 +353,7 @@ class GateShapeTests(unittest.TestCase):
             self.assertTrue(any("缺少必要欄位" in e and field in e for e in sizing_errors(sizing)), field)
         cases = {
             "含未允許欄位": {"threshold": "1"},
-            "version 只允許": {"version": "v2"},
+            "version 只允許": {"version": "v3"},
             "candidate_return": {"candidate_return": 0.03},
             "retreat_return": {"retreat_return": "0.04"},
             "candidate_expiry_days": {"candidate_expiry_days": 1},
@@ -774,14 +774,16 @@ class TurnoverCapTests(unittest.TestCase):
 
 class LiveConfigTests(unittest.TestCase):
     def test_the_live_config_enables_only_the_confirmed_state(self):
-        """2026-11-09 23:45 開啟：candidate 實質不動、confirmed 才放寬，且不填兩個放寬風控的選填欄位。"""
+        """2026-11-09 23:45 開 v1、2026-11-10 切到 v2：candidate 目標 0.30、confirmed 0.55，且不填兩個放寬風控的選填欄位。"""
         from test_gate_prerequisites import live_production_policy
 
         sizing = live_production_policy()["position_sizing"]
         gate = sizing["rebound_participation"]
+        self.assertEqual(gate["version"], "v2")
+        self.assertEqual(set(gate), {"version", "min_coverage", "by_state"})  # v2 沒有任何轉向門檻
         self.assertEqual(sizing["exposure_rotation"]["version"], "v3")
         self.assertIsNone(sizing["exposure_rotation"]["beta_target_by_stance"]["defensive"])
-        self.assertEqual(gate["by_state"]["candidate"]["defensive_target"], "0.01")
+        self.assertEqual(gate["by_state"]["candidate"]["defensive_target"], "0.30")  # 2026-11-10 由 0.01 改 0.30（0.01 恆 beta_at_target）
         self.assertEqual(gate["by_state"]["confirmed"]["defensive_target"], "0.55")
         for row in gate["by_state"].values():
             self.assertNotIn("defensive_cash_buffer", row)

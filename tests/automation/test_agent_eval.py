@@ -300,12 +300,14 @@ class RealPolicyEvaluationModeTests(unittest.TestCase):
 
     def test_cutoff_before_available_at_is_counterfactual(self):
         from etf_agent.evaluation.service import _eval_template
+        from datetime import datetime, timedelta
         available_at = json.loads(self.POLICY.read_text(encoding="utf-8"))["available_at"]
-        day = available_at[:10]
-        early, notes = _eval_template(self.POLICY, day + "T14:00:00+08:00")
+        # 取生效時間前 1 分鐘當「較早的 cutoff」：不依賴正式樣板切換時刻是一天中的哪個時間。
+        early_cutoff = (datetime.fromisoformat(available_at) - timedelta(minutes=1)).isoformat()
+        early, notes = _eval_template(self.POLICY, early_cutoff)
         self.assertEqual(notes["evaluation_mode"], "counterfactual")
         self.assertTrue(notes["available_at_overridden"])
-        self.assertEqual(early["available_at"], day + "T14:00:00+08:00")
+        self.assertEqual(early["available_at"], early_cutoff)
         _, later = _eval_template(self.POLICY, "2026-11-10T07:00:00+08:00")
         self.assertEqual(later["evaluation_mode"], "as_available")
         self.assertFalse(later["available_at_overridden"])

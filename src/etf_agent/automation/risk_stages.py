@@ -75,6 +75,14 @@ TURN_FACTS_PROMPT = (
 )
 
 
+TURN_STATE_PROMPT_V2 = (
+    "摘要另含 turn_state（v2：程式整理的最近幾日事實與資料品質，沒有狀態、沒有門檻、沒有證據編號、不可引用）：你的 turn_assessment 是"
+    "唯一決定防守姿態下曝險換股、現金比例與換手上限是否放寬的依據（turn_unconfirmed 對映候選、turn_confirmed 對映確認），"
+    "程式只在 data_status 為 unavailable 或回撤下限為 defensive 時把它壓回不放寬；regime 不是 bear 不會擋。"
+    "反彈可能失敗，證據不足就填 no_turn_evidence 或 turn_unconfirmed，不要為了追上大盤而升級。規則見 cash-stance.md「turn_state」節。"
+)
+
+
 TURN_STATE_PROMPT = (
     "摘要另含 turn_state（程式狀態機的結果，只是背景，沒有證據編號、不可引用）：你的 turn_assessment 與它取較保守者，"
     "才決定防守姿態下的曝險換股是否放寬；你認為尚未轉向就填 no_turn_evidence 或 turn_unconfirmed，不要為了配合它而升級，"
@@ -257,7 +265,10 @@ class RiskStagesMixin:
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
             + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else "")
-            + (TURN_STATE_PROMPT if turn_state is not None else "")
+            + (
+                (TURN_STATE_PROMPT_V2 if turn_state.get("version") == "v2" else TURN_STATE_PROMPT)
+                if turn_state is not None else ""
+            )
             + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else ""),
             cash_stance_turn_facts_schema(graded, cash_stance_recency is not None) if cash_stance_turn_facts is not None
             else cash_stance_recency_schema(graded) if cash_stance_recency is not None
