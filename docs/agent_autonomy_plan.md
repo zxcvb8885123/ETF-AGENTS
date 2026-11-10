@@ -8,7 +8,7 @@
 | 1 `reentry_cooldown` v2 | 已實作 | **已於 2026-11-10 17:40 開啟** |
 | 2 `drawdown_derisk` v5（`release_order`） | 已實作（`decision/release_order.py`、Skill `references/release-order.md`） | **已於 2026-11-10 17:40 開啟** |
 | 3 `agent_swap`（步驟 1–6，細節見[換股提名計畫](agent_nominated_rotation_plan.md)） | v1 影子（提名、封存、`team_inputs` 2.9、降級版 `agent_step_degradable`）、v2 配置與 `shadow-swap` 報告皆已實作 | **v1 已於 2026-11-10 開啟**（`max_swaps_per_run 2`、`min_holding_days 5`）；v2 未開啟 |
-| 4 現金與冷卻 | `cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`held_weight_facts`）、`reentry_cooldown` v3 皆已實作 | 未開啟（`slot_recycle` 仍未開啟） |
+| 4 現金與冷卻 | `cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`held_weight_facts`）、`reentry_cooldown` v3 皆已實作 | 三個 v2 已於 2026-11-10 17:58 開啟；`reentry_cooldown` v3、`slot_recycle` 未開啟 |
 
 ### 三份相關計畫的總表（2026-11-10）
 

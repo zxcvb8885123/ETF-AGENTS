@@ -161,7 +161,7 @@ class ShadowRunTests(unittest.TestCase):
         self.assertLess(names.index("swap_nominator"), names.index("cash_stance"))
         team = self.shadow_art["team_inputs"]
         self.assertEqual(team["schema_version"], SWAP_TEAM_VERSION)
-        self.assertEqual(set(team) - {"release_order", "dip_facts"}, SWAP_TEAM_FIELDS)  # 選配鍵（正式樣板已開 v5／quality_dip）不在版本白名單
+        self.assertEqual(set(team) - {"release_order", "dip_facts", "held_weight_facts"}, SWAP_TEAM_FIELDS)  # 選配鍵（正式樣板已開 v5／quality_dip）不在版本白名單
         nomination = team["swap_nomination"]
         self.assertEqual((nomination["status"], len(nomination["nominations"])), ("completed", 1))
         self.assertEqual(nomination["nominations"][0]["sell_symbol"], "2330.TW")

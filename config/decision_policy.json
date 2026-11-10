@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-10-autonomy-gates-1",
-  "available_at": "2026-11-10T17:40:00+08:00",
+  "policy_id": "strategy-2026-11-10-cash-v2-1",
+  "available_at": "2026-11-10T17:58:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -38,10 +38,9 @@
     "selection_ranking": "v1",
     "held_add_priority": "v1",
     "cash_buffer_floor": "v1",
-    "cash_fit_order": "v1",
-    "held_weight_budget": "v1",
-    "cash_fit_min_fill_ratio": "0.5",
-    "high_conviction_cash_priority": "v1",
+    "cash_fit_order": "v2",
+    "held_weight_budget": "v2",
+    "high_conviction_cash_priority": "v2",
     "limit_scaled_conviction": {
       "version": "v1",
       "alpha": "0.6"
