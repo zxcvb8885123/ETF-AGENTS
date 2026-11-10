@@ -72,7 +72,7 @@
       "version": "v2",
       "min_coverage": "0.80",
       "by_state": {
-        "candidate": {"defensive_target": "0.01", "max_swaps_per_run": 2, "min_holding_days": 5},
+        "candidate": {"defensive_target": "0.30", "max_swaps_per_run": 2, "min_holding_days": 5},
         "confirmed": {"defensive_target": "0.55", "max_swaps_per_run": 4, "min_holding_days": 0}
       }
     },
