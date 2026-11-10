@@ -14,6 +14,7 @@
 | `prices.py` | 官方成交均價查詢，只讀 SQLite；沿用帳本的 `OfficialCloseMarket` | `OfficialPriceBook` |
 | `repository.py` | 觀測的不可變保存，獨立根目錄 `artifacts/calibration/` | `CalibrationRepository` |
 | `service.py` | 記錄決策與對答案；`latest_per_entry_day`（同成交日取 cutoff 最晚、回報被取代者）與 `day_returns`（單日逐檔報酬與池平均）供 `evaluation.grid` 沿用同一口徑 | `build_observation`、`record_day`、`record_all`、`evaluate`、`latest_per_entry_day`、`day_returns` |
+| `intent_landing.py` | 唯讀統計 buy／add 意圖落地率、未落地原因（旗標組合）、旗標次數與「Agent 標 hold／add 卻被賣」的清單與金額；先驗證 manifest，缺檔、雜湊或欄位不符整批拒絕；CLI：`cli/calibration.py intent-landing [--since YYYY-MM-DD]` | `intent_landing_report` |
 | `gap_audit.py` | 決策價與成交均價的偏離、開盤漲跌停、缺均價清單 | `execution_gap_report` |
 
 ## 口徑

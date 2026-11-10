@@ -91,6 +91,23 @@ _RANK_TIER = _object(
     ("conviction", "ordered"),
 )
 RANKING_SCHEMA = _object({"tiers": {"type": "array", "items": _RANK_TIER}}, ("tiers",))
+# 5c 換股提名（position_sizing.agent_swap）：只有代號、依據識別碼、列舉與文字，沒有任何數字欄位。
+# no_nomination_reason 只在 nominations 為空時出現，所以不列入 required（有提名時 Validator 拒絕此欄位）。
+_SWAP_PAIR = _object(
+    {"buy_symbol": _TEXT, "sell_symbol": _TEXT, "buy_basis_ids": _strings(1), "sell_basis_ids": _strings(1), "reason": _TEXT},
+    ("buy_symbol", "sell_symbol", "buy_basis_ids", "sell_basis_ids", "reason"),
+)
+_THESIS_HINT_RESPONSE = _object(
+    {"symbol": _TEXT, "response": {"enum": ["nominated", "kept"]}, "reason": _TEXT}, ("symbol", "response", "reason"),
+)
+SWAP_NOMINATION_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "no_nomination_reason": _TEXT,
+    },
+    ("nominations", "thesis_hint_responses"),
+)
 CASH_STANCE_SCHEMA = _object(
     {"level": {"enum": list(CASH_STANCES)}, "breadth": {"enum": list(POSITION_BREADTHS)},
      "rationale": _TEXT, "evidence_ids": _strings(1)},
@@ -120,6 +137,17 @@ def cash_stance_turn_facts_schema(graded: bool, recency: bool = False) -> dict:
     return _object(
         {**base["properties"], "turn_assessment": {"enum": list(TURN_ASSESSMENTS)}},
         tuple(base["required"]) + ("turn_assessment",),
+    )
+
+
+# 只在 Policy 啟用 position_sizing.exposure_view（版本閘門）時使用：在既有現金姿態 Schema 上另加列舉 exposure_view（不是數字）。
+# 沒有此閘門時沿用上面的 Schema，逐位元不變。
+def exposure_view_schema(base: dict) -> dict:
+    from etf_agent.decision.exposure_facts import EXPOSURE_VIEWS
+
+    return _object(
+        {**base["properties"], "exposure_view": {"enum": list(EXPOSURE_VIEWS)}},
+        tuple(base["required"]) + ("exposure_view",),
     )
 
 

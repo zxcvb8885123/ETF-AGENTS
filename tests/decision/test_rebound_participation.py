@@ -493,7 +493,7 @@ class TeamInputsTests(unittest.TestCase):
     def test_version_table_and_builder(self):
         self.assertEqual(TEAM_FIELDS_BY_VERSION[REBOUND_TEAM_VERSION], REBOUND_TEAM_FIELDS)
         self.assertEqual(TEAM_FIELDS_BY_VERSION["2.7"] | {"turn_state"}, REBOUND_TEAM_FIELDS)
-        self.assertEqual(EXPOSURE_TEAM_VERSIONS, ("2.7", "2.8"))
+        self.assertEqual(EXPOSURE_TEAM_VERSIONS, ("2.7", "2.8", "2.9"))  # 2.9（換股提名）是 2.8 的超集，同樣含曝險檢視
         self.assertEqual(REBOUND_TEAM_VERSION, "2.8")
 
     def test_builder_requires_the_exposure_review_and_keeps_older_versions_unchanged(self):
@@ -617,6 +617,8 @@ class BriefAndReplayTests(unittest.TestCase):
         bundle, _, debate, intent, archived, _, _, _ = chain_inputs()
         template = live_policy_template()
         template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
+        template["position_sizing"].pop("agent_swap", None)  # 依賴另兩個閘門，要先拿掉
+        template["position_sizing"].pop("exposure_view", None)  # 依賴 exposure_rotation，同上
         template["position_sizing"].pop("rebound_participation", None)
         template["position_sizing"].pop("exposure_rotation", None)
         _, plain_notes = bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])

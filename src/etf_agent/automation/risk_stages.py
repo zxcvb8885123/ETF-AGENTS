@@ -13,6 +13,7 @@ from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
 from etf_agent.decision.recency import evidence_recency
 from etf_agent.decision.market_index import market_index_facts
+from etf_agent.decision.exposure_facts import risk_exposure_brief
 from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
@@ -23,7 +24,7 @@ from etf_agent.decision.sizing import (
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import (
     CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
-    cash_stance_turn_facts_schema,
+    cash_stance_turn_facts_schema, exposure_view_schema,
 )
 
 # 閘門段落只說「本次簡報含哪個欄位」並指向 cash-stance.md 的對應節；規則本身只寫在那裡（與 validate_cash_stance 同步）。
@@ -90,6 +91,14 @@ TURN_STATE_PROMPT = (
 )
 
 
+EXPOSURE_VIEW_PROMPT = (
+    "摘要含 exposure_facts（程式算的組合 beta、低 beta 占比、現金權重、持股產業權重與最近一個交易池上漲日的報酬，是背景事實、"
+    "沒有 evidence_id、不可引用，理由也不要寫出 exposure_facts 這個鍵名）：另輸出 exposure_view（keep_defensive／start_rebuild／rebuild），"
+    "只是紀錄你認為組合該不該開始回補市場參與度，不改現金姿態、現金比例、持股廣度或換股；不是 keep_defensive 時 evidence_ids "
+    "至少引用一個市場層級證據。反彈可能失敗，證據不足就填 keep_defensive。規則見 cash-stance.md「exposure_facts」節。"
+)
+
+
 CASH_GRADE_PROMPT = (
     "Policy 啟用 cash_ratio_range：摘要含 cash_grade_grid 與 cash_grade_allowed_by_stance，除了姿態另給 cash_grade"
     "（lower／middle／upper），只能選該姿態今日可選的子等級，你不得輸出百分比，規則見 cash-stance.md「cash_grade_allowed_by_stance」節。"
@@ -147,6 +156,8 @@ class RiskStagesMixin:
         cash_stance_turn_facts: Optional[Mapping[str, object]] = None,
         turn_state: Optional[Mapping[str, object]] = None,
         market_index_facts_gate: Optional[Mapping[str, object]] = None,
+        exposure_view_gate: Optional[Mapping[str, object]] = None,
+        exposure_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -195,6 +206,14 @@ class RiskStagesMixin:
         index_brief: Dict[str, object] = (
             {"market_index_facts": market_index_facts(bundle)} if market_index_facts_gate is not None else {}
         )
+        # exposure_view（版本閘門）：附程式算的組合曝險與產業權重事實（背景、不可引用）；沒有閘門時簡報與舊版逐鍵相同。
+        exposure_brief: Dict[str, object] = {}
+        if exposure_view_gate is not None:
+            if not typed:
+                raise DailyPipelineError("position_sizing.exposure_view 只能用於 evidence_policy=typed_evidence_v1")
+            if not isinstance(exposure_facts, Mapping):
+                raise DailyPipelineError("position_sizing.exposure_view 啟用時必須先建立 exposure_facts")
+            exposure_brief = {"exposure_facts": risk_exposure_brief(exposure_facts)}
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
@@ -202,6 +221,7 @@ class RiskStagesMixin:
                 "regime_assessment": regime,
                 **turn_brief,
                 **index_brief,
+                **exposure_brief,
                 "analyst_outlooks": {
                     name: counts([item.get("outlook") for item in report.get("items", [])])
                     for name, report in analyst_reports.items()
@@ -243,6 +263,7 @@ class RiskStagesMixin:
             validate_cash_stance(
                 context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range, prior_context=prior_context,
                 recency_gate=cash_stance_recency, turn_facts_gate=cash_stance_turn_facts,
+                exposure_view_gate=exposure_view_gate, exposure_facts=exposure_facts,
             )
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
@@ -250,6 +271,13 @@ class RiskStagesMixin:
                 errors.append("帳戶回撤 %s 已達門檻，現金姿態不得低於 %s" % (drawdown_control.get("drawdown"), floor))
             return errors
 
+        schema = (
+            cash_stance_turn_facts_schema(graded, cash_stance_recency is not None) if cash_stance_turn_facts is not None
+            else cash_stance_recency_schema(graded) if cash_stance_recency is not None
+            else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA)
+        )
+        if exposure_view_gate is not None:
+            schema = exposure_view_schema(schema)
         task = AgentTask(
             "cash_stance",
             "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節）及其連結的 %s，"
@@ -269,10 +297,9 @@ class RiskStagesMixin:
                 (TURN_STATE_PROMPT_V2 if turn_state.get("version") == "v2" else TURN_STATE_PROMPT)
                 if turn_state is not None else ""
             )
-            + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else ""),
-            cash_stance_turn_facts_schema(graded, cash_stance_recency is not None) if cash_stance_turn_facts is not None
-            else cash_stance_recency_schema(graded) if cash_stance_recency is not None
-            else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA),
+            + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else "")
+            + (EXPOSURE_VIEW_PROMPT if exposure_view_gate is not None else ""),
+            schema,
         )
         stance = self.agent_step(task, lambda output: dict(output), validate)
         self.save_artifact("cash_stance", stance)

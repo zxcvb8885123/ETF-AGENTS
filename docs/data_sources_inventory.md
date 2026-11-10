@@ -15,6 +15,7 @@
 | [月營收、重大訊息](#月營收重大訊息) | 證交所／櫃買中心 MOPS 開放資料 | `cli/data_agent.py collect` | 可，作事件與基本面事實 |
 | [官方財報](#官方財報) | MOPS 損益表、資產負債表 | `scripts/collect_financial_statements.py` | 可 |
 | [公司基本資料](#公司基本資料) | 證交所／櫃買中心公司資料 | `scripts/collect_sector_classification.py` | 候選；正式讀已驗證的檔案 |
+| [產業比較資料](#產業比較資料) | 證交所／櫃買中心各產業 EPS 統計（t187ap14） | `cli/industry_peer_collect.py` | 否（C1 只收集與稽核） |
 | [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 部分：現金流經核對後使用；其餘僅補抓去年同期時使用 |
 | [個股新聞](#個股新聞) | FinMind 個股新聞 | `scripts/collect_supplemental_sources.py finmind-news` | 可，只進事件分析師的公司事件 |
 | [正式帳本價量](#正式帳本價量) | 證交所／櫃買中心官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
@@ -81,6 +82,13 @@ Yahoo 缺某天時，用前後 Yahoo 的還原係數換算：
 
 - 來源：證交所／櫃買中心公司資料（含產業分類）。每日由 `scripts/collect_sector_classification.py` 保存候選。
 - 正式決策仍讀已驗證的 `data/sector_classification.json`，候選不會直接生效。
+
+## 產業比較資料
+
+- 來源：證交所 `t187ap14_L`（上市公司各產業EPS統計資訊）與櫃買中心 `mopsfin_t187ap14_O`（上櫃公司各產業EPS統計資訊）；2026-11-10 使用者視同登記為政府開放資料來源，核對紀錄見[來源核對](source_audit/2026-11-10_industry_peer_sources.md)，登記在 `config/industry_peer_sources.json`。
+- 內容：每家已公布本期的公司一列，含產業別名稱、營業收入、營業利益、稅後淨利、基本每股盈餘（千元）。2026-11-10 上市 296 家、上櫃 173 家，不是全市場。
+- 保存：共用資料庫 `industry_peer_stats`（每日列、內容變動才新版）；交易池逐檔與官方損益表核對，結果與代碼↔名稱表（`artifacts/data/industry_name_map_latest.json`）在 `artifacts/data/industry_peer_latest.json`。
+- 狀態：**只收集與稽核，不進 bundle、`team_inputs`、簡報或任何 Agent 輸入**，沒有計算產業中位數（C2 另案）。`INDUSTRY_PEER=0` 關閉每日收集。
 
 ## 多季基本面候選
 

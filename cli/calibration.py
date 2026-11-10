@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from etf_agent.calibration import MIN_DECISION_DAYS, CalibrationError, CalibrationRepository, evaluate, execution_gap_report, record_all  # noqa: E402
+from etf_agent.calibration import MIN_DECISION_DAYS, CalibrationError, CalibrationRepository, evaluate, execution_gap_report, intent_landing_report, record_all  # noqa: E402
 
 
 def _now() -> str:
@@ -31,12 +31,17 @@ def main(argv=None) -> int:
     audit.add_argument("--database", type=Path, default=ROOT / "var" / "etf_agent.db")
     audit.add_argument("--as-of", default=None)
     audit.add_argument("--days", type=int, default=60)
+    landing = sub.add_parser("intent-landing", help="統計 buy／add 意圖的落地率、旗標次數與 hold／add 被賣出的案例（唯讀）")
+    landing.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decisions")
+    landing.add_argument("--since", default=None, help="只算該日（YYYY-MM-DD）含以後的 run")
     args = parser.parse_args(argv)
     try:
         if args.command == "snapshot":
             result = record_all(args.decisions, CalibrationRepository(args.output))
         elif args.command == "report":
             result = evaluate(CalibrationRepository(args.observations), args.database, args.as_of or _now())
+        elif args.command == "intent-landing":
+            result = intent_landing_report(args.decisions, args.since)
         else:
             result = execution_gap_report(args.database, args.as_of or _now(), args.days)
     except CalibrationError as error:

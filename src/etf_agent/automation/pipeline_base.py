@@ -63,6 +63,27 @@ class PipelineResult:
     skill_versions: Dict[str, object] = field(default_factory=dict)
 
 
+STEP_COMPLETED = "completed"
+STEP_EXHAUSTED = "exhausted"
+STEP_UNAVAILABLE = "unavailable"
+STEP_STATUSES = (STEP_COMPLETED, STEP_EXHAUSTED, STEP_UNAVAILABLE)
+DEGRADE_MAX_ATTEMPTS = 3  # 降級版 Agent 步驟的驗證嘗試上限（第一次加兩次帶回饋的重試）
+DEGRADED_MARKER_FIELDS = {"status", "attempts", "errors", "fingerprint"}
+
+
+@dataclass(frozen=True)
+class AgentStepOutcome:
+    """降級版 Agent 步驟（``agent_step_degradable``）的結果。
+
+    ``completed``：``artifact`` 為通過驗證的輸出；``exhausted``：驗證失敗用盡，``errors`` 是最後一次的驗證錯誤；
+    ``unavailable``：暫時性失敗在重試後仍失敗，``errors`` 是失敗原因。後兩者的 ``artifact`` 為 None，由呼叫端封存確定性降級結果。"""
+
+    status: str
+    artifact: Optional[Dict[str, object]] = None
+    errors: Tuple[str, ...] = ()
+    attempts: int = 0
+
+
 # market 為事件分析師的全市場新聞標註（market_news_labels_*）。
 ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event", "market"})
 RESEARCH_TASK_PREFIXES = frozenset({"bull", "bear"})
@@ -306,6 +327,65 @@ class PipelineBase:
         validate: Callable[[Mapping[str, object]], List[str]],
     ) -> Dict[str, object]:
         """執行 Agent → 補 envelope → 驗證；失敗回饋錯誤重試，仍失敗即停止。"""
+        outcome = self._agent_step(task, build, validate, self.max_attempts, degradable=False)
+        assert outcome.artifact is not None
+        return outcome.artifact
+
+    def agent_step_degradable(
+        self,
+        task: AgentTask,
+        build: Callable[[Mapping[str, object]], Dict[str, object]],
+        validate: Callable[[Mapping[str, object]], List[str]],
+        fingerprint: str,
+        max_attempts: int = DEGRADE_MAX_ATTEMPTS,
+    ) -> AgentStepOutcome:
+        """與 ``agent_step`` 相同的流程，但失敗時回傳確定性降級結果而不是讓整份失敗（新程式路徑專用）。
+
+        - 嘗試次數由呼叫端指定（預設 3，不沿用 ``self.max_attempts``）。
+        - 驗證用盡：回傳 ``exhausted``；``TransientAgentError`` 在既有暫時性重試後仍失敗：回傳 ``unavailable``。
+        - 安全拒絕（秘密外洩、未核准工具等一般 ``DailyPipelineError``）仍往上拋，不降級；平行任務失敗引起的中止也往上拋。
+        - 降級結果另存 ``<task.name>_degraded.json``，續跑時沒有已驗證的輸出就由它重現同一個結果，不再呼叫 Agent。
+          ``fingerprint`` 是這次輸入的指紋（例如 brief 與信封的內容雜湊），存進標記；續跑時指紋不符就忽略標記、重新呼叫 Agent，
+          避免輸入已改變卻重現舊的降級結果。
+        - 與 ``agent_step`` 不同，``build`` 或 ``validate`` 對 Agent 輸出拋出 KeyError／TypeError／ValueError／AttributeError／IndexError
+          時視為一次驗證失敗（不讓整天失敗）；``build`` 對自己的輸入出錯同樣會被吞成驗證失敗，所以呼叫端須先確保輸入合法。
+        """
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or not 1 <= max_attempts <= 10:
+            raise ValueError("max_attempts 必須介於 1 與 10")
+        if not isinstance(fingerprint, str) or not fingerprint:
+            raise ValueError("fingerprint 必須是非空字串")
+        return self._agent_step(task, build, validate, max_attempts, degradable=True, fingerprint=fingerprint)
+
+    def _degraded_marker(self, task: AgentTask, fingerprint: str) -> Optional[AgentStepOutcome]:
+        """讀降級標記；缺檔、損壞、欄位不符或輸入指紋不符一律視為沒有（續跑時改為重新呼叫 Agent）。"""
+        try:
+            data = json.loads(self._path("%s_degraded" % task.name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if (not isinstance(data, dict) or set(data) != DEGRADED_MARKER_FIELDS or data["status"] not in (STEP_EXHAUSTED, STEP_UNAVAILABLE)
+                or isinstance(data["attempts"], bool) or not isinstance(data["attempts"], int) or data["attempts"] < 0
+                or not isinstance(data["errors"], list) or not all(isinstance(item, str) for item in data["errors"])
+                or data["fingerprint"] != fingerprint):
+            return None
+        return AgentStepOutcome(str(data["status"]), None, tuple(data["errors"]), int(data["attempts"]))
+
+    def _degrade(self, task: AgentTask, status: str, errors: Sequence[str], attempts: int, fingerprint: str) -> AgentStepOutcome:
+        outcome = AgentStepOutcome(status, None, tuple(single_line(error)[:300] for error in errors[:10]), attempts)
+        self.save_artifact("%s_degraded" % task.name, {
+            "status": outcome.status, "attempts": attempts, "errors": list(outcome.errors), "fingerprint": fingerprint,
+        })
+        self.log("  [agent] %s 降級為 %s（嘗試 %d 次）" % (task.name, status, attempts))
+        return outcome
+
+    def _agent_step(
+        self,
+        task: AgentTask,
+        build: Callable[[Mapping[str, object]], Dict[str, object]],
+        validate: Callable[[Mapping[str, object]], List[str]],
+        max_attempts: int,
+        degradable: bool,
+        fingerprint: str = "",
+    ) -> AgentStepOutcome:
         previous = sorted(
             self.run_dir.glob("%s_raw_*.json" % task.name),
             key=lambda path: int(path.stem.rsplit("_", 1)[1]),
@@ -326,41 +406,64 @@ class PipelineBase:
                     continue
                 if not errors:
                     self.log("  [agent] %s 沿用已驗證輸出 %s" % (task.name, path.name))
-                    return artifact
+                    return AgentStepOutcome(STEP_COMPLETED, artifact, (), 0)
             if previous and self._staged_raw is None and self._research_staging and task.name.split("_", 1)[0] in RESEARCH_TASK_PREFIXES:
                 # 對方的輸出已在磁碟上，重跑這個研究任務會破壞隔離：拒絕，不啟動。
                 raise DailyPipelineError("%s 已有的輸出全部驗證失敗，研究階段輸出暫存不允許在對方輸出已落地時重跑；請建立新的 run" % task.name)
+            if degradable:
+                degraded = self._degraded_marker(task, fingerprint)
+                if degraded is not None:
+                    self.log("  [agent] %s 沿用降級結果 %s" % (task.name, degraded.status))
+                    return degraded
         prompt = task.prompt
         errors: List[str] = []
         # 原始輸出只新增、不覆寫，保留每次嘗試供稽核。
         offset = len(previous)
         previous_artifact: Optional[Mapping[str, object]] = None
-        for attempt in range(1, self.max_attempts + 1):
+        for attempt in range(1, max_attempts + 1):
             self.log("  [agent] %s 第 %d 次" % (task.name, attempt))
             prefix = task.name.split("_", 1)[0]
             runner = (self.analyst_runner if prefix in ANALYST_TASK_PREFIXES
                       else self.research_runner if prefix in RESEARCH_TASK_PREFIXES else self.runner)
-            call, item = self._call_agent(runner, task, prompt, attempt)
+            try:
+                call, item = self._call_agent(runner, task, prompt, attempt)
+            except TransientAgentError as error:
+                if not degradable or self._abort.is_set():
+                    raise
+                return self._degrade(task, STEP_UNAVAILABLE, [str(error)], attempt, fingerprint)
             if call.usage_tokens is not None:
                 item["usage_tokens"] = call.usage_tokens
             with self._calls_lock:
                 self.calls.append(item)
             self._save_raw(task.name, offset + attempt, call.output)
-            artifact = build(call.output)
-            errors = validate(artifact)
-            if previous_artifact is not None:
+            artifact: Optional[Dict[str, object]]
+            if degradable:
+                try:
+                    artifact = build(call.output)
+                    errors = validate(artifact)
+                except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
+                    artifact = None
+                    errors = ["輸出無法解析（%s：%s）" % (type(error).__name__, str(error)[:100])]
+            else:
+                artifact = build(call.output)
+                errors = validate(artifact)
+            if previous_artifact is not None and artifact is not None:
                 # 驗證回饋後的重試：記錄每檔意圖／信心／強度／看法與 claims 數的變化，供事後稽核「因驗證回饋變積極」。
                 with self._calls_lock:
                     item["revision_diff"] = output_revision_diff(previous_artifact, artifact)
-            previous_artifact = artifact
+            if artifact is not None:
+                previous_artifact = artifact
             if not errors:
-                return artifact
+                assert artifact is not None
+                return AgentStepOutcome(STEP_COMPLETED, artifact, (), attempt)
             # 每次驗證失敗的錯誤數與前幾項留在執行紀錄，評測時可看出 Agent 在哪裡出錯。
             with self._calls_lock:
                 item["validation_errors"] = len(errors)
                 item["first_validation_errors"] = [str(error)[:200] for error in errors[:3]]
             # 錯誤可能含 Agent 輸出的外來值：逐條壓成單行並限長，避免偽造新的回饋條目或指示。
             prompt = task.prompt + VALIDATION_FEEDBACK_PREFIX + "\n- ".join(single_line(error) for error in errors[:40])
+        if degradable:
+            return self._degrade(task, STEP_EXHAUSTED, errors, max_attempts, fingerprint)
         raise DailyPipelineError("%s Agent 輸出驗證失敗：%s" % (task.name, "；".join(errors[:10])))
 
     def _call_agent(

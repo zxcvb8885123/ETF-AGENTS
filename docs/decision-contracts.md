@@ -57,6 +57,10 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 | 2.1（舊） | 無前次決策背景 |
 | 2.0（舊） | 三／四份分析報告及事件研究，保留原始重建 |
 
+選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：不升版本、不屬於上表的線性鏈，只要求 2.6 以上；與閘門雙向檢查（閘門在而鍵缺、或鍵在而閘門缺都拒絕），Finalizer 以 `validate_dip_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
+
+選配鍵 `exposure_facts`（`position_sizing.exposure_view` v1，2026-11-10 已開啟）：同 `dip_facts` 的做法，不升版本、只要求 2.7 以上；與閘門雙向檢查，Finalizer 以 `validate_exposure_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
+
 `portfolio_slots` 由 `decision/rotation.py` 以帳戶、policy 與同一份 debate 計算，只讀 `apply_trade_decision` 不會改動的欄位，Finalizer 以最終 policy 重算整份比對；`citable=false`、沒有 evidence_id，交易 Agent 不得寫進文字欄位。
 
 ### 持股檢視（停損／停利）
@@ -81,6 +85,28 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 來源必須是決策庫中同帳戶、`approved`／`no_trade`、通過 manifest 驗證、**目標交易時段嚴格早於本次**的 run（同一時段的 21:00 備案不算前次；同一前次時段多個 run 時優先帳本結算記錄的，否則取 cutoff 最新者），記錄 run_id、時段、挑法與內容雜湊，snapshot 不同時標 `cross_snapshot_exception`。
 - `citable=false`、沒有 evidence_id，交易 Agent 文字欄位出現其識別碼即拒絕，行動仍須由本次 claim 支持；沒有前次 run 時輸出 `unavailable`，不是錯誤。
 - 例外：`cash_ratio_range` 啟用時，同一個前次 run 的最終現金比例（`proposal.effective_policy.cash_buffer_rate`）由程式綁進 Policy 的 `cash_ratio_range.anchor`，只給風險 Agent 當單日上限的背景，不經由 `prior_decision_context`（見「風險 Agent」的前次識別碼規則）。
+
+### 優質股被大盤拖累的事實（`position_sizing.quality_dip_facts` v1，第一階段，紀錄用）
+
+設計見 [quality_dip_plan.md](quality_dip_plan.md)；啟用狀態見 status.md（已實作、尚未開啟）。閘門存在時：
+
+- `decision/dip_facts.py` 對全交易池重算，全部只用 cutoff 前可得的資料：日期格是行情交易日聯集；評估視窗＝最後 21 個日期（20 個日報酬），視窗前 beta 用基準日以前 61 個日期（60 個日報酬），兩窗在基準日相接。beta 直接用 `exposure.BetaModel`，只把行情截到基準日，`BetaModel` 與 `exposure_review` 的路徑不變。
+- 殘差 `residual_20d` ＝ 個股 20 日報酬 − beta × 交易池等權**日報酬連乘**的 20 日報酬（與 beta 同一個日報酬序列）；`relative_to_pool_20d` 另用各股 20 日報酬的簡單平均（與持股檢視同一公式），兩個池報酬欄位分開。有殘差的股票少於交易池 80%（沿用 `MIN_REGIME_COVERAGE`）時整份 `data_status: unavailable`。加權指數來源未核准或日期對不上只讓 `relative_to_index_20d` 為 null 並記 `data_gaps`。
+- `price_pattern` 只看符號與資料品質（殘差為 0 歸 `market_explained`），程式不設殘差或跌幅門檻；`candidate` 為 `market_dragged`／`oversold`（固定 `cause: unknown`）／`none`，有新壞事即 `none`；疑慮與不知道不改變標示。
+- 三個清單不混用：`new_adverse_facts`（視窗內新可得的月營收年增由正轉負、淨利由盈轉虧〔前一期可比口徑＝基本面指標的去年同季〕、事件分析師 `event_outlook` 為 negative 且視窗內有 high 事件）；金融業（財報產業別 fh／basi／bd／ins）或 `industry_formula_unsupported` 的月營收轉負改列 `concerns`；`concerns`（營收／淨利年增為負、營業利益率年差為負、營業或自由現金流為負，附期別）；`unknown`（指標 unavailable、單位或幣別衝突、缺月營收、現金流缺或未核對）。「視窗內新可得」＝ `available_at` 的台北日期晚於基準日。
+- 分析師階段事件報告尚未完成：技術分析師拿 `market_attribution`／`price_position`、基本面分析師拿不含事件一項的 `fundamental_flags`（`event_check: not_applied`），兩者都不含 `price_pattern`／`candidate`，區塊本身沒有 evidence_id，finding 引用各列附的該股既有證據。完整事實在多空研究完成後才建立與存檔（`dip_facts.json`，研究員拒讀），交易 Agent 以 `dip_background` 讀到（`citable=false`、沒有 evidence_id），文字欄位出現 `dip_background`、`dip_facts` 或事實識別碼即拒絕。多空研究員不拿，`shared_input_sha256` 不變。
+- 任何 bar 晚於最近交易日、bar 或文件可得時間缺時區、bar 可得時間晚於 cutoff 一律拒絕；晚於 cutoff 的文件不計入；bundle 須有 `fundamental_period_policy`。
+- 不新增 Agent 輸出欄位、不影響名額／權重／股數／現金／排序／Guard；回放不讀它（樣板帶閘門時 policy 照樣綁，配置不受影響）。
+
+### 組合曝險事實與風險 Agent 的回補意見（`position_sizing.exposure_view` v1，Agent 主導曝險階段 1，紀錄用）
+
+設計見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md)；啟用狀態見 status.md（已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`）。前提 `exposure_rotation`、`cash_stance_turn_facts`、`market_index_facts`（GATE_PREREQUISITES）與 `typed_evidence_v1`（驗證現金姿態時檢查）。閘門存在時：
+
+- `decision/exposure_facts.py` 只依 bundle 與 Policy 中配置前後相同的欄位（`exposure_rotation.beta_window_days`、`sector_by_symbol`）重算，不讀任何 Agent 輸出：組合曝險直接重用 `build_exposure_review`（同口徑）再加持股數與低 beta 檔數；產業權重依 Policy 綁定的 `sector_by_symbol`，金融保險（`industry:17`）另列，缺代碼歸 `unknown`；上漲日＝最近 20 個交易日內最近一個交易池等權報酬（與 `turn_facts` 同一個函式）大於 0 的日子，持股當日貢獻＝Σ（本次決策起始權重 × 當日收盤報酬），任一持股缺行情即 null（不當成 0），沒有上漲日即 `unavailable`；非持股的 beta 用同一個 `BetaModel`。
+- 任何 bar 晚於最近交易日、bar 可得時間缺時區或晚於 cutoff 一律拒絕。
+- 風險 Agent 簡報附 `exposure_facts`（背景、`citable=false`、沒有 facts_id 與 evidence_id；不含交易 Agent 的意圖與信心統計），輸出多一個必填列舉 `exposure_view`（`keep_defensive`／`start_rebuild`／`rebuild`）：值域外或缺少即拒絕；非 `keep_defensive` 時 `evidence_ids` 須含市場層級證據（專屬檢查）；理由寫出 `exposure_facts` 鍵名或 facts_id 即拒絕；沒有閘門時輸出帶此欄位即拒絕。三個驗證點（風險階段、`apply_trade_decision`、Finalizer）用同一個 `validate_cash_stance`。
+- `agent_swap` 也開啟時，換股提名簡報多一個 `exposure_facts` 區塊（轉向、`turn_state`、加權指數、組合曝險、產業權重、上漲日與持股當日報酬、提名候選的 beta），全部是背景；**不改 `swap_nomination.py` 的提名驗證規則與既有欄位**（`purpose`、曝險事實編號與 `lower_conviction_review` 是階段 2）。
+- 純紀錄：不影響名額、權重、股數、現金、換股與 Guard；回放略過閘門（notes 標 `exposure_view: ignored_in_replay`）並拿掉封存姿態的 `exposure_view`。
 
 ### 論點檢視背景與策略教訓
 

@@ -195,6 +195,10 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 2.0 至 2.5 皆為舊封存，維持原重建行為。2.1／2.2 的事件報告為 2.2 或 2.3，由資料包是否含已核准個股新聞決定。
 
+選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：程式算的優質股被大盤拖累事實，**不升版本、不排進上表的線性鏈**，只要求 2.6 以上（讀基本面指標）；與閘門雙向檢查，Finalizer 以 bundle、`fundamental_metrics` 與事件報告整份重算。沒有閘門的舊 run 欄位白名單與重建行為不變。之所以不做成「2.9 ＝ 2.8 加 dip_facts」，是線性鏈會讓這個紀錄用閘門依賴 `rebound_participation`，關掉反彈參與就得一起關它。見[計畫](quality_dip_plan.md)。
+
+選配鍵 `exposure_facts`（`position_sizing.exposure_view` v1，2026-11-10 已開啟，純紀錄、不影響配置）：程式算的組合曝險、產業權重、上漲日報酬與非持股 beta 事實，做法同 `dip_facts`——**不升版本、不排進上表的線性鏈**，只要求 2.7 以上（與 `exposure_review` 同一個 beta 口徑）；與閘門雙向檢查，Finalizer 以 bundle 與 Policy 整份重算。風險 Agent 的 `exposure_view` 列舉放在現金姿態內（同 `turn_assessment`）。沒有閘門的舊 run 欄位白名單與重建不變。
+
 ### 日期資料夾
 
 `artifacts/decisions/<date>/` 與 `artifacts/daily/<date>/` 的日期是**目標交易日**（台北時間），與 `artifacts/competition_d_plan/` 一致；晚上做隔天備案時就是隔天。缺目標時段（評測重跑、行事曆缺漏）才用執行當天。日期只是佈局，不影響編號、封印或雜湊；查找既有 run 一律全域掃描。
@@ -246,7 +250,7 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 ## 旁觀者（不在決策鏈內）
 
-- **校準**（`src/etf_agent/calibration/`）：只讀已封存決策與官方價量，記錄信心與多空強度，價格到齊後算前瞻報酬並審計前日收盤與當日均價的差距。決策、自動化與風控都不匯入它。口徑見[校準旁觀者](../src/etf_agent/calibration/README.md)。
+- **校準**（`src/etf_agent/calibration/`）：只讀已封存決策與官方價量，記錄信心與多空強度，價格到齊後算前瞻報酬審計前日收盤與當日均價的差距，並統計買進意圖落地率（`cli/calibration.py intent-landing`，唯讀）。決策、自動化與風控都不匯入它。口徑見[校準旁觀者](../src/etf_agent/calibration/README.md)。
 - **策略反思**（`src/etf_agent/strategy_reflection/`）：每週讓 Agent 提出策略旋鈕調整提案，經程式驗證與影子回放才改寫 `config/decision_policy.json`。
   - 自動套用只放行降風險方向；加風險或方向不明的提案只封存並標「需人處理」，須人用 `apply-pending --allow-risk-increase <reflection_id>` 套用。
   - 影子回放比的是對交易池等權基準的超額，且在兩段不重疊子區間都不得劣於基準或目前策略。回放只重算封存的 Agent 意圖，**不是對 LLM 判斷的前瞻驗證**，只有比賽期間的即時紀錄才算證據。

@@ -21,9 +21,11 @@ from .drawdown import stance_meets_floor
 from .exposure import hold_conviction_enabled
 from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
+from .dip_facts import dip_reference_tokens
 from .recency import cash_stance_recency_gate
 from .rebound import bind_effective_state, loosened_cash_buffer, rebound_gate
 from .turn_facts import cash_stance_turn_facts_gate
+from .exposure_facts import exposure_view_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -85,6 +87,7 @@ class TradeDecisionValidator:
         prior_context: Optional[Mapping[str, object]] = None,
         position_review: Optional[Mapping[str, object]] = None,
         hold_conviction: bool = False,
+        dip_facts: Optional[Mapping[str, object]] = None,
     ):
         """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
         交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。
@@ -93,7 +96,10 @@ class TradeDecisionValidator:
         必須在 ``adopted_claim_ids`` 剛好處理一次、不可否決；沒有檢視的舊 run 傳 None，驗證不變。
 
         ``hold_conviction``（exposure_rotation 閘門）為 True 時，hold 也必填 conviction（持股還值得佔一個位置的程度）；
-        預設 False，hold 帶信心即拒絕（現行）。"""
+        預設 False，hold 帶信心即拒絕（現行）。
+
+        ``dip_facts`` 是 quality_dip_facts 閘門的事實（team_inputs.dip_facts）：交易 brief 以 ``dip_background`` 附上，
+        不是證據，文字欄位出現其識別碼即拒絕；沒有閘門的舊 run 傳 None，驗證不變。"""
         self.hold_conviction = hold_conviction
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
@@ -107,6 +113,7 @@ class TradeDecisionValidator:
         for symbol, identifier in self.position_ids.items():
             self.claims.setdefault(symbol, {})[identifier] = "position"
         self.prior_tokens = prior_reference_tokens(prior_context)
+        self.dip_tokens = dip_reference_tokens(dip_facts)
         self.available = {
             str(item.get("symbol", "")).upper()
             for item in momentum.get("items", [])
@@ -196,6 +203,14 @@ class TradeDecisionValidator:
         )
         if cited:
             errors.append("%s 不得引用前次決策背景（%s）；它不是本次證據" % (prefix, ", ".join(cited)))
+        dip_cited = sorted(
+            token for token in self.dip_tokens
+            if any(token in text for text in (rationale, *questions, *conditions))
+        )
+        if dip_cited:
+            errors.append(
+                "%s 不得引用 dip_background（%s）；它是程式算的背景、不是本次證據，請引用多空 claim 的依據" % (prefix, ", ".join(dip_cited))
+            )
         available = self.claims.get(symbol, {})
         repeated = sorted({claim for claim in (*adopted, *rejected) if (*adopted, *rejected).count(claim) > 1})
         if repeated:
@@ -268,6 +283,7 @@ def apply_trade_decision(
         DecisionContext(bundle), cash_stance, "cash_stance", stance_errors, cash_ratio_range=gate, prior_context=prior_context,
         recency_gate=cash_stance_recency_gate(policy.get("position_sizing") or {}),
         turn_facts_gate=cash_stance_turn_facts_gate(policy.get("position_sizing") or {}),
+        exposure_view_gate=exposure_view_gate(policy.get("position_sizing") or {}),
     )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))

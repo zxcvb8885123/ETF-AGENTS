@@ -59,6 +59,7 @@
     "cash_stance_recency": {"version": "v1"},
     "cash_stance_turn_facts": {"version": "v1"},
     "market_index_facts": {"version": "v1"},
+    "exposure_view": {"version": "v1"},
     "exposure_rotation": {
       "version": "v3",
       "beta_window_days": 60,
@@ -76,6 +77,7 @@
         "confirmed": {"defensive_target": "0.55", "max_swaps_per_run": 4, "min_holding_days": 0}
       }
     },
+    "agent_swap": {"version": "v1", "max_swaps_per_run": 2, "min_holding_days": 5},
     "cash_ceiling_fix": "v1",
     "stock_limit_headroom": "v1",
     "buy_gap_reserve": "v1",
