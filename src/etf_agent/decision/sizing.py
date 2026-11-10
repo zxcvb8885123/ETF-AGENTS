@@ -211,8 +211,12 @@ AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 # quality_dip 是優質股第三階段的子閘門（decision/quality_dip_swap.py）：purpose 列舉多一個 quality_dip（前提 agent_swap.exposure）。
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
-    "exposure", "quality_dip",
+    "exposure", "quality_dip", "derisk_day_view",
 }
+# derisk_day_view（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：減碼日不再由程式整個略過換股提名，
+# 改由風險 Agent 的 exposure_view 決定（keep_defensive 才略過，start_rebuild／rebuild 照常依提名換股）；前提 agent_swap.exposure v2。
+# 省略此欄位的舊 Policy／舊 run 逐位元維持「減碼日整個略過」的原重建行為。
+DERISK_DAY_VIEW = {"version": "v1"}
 NOMINATION_REF_FIELDS = {"nomination_id", "sha256", "status"}
 NOMINATION_STATUSES = ("completed", "not_needed", "exhausted", "unavailable")  # 同 swap_nomination.STATUSES（那邊 import 本模組，不能反向）
 AGENT_SWAP_REQUIRED_FIELDS = {"version", "max_swaps_per_run", "min_holding_days"}
@@ -710,6 +714,12 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
         elif hints is None:
             errors.append("%s.verdicts_ref 必須附 thesis_hint_symbols" % prefix)
     _validate_agent_swap_binding(gate, prefix, errors)
+    if "derisk_day_view" in gate:
+        exposure_gate = gate.get("exposure")
+        if gate["derisk_day_view"] != DERISK_DAY_VIEW:
+            errors.append('%s.derisk_day_view 必須是 {"version": "v1"}' % prefix)
+        if version != AGENT_SWAP_V2 or not isinstance(exposure_gate, Mapping) or exposure_gate.get("version") != "v2":
+            errors.append("%s.derisk_day_view 需要 agent_swap v2 與 agent_swap.exposure v2（風險 Agent 的 exposure_view 才綁得進來）" % prefix)
     if "exposure" in gate:
         from .exposure_swap import validate_exposure_swap_gate
         validate_exposure_swap_gate(sizing, errors)
@@ -812,6 +822,12 @@ def release_order_binding(sizing: object) -> Optional[Tuple[List[str], str]]:
     if symbols is None or not isinstance(ref, Mapping):
         raise DecisionToolError("DecisionPolicy 啟用 drawdown_derisk v5，但尚未綁定釋出順序（release_symbols／release_ref）")
     return [str(symbol) for symbol in symbols], str(ref["status"])
+
+
+def derisk_day_uses_agent_view(sizing: object) -> bool:
+    """agent_swap.derisk_day_view 啟用（減碼日改由風險 Agent 的 exposure_view 決定是否換股）；沒有欄位回 False（原行為）。"""
+    swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    return isinstance(swap, Mapping) and swap.get("derisk_day_view") == DERISK_DAY_VIEW
 
 
 def agent_swap_binding(sizing: object) -> Optional[Tuple[List[Tuple[str, str]], str]]:

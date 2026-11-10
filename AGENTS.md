@@ -127,6 +127,7 @@
 - Skill 使用小寫連字號命名，並包含精簡的 `SKILL.md`；需要詳細 schema 時放在 `references/`。
 - `agents/openai.yaml` 的 `default_prompt` 必須明確提到 `$skill-name`，UI 描述要與 Skill 邊界一致。
 - 不直接在專案內串接模型 API、LangChain 或 LangGraph；除非計畫明確變更並完成測試與安全審查。
+- 不要整份讀 `src/etf_agent/decision/allocation.py`（檔案很大）：先搜尋，或只讀需要的行段。
 - 保留既有使用者修改；不要修改與當前任務無關的檔案。
 
 ## 開發與 Docker 環境

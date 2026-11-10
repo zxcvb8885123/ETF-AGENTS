@@ -32,7 +32,7 @@ LIMITS = {"max_stock_weight": "0.2", "special_weight_limits": {symbol: "0.2" for
 TWO_PAIRS = [("2317.TW", "2330.TW"), ("2412.TW", "1101.TW")]
 
 
-def bind_exposure(bundle, intent, policy, purposes, view="start_rebuild", version="v2", caps=None):
+def bind_exposure(bundle, intent, policy, purposes, view="start_rebuild", version="v2", caps=None, derisk_view=False):
     """把 purpose、``agent_swap.exposure``（v2 另綁 view）與 exposure_view 閘門綁進已有 nominated_pairs 的 Policy，重跑配置並重建驗證。"""
     bound = copy.deepcopy(policy)
     sizing = bound["position_sizing"]
@@ -42,6 +42,8 @@ def bind_exposure(bundle, intent, policy, purposes, view="start_rebuild", versio
     if version == "v2":
         gate.update(max_pairs_by_view=dict(caps or CAPS), view=view)
     swap["exposure"] = gate
+    if derisk_view:
+        swap["derisk_day_view"] = {"version": "v1"}
     sizing["exposure_view"] = {"version": "v1"}
     sizing["market_index_facts"] = dict(MARKET_INDEX_GATE)
     bound["content_sha256"] = decision_policy_sha256(bound)
@@ -52,9 +54,9 @@ def bind_exposure(bundle, intent, policy, purposes, view="start_rebuild", versio
     return bound, body
 
 
-def world(bundle, pairs, purposes, items=None, view="start_rebuild", version="v2", caps=None, **kwargs):
+def world(bundle, pairs, purposes, items=None, view="start_rebuild", version="v2", caps=None, derisk_view=False, **kwargs):
     intent, policy, plain, control = v2_world(bundle, items, pairs=pairs, **kwargs)
-    bound, body = bind_exposure(bundle, intent, policy, purposes, view, version, caps)
+    bound, body = bind_exposure(bundle, intent, policy, purposes, view, version, caps, derisk_view)
     return intent, bound, body, plain
 
 
@@ -183,6 +185,22 @@ class ShadowAndHardLimitTests(unittest.TestCase):
         self.assertIn("AGENT_SWAP_SKIPPED:derisk_day", found)
         self.assertFalse(found & {"AGENT_SWAP", "AGENT_SWAP_FILL", "AGENT_SWAP_CANCELLED:exposure_view"})
         self.assertEqual(body["order_proposal"]["orders"], control["order_proposal"]["orders"])
+
+    def test_derisk_day_view_does_not_skip_the_whole_day(self):
+        bundle = exposure_bundle(cash="136000", positions={"2330.TW": 1000, "1101.TW": 7000})
+        _, _, body, _ = world(bundle, [PAIR], [PURPOSE_EXPOSURE], level="defensive", grade="lower", view="start_rebuild", derisk_view=True)
+        found = codes(body)
+        self.assertIn("RISK_DRAWDOWN", found)
+        self.assertNotIn("AGENT_SWAP_SKIPPED:derisk_day", found)
+
+    def test_derisk_day_view_with_keep_defensive_cancels_exposure_pairs_only(self):
+        bundle = exposure_bundle(cash="136000", positions={"2330.TW": 1000, "1101.TW": 7000})
+        _, _, body, _ = world(bundle, [PAIR], [PURPOSE_EXPOSURE], level="defensive", grade="lower", view="keep_defensive", derisk_view=True)
+        found = codes(body)
+        self.assertIn("RISK_DRAWDOWN", found)
+        self.assertNotIn("AGENT_SWAP_SKIPPED:derisk_day", found)
+        self.assertIn("AGENT_SWAP_CANCELLED:exposure_view", found)
+        self.assertNotIn("AGENT_SWAP", found)
 
     def test_a_buyer_without_a_buy_order_cancels_the_exposure_pair_and_the_victim_is_not_sold(self):
         bundle = exposure_bundle()

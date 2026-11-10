@@ -34,7 +34,7 @@ from .sizing import (
     HELD_WEIGHT_BUDGET, HIGH_CONVICTION_CASH_PRIORITY,
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
-    conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
+    conviction_weights, derisk_day_uses_agent_view, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
     agent_swap_binding, high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, release_order_binding,
     slot_recycle_enabled, validate_position_sizing,
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
@@ -1074,8 +1074,11 @@ class AllocationOrderEngine:
         if not pairs:
             return targets
         if derisk_day:
-            note("AGENT_SWAP_SKIPPED:derisk_day", portfolio, "當日由 drawdown_derisk 減碼，換股提名整個略過（防守補現金當天不換股買進）")
-            return targets
+            # derisk_day_view（版本閘門）：減碼日不整個略過，各配對仍照下面各自的條件處理（keep_defensive 取消 exposure 配對、
+            # quality_dip 的回撤下限與轉向條件、硬規則可行性試算）。沒有閘門時原行為。
+            if not derisk_day_uses_agent_view(self.policy.get("position_sizing")):
+                note("AGENT_SWAP_SKIPPED:derisk_day", portfolio, "當日由 drawdown_derisk 減碼，換股提名整個略過（防守補現金當天不換股買進）")
+                return targets
         if exposure_pairs and exposure_binding["view"] == "keep_defensive":  # type: ignore[index]
             for buy, sell in pairs:
                 if (buy, sell) in exposure_pairs:

@@ -204,23 +204,23 @@ class ArchivedRunsReproductionTest(unittest.TestCase):
 
     def test_overall_landing(self):
         totals = self.report["totals"]
-        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (256, 40))
-        self.assertEqual(totals["unlanded_reasons"]["MAX_POSITIONS"], 163)
-        self.assertEqual(totals["unlanded_reasons"]["NO_FLAG"], 25)
+        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (285, 40))
+        self.assertEqual(totals["unlanded_reasons"]["MAX_POSITIONS"], 189)
+        self.assertEqual(totals["unlanded_reasons"]["NO_FLAG"], 26)
 
     def test_policy_segments_sum_to_archived_totals(self):
         totals = self.report["totals"]
         segments = self.report["by_policy"]
-        self.assertEqual(sum(segment["buy_add_intents"] for segment in segments), 256)
+        self.assertEqual(sum(segment["buy_add_intents"] for segment in segments), 285)
         self.assertEqual(sum(segment["landed"] for segment in segments), 40)
-        self.assertEqual(sum(segment["unlanded"] for segment in segments), 216)
-        self.assertEqual(sum(int(segment["overridden_sell_gross_amount"]) for segment in segments), 48450690)
-        self.assertEqual(totals["overridden_sell_gross_amount"], "48450690")
+        self.assertEqual(sum(segment["unlanded"] for segment in segments), 245)
+        self.assertEqual(sum(int(segment["overridden_sell_gross_amount"]) for segment in segments), 48913350)
+        self.assertEqual(totals["overridden_sell_gross_amount"], "48913350")
         self.assertEqual(sum(segment["run_count"] for segment in segments), self.report["run_count"])
 
     def test_since_1104(self):
         totals = intent_landing_report(REAL_DECISIONS, since="2026-11-04")["totals"]
-        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (89, 6))
+        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (118, 6))
 
     def test_1104_hold_sold(self):
         day = next(item for item in self.report["days"] if item["date"] == "2026-11-04")

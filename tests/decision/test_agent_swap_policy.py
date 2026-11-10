@@ -188,6 +188,7 @@ class AgentSwapGateTests(unittest.TestCase):
             "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
             "exposure",  # Agent 主導曝險階段 2、3 的子閘門（decision/exposure_swap.py）
             "quality_dip",  # 優質股第三階段的子閘門（decision/quality_dip_swap.py）
+            "derisk_day_view",  # 減碼日改由風險 Agent 的 exposure_view 決定是否換股（版本閘門）
         })
 
 
