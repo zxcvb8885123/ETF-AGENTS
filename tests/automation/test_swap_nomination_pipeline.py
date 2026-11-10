@@ -49,6 +49,7 @@ def template(gate=GATE):
     """正式樣板（只拿掉 fixture 沒有資料的 cash_stance_recency）；``gate`` 為 None 時不加 agent_swap（對照組）。"""
     value = live_policy_template()
     value["position_sizing"].pop("cash_stance_recency")
+    value["position_sizing"].pop("agent_swap", None)  # 正式樣板已含 agent_swap：先移除，再依 gate 明確加回
     if gate is not None:
         value["position_sizing"]["agent_swap"] = copy.deepcopy(gate)
     return value
