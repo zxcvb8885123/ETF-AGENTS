@@ -73,12 +73,21 @@ LIMIT_HEADROOM_BUY = Decimal("0.97")
 # 已持有的 add 不受影響、只減少增量。省略此欄位的舊 Decision run 維持依代號逐張減少的原重建行為。
 CASH_FIT_ORDER = "v1"
 CASH_FIT_MIN_FILL_RATIO = Decimal("0.5")
+# v2（docs/agent_autonomy_plan.md 階段 4，只由人設定）：買單取得現金的順序同 v1，但新股只買得到零頭時**不再整筆取消**
+# （不記 RISK_CASH_FIT），買得到幾張買幾張；cash_fit_min_fill_ratio 在 v2 不允許出現。``_fit_turnover`` 的新股殘量取消屬換手護欄、
+# 本版不動。v1 逐位元維持原重建行為。
+CASH_FIT_ORDER_V2 = "v2"
+CASH_FIT_ORDER_VERSIONS = (CASH_FIT_ORDER, CASH_FIT_ORDER_V2)
 # 2026-11-06 後新增（high_conviction_cash_priority 版本閘門）：可動用的現金先全部給高信心買單。高信心新股因現金不足
 # 買不到目標的 cash_fit_min_fill_ratio 時不再整筆取消，買得到幾張就買幾張；高信心買單（含已持有的 add）被現金縮減且至少買到一張後，
 # 後面未持有的中、低信心新股不得動用剩下的現金（降為 0，CASH_BUFFER 旗標）；已持有股票的加碼不受影響。
 # turnover_fit 縮減也同樣不取消高信心零頭。須與 cash_fit_order 同時啟用。
 # 省略此欄位的舊 Policy／舊 Decision run 維持塵埃取消後現金流向後面買單的原重建行為。
 HIGH_CONVICTION_CASH_PRIORITY = "v1"
+# v2（階段 4，只由人設定）：保留「現金先給 high」（買單順序、high 零頭不取消），**移除**「high 買單被現金縮減後擋掉後面未持有的
+# 中低信心新股」的封鎖（先後順序已由名次決定）。v1 逐位元維持原重建行為。
+HIGH_CONVICTION_CASH_PRIORITY_V2 = "v2"
+HIGH_CONVICTION_CASH_PRIORITY_VERSIONS = (HIGH_CONVICTION_CASH_PRIORITY, HIGH_CONVICTION_CASH_PRIORITY_V2)
 # 2026-11-03 後新增（cash_ceiling_fix 版本閘門）：配置後 base 情境現金比例達競賽上限時，程式依 ATR14 由低到高
 # 留住交易 Agent 標為 exit 的持股續抱（RISK_CASH_CEILING，forced_exit 不留），直到低於上限。
 # 省略此欄位的舊 Decision run 維持由 Guard CASH_WEIGHT 整份拒絕的原重建行為。
@@ -101,7 +110,15 @@ TURNOVER_FIT = "v1"
 # 2026-11-03 後新增（reentry_cooldown 版本閘門）：決策庫中最近 days 個日曆天內（目標交易時段早於本次）已出場的股票，
 # 未持有時不得再買進（RISK_REENTRY_COOLDOWN）。名單由每日 pipeline 綁進 Policy（blocked_symbols＋source_run_ids），
 # 事後重建只讀 Policy。省略此欄位的舊 run 不設冷卻。
+# v2（只由人設定）：只計「交易 Agent 自己的 exit／forced_exit 意圖」造成的賣出；程式因回撤、強制換股、曝險換股或單股上限
+# 把 hold／trim 賣成 exit 的不計（需讀前次 run 的 intent.json）。v1 逐位元維持原行為。
 REENTRY_COOLDOWN_VERSION = "v1"
+REENTRY_COOLDOWN_VERSION_V2 = "v2"
+# v3（階段 4，只由人設定）：名單口徑同 v2（只計交易 Agent 自己的出場、同樣由 pipeline 綁定、Finalizer 以決策庫重算），
+# 但**不再擋買單**：交易 Agent 簡報附 ``cooldown:<代號>`` 提示，買回（buy）時須把該識別碼放進 adopted_claim_ids 回應一次；
+# 沒回應的買單由配置取消並記 RISK_REENTRY_COOLDOWN（只取消該動作）。agent_swap 的換入候選仍沿用名單排除（見 swap_nomination）。
+REENTRY_COOLDOWN_VERSION_V3 = "v3"
+REENTRY_COOLDOWN_VERSIONS = (REENTRY_COOLDOWN_VERSION, REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3)
 REENTRY_COOLDOWN_FIELDS = {"version", "days", "blocked_symbols", "source_run_ids"}
 # 2026-11-03 後新增（drawdown_derisk 版本閘門）：現金姿態為 defensive 時由程式依 ATR14 由高到低、信心低到高把持股減碼到
 # 姿態現金緩衝（RISK_DRAWDOWN，一次最多 NAV × max_derisk_fraction，預設 0.25）；配置預算 ≤ 0 時旗標改為 CASH_BUFFER；
@@ -116,19 +133,32 @@ DRAWDOWN_DERISK_VERSION = "v1"
 DRAWDOWN_DERISK_VERSION_V2 = "v2"
 DRAWDOWN_DERISK_VERSION_V3 = "v3"
 DRAWDOWN_DERISK_VERSION_V4 = "v4"
+# v5（docs/agent_autonomy_plan.md 階段 2，只由人設定）：v4 的數字（單次預算、換手餘額、整張、最低檔數）全部不變，只把「先賣誰」
+# 由程式的 ATR 順序改成交易 Agent 第二輪給的釋出順序（release_order，team_inputs 選配鍵）；順序由 pipeline 綁進本物件的
+# release_symbols／release_ref（樣板不得預填）。順序驗證用盡或呼叫失敗時退回 v4 的確定性順序並留旗標，硬規則仍整份拒絕。
+DRAWDOWN_DERISK_VERSION_V5 = "v5"
 DRAWDOWN_DERISK_VERSIONS = (
     DRAWDOWN_DERISK_VERSION, DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4,
+    DRAWDOWN_DERISK_VERSION_V5,
 )
 # 其他閘門要求 drawdown_derisk「減碼後不得加回」時接受的版本（v3 與其後續版本）。
-DRAWDOWN_DERISK_NO_READD_VERSIONS = (DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4)
+DRAWDOWN_DERISK_NO_READD_VERSIONS = (DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4, DRAWDOWN_DERISK_VERSION_V5)
+# 有「單次預算另扣換手餘額」行為、且 rebound_participation／high_conviction_cash_floor 接受的版本（v4 與其後續版本）。
+DRAWDOWN_DERISK_TURNOVER_VERSIONS = (DRAWDOWN_DERISK_VERSION_V4, DRAWDOWN_DERISK_VERSION_V5)
+RELEASE_ORDER_STATUSES = ("completed", "not_needed", "exhausted", "unavailable")  # 同 release_order.STATUSES（那邊 import 本模組，不能反向）
+RELEASE_REF_FIELDS = {"release_order_id", "sha256", "status"}
 # 2026-11-08 新增（held_weight_budget 版本閘門，審查 D-1，只由人設定）：已持有的加碼候選若現有權重已高於等級份額，
 # 依現有權重計入配置預算、目標權重就是現有權重、不建買單（RISK_HELD_WEIGHT），其他候選不再按高估的預算超配後
 # 再被 CASH_BUFFER／RISK_CASH_FIT 砍回。省略此欄位的舊 Policy／舊 Decision run 逐位維持原重建行為。
 HELD_WEIGHT_BUDGET = "v1"
+# v2（階段 4，只由人設定）：預算算法與 v1 逐位相同，只多一份交易 Agent 簡報的持股權重事實（team_inputs 選配鍵
+# ``held_weight_facts``，Finalizer 整份重算）；前提 selection_ranking（team_inputs 2.5 以上）。v1 與沒有閘門的舊 run 不變。
+HELD_WEIGHT_BUDGET_V2 = "v2"
+HELD_WEIGHT_BUDGET_VERSIONS = (HELD_WEIGHT_BUDGET, HELD_WEIGHT_BUDGET_V2)
 # 名額回收（slot_recycle 版本閘門，物件 {"version": "v1"}）：排名在前的新股因預算為零或目標金額不足一張而算不出整張
 # （LOT_SIZE）時，不再占著新增名額，讓後面的候選補位；總持股數仍不超過上限。省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。
 SLOT_RECYCLE = {"version": "v1"}
-DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction"}
+DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction", "release_symbols", "release_ref"}
 DRAWDOWN_DERISK_FRACTION = Decimal("0.25")
 # 2026-11-05 後新增（high_conviction_cash_floor 版本閘門，只由人設定）：高信心（high）買單可把現金用到
 # min(NAV × 姿態緩衝 × floor_ratio, 起始已交割現金)，medium／low 維持 cash_buffer_floor 的 min(NAV × 緩衝, 起始現金)；
@@ -174,7 +204,13 @@ CASH_ANCHOR_SOURCE_FIELDS = {
 AGENT_SWAP_V1 = "v1"
 AGENT_SWAP_V2 = "v2"
 AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
-AGENT_SWAP_FIELDS = {"version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref"}
+# v2 另有 pipeline 在 5c 之後綁定的 nominated_pairs（有序配對，依 Agent 先後）與 nomination_ref（提名封存的識別與狀態）；
+# 樣板不得預填，Finalizer 以 team_inputs 的提名重算比對，重建配置只讀 Policy。v1（影子）不綁、出現即拒絕。
+AGENT_SWAP_FIELDS = {
+    "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
+}
+NOMINATION_REF_FIELDS = {"nomination_id", "sha256", "status"}
+NOMINATION_STATUSES = ("completed", "not_needed", "exhausted", "unavailable")  # 同 swap_nomination.STATUSES（那邊 import 本模組，不能反向）
 AGENT_SWAP_REQUIRED_FIELDS = {"version", "max_swaps_per_run", "min_holding_days"}
 AGENT_SWAP_MAX_SWAPS = (1, 10)
 AGENT_SWAP_MIN_HOLDING_DAYS = (0, 60)
@@ -250,9 +286,9 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="rank_by_symbol／selection_ranking_id／selection_ranking_sha256 三者必須一起綁定（_validate_rank）",
     ),
     GateRule("cash_buffer_floor", allowed=(CASH_BUFFER_FLOOR,)),
-    GateRule("cash_fit_order", allowed=(CASH_FIT_ORDER,)),
+    GateRule("cash_fit_order", allowed=CASH_FIT_ORDER_VERSIONS, note="v2 不允許 cash_fit_min_fill_ratio（_validate_execution_gates 檢查）"),
     GateRule("cash_fit_min_fill_ratio", requires=("cash_fit_order",)),
-    GateRule("high_conviction_cash_priority", allowed=(HIGH_CONVICTION_CASH_PRIORITY,), requires=("cash_fit_order",)),
+    GateRule("high_conviction_cash_priority", allowed=HIGH_CONVICTION_CASH_PRIORITY_VERSIONS, requires=("cash_fit_order",)),
     GateRule(
         "cash_ceiling_fix", allowed=(CASH_CEILING_FIX,),
         note="rules.reuse_sell_proceeds=false 時賣款不能買替補，留住 exit 的判斷只看 base 情境期末現金比例，與 true 時同一套順序",
@@ -272,7 +308,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="drawdown_control 另需 release_neutral_below／release_defensive_below（drawdown.validate_drawdown_control）；"
              "v3 以上才能與 high_conviction_cash_floor／cash_ratio_range 同用；v4 另受 max_turnover_rate 約束",
     ),
-    GateRule("held_weight_budget", allowed=(HELD_WEIGHT_BUDGET,)),
+    GateRule("held_weight_budget", allowed=HELD_WEIGHT_BUDGET_VERSIONS, note="v2 另需 selection_ranking（_validate_execution_gates 檢查）；team_inputs 另存 held_weight_facts"),
     GateRule(
         "rebound_participation",
         requires=("exposure_rotation", "cash_stance_turn_facts", "drawdown_derisk"),
@@ -511,8 +547,8 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
             errors.append("position_sizing.reentry_cooldown 必須是物件")
         else:
             reject_unknown_fields(cooldown, REENTRY_COOLDOWN_FIELDS, "position_sizing.reentry_cooldown", errors)
-            if cooldown.get("version") != REENTRY_COOLDOWN_VERSION:
-                errors.append("position_sizing.reentry_cooldown.version 只允許 %s" % REENTRY_COOLDOWN_VERSION)
+            if cooldown.get("version") not in REENTRY_COOLDOWN_VERSIONS:
+                errors.append("position_sizing.reentry_cooldown.version 只允許 %s" % "、".join(REENTRY_COOLDOWN_VERSIONS))
             days = cooldown.get("days")
             if isinstance(days, bool) or not isinstance(days, int) or days < 1:
                 errors.append("position_sizing.reentry_cooldown.days 必須是正整數")
@@ -543,6 +579,11 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
                         errors.append("position_sizing.drawdown_derisk.max_derisk_fraction 必須大於 0 且不超過 1")
                 except DecisionToolError as error:
                     errors.append(str(error))
+            _validate_release_binding(sizing, derisk, errors)
+    if sizing.get("cash_fit_order") == CASH_FIT_ORDER_V2 and "cash_fit_min_fill_ratio" in sizing:
+        errors.append("position_sizing.cash_fit_min_fill_ratio 不允許與 cash_fit_order=v2 同時出現（v2 不取消零頭）")
+    if sizing.get("held_weight_budget") == HELD_WEIGHT_BUDGET_V2 and "selection_ranking" not in sizing:
+        errors.append("position_sizing.held_weight_budget=v2 必須與 selection_ranking 同時存在（持股權重事實建立在 team_inputs 2.5 以上）")
     if "cash_fit_min_fill_ratio" in sizing:
         try:
             ratio = decimal_value(sizing["cash_fit_min_fill_ratio"], "position_sizing.cash_fit_min_fill_ratio")
@@ -618,6 +659,7 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
             errors.append("%s.verdicts_ref 欄位必須是 verdicts_id、as_of、sha256 的非空字串" % prefix)
         elif hints is None:
             errors.append("%s.verdicts_ref 必須附 thesis_hint_symbols" % prefix)
+    _validate_agent_swap_binding(gate, prefix, errors)
     exposure = sizing.get("exposure_rotation")
     if isinstance(exposure, Mapping) and exposure.get("version") != "v3":
         errors.append("%s 只允許用於 exposure_rotation.version=v3（提供 hold 信心、持有天數與 exposure_review）" % prefix)
@@ -630,6 +672,96 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
             errors.append("%s.version=v2 不得與 rotation.forced_swap 同時啟用（論點被推翻改為提名時必須回應的提示）" % prefix)
         if isinstance(exposure, Mapping) and "conviction_gap_swap" in exposure:
             errors.append("%s.version=v2 不得與 exposure_rotation.conviction_gap_swap 同時啟用（換股由 Agent 提名）" % prefix)
+
+
+def _validate_agent_swap_binding(gate: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+    """v2 的 nominated_pairs／nomination_ref：兩者一起出現、只用於 v2、形狀與值域固定；非 completed 的提名不得有配對。"""
+    pairs, ref = gate.get("nominated_pairs"), gate.get("nomination_ref")
+    if pairs is None and ref is None:
+        return
+    if gate.get("version") != AGENT_SWAP_V2:
+        errors.append("%s.nominated_pairs／nomination_ref 只用於 version=v2（v1 影子不讀提名）" % prefix)
+        return
+    if pairs is None or ref is None:
+        errors.append("%s.nominated_pairs 與 nomination_ref 必須一起出現（只能由 pipeline 綁定）" % prefix)
+        return
+    status = None
+    if not isinstance(ref, Mapping) or set(ref) != NOMINATION_REF_FIELDS or not all(isinstance(v, str) and v for v in ref.values()):
+        errors.append("%s.nomination_ref 欄位必須是 nomination_id、sha256、status 的非空字串" % prefix)
+    elif ref["status"] not in NOMINATION_STATUSES:
+        errors.append("%s.nomination_ref.status 只允許 %s" % (prefix, "／".join(NOMINATION_STATUSES)))
+    else:
+        status = ref["status"]
+    if not isinstance(pairs, list) or not all(
+        isinstance(pair, Mapping) and set(pair) == {"buy_symbol", "sell_symbol"}
+        and all(isinstance(v, str) and v and v == v.upper() for v in pair.values()) and pair["buy_symbol"] != pair["sell_symbol"]
+        for pair in pairs
+    ):
+        errors.append("%s.nominated_pairs 必須是 {buy_symbol, sell_symbol}（大寫、不得相同）的清單" % prefix)
+        return
+    if len({pair["buy_symbol"] for pair in pairs}) != len(pairs) or len({pair["sell_symbol"] for pair in pairs}) != len(pairs):
+        errors.append("%s.nominated_pairs 的 buy_symbol、sell_symbol 各最多出現一次" % prefix)
+    limit = gate.get("max_swaps_per_run")
+    if isinstance(limit, int) and not isinstance(limit, bool) and len(pairs) > limit:
+        errors.append("%s.nominated_pairs 不得超過 max_swaps_per_run" % prefix)
+    if status is not None and status != "completed" and pairs:
+        errors.append("%s.nomination_ref.status 不是 completed 時 nominated_pairs 必須為空" % prefix)
+
+
+def _validate_release_binding(sizing: Mapping[str, object], derisk: Mapping[str, object], errors: List[str]) -> None:
+    """drawdown_derisk v5 的前提與 release_symbols／release_ref：v5 須有 selection_ranking；兩個綁定欄位一起出現、只用於 v5、
+    形狀固定；非 completed 的順序不得有代號。內容與 team_inputs.release_order 的一致由 Finalizer 比對。"""
+    prefix = "position_sizing.drawdown_derisk"
+    v5 = derisk.get("version") == DRAWDOWN_DERISK_VERSION_V5
+    if v5 and "selection_ranking" not in sizing:
+        errors.append("%s.version=v5 必須與 selection_ranking 同時存在（釋出順序由交易 Agent 第二輪給）" % prefix)
+    symbols, ref = derisk.get("release_symbols"), derisk.get("release_ref")
+    if symbols is None and ref is None:
+        return
+    if not v5:
+        errors.append("%s.release_symbols／release_ref 只用於 version=v5" % prefix)
+        return
+    if symbols is None or ref is None:
+        errors.append("%s.release_symbols 與 release_ref 必須一起出現（只能由 pipeline 綁定）" % prefix)
+        return
+    status = None
+    if not isinstance(ref, Mapping) or set(ref) != RELEASE_REF_FIELDS or not all(isinstance(v, str) and v for v in ref.values()):
+        errors.append("%s.release_ref 欄位必須是 release_order_id、sha256、status 的非空字串" % prefix)
+    elif ref["status"] not in RELEASE_ORDER_STATUSES:
+        errors.append("%s.release_ref.status 只允許 %s" % (prefix, "／".join(RELEASE_ORDER_STATUSES)))
+    else:
+        status = ref["status"]
+    if not isinstance(symbols, list) or not all(isinstance(s, str) and s and s == s.upper() for s in symbols) or len(set(symbols)) != len(symbols):
+        errors.append("%s.release_symbols 必須是依 Agent 先後排列、不重複的大寫代號清單" % prefix)
+        return
+    if status is not None and status != "completed" and symbols:
+        errors.append("%s.release_ref.status 不是 completed 時 release_symbols 必須為空" % prefix)
+
+
+def release_order_binding(sizing: object) -> Optional[Tuple[List[str], str]]:
+    """drawdown_derisk v5 的釋出順序綁定：(依 Agent 先後的代號, 狀態)。沒有 v5 回 None，配置完全不讀順序。
+
+    v5 但尚未綁定（樣板直接進配置）時拋錯，不靜默退回 v4。"""
+    derisk = sizing.get("drawdown_derisk") if isinstance(sizing, Mapping) else None
+    if not isinstance(derisk, Mapping) or derisk.get("version") != DRAWDOWN_DERISK_VERSION_V5:
+        return None
+    symbols, ref = derisk.get("release_symbols"), derisk.get("release_ref")
+    if symbols is None or not isinstance(ref, Mapping):
+        raise DecisionToolError("DecisionPolicy 啟用 drawdown_derisk v5，但尚未綁定釋出順序（release_symbols／release_ref）")
+    return [str(symbol) for symbol in symbols], str(ref["status"])
+
+
+def agent_swap_binding(sizing: object) -> Optional[Tuple[List[Tuple[str, str]], str]]:
+    """v2（正式）的提名綁定：(有序配對 [(換入, 換出)], 提名狀態)。沒有閘門或是 v1（影子）回 None，配置完全不讀提名。
+
+    v2 但尚未綁定（樣板直接進配置）時拋錯，不靜默當作沒有提名。"""
+    gate = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    if not isinstance(gate, Mapping) or gate.get("version") != AGENT_SWAP_V2:
+        return None
+    pairs, ref = gate.get("nominated_pairs"), gate.get("nomination_ref")
+    if pairs is None or not isinstance(ref, Mapping):
+        raise DecisionToolError("DecisionPolicy 啟用 agent_swap v2，但尚未綁定換股提名（nominated_pairs／nomination_ref）")
+    return [(str(pair["buy_symbol"]), str(pair["sell_symbol"])) for pair in pairs], str(ref["status"])
 
 
 def _ratio_in_open_unit(raw: object, label: str, errors: List[str], allow_one: bool) -> None:
@@ -985,7 +1117,7 @@ def drawdown_derisk_v2(sizing: Mapping[str, object]) -> bool:
     """drawdown_derisk 為 v2 以上（整張進位不得超過單次減碼硬上限）；v1 或沒有閘門回 False。"""
     derisk = sizing.get("drawdown_derisk")
     return isinstance(derisk, Mapping) and derisk.get("version") in (
-        DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4,
+        DRAWDOWN_DERISK_VERSION_V2, DRAWDOWN_DERISK_VERSION_V3, DRAWDOWN_DERISK_VERSION_V4, DRAWDOWN_DERISK_VERSION_V5,
     )
 
 
@@ -996,14 +1128,75 @@ def drawdown_derisk_v3(sizing: Mapping[str, object]) -> bool:
 
 
 def drawdown_derisk_v4(sizing: Mapping[str, object]) -> bool:
-    """drawdown_derisk 為 v4（單次減碼預算另扣交易 Agent 賣單後的換手餘額）；其餘回 False。"""
+    """drawdown_derisk 為 v4 以上（單次減碼預算另扣交易 Agent 賣單後的換手餘額，v5 沿用）；v1～v3 或沒有閘門回 False。"""
     derisk = sizing.get("drawdown_derisk")
-    return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V4
+    return isinstance(derisk, Mapping) and derisk.get("version") in DRAWDOWN_DERISK_TURNOVER_VERSIONS
+
+
+def drawdown_derisk_v5(sizing: object) -> bool:
+    """drawdown_derisk 為 v5（先賣誰由交易 Agent 的釋出順序決定；數字規則同 v4）；其餘回 False。"""
+    derisk = sizing.get("drawdown_derisk") if isinstance(sizing, Mapping) else None
+    return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V5
 
 
 def slot_recycle_enabled(sizing: Mapping[str, object]) -> bool:
     """slot_recycle 閘門：只有剛好 {"version": "v1"} 才算開啟；其他值已被 validate_gate_prerequisites 拒絕。"""
     return sizing.get("slot_recycle") == SLOT_RECYCLE
+
+
+def reentry_cooldown_agent_only(sizing: Mapping[str, object]) -> bool:
+    """reentry_cooldown v2／v3：名單只收交易 Agent 自己的出場；其他（v1、無閘門）一律 False。"""
+    cooldown = sizing.get("reentry_cooldown")
+    return isinstance(cooldown, Mapping) and cooldown.get("version") in (REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3)
+
+
+def reentry_cooldown_hint_only(sizing: object) -> bool:
+    """reentry_cooldown v3：名單不擋買單、改成交易 Agent 簡報的提示（買回須回應）；其他一律 False。"""
+    cooldown = sizing.get("reentry_cooldown") if isinstance(sizing, Mapping) else None
+    return isinstance(cooldown, Mapping) and cooldown.get("version") == REENTRY_COOLDOWN_VERSION_V3
+
+
+def reentry_hint_id(symbol: str) -> str:
+    """v3 提示的識別碼（買回時放進 adopted_claim_ids 回應）。"""
+    return "cooldown:%s" % symbol.upper()
+
+
+def reentry_hint_symbols(sizing: object) -> Optional[List[str]]:
+    """v3 且已綁定名單時回傳提示的代號（排序）；其他回 None（交易 Agent 驗證與簡報與舊版逐鍵相同）。"""
+    if not reentry_cooldown_hint_only(sizing):
+        return None
+    blocked = reentry_blocked_symbols(sizing)  # type: ignore[arg-type]
+    return None if blocked is None else sorted(blocked)
+
+
+def cash_fit_ordered(effective: Mapping[str, object]) -> bool:
+    """effective 的 cash_fit_order 為 v1 或 v2（買單依信心、名次、代號取得現金）。"""
+    return effective.get("cash_fit_order") in CASH_FIT_ORDER_VERSIONS
+
+
+def cash_fit_cancels_dust(effective: Mapping[str, object]) -> bool:
+    """只有 cash_fit_order=v1 會把新股零頭整筆取消（RISK_CASH_FIT）；v2 不取消。"""
+    return effective.get("cash_fit_order") == CASH_FIT_ORDER
+
+
+def high_priority_enabled(effective: Mapping[str, object]) -> bool:
+    """high_conviction_cash_priority 為 v1 或 v2（現金先給 high、high 零頭不取消）；須與 cash_fit_order 同時存在。"""
+    return cash_fit_ordered(effective) and effective.get("high_conviction_cash_priority") in HIGH_CONVICTION_CASH_PRIORITY_VERSIONS
+
+
+def high_priority_blocks(effective: Mapping[str, object]) -> bool:
+    """只有 v1 會在 high 買單被現金縮減後擋掉後面未持有的中低信心新股；v2 不封鎖。"""
+    return cash_fit_ordered(effective) and effective.get("high_conviction_cash_priority") == HIGH_CONVICTION_CASH_PRIORITY
+
+
+def held_weight_budget_enabled(sizing: Mapping[str, object]) -> bool:
+    """held_weight_budget v1 或 v2（預算算法相同）。"""
+    return sizing.get("held_weight_budget") in HELD_WEIGHT_BUDGET_VERSIONS
+
+
+def held_weight_facts_gate(sizing: object) -> bool:
+    """held_weight_budget=v2：交易 Agent 簡報附持股權重事實，team_inputs 另存 held_weight_facts（雙向）。"""
+    return isinstance(sizing, Mapping) and sizing.get("held_weight_budget") == HELD_WEIGHT_BUDGET_V2
 
 
 def reentry_blocked_symbols(sizing: Mapping[str, object]) -> Optional[List[str]]:

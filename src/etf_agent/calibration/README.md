@@ -15,6 +15,7 @@
 | `repository.py` | 觀測的不可變保存，獨立根目錄 `artifacts/calibration/` | `CalibrationRepository` |
 | `service.py` | 記錄決策與對答案；`latest_per_entry_day`（同成交日取 cutoff 最晚、回報被取代者）與 `day_returns`（單日逐檔報酬與池平均）供 `evaluation.grid` 沿用同一口徑 | `build_observation`、`record_day`、`record_all`、`evaluate`、`latest_per_entry_day`、`day_returns` |
 | `intent_landing.py` | 唯讀統計 buy／add 意圖落地率、未落地原因（旗標組合）、旗標次數與「Agent 標 hold／add 卻被賣」的清單與金額；先驗證 manifest，缺檔、雜湊或欄位不符整批拒絕；CLI：`cli/calibration.py intent-landing [--since YYYY-MM-DD]` | `intent_landing_report` |
+| `shadow_swap_report.py` | 唯讀統計 `agent_swap` v1 影子提名：每日狀態次數、配對、換入／換出股與信心，並依 v2 規則離線估算「若開 v2 會成交哪幾對」與取消原因分佈（上限估計，動態取消無法重現），與同日實際訂單對照；標 `replay_reference_only`；缺檔、雜湊、snapshot／cutoff 不一致整批拒絕，無影子 run 回報 `no_shadow_data`；CLI：`cli/calibration.py shadow-swap [--since YYYY-MM-DD]` | `shadow_swap_report` |
 | `gap_audit.py` | 決策價與成交均價的偏離、開盤漲跌停、缺均價清單 | `execution_gap_report` |
 
 ## 口徑

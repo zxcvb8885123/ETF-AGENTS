@@ -8,7 +8,7 @@
 
 - 每一對提名包含：換入的新股 `buy_symbol`、換出的持股 `sell_symbol`、換入依據 `buy_basis_ids`、換出依據 `sell_basis_ids`、一段白話理由 `reason`。
 - 陣列順序就是優先順序，最想先用的放最前面。對數不得超過簡報給的 `pair_limit`。
-- 沒有合適的配對就輸出空的 `nominations`，並在 `no_nomination_reason` 寫原因。有提名時**不要**輸出 `no_nomination_reason`。
+- 沒有合適的配對就輸出空的 `nominations`，並在 `no_nomination_reason` 寫原因。`no_nomination_reason` 欄位一律要輸出：有提名時填空字串 `""`（不適用），`nominations` 為空時必須是非空理由。
 - 不確定時不提名比勉強提名好：沒有提名就不換股，程式不會替你挑。
 
 ## 哪些可以提名
@@ -63,7 +63,7 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
     }
   ],
   "thesis_hint_responses": [{"symbol": "YYYY.TW", "response": "nominated", "reason": "…"}],
-  "no_nomination_reason": "（nominations 為空時必填，否則不要輸出）"
+  "no_nomination_reason": "（nominations 為空時必填非空理由；有提名時填空字串）"
 }
 ```
 

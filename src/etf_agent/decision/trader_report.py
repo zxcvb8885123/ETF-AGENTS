@@ -2,7 +2,7 @@
 
 from datetime import timedelta, timezone
 import re
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence
 
 from etf_agent.core import parse_aware_time
 
@@ -68,10 +68,12 @@ def render_trader_report(
     debate: Mapping[str, object], trade: Mapping[str, object],
     position_review: Optional[Mapping[str, object]] = None,
     hold_conviction: bool = False,
+    reentry_hint_symbols: Optional[Sequence[str]] = None,
 ) -> str:
     """保留原判斷，只將識別碼、等級與長段落轉成閱讀版。"""
     errors = TradeDecisionValidator(
-        bundle, momentum, debate, position_review=position_review, hold_conviction=hold_conviction
+        bundle, momentum, debate, position_review=position_review, hold_conviction=hold_conviction,
+        reentry_hint_symbols=reentry_hint_symbols,
     ).validate(trade)
     if errors:
         raise DecisionToolError("交易整合結果驗證失敗：" + "；".join(errors))

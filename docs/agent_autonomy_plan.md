@@ -1,6 +1,24 @@
 # 把策略裁量還給 Agent：設計計畫
 
-狀態（2026-11-10）：**只有計畫，沒有任何程式、設定或契約被修改**。本檔提到的新閘門版本、新欄位與新 artifact 名稱（`release_order`、`reentry_cooldown` v2、`drawdown_derisk` v5 等）全部是**提案、名稱暫定、尚未實作**。是否實作與開啟由人決定。
+狀態（2026-11-10，依程式與 `config/decision_policy.json` 核對）：各階段已實作，**只有階段 0 的統計工具與階段 3 的 `agent_swap` v1 影子期已開啟／可用**，其餘為「已實作、尚未開啟」（正式設定沒有這些欄位，不可當成現行行為）：
+
+| 階段 | 實作 | 開啟 |
+| --- | --- | --- |
+| 0 意圖落地率 | `calibration/intent_landing.py`、`cli/calibration.py intent-landing` | 唯讀工具，已可用 |
+| 1 `reentry_cooldown` v2 | 已實作 | 未開啟 |
+| 2 `drawdown_derisk` v5（`release_order`） | 已實作（`decision/release_order.py`、Skill `references/release-order.md`） | 未開啟 |
+| 3 `agent_swap`（步驟 1–6，細節見[換股提名計畫](agent_nominated_rotation_plan.md)） | v1 影子（提名、封存、`team_inputs` 2.9、降級版 `agent_step_degradable`）、v2 配置與 `shadow-swap` 報告皆已實作 | **v1 已於 2026-11-10 開啟**（`max_swaps_per_run 2`、`min_holding_days 5`）；v2 未開啟 |
+| 4 現金與冷卻 | `cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`held_weight_facts`）、`reentry_cooldown` v3 皆已實作 | 未開啟（`slot_recycle` 仍未開啟） |
+
+**實作註記（與下文設計不符或補充之處，下文各節保留當時的設計與推論）**：
+
+- 階段 1：解除冷卻後，1815、3443、3533 在重算時仍被現金不足與名額擋住，所以 v2 如第 4 節所預期，只保證不再二次封鎖、不保證落地率上升。
+- 階段 2：順序驗證用盡或呼叫失敗時，配置不整份拒絕，而是退回 v4 的 ATR 順序並留 `DERISK_ORDER_SKIPPED:order_*`（降級）；`release_order` 以 `team_inputs` 選配鍵存放、**不升版本**（2.9 已被換股提名占用，前提只有 `selection_ranking`）。
+- 階段 3：換股提名是獨立的第二輪（5c），不是擴充階段 2 的同一份輸出；閘門在 `position_sizing.agent_swap`（不是 `rotation.agent_swap`），`team_inputs` 升為 2.9；v1 影子期配置不讀提名。
+- 階段 4：`held_weight_facts` 只給現有權重、單股上限與 high 份額下限，**不含 medium／low 份額**（簡報時現金與廣度尚未確定）；`reentry_cooldown` v3 沒回應提示是「配置取消該買單」、不是驗證錯誤；`agent_swap` 的換入候選仍沿用冷卻名單排除。
+- 影子報告（`shadow-swap`）的「若開 v2 會成交幾對」是離線估算，**只是上限**（動態取消無法重現），只算 `replay_reference_only`。
+
+是否開啟任何一項、何時切換由人決定。
 
 本檔的數字來自 `artifacts/decisions/` 的 11 份封存決策（目標交易日 2026-10-27～11-10），是「當時實際發生了什麼」的事後統計，不是績效，也不是對 LLM 判斷的前瞻驗證。行號為 2026-11-10 工作區（分支 `145-`）。
 

@@ -9,6 +9,7 @@ from .gap_audit import execution_gap_report
 from .intent_landing import intent_landing_report
 from .repository import CalibrationRepository
 from .service import build_observation, evaluate, record_all, record_day
+from .shadow_swap_report import shadow_swap_report
 
 __all__ = [
     "HORIZONS",
@@ -21,4 +22,5 @@ __all__ = [
     "intent_landing_report",
     "record_all",
     "record_day",
+    "shadow_swap_report",
 ]

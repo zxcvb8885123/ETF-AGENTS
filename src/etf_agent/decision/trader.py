@@ -88,6 +88,7 @@ class TradeDecisionValidator:
         position_review: Optional[Mapping[str, object]] = None,
         hold_conviction: bool = False,
         dip_facts: Optional[Mapping[str, object]] = None,
+        reentry_hint_symbols: Optional[Sequence[str]] = None,
     ):
         """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
         交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。
@@ -99,7 +100,11 @@ class TradeDecisionValidator:
         預設 False，hold 帶信心即拒絕（現行）。
 
         ``dip_facts`` 是 quality_dip_facts 閘門的事實（team_inputs.dip_facts）：交易 brief 以 ``dip_background`` 附上，
-        不是證據，文字欄位出現其識別碼即拒絕；沒有閘門的舊 run 傳 None，驗證不變。"""
+        不是證據，文字欄位出現其識別碼即拒絕；沒有閘門的舊 run 傳 None，驗證不變。
+
+        ``reentry_hint_symbols``（reentry_cooldown v3）是近期出場的代號：未持有者各有一個 ``cooldown:<代號>`` 提示，買回時放進
+        ``adopted_claim_ids`` 回應；只檢查結構（只屬於該股票、不可否決、不重複），**不強制**回應——沒回應的買單由配置取消並留旗標
+        （RISK_REENTRY_COOLDOWN），不讓一個提示沒回應就耗盡修正循環。沒有 v3 的舊 run 傳 None，驗證不變。"""
         self.hold_conviction = hold_conviction
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
@@ -112,6 +117,8 @@ class TradeDecisionValidator:
         self.position_ids = position_ids_by_symbol(position_review)
         for symbol, identifier in self.position_ids.items():
             self.claims.setdefault(symbol, {})[identifier] = "position"
+        for symbol in sorted({str(item).upper() for item in (reentry_hint_symbols or ())} - self.context.held_symbols):
+            self.claims.setdefault(symbol, {})["cooldown:%s" % symbol] = "cooldown"
         self.prior_tokens = prior_reference_tokens(prior_context)
         self.dip_tokens = dip_reference_tokens(dip_facts)
         self.available = {
@@ -221,7 +228,7 @@ class TradeDecisionValidator:
         unknown = sorted((set(adopted) | set(rejected)) - set(available))
         if unknown:
             errors.append("%s 引用不屬於該股票的 claim：%s" % (prefix, ", ".join(unknown)))
-        optional = {claim for claim, role in available.items() if role == "position"}
+        optional = {claim for claim, role in available.items() if role in ("position", "cooldown")}
         missing = sorted(set(available) - optional - set(adopted) - set(rejected))
         if missing:
             errors.append("%s 未處理全部 claim：%s" % (prefix, ", ".join(missing)))
@@ -236,6 +243,9 @@ class TradeDecisionValidator:
                 "%s %s 需要至少一個被採納的空頭 claim、持股檢視警示或持股事實；若沒有可採納的依據，請改為 hold（降級）"
                 % (prefix, intent)
             )
+        rejected_hints = sorted(claim for claim in rejected if available.get(claim) == "cooldown")
+        if rejected_hints:
+            errors.append("%s 冷卻提示是程式事實，只能在買回時採納、不可否決：%s" % (prefix, ", ".join(rejected_hints)))
         rejected_reviews = sorted(claim for claim in rejected if available.get(claim) == "review")
         if rejected_reviews:
             errors.append("%s 持股檢視警示是程式事實，只能採納不可否決：%s" % (prefix, ", ".join(rejected_reviews)))

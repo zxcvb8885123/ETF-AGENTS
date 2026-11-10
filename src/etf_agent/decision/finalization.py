@@ -34,7 +34,13 @@ from .turn_facts import cash_stance_turn_facts_gate
 from .swap_nomination import SWAP_NOMINATION_KEY, agent_swap_gate, validate_team_swap_nomination
 from .dip_facts import DIP_FACTS_KEY, quality_dip_facts_gate, validate_dip_facts
 from .exposure_facts import EXPOSURE_FACTS_KEY, exposure_view_gate, validate_exposure_facts
-from .sizing import cash_ratio_gate, cash_ratio_selection_check, validate_cash_stance
+from .reentry_cooldown import recent_exit_symbols
+from .release_order import RELEASE_ORDER_KEY, validate_team_release_order
+from .held_weight_facts import HELD_WEIGHT_FACTS_KEY, validate_held_weight_facts
+from .sizing import (
+    cash_ratio_gate, cash_ratio_selection_check, drawdown_derisk_v5, held_weight_facts_gate, reentry_cooldown_agent_only,
+    reentry_hint_symbols, validate_cash_stance,
+)
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
 
@@ -109,6 +115,8 @@ def build_team_inputs(
     dip_facts: Optional[Mapping[str, object]] = None,
     swap_nomination: Optional[Mapping[str, object]] = None,
     exposure_facts: Optional[Mapping[str, object]] = None,
+    release_order: Optional[Mapping[str, object]] = None,
+    held_weight_facts: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
@@ -127,6 +135,13 @@ def build_team_inputs(
 
     選配鍵 ``exposure_facts``（position_sizing.exposure_view 啟用才有）：做法同 dip_facts，不升版本，只要求 2.7 以上
     （需要 exposure_review 同口徑的 beta）；Finalizer 以 Policy 閘門雙向檢查並整份重算。沒有傳入時 team_inputs 逐鍵不變。
+
+    選配鍵 ``release_order``（position_sizing.drawdown_derisk v5 才有）：交易 Agent 第二輪給的回撤減碼釋出順序，做法同 dip_facts，
+    不升版本（2.9 已被換股提名占用，且 v5 的前提只有 selection_ranking），只要求 2.5 以上；Finalizer 以 Policy 閘門雙向檢查並整份
+    重建驗證、比對 Policy 綁定。沒有傳入時 team_inputs 逐鍵不變。
+
+    選配鍵 ``held_weight_facts``（position_sizing.held_weight_budget=v2 才有）：程式算的持股權重事實，做法同 dip_facts，不升版本，
+    只要求 2.5 以上；Finalizer 以 Policy 閘門雙向檢查並整份重算。沒有傳入時 team_inputs 逐鍵不變。
     """
     if prior_decision_context is not None and research_result is not None:
         raise DecisionToolError("team_inputs 不能同時含舊版事件研究與前次決策背景")
@@ -152,6 +167,10 @@ def build_team_inputs(
         raise DecisionToolError("team_inputs 的 dip_facts 必須是物件，且只能用於 2.6 以上（需要基本面指標）")
     if exposure_facts is not None and (exposure_review is None or not isinstance(exposure_facts, Mapping)):
         raise DecisionToolError("team_inputs 的 exposure_facts 必須是物件，且只能用於 2.7 以上（需要曝險檢視）")
+    if release_order is not None and (selection_ranking is None or not isinstance(release_order, Mapping)):
+        raise DecisionToolError("team_inputs 的 release_order 必須是物件，且只能用於 2.5 以上（需要入選排序）")
+    if held_weight_facts is not None and (selection_ranking is None or not isinstance(held_weight_facts, Mapping)):
+        raise DecisionToolError("team_inputs 的 held_weight_facts 必須是物件，且只能用於 2.5 以上（需要入選排序）")
     if swap_nomination is not None and turn_state is None:
         raise DecisionToolError("team_inputs 2.9 的換股提名必須與反彈參與狀態（2.8）同時存在")
     if swap_nomination is not None and not isinstance(swap_nomination, Mapping):
@@ -203,6 +222,10 @@ def build_team_inputs(
         team[DIP_FACTS_KEY] = dict(dip_facts)
     if exposure_facts is not None:
         team[EXPOSURE_FACTS_KEY] = dict(exposure_facts)
+    if release_order is not None:
+        team[RELEASE_ORDER_KEY] = dict(release_order)
+    if held_weight_facts is not None:
+        team[HELD_WEIGHT_FACTS_KEY] = dict(held_weight_facts)
     return team
 
 
@@ -306,6 +329,28 @@ class DecisionFinalizer:
         validate_drawdown_control(self.policy, self.bundle, errors, history)
         return errors
 
+    def _validate_reentry_cooldown(self) -> List[str]:
+        """reentry_cooldown v2：以決策庫整份重算「交易 Agent 自己的出場」名單，與 Policy 綁定的名單比對；fail-closed。
+
+        v1 與沒有閘門的舊 policy 不碰決策庫，行為與舊版相同。"""
+        sizing = self.policy.get("position_sizing")
+        if not isinstance(sizing, Mapping) or not reentry_cooldown_agent_only(sizing):
+            return []
+        cooldown = sizing["reentry_cooldown"]
+        prefix = "DecisionPolicy.position_sizing.reentry_cooldown"
+        if cooldown.get("blocked_symbols") is None or cooldown.get("source_run_ids") is None:
+            return ["%s v2 必須綁定 blocked_symbols 與 source_run_ids" % prefix]
+        days = cooldown.get("days")
+        if isinstance(days, bool) or not isinstance(days, int) or days < 1:
+            return ["%s.days 必須是正整數" % prefix]
+        try:
+            symbols, run_ids = recent_exit_symbols(self.decision_repository, self.bundle, days, agent_only=True)
+        except Exception as error:  # 決策庫損毀、manifest 或 intent.json 不可用一律拒絕，不當成沒有出場
+            return ["%s 無法由決策庫重算冷卻名單：%s" % (prefix, error)]
+        if cooldown["blocked_symbols"] != symbols or cooldown["source_run_ids"] != run_ids:
+            return ["%s 的名單與決策庫重算不一致（重算：%s／%s）" % (prefix, symbols, run_ids)]
+        return []
+
     def _validate_cash_ratio_anchor(self) -> List[str]:
         """policy 有 cash_ratio_range 時，以決策庫（前次 run）或本次帳戶重算 anchor 比對；fail-closed。
 
@@ -328,6 +373,7 @@ class DecisionFinalizer:
         # exposure_rotation（版本閘門）：持有天數以帳本獨立重算；沒有閘門的舊 policy 不碰帳本。
         validate_held_since(self.policy, self.bundle, self.holdings_history_provider, errors, self.nav_history_provider)
         errors.extend(self._validate_cash_ratio_anchor())
+        errors.extend(self._validate_reentry_cooldown())
         errors.extend(self._validate_team_chain())
         errors.extend(ProposalValidator(self.bundle, self.policy, self.intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, self.policy).validate(proposal, scenario))
@@ -382,8 +428,26 @@ class DecisionFinalizer:
             ]
         # quality_dip_facts（版本閘門）的 dip_facts 是選配鍵：與 Policy 閘門雙向同時存在；沒有閘門的舊 run 欄位檢查與舊版相同。
         dip_gate = quality_dip_facts_gate(self.policy.get("position_sizing"))
-        if set(team) - {DIP_FACTS_KEY, EXPOSURE_FACTS_KEY} != fields:
+        if set(team) - {DIP_FACTS_KEY, EXPOSURE_FACTS_KEY, RELEASE_ORDER_KEY, HELD_WEIGHT_FACTS_KEY} != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
+        # drawdown_derisk v5（版本閘門）的 release_order 也是選配鍵：與 Policy 閘門雙向同時存在、須 2.5 以上，整份重建驗證並比對 Policy 綁定。
+        # 沒有 v5 的舊 run 完全不碰這段。
+        if (RELEASE_ORDER_KEY in team) != drawdown_derisk_v5(self.policy.get("position_sizing")):
+            errors.append("DecisionPolicy 的 position_sizing.drawdown_derisk v5 必須與 team_inputs.release_order 同時存在")
+        elif RELEASE_ORDER_KEY in team:
+            if version not in RANKING_TEAM_VERSIONS:
+                errors.append("team_inputs.release_order 只能用於 2.5 以上（需要入選排序）")
+            else:
+                validate_team_release_order(self.bundle, self.policy, self.intent, self.debate, team, errors)
+        # held_weight_budget=v2（版本閘門）的 held_weight_facts 也是選配鍵：與 Policy 閘門雙向同時存在、須 2.5 以上，整份重算比對。
+        # 沒有 v2 的舊 run 完全不碰這段。
+        if (HELD_WEIGHT_FACTS_KEY in team) != held_weight_facts_gate(self.policy.get("position_sizing")):
+            errors.append("DecisionPolicy 的 position_sizing.held_weight_budget=v2 必須與 team_inputs.held_weight_facts 同時存在")
+        elif HELD_WEIGHT_FACTS_KEY in team:
+            if version not in RANKING_TEAM_VERSIONS:
+                errors.append("team_inputs.held_weight_facts 只能用於 2.5 以上（需要入選排序）")
+            else:
+                validate_held_weight_facts(self.bundle, self.policy, team, errors)
         # exposure_view（版本閘門）的 exposure_facts 也是選配鍵：與 Policy 閘門雙向同時存在、須 2.7 以上，整份重算比對。
         view_gate = exposure_view_gate(self.policy.get("position_sizing"))
         if (EXPOSURE_FACTS_KEY in team) != (view_gate is not None):
@@ -479,6 +543,7 @@ class DecisionFinalizer:
                 self.bundle, self.momentum, self.debate, prior_context=prior, position_review=review,
                 hold_conviction=hold_conviction_enabled(self.policy),
                 dip_facts=team.get(DIP_FACTS_KEY) if dip_gate is not None else None,
+                reentry_hint_symbols=reentry_hint_symbols(self.policy.get("position_sizing")),
             ).validate(self.intent)
         )
         stance = team.get("cash_stance")

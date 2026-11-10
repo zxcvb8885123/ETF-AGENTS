@@ -18,7 +18,7 @@ v1（影子）與 v2（正式）的簡報完全相同，函式不讀 ``agent_swa
 from __future__ import annotations
 
 import copy
-from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .contracts import (
@@ -28,8 +28,10 @@ from .contracts import (
     reject_unknown_fields,
     required_string,
     snapshot_execution_price,
+    untradable_symbols,
     validate_forbidden_keys,
 )
+from .allocation import commission_fee, execution_price, sell_tax
 from .exposure import holding_days_by_symbol
 from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
@@ -70,8 +72,7 @@ PROGRAM_REASONS = {
 # 新股不可提名的原因代碼、持股不可提名的原因代碼（簡報與 Validator 共用）。
 CANDIDATE_REASONS = ("not_tradable", "reentry_cooldown", "no_price", "conviction_below_threshold", "no_bull_basis")
 VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_bear_basis")
-MONEY = Decimal("1")  # 與 allocation.MONEY 相同的整元進位；估計用，不要求與配置逐位相同
-PRICE_QUANTUM = Decimal("0.01")
+MONEY = Decimal("1")  # 簡報顯示用的整元進位；費稅與成交價公式與配置共用 allocation 的函式
 RATE_QUANTUM = Decimal("0.000001")
 BRIEF_NOTE = (
     "以下事實全部由程式計算。每一對提名都要有換入股自己已採納的多頭論點、換出股自己已採納的空頭論點或持股檢視事實；"
@@ -118,7 +119,11 @@ def seal_swap_nomination(envelope: Mapping[str, object], raw: object) -> Dict[st
         "errors": [],
     }
     if "no_nomination_reason" in output:
-        body["no_nomination_reason"] = copy.deepcopy(output["no_nomination_reason"])
+        reason = output["no_nomination_reason"]
+        # Codex strict schema 要求欄位一律輸出：有提名時 Agent 以空字串表示「不適用」，封存時省略該鍵（與沒有輸出等價）。
+        # nominations 為空時的空字串原樣保留，由 Validator 以「必須是非空字串」退回。
+        if not (reason == "" and isinstance(output.get("nominations"), list) and output["nominations"]):
+            body["no_nomination_reason"] = copy.deepcopy(reason)
     for key in sorted(str(key) for key in output if str(key) not in AGENT_OUTPUT_FIELDS):
         body["x_%s" % key] = copy.deepcopy(output[key])
     if not isinstance(raw, Mapping):
@@ -148,22 +153,6 @@ def nominations_of(nomination: Optional[Mapping[str, object]]) -> List[Dict[str,
 
 
 # ---------------------------------------------------------------- 事實
-
-def untradable_symbols(bundle: Mapping[str, object]) -> Set[str]:
-    """明確交易狀態包中非 allowed 的標的；沒有狀態包時回空集合。
-
-    與 ``AllocationOrderEngine._untradable`` 同源同規則（那是實例方法，這裡不改 allocation，維持小而純的複本；
-    第 6 步接入配置時應讓兩者共用一個函式）。"""
-    status_bundle = bundle.get("trading_status_bundle")
-    assessment = bundle.get("tradability_assessment")
-    if not isinstance(status_bundle, Mapping) or not isinstance(assessment, Mapping):
-        return set()
-    return {
-        str(item.get("symbol", "")).upper()
-        for item in assessment.get("symbols", [])
-        if isinstance(item, Mapping) and item.get("symbol") and str(item.get("state", "unknown")) != "allowed"
-    }
-
 
 def _gate(policy: Mapping[str, object]) -> Mapping[str, object]:
     sizing = policy.get("position_sizing")
@@ -364,7 +353,7 @@ class SwapEstimator:
         self.commission_rate = decimal_value(policy["commission_rate"], "commission_rate")
         self.tax_rate = decimal_value(policy["sell_tax_rate"], "sell_tax_rate")
         self.minimum_commission = decimal_value(policy["minimum_commission"], "minimum_commission")
-        self.slippage = decimal_value(policy["slippage_bps"], "slippage_bps") / Decimal("10000")
+        self.slippage_bps = decimal_value(policy["slippage_bps"], "slippage_bps")
         self.trim_fraction = decimal_value(policy["trim_fraction"], "trim_fraction")
         self.turnover_cap = decimal_value(policy["max_turnover_rate"], "max_turnover_rate")
         self.reuse = bool(policy["reuse_sell_proceeds"])
@@ -398,18 +387,17 @@ class SwapEstimator:
         return max(decimal_value(value, "cash_buffer_by_stance") for value in buffers.values())
 
     def _execution(self, symbol: str, side: str) -> Decimal:
-        factor = Decimal(1) + self.slippage if side == "buy" else Decimal(1) - self.slippage
-        return (self.prices[symbol] * factor).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+        return execution_price(self.prices[symbol], side, self.slippage_bps)
 
     def _commission(self, gross: Decimal) -> Decimal:
-        return max(gross * self.commission_rate, self.minimum_commission).quantize(MONEY, rounding=ROUND_CEILING)
+        return commission_fee(gross, self.commission_rate, self.minimum_commission)
 
     def gross(self, symbol: str, side: str, shares: int) -> Decimal:
         return self._execution(symbol, side) * Decimal(shares)
 
     def sell_net(self, symbol: str, shares: int) -> Decimal:
         gross = self.gross(symbol, "sell", shares)
-        return gross - self._commission(gross) - (gross * self.tax_rate).quantize(MONEY, rounding=ROUND_CEILING)
+        return gross - self._commission(gross) - sell_tax(gross, "sell", self.tax_rate)
 
     def buy_one_lot_cost(self, symbol: str) -> Decimal:
         gross = self.gross(symbol, "buy", self.lot)
@@ -841,7 +829,6 @@ def validate_thesis_hint_binding(policy: Mapping[str, object], verdicts: Optiona
 # ---------------------------------------------------------------- 閘門與 team_inputs 2.9
 
 SWAP_NOMINATION_KEY = "swap_nomination"
-SUPPORTED_GATE_VERSIONS = ("v1",)  # 目前只支援影子（v1）；v2 的配置尚未實作，pipeline 與 Finalizer 一律拒絕
 
 
 def agent_swap_gate(sizing: object) -> Optional[Mapping[str, object]]:
@@ -850,13 +837,33 @@ def agent_swap_gate(sizing: object) -> Optional[Mapping[str, object]]:
     return gate if isinstance(gate, Mapping) else None
 
 
-def unsupported_gate_version(sizing: object) -> Optional[str]:
-    """閘門存在但版本目前不支援時回錯誤訊息（v2 的配置步驟尚未實作，不得靜默當 v1 跑）；否則 None。"""
-    gate = agent_swap_gate(sizing)
-    if gate is not None and gate.get("version") not in SUPPORTED_GATE_VERSIONS:
-        return "position_sizing.agent_swap.version=%s 的配置尚未實作，目前只支援 %s（影子）" % (
-            gate.get("version"), "／".join(SUPPORTED_GATE_VERSIONS))
-    return None
+def _expected_pair_binding(nomination: Mapping[str, object]) -> Dict[str, object]:
+    """v2 在 Policy 綁定的提名內容：依 Agent 先後的配對與封存識別（只有 completed 才有配對）。"""
+    return {
+        "nominated_pairs": [
+            {"buy_symbol": str(item["buy_symbol"]).upper(), "sell_symbol": str(item["sell_symbol"]).upper()}
+            for item in nominations_of(nomination)
+        ],
+        "nomination_ref": {
+            "nomination_id": str(nomination["nomination_id"]), "sha256": str(nomination["content_sha256"]),
+            "status": str(nomination["status"]),
+        },
+    }
+
+
+def apply_swap_nomination(policy: Mapping[str, object], nomination: Mapping[str, object]) -> Dict[str, object]:
+    """把提名配對綁進 Policy 的 ``agent_swap``（只在 v2；做法同 ``apply_selection_ranking``）：樣板不得預填，先清掉再綁；
+    v1（影子）與沒有閘門的 Policy 原樣回傳（配置不讀提名）。呼叫端須重算 content_sha256。"""
+    gate = agent_swap_gate(policy.get("position_sizing"))
+    if gate is None or gate.get("version") != "v2":
+        return dict(policy)
+    result = copy.deepcopy(dict(policy))
+    bound = result["position_sizing"]["agent_swap"]
+    bound.pop("nominated_pairs", None)
+    bound.pop("nomination_ref", None)
+    bound.update(_expected_pair_binding(nomination))
+    result.pop("content_sha256", None)
+    return result
 
 
 def validate_team_swap_nomination(
@@ -870,10 +877,6 @@ def validate_team_swap_nomination(
     """Finalizer 對 team_inputs 2.9 的 ``swap_nomination`` 整份重建驗證（信封、雜湊、事實重算與 2.6 A 段靜態檢查）。
 
     只讀 team_inputs 內已由其他檢查驗證過的入選排序、持股檢視、曝險檢視與前次決策背景；缺任何一項即拒絕。"""
-    unsupported = unsupported_gate_version(policy.get("position_sizing"))
-    if unsupported is not None:
-        errors.append(unsupported)
-        return
     nomination = team.get(SWAP_NOMINATION_KEY)
     if not isinstance(nomination, Mapping):
         errors.append("team_inputs.swap_nomination 必須是物件")
@@ -891,3 +894,14 @@ def validate_team_swap_nomination(
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:
         problems = ["無法重建驗證：%s" % error]
     errors.extend("team_inputs.swap_nomination：%s" % problem for problem in problems)
+    # v2：Policy 綁定的配對與提名封存必須完全一致（配置只讀 Policy）；v1（影子）不得綁定（sizing 驗證已拒絕預填）。
+    gate = agent_swap_gate(policy.get("position_sizing"))
+    if gate is not None and gate.get("version") == "v2":
+        try:
+            expected = _expected_pair_binding(nomination)
+        except (KeyError, TypeError, ValueError) as error:
+            errors.append("team_inputs.swap_nomination 無法比對 Policy 綁定：%s" % error)
+            return
+        for field, value in expected.items():
+            if gate.get(field) != value:
+                errors.append("DecisionPolicy.position_sizing.agent_swap.%s 與 team_inputs.swap_nomination 不一致" % field)

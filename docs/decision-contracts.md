@@ -47,6 +47,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 | 版本 | 內容 |
 | --- | --- |
+| 2.9 | 2.8 再加交易 Agent 第二輪的換股提名 `swap_nomination`；只在 `position_sizing.agent_swap` 啟用時存在（雙向檢查，缺一即拒絕，v1 影子與 v2 欄位集合相同），Finalizer 以 `SwapNominationValidator` 整份重建驗證；須與 2.8 的前提同時存在（目前正式） |
 | 2.8 | 2.7 再加程式計算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（雙向檢查，缺一即拒絕），Finalizer 整份重算比對 |
 | 2.7 | 2.6 再加程式計算的曝險檢視 `exposure_review`；只在 `position_sizing.exposure_rotation` 啟用時存在，兩者缺一即拒絕 |
 | 2.6 | 2.5 再加程式計算的基本面指標 `fundamental_metrics`；只在 bundle 有 `fundamental_period_policy` 時，Finalizer 以 `validate_fundamental_metrics` 整份重算比對 |
@@ -56,6 +57,8 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 | 2.2 | 同 2.3 但無名額脈絡 |
 | 2.1（舊） | 無前次決策背景 |
 | 2.0（舊） | 三／四份分析報告及事件研究，保留原始重建 |
+
+選配鍵 `release_order`（`drawdown_derisk` v5）與 `held_weight_facts`（`held_weight_budget` v2）：皆已實作、尚未開啟；同 `dip_facts` 的做法，不升版本（2.9 已被換股提名占用）、只要求 2.5 以上；與閘門雙向檢查，Finalizer 整份重建，`release_order` 另比對 Policy 綁定的 `release_symbols`／`release_ref`。
 
 選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：不升版本、不屬於上表的線性鏈，只要求 2.6 以上；與閘門雙向檢查（閘門在而鍵缺、或鍵在而閘門缺都拒絕），Finalizer 以 `validate_dip_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
 
@@ -149,6 +152,28 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 換出的賣單意圖由程式標為 `exit`、留下 `RISK_FORCED_SWAP` 旗標，不改寫交易 Agent 的原意圖，也不動標為 add／trim／exit 的持股、不可交易標的與被留住的出場。
 - `forced_swap.confirmation`：被換出的持股須有交易 Agent 本次採納的該股空頭 claim，否則不換（`RISK_FORCED_SWAP_UNCONFIRMED`）；換出數受 `min_positions` 與現金限制。
 - 省略 `forced_swap` 的舊 Policy／舊 run 維持「只有交易 Agent 標 exit 才釋出名額」的原重建行為。
+
+### 換股提名（`agent_swap`）
+
+- 閘門 `position_sizing.agent_swap`（只由人設定、策略反思禁區；欄位 `version`、`max_swaps_per_run`［1～10］、`min_holding_days`［0～60］，另有 pipeline 綁定的 `thesis_hint_symbols`／`verdicts_ref`，v2 另有 `nominated_pairs`／`nomination_ref`，樣板不得預填）。目前正式設定是 **v1 影子期**（2026-11-10 開啟）；**v2 已實作、尚未開啟**。前提：`exposure_rotation` v3、`rebound_participation` v2（`team_inputs` 2.9 是 2.8 的超集）。
+- 提名發生在交易 Agent 入選排序之後（5c）：輸出只有 `nominations`（`buy_symbol`、`sell_symbol`、兩邊依據識別碼、文字理由）、`thesis_hint_responses`（`nominated`／`kept`）與 `no_nomination_reason`，不得有數字；換入者須是第一輪 buy、未持有、可交易、信心達 `rotation.min_new_conviction`、不在冷卻名單；換出者須是第一輪 hold、持有天數足夠；換出依據只能是本次已採納的空頭 claim 或持股檢視事實；另做保守現金與換手下界檢查，驗證失敗走帶回饋的修正循環（最多三次）。
+- 封存狀態四種：`completed`、`not_needed`（沒有需要或可提名的對，程式封存、不呼叫 Agent）、`exhausted`（驗證用盡）、`unavailable`（暫時性失敗）。**提名失敗只取消該動作**（降級，不是整天失敗），其餘決策照常；安全拒絕與硬規則失敗仍整份拒絕。Finalizer 無法證明 Agent 真的失敗，只核對狀態形狀與配置未使用提名。
+- **v1 影子**：提名封存並由 Finalizer 重建，配置完全不讀提名，訂單與旗標與沒有此欄位時相同；出現 `nominated_pairs`／`nomination_ref` 即拒絕；回放略過此閘門。
+- **v2（尚未開啟）**：與 `rotation.forced_swap`、`exposure_rotation.conviction_gap_swap` 互斥；pipeline 在 5c 後綁 `nominated_pairs`（有序）與 `nomination_ref`，Finalizer 以 `team_inputs` 的提名重算比對，重建配置只讀 Policy。配置在曝險換股之前依序試算：減碼日整個略過（`AGENT_SWAP_SKIPPED:derisk_day`）、提名 `exhausted`／`unavailable` 不換（`AGENT_SWAP_SKIPPED:nomination_*`）、換入者不換股即有名額者不使用該對（`AGENT_SWAP_UNNEEDED`）、其餘不可行的對只取消該對（`AGENT_SWAP_CANCELLED:<原因>`，換出者不賣、不會只賣不買）；成交的對換出者標 `exit`＋`AGENT_SWAP`、換入者 `AGENT_SWAP_FILL`，不改寫交易 Agent 意圖；`exposure_rotation` 的換股步驟停用（`EXPOSURE_ROTATION_SKIPPED:agent_swap`）；`portfolio_slots` 升 1.1。
+- 設計與實作註記見[換股提名計畫](agent_nominated_rotation_plan.md)；唯讀統計 `cli/calibration.py shadow-swap`（估算是上限、`replay_reference_only`）與 `intent-landing`。
+
+### Agent 自主權線：已實作、尚未開啟的版本
+
+下列版本皆只由人設定、策略反思禁區，舊版本與沒有欄位的舊 run 逐位元不變；設計與實作註記見[自主權計畫](agent_autonomy_plan.md)。**正式設定目前都沒有**，不要當成現行行為。
+
+| 閘門 | 行為 |
+| --- | --- |
+| `reentry_cooldown` v2 | 冷卻名單只計交易 Agent 自己的 `exit`／`forced_exit`；程式因回撤、換股、單股上限賣出的不計；Finalizer 以決策庫（前次 run 的 `intent.json`）整份重算名單，讀不到或不符即拒絕 |
+| `reentry_cooldown` v3 | 名單口徑同 v2，但不再擋買單：交易 Agent 簡報附 `cooldown:<代號>` 提示，買回（buy）時須放進 `adopted_claim_ids` 回應；沒回應是由配置取消該買單（`RISK_REENTRY_COOLDOWN`），不是驗證錯誤；`agent_swap` 的換入候選仍排除冷卻名單 |
+| `drawdown_derisk` v5 | 數字全同 v4，只把「先賣誰」改成交易 Agent 的釋出順序（`release_order`：涵蓋全部可減碼持股各一次、只有代號與文字）；pipeline 綁 `release_symbols`／`release_ref`；順序 `exhausted`／`unavailable` 時退回 v4 的 ATR 順序並留 `DERISK_ORDER_SKIPPED:order_*`（降級，不是整份拒絕）；前提 `selection_ranking` |
+| `cash_fit_order` v2 | 買單取得現金的順序同 v1，新股只買得到零頭時不再整筆取消（無 `RISK_CASH_FIT`）；不允許 `cash_fit_min_fill_ratio` |
+| `high_conviction_cash_priority` v2 | 保留現金先給 high 與 high 零頭不取消，移除「high 被縮減後擋掉後面未持有的中低信心新股」 |
+| `held_weight_budget` v2 | 預算算法同 v1；交易 Agent 簡報多附持股權重事實（`team_inputs.held_weight_facts`；現有權重、單股上限、`limit_scaled_conviction` 啟用時 high 份額下限，**不含** medium／low 的份額，因為簡報時現金與廣度尚未確定）；需 `selection_ranking` |
 
 ### 現金緩衝（`cash_buffer_floor: "v1"`）
 

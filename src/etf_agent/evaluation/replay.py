@@ -44,7 +44,9 @@ from etf_agent.decision import (
 from etf_agent.decision.allocation import ALLOCATION_ENGINE_VERSION
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.finalization import DECISION_ENGINE_VERSION
-from etf_agent.decision.sizing import allowed_cash_grades, cash_grade_grid, cash_ratio_gate
+from etf_agent.decision.sizing import (
+    allowed_cash_grades, cash_grade_grid, cash_ratio_gate, drawdown_derisk_v5, reentry_hint_symbols,
+)
 from etf_agent.virtual_account.daily import OfficialCloseMarket
 
 from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, REPLAY_SCHEMA_VERSION, ReplayError
@@ -186,6 +188,7 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
             bundle, momentum, files["debate"], prior_context=prior, position_review=team.get("position_review"),
             hold_conviction=hold_conviction_enabled(files["policy"]),
             dip_facts=team.get("dip_facts") if isinstance(team.get("dip_facts"), Mapping) else None,
+            reentry_hint_symbols=reentry_hint_symbols(files["policy"].get("position_sizing")),
         ).validate(files["intent"])
     except DecisionToolError as error:
         errors = [str(error)]
@@ -259,6 +262,14 @@ def bind_replay_policy(
         if swap_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "agent_swap"}
             base["content_sha256"] = decision_policy_sha256(base)
+        # drawdown_derisk v5 需要封存 run 沒有的釋出順序（交易 Agent 當天的輸出）：回放把它當 v4（數字規則相同，先賣誰回到 ATR 順序），
+        # 並拿掉綁定欄位；沒有 v5 的舊回放 notes 與 policy 逐位元不變。
+        release_replayed_as_v4 = drawdown_derisk_v5(base.get("position_sizing"))
+        if release_replayed_as_v4:
+            derisk = {key: value for key, value in base["position_sizing"]["drawdown_derisk"].items() if key not in ("release_symbols", "release_ref")}
+            derisk["version"] = "v4"
+            base["position_sizing"] = {**base["position_sizing"], "drawdown_derisk": derisk}
+            base["content_sha256"] = decision_policy_sha256(base)
         # exposure_rotation 需要封存 run 沒有的 hold 信心與帳本持有天數：樣板有閘門時回放略過它（不換股），
         # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
         exposure_ignored = isinstance(base.get("position_sizing"), Mapping) and "exposure_rotation" in base["position_sizing"]
@@ -307,6 +318,8 @@ def bind_replay_policy(
         notes["agent_swap"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
+    if release_replayed_as_v4:
+        notes["drawdown_derisk_v5"] = "replayed_as_v4"
     return policy, notes
 
 

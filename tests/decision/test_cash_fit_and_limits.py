@@ -391,7 +391,7 @@ class CashFitOrderTests(unittest.TestCase):
         self.assertEqual(effective["cash_fit_min_fill_ratio"], Decimal("0.25"))
 
     def test_policy_validation_fails_closed(self):
-        self.assertTrue(any("cash_fit_order" in e for e in sizing_errors(cash_fit_order="v2")))
+        self.assertTrue(any("cash_fit_order" in e for e in sizing_errors(cash_fit_order="v9")))
         self.assertTrue(any("cash_fit_min_fill_ratio" in e for e in sizing_errors(cash_fit_min_fill_ratio="0.5")))
         for bad in ("0", "1.5", "abc"):
             self.assertTrue(any("cash_fit_min_fill_ratio" in e for e in sizing_errors(cash_fit_order="v1", cash_fit_min_fill_ratio=bad)), bad)

@@ -41,6 +41,8 @@ from etf_agent.decision import (
 from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_market_report
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.exposure_facts import EXPOSURE_FACTS_KEY, nomination_exposure_brief
+from etf_agent.decision.held_weight_facts import held_weight_brief
+from etf_agent.decision.sizing import reentry_hint_id
 from etf_agent.decision.market_index import market_index_facts
 from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.stance import STANCE_ROLES
@@ -56,6 +58,18 @@ from etf_agent.decision.swap_nomination import (
     seal_swap_nomination,
     swap_nomination_brief,
 )
+from etf_agent.decision.release_order import (
+    STATUS_EXHAUSTED as RELEASE_EXHAUSTED,
+    STATUS_NOT_NEEDED as RELEASE_NOT_NEEDED,
+    STATUS_UNAVAILABLE as RELEASE_UNAVAILABLE,
+    ReleaseOrderValidator,
+    needs_release_order,
+    program_release_order,
+    release_envelope,
+    release_facts,
+    release_order_brief,
+    seal_release_order,
+)
 from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
 from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_brief
 
@@ -64,6 +78,7 @@ from .agent_schemas import (
     EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
     RANKING_SCHEMA,
+    RELEASE_ORDER_SCHEMA,
     SWAP_NOMINATION_SCHEMA,
     TRADE_SCHEMA,
     _CLAIM_KIND_RULES,
@@ -94,6 +109,18 @@ _REVIEW_RULES = (
 _EXPOSURE_RULES = (
     "本批輸入含 exposure_background 與各持股的 exposure（程式算好的 beta 與上行／下行捕捉，只是背景、沒有 evidence_id、不可引用）；"
     "hold 的 conviction 必填，依 data-rules.md「hold 信心」處理。"
+)
+
+
+_HELD_WEIGHT_RULES = (
+    "本批輸入含 held_weight_background 與各持股的 held_weight（程式算的現有權重、單股上限與 high 份額下限，只是背景、沒有 evidence_id、"
+    "不可引用，也不得寫進理由）：add 的目標權重是 max(現有權重, 信心份額)，現有權重已不低於份額時加碼不會成交；"
+    "份額在你交件時還算不出來，這些事實只幫你判斷 add 是否有實質效果，不改變任何驗證規則。"
+)
+_COOLDOWN_RULES = (
+    "本批部分未持有的股票附有 reentry_cooldown 提示（近期才由交易 Agent 自己出場，是程式事實、不是禁止）：若你仍決定 buy 這檔，"
+    "必須把該提示的 hint_id 放進這檔的 adopted_claim_ids 一次，並在 rationale 說明為何與先前出場時的判斷不同；"
+    "沒有放進去的 buy 會被程式取消。不 buy 就不要放，也不可放進 rejected_claim_ids。"
 )
 
 
@@ -361,6 +388,8 @@ class TeamStagesMixin:
         position_review: Optional[Mapping[str, object]] = None,
         exposure_review: Optional[Mapping[str, object]] = None,
         dip_facts: Optional[Mapping[str, object]] = None,
+        held_weight_facts: Optional[Mapping[str, object]] = None,
+        reentry_hint_symbols: Optional[Sequence[str]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
@@ -391,6 +420,10 @@ class TeamStagesMixin:
         exposure_brief = exposure_review_brief(exposure_review) if exposure_review is not None else {}
         # quality_dip_facts：整份事實以 dip_background 附上（citable=false、沒有 evidence_id）；沒有閘門時簡報逐鍵不變。
         dip_brief = dip_background_brief(dip_facts) if dip_facts is not None else {}
+        # held_weight_budget v2：持股權重事實附在簡報（citable=false）；沒有閘門時簡報逐鍵不變。
+        weight_brief = held_weight_brief(held_weight_facts) if held_weight_facts is not None else {}
+        # reentry_cooldown v3：未持有且近期出場的股票各附一個 hint_id 提示（買回須回應）；沒有 v3 時簡報逐鍵不變。
+        hint_symbols = sorted({str(s).upper() for s in (reentry_hint_symbols or ())} - set(held))
         hold_conviction = exposure_review is not None
         lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
         thesis_verdicts = load_thesis_verdicts(self.root, bundle["decision_cutoff"])  # 每週論點檢視；只是背景，沒有可引用的 ID
@@ -414,6 +447,7 @@ class TeamStagesMixin:
                        if position_review is not None else {}),
                     **({"exposure_background": exposure_brief["background"]} if exposure_review is not None else {}),
                     **({"dip_background": dip_brief["background"]} if dip_facts is not None else {}),
+                    **({"held_weight_background": weight_brief["background"]} if held_weight_facts is not None else {}),
                     **({"prior_decision_background": background} if background is not None else {}),
                     **({"strategy_lessons": lessons_background} if lessons_background is not None else {}),
                     **({"thesis_review_background": thesis_background} if thesis_background is not None else {}),
@@ -434,18 +468,22 @@ class TeamStagesMixin:
                                if symbol in exposure_brief.get("by_symbol", {}) else {}),
                             **({"dip": dip_brief["by_symbol"][symbol]}
                                if symbol in dip_brief.get("by_symbol", {}) else {}),
+                            **({"held_weight": weight_brief["by_symbol"][symbol]}
+                               if symbol in weight_brief.get("by_symbol", {}) else {}),
+                            **({"reentry_cooldown": {"hint_id": reentry_hint_id(symbol), "citable": False}}
+                               if symbol in hint_symbols else {}),
                         }
                         for symbol in batch["symbols"]
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts)
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
                 "再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔整合兩方論點、記錄每個論點的採納或否決，"
                 "再依持股與交易條件形成單一交易意圖；整合方式、理由寫法、欄位與限制都依參考文件。"
-                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s"
+                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), len(batch["symbols"]),
@@ -454,6 +492,8 @@ class TeamStagesMixin:
                     _REVIEW_RULES if position_review is not None else "",
                     _EXPOSURE_RULES if exposure_review is not None else "",
                     _DIP_TRADER_RULES if dip_facts is not None else "",
+                    _HELD_WEIGHT_RULES if held_weight_facts is not None else "",
+                    _COOLDOWN_RULES if set(hint_symbols) & set(batch["symbols"]) else "",
                     _SHARED_RULES,
                 ),
                 TRADE_SCHEMA,
@@ -468,13 +508,15 @@ class TeamStagesMixin:
         decision = seal_trade_decision(envelope, merge_batch_items(batches, outputs, "trader"))
         errors = TradeDecisionValidator(
             bundle, momentum, debate, prior_context=prior_context, position_review=position_review,
-            hold_conviction=hold_conviction, dip_facts=dip_facts,
+            hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols,
         ).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("trade_decision", decision)
         (self.run_dir / "trader_report.md").write_text(
-            render_trader_report(bundle, momentum, debate, decision, position_review, hold_conviction), encoding="utf-8"
+            render_trader_report(
+                bundle, momentum, debate, decision, position_review, hold_conviction, reentry_hint_symbols=reentry_hint_symbols,
+            ), encoding="utf-8"
         )
         return decision
 
@@ -593,6 +635,60 @@ class TeamStagesMixin:
             raise DailyPipelineError("SwapNomination 驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("swap_nomination", nomination)
         return nomination
+
+    def run_release_order(
+        self,
+        bundle: Mapping[str, object],
+        momentum: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+        ranking: Mapping[str, object],
+        debate: Mapping[str, object],
+        position_review: Mapping[str, object],
+        prior_context: Optional[Mapping[str, object]],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """5d 回撤減碼釋出順序（drawdown_derisk v5）：交易 Agent 在入選排序之後，對可減碼持股給「若需要降低持股，先放掉誰」的順序。
+
+        可減碼持股少於兩檔沒有先後可排，程式直接封存 ``not_needed``、不呼叫 Agent；驗證最多三次嘗試，用盡封存 ``exhausted``、
+        暫時性失敗重試後仍失敗封存 ``unavailable``（空順序，配置退回 v4 的 ATR 順序並留旗標，其餘決策照常）；安全拒絕仍整個停止。
+        簡報不含風險 Agent 的姿態與現金缺口（此時尚未產生）。"""
+        envelope = release_envelope(bundle, trade_decision, ranking, "release-order:%s" % run_id)
+        try:
+            facts = release_facts(bundle, trade_decision, debate, position_review)
+        except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+            raise DailyPipelineError("釋出順序無法由共同輸入建立事實：%s" % error) from error
+        validator = ReleaseOrderValidator(bundle, trade_decision, ranking, debate, position_review, prior_context=prior_context)
+        if not needs_release_order(facts):
+            release = program_release_order(envelope, RELEASE_NOT_NEEDED)
+        else:
+            try:
+                brief = release_order_brief(bundle, trade_decision, debate, position_review, momentum)
+            except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+                raise DailyPipelineError("釋出順序簡報建立失敗：%s" % error) from error
+            brief_path = self.save_brief("brief_release_order", brief)
+            task = AgentTask(
+                "release_order",
+                "你是 $trader 交易 Agent，現在做**第四步：回撤減碼的釋出順序**。先讀 %s，再讀 %s。"
+                "第一輪與入選排序已完成；你只決定「若之後需要降低持股，先放掉誰」，輸出涵蓋簡報全部持股、每檔恰好一次的先後順序，"
+                "最先願意放掉的放最前面；每檔引用簡報列出的該股自己的依據識別碼並附白話理由。%s"
+                % (self.root / "tradeagent/trading/trader/references/release-order.md", brief_path, _SHARED_RULES),
+                RELEASE_ORDER_SCHEMA,
+            )
+            fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
+            outcome = self.agent_step_degradable(
+                task, lambda output: seal_release_order(envelope, output), validator.validate, fingerprint,
+            )
+            if outcome.artifact is not None:
+                release = outcome.artifact
+            elif outcome.status in (RELEASE_EXHAUSTED, RELEASE_UNAVAILABLE):
+                release = program_release_order(envelope, outcome.status, outcome.errors)
+            else:
+                raise DailyPipelineError("釋出順序未預期的步驟狀態：%s" % outcome.status)
+        errors = validator.validate(release)
+        if errors:
+            raise DailyPipelineError("ReleaseOrder 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("release_order", release)
+        return release
 
 
 NOMINATION_EXPOSURE_PROMPT = (

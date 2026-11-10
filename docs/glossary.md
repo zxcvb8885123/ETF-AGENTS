@@ -30,6 +30,10 @@
 | `portfolio_slots` | 程式算好的名額脈絡（持股檔數、硬上限、空名額、全池多空強度統計），只給交易 Agent 當背景，`citable=false` | `decision/rotation.py`（`build_portfolio_slots`、`validate_portfolio_slots`）；封存於 `team_inputs` | — |
 | `rotation.forced_swap`（`version`、`min_new_conviction`、`max_swaps_per_run`、`confirmation`） | 滿檔又沒人出場時，程式換掉「交易 Agent 標 hold、且論點檢視判定 broken」的持股；`confirmation` 要求被換出者有本次採納的該股空頭 claim | policy；`decision/allocation.py` | `RISK_FORCED_SWAP`、`RISK_FORCED_SWAP_UNCONFIRMED` |
 | `forced_swap.broken_symbols`、`forced_swap.verdicts_ref` | 每日流程把論點檢視的 broken 名單與來源指紋綁進 policy；重建只讀 policy、不讀結論檔 | `decision/thesis_verdicts.py` `bind_forced_swap`；來源 `var/strategy_reflection/thesis_verdicts.json` | — |
+| `agent_swap`（`version`、`max_swaps_per_run`、`min_holding_days`、流程綁入的 `thesis_hint_symbols`／`verdicts_ref`；v2 另有 `nominated_pairs`／`nomination_ref`） | 換股改由交易 Agent 第二輪提名；v1 影子只封存、配置不讀（2026-11-10 已開啟），v2 讓程式依提名換股（已實作、尚未開啟；與 `forced_swap`、`conviction_gap_swap` 互斥） | policy；`decision/sizing.py`、`decision/swap_nomination.py`（`apply_swap_nomination`）、`decision/allocation.py` `_agent_swap` | 見下列 |
+| `swap_nomination`（team_inputs 2.9）、`SwapNominationValidator`、`status`（`completed`／`not_needed`／`exhausted`／`unavailable`） | 交易 Agent 的換股提名封存與重建驗證；失敗只降級、取消該動作 | `decision/swap_nomination.py`；`automation/team_stages.py` `run_swap_nomination`、`pipeline_base.py` `agent_step_degradable` | — |
+| `AGENT_SWAP`、`AGENT_SWAP_FILL`、`AGENT_SWAP_UNNEEDED`、`AGENT_SWAP_CANCELLED:<原因>`、`AGENT_SWAP_SKIPPED:derisk_day`／`nomination_exhausted`／`nomination_unavailable`、`EXPOSURE_ROTATION_SKIPPED:agent_swap` | agent_swap v2 的旗標（v1 影子與沒有閘門時不會出現）：換出者、換入者、換入者不換股即有名額而不使用該對、不可行的對被取消、整個略過、曝險換股讓位 | `decision/allocation.py` | 同左 |
+| `portfolio_slots` 1.1 | agent_swap v2 時名額脈絡多附提名相關說明（v1 與無閘門維持 1.0） | `decision/rotation.py` | — |
 
 ## 現金姿態與緩衝
 
@@ -68,6 +72,9 @@
 | `sector_fit`、`max_sector_weight` | 產業上限只按整張縮減當日買進增量，不賣既有持股 | `sector_fit` 在 policy、上限在 rules；`decision/risk.py`、`decision/allocation.py` | `RISK_SECTOR_WEIGHT` |
 | `turnover_fit`、`max_turnover_rate` | 換手上限：先逐筆縮減買單；賣單本身就超過時依 ATR 留住出場持股 | policy；`decision/allocation.py` | `TURNOVER_LIMIT`（逐筆縮減）、`RISK_TURNOVER`（留住出場） |
 | `reentry_cooldown`（`version`、`days`、流程綁入的名單） | 出場後 N 日內不再買進未持有的新股；名單由每日流程從決策庫取得 | policy；`decision/reentry_cooldown.py`（`recent_exit_symbols`、`bind_reentry_cooldown`）、`decision/allocation.py` | `RISK_REENTRY_COOLDOWN` |
+| `reentry_cooldown` v2／v3（已實作、尚未開啟） | v2 名單只計交易 Agent 自己的 exit／forced_exit；v3 名單同 v2 但改成簡報的 `cooldown:<代號>` 提示，買回須在 `adopted_claim_ids` 回應，沒回應由配置取消買單 | policy；`decision/reentry_cooldown.py`、`decision/trader.py`、`decision/allocation.py` | `RISK_REENTRY_COOLDOWN` |
+| `cash_fit_order` v2、`high_conviction_cash_priority` v2（已實作、尚未開啟） | v2：新股只買得到零頭時不整筆取消（不允許 `cash_fit_min_fill_ratio`）；v2：移除「high 被縮減後擋後面中低信心新股」 | policy；`decision/sizing.py`、`decision/allocation.py` | — |
+| `held_weight_budget` v2、`held_weight_facts`（已實作、尚未開啟） | 預算同 v1，另附交易 Agent 簡報的持股權重事實（背景、不可引用，不含 medium／low 份額）；`team_inputs` 選配鍵 | `decision/held_weight_facts.py` | `RISK_HELD_WEIGHT` |
 | `min_positions`、`max_positions` | 持股檔數的硬性範圍；低於下限時程式依 ATR14 留住標 exit 的持股 | rules；`decision/allocation.py` `_run_min_positions`、`decision/risk.py` | `RISK_MIN_POSITIONS` |
 | `minimum_active_share` | 與必備主動型 ETF 前 15 大的 Active Share 下限；不足時取消重疊最多的買單重配 | rules；`decision/active_share.py`、`decision/allocation.py`、`decision/risk.py` | `RISK_ACTIVE_SHARE` |
 | 不可交易標的 | 交易狀態包非 `allowed` 的標的不建買單、續抱不賣 | `decision/allocation.py` | `RISK_NOT_TRADABLE` |
@@ -80,6 +87,7 @@
 | `drawdown_control`（`neutral_at`、`defensive_at`、`release_neutral_below`、`release_defensive_below`） | 帳本 NAV 回撤達門檻時強制現金姿態下限；解除門檻帶 hysteresis | policy；`decision/drawdown.py`（`bind_drawdown`、`stance_floor`） | — |
 | `history_ref`、`ledger_nav_history_provider` | 帳本 NAV 歷史的指紋（head_run_id、length、sha256）與重建時讀帳本的注入點 | `decision/drawdown.py` `verify_history_reference`；`virtual_account/service.py` | — |
 | `drawdown_derisk`（`version`、`max_derisk_fraction`） | 防守姿態下程式依 ATR 把持股減碼到緩衝，單次減碼有上限；各版本差異見 [decision-details.md](decision-details.md) | policy；`decision/allocation.py`、`decision/sizing.py` | `RISK_DRAWDOWN` |
+| `drawdown_derisk` v5、`release_order`、`release_symbols`／`release_ref`（已實作、尚未開啟） | 減碼先後由交易 Agent 的釋出順序決定，數字同 v4；`team_inputs` 選配鍵 `release_order`，pipeline 綁進 Policy；順序失敗退回 v4 ATR 順序 | policy；`decision/release_order.py`、`decision/allocation.py` | `RISK_DRAWDOWN`、`DERISK_ORDER_SKIPPED:order_exhausted`／`order_unavailable` |
 
 ## 交易 Agent 的背景輸入
 

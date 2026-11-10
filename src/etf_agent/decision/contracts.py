@@ -26,7 +26,7 @@ from .fields import (
     string_list,
     validate_forbidden_keys,
 )
-from .input_context import DecisionContext
+from .input_context import DecisionContext, untradable_symbols
 from .input_validator import DecisionInputValidator
 
 __all__ = [
@@ -50,5 +50,6 @@ __all__ = [
     "required_string",
     "snapshot_execution_price",
     "string_list",
+    "untradable_symbols",
     "validate_forbidden_keys",
 ]

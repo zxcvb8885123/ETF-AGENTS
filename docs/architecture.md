@@ -15,6 +15,7 @@
 資料收集與快照 → 三位分析師（技術／基本面／事件與市場情緒）
   → 多頭、空頭研究員（同一份輸入、互相看不到對方）
   → 交易 Agent（取捨多空論點，給買賣意圖與信心）
+      （第二輪：入選排序；`agent_swap` 啟用時再一輪換股提名，目前 v1 影子只封存、配置不讀）
   → 風險 Agent（給現金姿態與持股廣度）
   → 程式配置（權重、張數、費稅、情境、比賽限制檢查）
   → 封存決策與中文報告（人工檢視）
@@ -47,6 +48,15 @@
 ### 入選排序
 
 交易 Agent 是分批執行的，各批看不到其他批的候選，所以只能給三級信心。批次合併後，交易 Agent 再做第二輪，一次看全部買進／加碼候選，**只在同信心等級內**排先後並附理由，不改信心、不新增事實、不輸出數字。每個等級只有一檔時，程式直接封存、不呼叫 Agent。
+
+### 換股提名（`agent_swap`）
+
+名額卡住（空名額少於想買的新股）時，交易 Agent 在入選排序之後多一次第二輪，提名「用哪檔新股換哪檔持股」並附依據，只有代號配對與文字、沒有數字；不需要提名時由程式直接封存 `not_needed`、不呼叫 Agent。提名失敗（驗證用盡 `exhausted`、暫時性錯誤 `unavailable`）只取消這個動作，其餘決策照常，硬性規則失敗仍整份拒絕。
+
+- 目前（2026-11-10 起）是 **v1 影子期**：提名被封存並由 Finalizer 重建驗證，配置完全不讀提名；唯讀統計用 `cli/calibration.py shadow-swap`。
+- v2（已實作、尚未開啟）才讓程式依提名換股：換出者標 `exit`、旗標 `AGENT_SWAP`／`AGENT_SWAP_FILL`，不可行的對由程式取消（`AGENT_SWAP_CANCELLED:<原因>`），換出者不賣。
+
+設計見[換股提名計畫](agent_nominated_rotation_plan.md)，契約見[決策鏈契約](decision-contracts.md#換股提名agent_swap)。
 
 ### 持股檢視（停損停利）
 
@@ -183,9 +193,10 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 | 版本 | 內容 |
 | --- | --- |
+| 2.9（目前正式，`agent_swap` 已開啟） | 2.8 再加交易 Agent 第二輪的換股提名 `swap_nomination`（v1 影子與 v2 欄位相同）；與 `position_sizing.agent_swap` 雙向檢查，Finalizer 以 `SwapNominationValidator` 整份重建驗證；須與 2.8 的前提（`rebound_participation`、`exposure_rotation` v3）同時存在 |
 | 2.8 | 2.7 再加程式算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（已實作、尚未開啟），與閘門雙向檢查，整份重算比對 |
 | 2.7 | 2.6 再加程式算的曝險檢視 `exposure_review`（beta、capture）；只在 `position_sizing.exposure_rotation` 啟用時存在，與閘門雙向檢查，整份重算比對 |
-| 2.6（目前正式） | 2.5 再加程式算的基本面指標；有逐檔期別設定時必為 2.6，整份重算比對，改寫或降級都拒絕 |
+| 2.6（基準） | 2.5 再加程式算的基本面指標；有逐檔期別設定時必為 2.6，整份重算比對，改寫或降級都拒絕 |
 | 2.5 | 2.4 再加第二輪入選排序 |
 | 2.4 | 2.3 再加持股檢視 |
 | 2.3 | 三份分析報告、現金姿態、前次決策背景、名額脈絡 |
@@ -194,6 +205,8 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 2.0 | 依原始分析報告與事件研究輸入重建 |
 
 2.0 至 2.5 皆為舊封存，維持原重建行為。2.1／2.2 的事件報告為 2.2 或 2.3，由資料包是否含已核准個股新聞決定。
+
+選配鍵 `release_order`（`position_sizing.drawdown_derisk` v5，已實作、尚未開啟）與 `held_weight_facts`（`position_sizing.held_weight_budget` v2，已實作、尚未開啟）：做法同 `dip_facts`，**不升版本**（2.9 已被換股提名占用），只要求 2.5 以上（需入選排序）；各與閘門雙向檢查，Finalizer 整份重建（`release_order` 並比對 Policy 綁定的 `release_symbols`／`release_ref`）。`release_order` 是交易 Agent 給的回撤減碼釋出順序，`held_weight_facts` 是程式算的持股權重事實（背景、不可引用）。沒有這些閘門的舊 run 欄位白名單與重建不變。
 
 選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：程式算的優質股被大盤拖累事實，**不升版本、不排進上表的線性鏈**，只要求 2.6 以上（讀基本面指標）；與閘門雙向檢查，Finalizer 以 bundle、`fundamental_metrics` 與事件報告整份重算。沒有閘門的舊 run 欄位白名單與重建行為不變。之所以不做成「2.9 ＝ 2.8 加 dip_facts」，是線性鏈會讓這個紀錄用閘門依賴 `rebound_participation`，關掉反彈參與就得一起關它。見[計畫](quality_dip_plan.md)。
 

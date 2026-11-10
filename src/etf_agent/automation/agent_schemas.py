@@ -92,7 +92,8 @@ _RANK_TIER = _object(
 )
 RANKING_SCHEMA = _object({"tiers": {"type": "array", "items": _RANK_TIER}}, ("tiers",))
 # 5c 換股提名（position_sizing.agent_swap）：只有代號、依據識別碼、列舉與文字，沒有任何數字欄位。
-# no_nomination_reason 只在 nominations 為空時出現，所以不列入 required（有提名時 Validator 拒絕此欄位）。
+# Codex strict schema 要求 properties 全部列入 required：no_nomination_reason 一律輸出，有提名時填空字串（不適用；
+# 封存時省略該鍵，見 swap_nomination.seal_swap_nomination），nominations 為空時必須是非空理由（Validator 檢查）。
 _SWAP_PAIR = _object(
     {"buy_symbol": _TEXT, "sell_symbol": _TEXT, "buy_basis_ids": _strings(1), "sell_basis_ids": _strings(1), "reason": _TEXT},
     ("buy_symbol", "sell_symbol", "buy_basis_ids", "sell_basis_ids", "reason"),
@@ -104,10 +105,16 @@ SWAP_NOMINATION_SCHEMA = _object(
     {
         "nominations": {"type": "array", "items": _SWAP_PAIR},
         "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
-        "no_nomination_reason": _TEXT,
+        "no_nomination_reason": {"type": "string"},
     },
-    ("nominations", "thesis_hint_responses"),
+    ("nominations", "thesis_hint_responses", "no_nomination_reason"),
 )
+# 回撤減碼的釋出順序（position_sizing.drawdown_derisk v5）：只有代號、依據識別碼與文字，沒有任何數字欄位；順序就是陣列順序。
+_RELEASE_ENTRY = _object(
+    {"symbol": _TEXT, "basis_ids": _strings(1), "reason": _TEXT}, ("symbol", "basis_ids", "reason"),
+)
+# 欄位叫 sequence 而不是 order：decision.fields.FORBIDDEN_DECISION_KEYS 禁止 order／orders 這類訂單欄位名稱。
+RELEASE_ORDER_SCHEMA = _object({"sequence": {"type": "array", "items": _RELEASE_ENTRY}}, ("sequence",))
 CASH_STANCE_SCHEMA = _object(
     {"level": {"enum": list(CASH_STANCES)}, "breadth": {"enum": list(POSITION_BREADTHS)},
      "rationale": _TEXT, "evidence_ids": _strings(1)},

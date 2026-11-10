@@ -17,6 +17,7 @@ from .contracts import (
     parse_time,
     reject_unknown_fields,
     required_string,
+    untradable_symbols,
 )
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
@@ -34,7 +35,10 @@ from .sizing import (
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
     conviction_weights, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
-    high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, slot_recycle_enabled, validate_position_sizing,
+    agent_swap_binding, high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, release_order_binding,
+    slot_recycle_enabled, validate_position_sizing,
+    cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
+    reentry_cooldown_hint_only, reentry_hint_id,
 )
 
 
@@ -42,6 +46,14 @@ ALLOCATION_ENGINE_VERSION = "1.0.0"
 # exposure_rotation（版本閘門）的旗標代碼：換出者、換入者；沒有閘門的 run 不會出現。
 EXPOSURE_VICTIM_CODES = ("RISK_EXPOSURE_ROTATION", "RISK_CONVICTION_GAP_SWAP")
 EXPOSURE_FILL_CODES = ("EXPOSURE_ROTATION_FILL", "CONVICTION_GAP_SWAP_FILL")
+# agent_swap v2（版本閘門）的旗標代碼：換出者、換入者；v1（影子）與沒有閘門的 run 不會出現。
+AGENT_SWAP_VICTIM_CODE = "AGENT_SWAP"
+AGENT_SWAP_FILL_CODE = "AGENT_SWAP_FILL"
+# 換入者沒有買單時，依該股最後一個縮減旗標判定取消原因（旗標代碼依配置步驟先後；沒有對應旗標一律 no_buy_order）。
+AGENT_SWAP_UNFILLED_REASONS = {
+    "RISK_CASH_FIT": "cash_fit", "CASH_BUFFER": "cash_fit", "RISK_CASH_SOFT_FLOOR": "cash_fit",
+    "RISK_STOCK_WEIGHT": "stock_weight", "RISK_SECTOR_WEIGHT": "sector_fit", "TURNOVER_LIMIT": "turnover",
+}
 # Active Share 低於門檻時，程式最多取消幾檔重疊的買進候選後重新配置。
 ACTIVE_SHARE_MAX_DROPS = 3
 MONEY = Decimal("1")
@@ -59,6 +71,23 @@ def _rate(value: Decimal) -> str:
 
 def _price(value: Decimal) -> str:
     return str(value.quantize(PRICE, rounding=ROUND_HALF_UP))
+
+
+def execution_price(reference: Decimal, side: str, slippage_bps: Decimal) -> Decimal:
+    """成交估價：決策用價依滑價加減後四捨五入到分；``_order`` 與換股提名的成本估計共用同一公式。"""
+    bps = slippage_bps / Decimal("10000")
+    price = reference * (Decimal("1") + bps if side == "buy" else Decimal("1") - bps)
+    return price.quantize(PRICE, rounding=ROUND_HALF_UP)
+
+
+def commission_fee(gross: Decimal, commission_rate: Decimal, minimum_commission: Decimal) -> Decimal:
+    """手續費：費率與低消取大者、整元無條件進位。"""
+    return max(gross * commission_rate, minimum_commission).quantize(MONEY, rounding=ROUND_CEILING)
+
+
+def sell_tax(gross: Decimal, side: str, tax_rate: Decimal) -> Decimal:
+    """證交稅：只有賣單收，整元無條件進位。"""
+    return (gross * tax_rate if side == "sell" else Decimal("0")).quantize(MONEY, rounding=ROUND_CEILING)
 
 
 def decision_policy_sha256(policy: Mapping[str, object]) -> str:
@@ -394,8 +423,10 @@ class AllocationOrderEngine:
         if body is not None and exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
             # exposure_rotation：程式自己換出的持股優先放回（優先序：交易 Agent 的 exit／trim ＞ forced_swap ＞ 曝險換股），
             # 才輪到留住交易 Agent 的 exit；曝險換股可以被取消，交易 Agent 的賣出意圖不應為它讓路。
+            # agent_swap v2 的換出者同樣先放回（留住換出者時該對換股在重跑時取消，換入者不買）。
             swapped = {
-                str(flag["symbol"]).upper() for flag in body.get("constraint_flags", []) if flag.get("code") in EXPOSURE_VICTIM_CODES
+                str(flag["symbol"]).upper() for flag in body.get("constraint_flags", [])
+                if flag.get("code") in EXPOSURE_VICTIM_CODES + (AGENT_SWAP_VICTIM_CODE,)
             }
             first = sorted(swapped, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol))
             remaining = first + [symbol for symbol in remaining if symbol not in swapped]
@@ -407,16 +438,8 @@ class AllocationOrderEngine:
         return isinstance(forced, Mapping) and forced.get("confirmation") == FORCED_SWAP_CONFIRMATION
 
     def _untradable(self) -> Set[str]:
-        """明確交易狀態包中非 allowed 的標的（與 CompetitionGuard 的 TRADABLE 規則同源）；沒有狀態包時回空集合。"""
-        status_bundle = self.context.bundle.get("trading_status_bundle")
-        assessment = self.context.bundle.get("tradability_assessment")
-        if not isinstance(status_bundle, Mapping) or not isinstance(assessment, Mapping):
-            return set()
-        return {
-            str(item.get("symbol", "")).upper()
-            for item in assessment.get("symbols", [])
-            if isinstance(item, Mapping) and item.get("symbol") and str(item.get("state", "unknown")) != "allowed"
-        }
+        """明確交易狀態包中非 allowed 的標的；與換股提名共用 ``untradable_symbols``。"""
+        return untradable_symbols(self.context.bundle)
 
     def _run_exposure(
         self,
@@ -430,22 +453,39 @@ class AllocationOrderEngine:
     ) -> Dict[str, object]:
         """exposure_rotation（版本閘門）的復原迴圈：換入者經現金／個股權重／換手等後續步驟後沒有買單（被取消），
         就把它從換股配對排除並重跑，換出者因此不賣（不得出現只賣不買）。排除集合只會增加，所以必定收斂。
-        沒有閘門時只跑一次 ``_run``，與舊版逐位相同。"""
+        沒有閘門時只跑一次 ``_run``，與舊版逐位相同。
+
+        agent_swap v2 的換入者同樣處理：沒有買單就以原因（``_unfilled_reason``）取消該對並重跑，換出者因此不賣。"""
         gated = exposure_rotation_gate(self.policy.get("position_sizing")) is not None
+        agent_gated = agent_swap_binding(self.policy.get("position_sizing")) is not None
         excluded_fills: Set[str] = set()
+        agent_cancelled: Dict[str, str] = {}
         while True:
             body = self._run(
                 intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept_exits,
-                active_share_dropped, excluded_fills if gated else None,
+                active_share_dropped, excluded_fills if gated else None, agent_cancelled if agent_gated else None,
             )
-            if not gated:
+            if not gated and not agent_gated:
                 return body
             fills = {str(flag["symbol"]).upper() for flag in body["constraint_flags"] if flag.get("code") in EXPOSURE_FILL_CODES}
+            agent_fills = {str(flag["symbol"]).upper() for flag in body["constraint_flags"] if flag.get("code") == AGENT_SWAP_FILL_CODE}
             bought = {str(order["symbol"]).upper() for order in body["order_proposal"]["orders"] if order["side"] == "buy"}
             unfilled = fills - bought
-            if not unfilled:
+            agent_unfilled = agent_fills - bought
+            if not unfilled and not agent_unfilled:
                 return body
             excluded_fills |= unfilled
+            for symbol in sorted(agent_unfilled):
+                agent_cancelled[symbol] = self._unfilled_reason(body, symbol)
+
+    @staticmethod
+    def _unfilled_reason(body: Mapping[str, object], symbol: str) -> str:
+        """換入者沒有買單的原因：該股最後一個縮減旗標（現金、單股權重、產業、換手），否則 no_buy_order。"""
+        reason = "no_buy_order"
+        for flag in body["constraint_flags"]:  # type: ignore[union-attr]
+            if str(flag.get("symbol", "")).upper() == symbol and flag.get("code") in AGENT_SWAP_UNFILLED_REASONS:
+                reason = AGENT_SWAP_UNFILLED_REASONS[str(flag["code"])]
+        return reason
 
     def _run(
         self,
@@ -457,9 +497,11 @@ class AllocationOrderEngine:
         kept_exits: Mapping[str, str],
         active_share_dropped: Optional[Mapping[str, str]] = None,
         exposure_excluded: Optional[Set[str]] = None,
+        agent_cancelled: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, object]:
         """``kept_exits`` 是程式留住續抱的 exit 持股及其旗標代碼（RISK_MIN_POSITIONS／RISK_CASH_CEILING）。
-        ``exposure_excluded`` 是 exposure_rotation 復原迴圈排除的換入者（只有閘門啟用時才傳）。"""
+        ``exposure_excluded`` 是 exposure_rotation 復原迴圈排除的換入者（只有閘門啟用時才傳）；
+        ``agent_cancelled`` 是 agent_swap v2 復原迴圈取消的換入者與原因（只有 v2 才傳）。"""
         excluded = {value.upper() for value in (excluded_symbols or set())}
         effective = self._effective_policy(overrides or {})
         intents = {
@@ -553,11 +595,13 @@ class AllocationOrderEngine:
         order_intents = dict(intents)
         derisk_gate = drawdown_derisk_fraction(self.policy.get("position_sizing") or {}) is not None
         # drawdown_derisk（版本閘門）：防守姿態時由程式把持股減碼到姿態現金緩衝；不改寫交易 Agent 的意圖。
+        derisk_notes: List[Dict[str, object]] = []  # v5 退回 ATR 順序的旗標：PORTFOLIO 層級、不算減碼日（不進 derisk_flags）
         derisk_flags = self._drawdown_derisk(
             current, target_shares, active_symbols, order_intents, intents, marked_nav, starting_total_cash,
-            effective, untradable, kept_exits,
+            effective, untradable, kept_exits, derisk_notes,
         )
         constraint_flags.extend(derisk_flags)
+        constraint_flags.extend(derisk_notes)
         candidates = [
             symbol
             for symbol in sorted(intents)
@@ -585,7 +629,28 @@ class AllocationOrderEngine:
         candidates = [symbol for symbol in candidates if symbol not in untradable]
         # reentry_cooldown（版本閘門）：最近出場的股票未持有時不得再買進；名單綁在 Policy，重建只讀 Policy。
         blocked = reentry_blocked_symbols(self.policy.get("position_sizing") or {})
-        if blocked is not None:
+        if blocked is not None and reentry_cooldown_hint_only(self.policy.get("position_sizing")):
+            # reentry_cooldown v3：名單只是交易 Agent 簡報的提示、不擋買單；買回（未持有）時須把 cooldown:<代號> 放進
+            # adopted_claim_ids 回應一次，沒回應的買單由程式取消並留旗標（只取消該動作，交易 Agent 的意圖未被改寫）。
+            cooldown = self.policy["position_sizing"]["reentry_cooldown"]
+            responded = {
+                str(item.get("symbol", "")).upper()
+                for item in intent_result.get("items", [])
+                if isinstance(item, Mapping)
+                and reentry_hint_id(str(item.get("symbol", ""))) in (item.get("adopted_claim_ids") or [])
+            }
+            unanswered = [
+                symbol for symbol in candidates
+                if symbol in blocked and symbol not in active_symbols and current.get(symbol, 0) <= 0 and symbol not in responded
+            ]
+            for symbol in unanswered:
+                constraint_flags.append({
+                    "symbol": symbol, "code": "RISK_REENTRY_COOLDOWN",
+                    "detail": "出場後 %d 日內（來源決策 %s）買回須回應冷卻提示 %s，本次未回應，由程式不建立買單（交易 Agent 的意圖未被改寫）"
+                    % (int(cooldown["days"]), "、".join(cooldown.get("source_run_ids") or []) or "無", reentry_hint_id(symbol)),
+                })
+            candidates = [symbol for symbol in candidates if symbol not in unanswered]
+        elif blocked is not None:
             cooldown = self.policy["position_sizing"]["reentry_cooldown"]
             for symbol in candidates:
                 if symbol in blocked and symbol not in active_symbols and current.get(symbol, 0) <= 0:
@@ -637,12 +702,21 @@ class AllocationOrderEngine:
                 candidates, active_symbols, target_shares, marked_nav, max_positions, effective,
                 len(current),
             )
+            swap_binding = agent_swap_binding(self.policy.get("position_sizing"))
+            if swap_binding is not None:
+                # agent_swap v2（版本閘門）：取代 forced_swap 的位置、在曝險換股之前，依交易 Agent 第二輪提名換股；
+                # v1（影子）與沒有閘門的舊 run 不經過這裡。
+                targets = self._agent_swap(
+                    targets, swap_binding, current, active_symbols, target_shares, order_intents, intents, kept_exits,
+                    untradable, marked_nav, max_positions, effective, bool(derisk_flags), agent_cancelled or {},
+                    active_share_dropped or {}, excluded, constraint_flags,
+                )
             if exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
                 # exposure_rotation（版本閘門）：forced_swap 之後、買單配置之前換股；沒有閘門的舊 run 不經過這裡。
                 targets = self._exposure_rotation(
                     targets, current, active_symbols, target_shares, order_intents, intents, kept_exits, untradable,
                     starting_cash, marked_nav, max_positions, effective, bool(derisk_flags), exposure_excluded or set(),
-                    constraint_flags,
+                    constraint_flags, agent_swap=swap_binding is not None,
                 )
             candidates, sized_weights, skipped, budget, held_frozen = targets
             # held_weight_budget（版本閘門）：現有權重已高於等級份額的加碼持股，目標權重就是現有權重、不建買單；
@@ -903,6 +977,108 @@ class AllocationOrderEngine:
             victims.append(symbol)
         return victims, unconfirmed
 
+    def _agent_swap(
+        self,
+        targets: Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]],
+        binding: Tuple[List[Tuple[str, str]], str],
+        current: Mapping[str, int],
+        active_symbols: Set[str],
+        target_shares: Dict[str, int],
+        order_intents: Dict[str, str],
+        intents: Mapping[str, str],
+        kept_exits: Mapping[str, str],
+        untradable: Set[str],
+        marked_nav: Decimal,
+        max_positions: int,
+        effective: Mapping[str, object],
+        derisk_day: bool,
+        cancelled: Mapping[str, str],
+        active_share_dropped: Mapping[str, str],
+        excluded: Set[str],
+        flags: List[Dict[str, object]],
+    ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
+        """換股改由交易 Agent 提名（``position_sizing.agent_swap`` v2，版本閘門；docs/agent_nominated_rotation_plan.md 2.6 B 段）。
+
+        在名額配對（不含提名）之後、曝險換股之前，依 Agent 的先後使用提名配對 (換入, 換出)；程式不挑人，只檢查可行性：
+        提名狀態為 exhausted／unavailable 留 ``AGENT_SWAP_SKIPPED:nomination_*``，減碼日整個略過（``derisk_day``）；
+        換入者在不換股時已拿到名額的對標 ``AGENT_SWAP_UNNEEDED``、換出者不賣；其餘依序試算：換出者目標設 0，
+        以 ``allowed_new`` 把釋出的名額只給本對換入者，試算失敗就從清單尾端減少對數（``swap_cap``）。
+        成交的對：換出者賣單由程式標 ``exit``＋``AGENT_SWAP``、換入者 ``AGENT_SWAP_FILL``，交易 Agent 的意圖不改寫。
+        取消的對留 ``AGENT_SWAP_CANCELLED:<原因>``（symbol 為換入者）；換出者一律不賣，所以不會只賣不買。
+        復原迴圈（``_run_exposure``）取消的換入者、Active Share 或風險審查排除的換入者、被留住的換出者都由同一規則處理。
+        只減少成交的對數，不會換成別的持股或別的新股。"""
+        pairs, status = binding
+        portfolio = SKIP_PORTFOLIO_SYMBOL
+
+        def note(code: str, symbol: str, detail: str) -> None:
+            flags.append({"symbol": symbol, "code": code, "detail": detail})
+
+        def cancel(buy: str, sell: str, reason: str) -> None:
+            note("AGENT_SWAP_CANCELLED:%s" % reason, buy, "交易 Agent 提名的換股（買 %s／賣 %s）由程式取消（%s）；換出者不賣，交易 Agent 的意圖未被改寫" % (
+                buy, sell, reason))
+
+        if status in {"exhausted", "unavailable"}:
+            note("AGENT_SWAP_SKIPPED:nomination_%s" % status, portfolio, "換股提名%s，本次不換股；其餘決策照常" % (
+                "的驗證在嘗試用盡後仍未通過" if status == "exhausted" else "的 Agent 呼叫在暫時性失敗重試後仍失敗"))
+            return targets
+        if not pairs:
+            return targets
+        if derisk_day:
+            note("AGENT_SWAP_SKIPPED:derisk_day", portfolio, "當日由 drawdown_derisk 減碼，換股提名整個略過（防守補現金當天不換股買進）")
+            return targets
+        ordered, weights, skipped, budget, held_frozen = targets
+        candidate_set = set(ordered)
+        needed: List[Tuple[str, str]] = []
+        for buy, sell in pairs:
+            if buy in cancelled:
+                cancel(buy, sell, cancelled[buy])
+            elif buy in active_share_dropped:
+                cancel(buy, sell, "active_share")
+            elif buy in excluded:
+                cancel(buy, sell, "risk_excluded")
+            elif buy in weights:
+                note("AGENT_SWAP_UNNEEDED", buy, "換入者不換股即取得名額（廣度空名額或其他出場釋出），該對不使用，換出者 %s 不賣" % sell)
+            elif buy not in candidate_set or buy in current:
+                cancel(buy, sell, "buy_unavailable")
+            elif sell in kept_exits:
+                cancel(buy, sell, "victim_kept")
+            elif not (
+                sell in current and intents.get(sell, "hold") == "hold" and sell in active_symbols
+                and target_shares.get(sell, 0) > 0 and sell in self.prices and sell not in untradable
+            ):
+                cancel(buy, sell, "victim_unavailable")
+            else:
+                needed.append((buy, sell))
+        limit = int((self.policy["position_sizing"]["agent_swap"])["max_swaps_per_run"])
+        for buy, sell in needed[limit:]:
+            cancel(buy, sell, "swap_cap")
+        needed = needed[:limit]
+        baseline_new = set(weights) - active_symbols
+        accepted: List[Tuple[str, str]] = []
+        result = targets
+        for count in range(len(needed), 0, -1):
+            chosen = needed[:count]
+            trial_active = set(active_symbols) - {sell for _, sell in chosen}
+            trial_target = dict(target_shares)
+            for _, sell in chosen:
+                trial_target[sell] = 0
+            trial = self._conviction_targets(
+                ordered, trial_active, trial_target, marked_nav, max_positions, effective, len(current),
+                allowed_new=set(weights) | {buy for buy, _ in chosen},
+            )
+            if all(buy in trial[1] for buy, _ in chosen) and baseline_new <= set(trial[1]):
+                accepted, result = list(chosen), trial
+                break
+        for buy, sell in needed[len(accepted):]:
+            cancel(buy, sell, "swap_cap")
+        for buy, sell in accepted:
+            target_shares[sell] = 0
+            active_symbols.discard(sell)
+            order_intents[sell] = "exit"
+            note(AGENT_SWAP_VICTIM_CODE, sell, "交易 Agent 第二輪提名換出，換入 %s（程式只檢查可行性；交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % buy)
+            note(AGENT_SWAP_FILL_CODE, buy, "原本被持股名額擋下；交易 Agent 第二輪提名換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % sell)
+        return result
+
     def _exposure_beta_model(self, gate: Mapping[str, object]) -> BetaModel:
         if self._beta_model is None:
             self._beta_model = beta_model(self.context.bundle, gate)
@@ -925,6 +1101,7 @@ class AllocationOrderEngine:
         derisk_day: bool,
         excluded_fills: Set[str],
         flags: List[Dict[str, object]],
+        agent_swap: bool = False,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """市場轉向時的持股曝險調整（``position_sizing.exposure_rotation`` v1／v2，版本閘門）：在 forced_swap 之後、買單配置之前，
         把「本次 buy 卻被名額擋下」的高 beta 新股，換掉交易 Agent 標 hold、信心不高、beta 偏低的持股，配對規則與上限見
@@ -966,6 +1143,10 @@ class AllocationOrderEngine:
             skip("EXPOSURE_ROTATION", "derisk_day", detail="當日由 drawdown_derisk 減碼，曝險換股與回撤減碼互斥，整個略過")
             if gap_on:
                 skip("CONVICTION_GAP_SWAP", "derisk_day", detail="當日由 drawdown_derisk 減碼，信心差換股同樣略過")
+            return targets
+        if agent_swap:
+            # agent_swap v2（版本閘門）：換股由交易 Agent 提名、已在前一步處理；曝險換股不配對（上面的反彈現金與換手旗標照舊）。
+            skip("EXPOSURE_ROTATION", "agent_swap", detail="換股改由交易 Agent 提名（agent_swap v2），曝險換股不配對")
             return targets
         ordered, weights, skipped, budget, held_frozen = targets
         tiers = sizing["conviction_by_symbol"]
@@ -1164,7 +1345,7 @@ class AllocationOrderEngine:
                     "sector_fit", "turnover_fit"):
             if key in sizing:
                 result[key] = sizing[key]
-        if "cash_fit_order" in sizing:
+        if sizing.get("cash_fit_order") == CASH_FIT_ORDER:  # v2 不取消零頭，沒有最低成交比例
             result["cash_fit_min_fill_ratio"] = cash_fit_min_fill_ratio(sizing)
         if "buy_gap_reserve" in sizing:
             result["buy_gap_reserve_rate"] = buy_gap_reserve_rate(sizing)
@@ -1292,7 +1473,7 @@ class AllocationOrderEngine:
         )
         floor = decimal_value(sizing["volatility_floor"], "volatility_floor")
         alpha = limit_scaled_alpha(sizing)
-        held_weight_budget = sizing.get("held_weight_budget") == HELD_WEIGHT_BUDGET
+        held_weight_budget = held_weight_budget_enabled(sizing)
         held_frozen: Dict[str, Tuple[Decimal, Decimal]] = {}
         while True:
             held_outside = sum(
@@ -1658,11 +1839,7 @@ class AllocationOrderEngine:
             cut = min(max(int((excess / (self.prices[symbol] * lot)).to_integral_value(rounding=ROUND_CEILING)), 1),
                       int(weakest["shares"]) // lot) * lot
             remaining = int(weakest["shares"]) - cut
-            high_exempt = (
-                effective.get("cash_fit_order") == CASH_FIT_ORDER
-                and effective.get("high_conviction_cash_priority") == HIGH_CONVICTION_CASH_PRIORITY
-                and tiers.get(symbol) == "high"
-            )
+            high_exempt = high_priority_enabled(effective) and tiers.get(symbol) == "high"
             if (
                 current.get(symbol, 0) <= 0 and not high_exempt
                 and Decimal(remaining) < Decimal(requested[symbol]) * min_fill_ratio
@@ -1695,6 +1872,7 @@ class AllocationOrderEngine:
         effective: Mapping[str, object],
         untradable: Set[str],
         kept_exits: Mapping[str, str],
+        notes: Optional[List[Dict[str, object]]] = None,
     ) -> List[Dict[str, object]]:
         """``drawdown_derisk``（版本閘門）：現金姿態為 defensive 時，交易 Agent 的賣單算進現金後仍低於姿態緩衝
         （cash_buffer_rate × NAV），由程式依（ATR14 高→低、信心低→高、代號）把持股按整張減碼到目標現金，一次最多賣出
@@ -1703,8 +1881,12 @@ class AllocationOrderEngine:
         版本：v1 整張進位可超過單次上限；v2 進位不得超過；v3 另由 ``_run`` 把被減碼的持股排除在本次加碼候選外
         （減碼後的股數為上限，交易 Agent 標 add 也不加回）；v4 單次預算另取 min(·, NAV × max_turnover_rate − 交易 Agent
         賣單 gross)，減碼不會把賣單總額推過換手上限（否則 ``_run_min_positions`` 的 RISK_TURNOVER 會留住交易 Agent 的
-        exit、下一輪再改賣別檔）。省略閘門的舊 run 維持「防守姿態只停止買進、不降曝險」的原行為。"""
+        exit、下一輪再改賣別檔）；v5 數字規則同 v4，只把「先賣誰」由 ATR 順序換成交易 Agent 第二輪的釋出順序（Policy 綁定的
+        release_symbols，status=completed 才用；Agent 順序沒列到的可減碼持股排在後面、依 v4 順序），``notes`` 收退回 v4 順序的
+        旗標（順序 exhausted／unavailable 且真的減碼時留 ``DERISK_ORDER_SKIPPED:*``，symbol 為 PORTFOLIO）。
+        省略閘門的舊 run 維持「防守姿態只停止買進、不降曝險」的原行為。"""
         sizing = self.policy.get("position_sizing") or {}
+        release = release_order_binding(sizing)  # 只有 v5 有；v5 尚未綁定釋出順序時拋錯，不靜默退回 v4
         fraction = drawdown_derisk_fraction(sizing)
         if fraction is None or sizing.get("cash_stance") != "defensive":
             return []
@@ -1742,18 +1924,26 @@ class AllocationOrderEngine:
         atr = self._atr_pct()
         minimum = int(self.policy["min_positions"])
         count = len(active_symbols)
-        order = sorted(
-            (
-                symbol for symbol in current
-                if target_shares.get(symbol, 0) > 0 and symbol in self.prices and symbol not in untradable
-                and symbol not in kept_exits and intents.get(symbol, "hold") not in {"exit", "forced_exit", "trim"}
-            ),
-            key=lambda symbol: (
+        def deterministic_key(symbol: str) -> Tuple[object, ...]:
+            return (
                 -atr.get(symbol, Decimal("-Infinity")),
                 -(CONVICTION_LEVELS.index(tiers[symbol]) if symbol in tiers else len(CONVICTION_LEVELS)),
                 symbol,
-            ),
-        )
+            )
+
+        eligible = [
+            symbol for symbol in current
+            if target_shares.get(symbol, 0) > 0 and symbol in self.prices and symbol not in untradable
+            and symbol not in kept_exits and intents.get(symbol, "hold") not in {"exit", "forced_exit", "trim"}
+        ]
+        agent_order = release is not None and release[1] == "completed"
+        if agent_order:
+            # v5：Agent 的釋出順序在前；沒列到的（不應發生，Finalizer 要求順序涵蓋全部可減碼持股）排在後面、依 v4 順序。
+            position = {symbol: index for index, symbol in enumerate(release[0])}  # type: ignore[index]
+            order = sorted(eligible, key=lambda symbol: (position.get(symbol, len(position)),) + deterministic_key(symbol))
+        else:
+            order = sorted(eligible, key=deterministic_key)
+        how = "依交易 Agent 的釋出順序（程式只算賣多少）" if agent_order else "由程式依 ATR14 由高到低"
         flags: List[Dict[str, object]] = []
         for symbol in order:
             if remaining <= 0:
@@ -1780,22 +1970,28 @@ class AllocationOrderEngine:
             hard_budget -= lots * lot_value
             if soft_ratio is None:
                 detail = (
-                    "防守姿態回撤減碼：現金低於 %s 的姿態緩衝，由程式依 ATR14 由高到低減碼，股數由 %d 降為 %d"
+                    "防守姿態回撤減碼：現金低於 %s 的姿態緩衝，%s減碼，股數由 %d 降為 %d"
                     "（單次最多 NAV 的 %s；訂單意圖由程式標為 %s，交易 Agent 的意圖未被改寫）"
-                    % (format(effective["cash_buffer_rate"], ".0%"), before, target_shares[symbol], format(fraction, ".0%"),
+                    % (format(effective["cash_buffer_rate"], ".0%"), how, before, target_shares[symbol], format(fraction, ".0%"),
                        order_intents[symbol])
                 )
             else:
                 detail = (
-                    "防守姿態回撤減碼：現金低於 %s 的高信心現金下限（姿態緩衝 %s × %s），由程式依 ATR14 由高到低減碼，"
+                    "防守姿態回撤減碼：現金低於 %s 的高信心現金下限（姿態緩衝 %s × %s），%s減碼，"
                     "股數由 %d 降為 %d（單次最多 NAV 的 %s；訂單意圖由程式標為 %s，交易 Agent 的意圖未被改寫）"
-                    % (format(target_rate, ".2%"), format(effective["cash_buffer_rate"], ".0%"), format(soft_ratio, "f"),
+                    % (format(target_rate, ".2%"), format(effective["cash_buffer_rate"], ".0%"), format(soft_ratio, "f"), how,
                        before, target_shares[symbol], format(fraction, ".0%"), order_intents[symbol])
                 )
             if turnover_capped:
                 detail += "；本次減碼預算另受 %s 換手上限約束（扣除交易 Agent 賣單後的餘額）" % format(
                     effective["max_turnover_rate"], ".0%")
             flags.append({"symbol": symbol, "code": "RISK_DRAWDOWN", "detail": detail})
+        if flags and notes is not None and release is not None and release[1] in {"exhausted", "unavailable"}:
+            notes.append({
+                "symbol": SKIP_PORTFOLIO_SYMBOL, "code": "DERISK_ORDER_SKIPPED:order_%s" % release[1],
+                "detail": "回撤減碼的釋出順序%s，本次退回 v4 的 ATR14 由高到低順序減碼；其餘決策照常" % (
+                    "的驗證在嘗試用盡後仍未通過" if release[1] == "exhausted" else "的 Agent 呼叫在暫時性失敗重試後仍失敗"),
+            })
         return flags
 
     def _order(
@@ -1807,17 +2003,10 @@ class AllocationOrderEngine:
         effective: Mapping[str, object],
     ) -> Dict[str, object]:
         reference = self.prices[symbol]
-        bps = effective["slippage_bps"] / Decimal("10000")  # type: ignore[operator]
-        price = reference * (Decimal("1") + bps if side == "buy" else Decimal("1") - bps)
-        price = price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        price = execution_price(reference, side, effective["slippage_bps"])  # type: ignore[arg-type]
         gross = price * Decimal(shares)
-        raw_fee = gross * effective["commission_rate"]  # type: ignore[operator]
-        commission = max(raw_fee, effective["minimum_commission"]).quantize(  # type: ignore[arg-type]
-            MONEY, rounding=ROUND_CEILING
-        )
-        tax = (
-            gross * effective["sell_tax_rate"] if side == "sell" else Decimal("0")  # type: ignore[operator]
-        ).quantize(MONEY, rounding=ROUND_CEILING)
+        commission = commission_fee(gross, effective["commission_rate"], effective["minimum_commission"])  # type: ignore[arg-type]
+        tax = sell_tax(gross, side, effective["sell_tax_rate"])  # type: ignore[arg-type]
         impact = -(gross + commission) if side == "buy" else gross - commission - tax
         return {
             "symbol": symbol,
@@ -1903,7 +2092,7 @@ class AllocationOrderEngine:
             (decimal_value(item["gross_amount"], "gross_amount") for item in sells),
             Decimal("0"),
         )
-        ordered_fit = effective.get("cash_fit_order") == CASH_FIT_ORDER
+        ordered_fit = cash_fit_ordered(effective)
         reserve_rate = (
             effective["buy_gap_reserve_rate"] if effective.get("buy_gap_reserve") == BUY_GAP_RESERVE else None
         )
@@ -1920,12 +2109,15 @@ class AllocationOrderEngine:
                     str(item["symbol"]),
                 ),
             )
-            min_fill_ratio: Decimal = effective["cash_fit_min_fill_ratio"]  # type: ignore[assignment]
+            # cash_fit_order=v2 不取消零頭，effective 沒有最低成交比例（cancel_dust 為 False 時不會讀它）。
+            min_fill_ratio: Decimal = effective.get("cash_fit_min_fill_ratio", Decimal("0"))  # type: ignore[assignment]
+        cancel_dust = cash_fit_cancels_dust(effective)
         held = {symbol for symbol, shares in (current or {}).items() if int(shares) > 0}
         fitted = list(sells)
         flags: List[Dict[str, object]] = []
         buy_total = Decimal("0")
-        high_priority = ordered_fit and effective.get("high_conviction_cash_priority") == HIGH_CONVICTION_CASH_PRIORITY
+        high_priority = high_priority_enabled(effective)
+        blocks_after_high = high_priority_blocks(effective)  # v2 移除封鎖，只保留現金先給 high
         high_cash_clipped = False
         for item in buys:
             candidate = dict(item)
@@ -1935,7 +2127,7 @@ class AllocationOrderEngine:
             turnover_clipped = False
             priority_blocked = False
             is_high = all_tiers.get(str(item["symbol"])) == "high"
-            if high_priority and high_cash_clipped and not is_high and str(item["symbol"]) not in held:
+            if blocks_after_high and high_cash_clipped and not is_high and str(item["symbol"]) not in held:
                 # 高信心買單已被現金縮減：剩下的現金全部留給它，未持有的中、低信心新股不得動用；
                 # 已持有股票的加碼不受影響（本來就是持股，加碼只看自己的信心）。
                 candidate = {}
@@ -1967,7 +2159,7 @@ class AllocationOrderEngine:
                 # 至少買到一張才算「高信心用掉了剩下的現金」；連一張都買不起（整筆取消）時不擋後面的買單。
                 high_cash_clipped = True
             if (
-                ordered_fit and candidate and cash_clipped and str(item["symbol"]) not in held
+                ordered_fit and cancel_dust and candidate and cash_clipped and str(item["symbol"]) not in held
                 and not (high_priority and is_high)
                 and Decimal(int(candidate["shares"])) < Decimal(requested_shares) * min_fill_ratio
             ):

@@ -170,8 +170,8 @@ def validate_rebound_gate(sizing: Mapping[str, object], errors: List[str]) -> No
     if isinstance(turn_gate, Mapping) and turn_gate.get("version") != "v1":
         errors.append("%s 需要 cash_stance_turn_facts.version=v1（雙鑰匙的 Agent 列舉）" % prefix)
     derisk = sizing.get("drawdown_derisk")
-    if isinstance(derisk, Mapping) and derisk.get("version") != "v4":
-        errors.append("%s 必須與 drawdown_derisk.version=v4 同時使用" % prefix)
+    if isinstance(derisk, Mapping) and derisk.get("version") not in ("v4", "v5"):  # v5 只改減碼的先後，數字規則同 v4
+        errors.append("%s 必須與 drawdown_derisk.version=v4（或 v5）同時使用" % prefix)
 
 
 def _neutral_cash_floor(sizing: Mapping[str, object]) -> Optional[Decimal]:

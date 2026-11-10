@@ -31,7 +31,7 @@ analyst_outlooks 裡的 event 是該公司事件，不是整體台股情緒；�
 - `rotation`：`enabled`、`max_swaps_per_run`（本次最多幾個出場名額可給新股）、`min_new_conviction`（用換股名額的最低信心）。
 - `held_by_bear_strength`／`unheld_by_bull_strength`：全池持股的空頭強度與未持有股票的多頭強度分布計數，是對**共同輸入**的統計，不是其他批的輸出。
 
-`free_slots` 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交；程式依信心等級配對，名額不足者不建立買單並標 `MAX_POSITIONS`，信心低於門檻者標 `ROTATION_CONVICTION`。你看不到其他批的候選，配對是程式的工作。持股的空頭 claim 已成立、多頭理由不再成立時就給 exit 或 trim；出場與買進的依據要求見第 4 節，名額多寡不改變它。這個區塊沒有 evidence ID，rationale、unresolved_questions 與 invalidation_conditions 用不到它。
+`free_slots` 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交；程式依信心等級配對，名額不足者不建立買單並標 `MAX_POSITIONS`，信心低於門檻者標 `ROTATION_CONVICTION`。你看不到其他批的候選，配對是程式的工作；**但 `portfolio_slots` 含 `swap_nomination_background`（`schema_version` 為 1.1）時**，名額卡住的新股要換掉哪檔持股改由第二輪提名決定（見 [swap-nomination.md](swap-nomination.md)），本輪各批不為換股調整意圖或信心，`note` 與該區塊的文字以 brief 內容為準。持股的空頭 claim 已成立、多頭理由不再成立時就給 exit 或 trim；出場與買進的依據要求見第 4 節，名額多寡不改變它。這個區塊沒有 evidence ID，rationale、unresolved_questions 與 invalidation_conditions 用不到它。
 
 ### 持股檢視（position_review）
 
