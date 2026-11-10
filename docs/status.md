@@ -41,7 +41,7 @@
 
 ### 版本閘門啟用狀態
 
-這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-09 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-09-exposure-v2-1`，`available_at: 2026-11-09T17:50:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-10 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-10-cash-v2-1`，`available_at: 2026-11-10T17:58:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
 
 2026-11-09 17:50 把 `exposure_rotation` 由 v1 切到 v2（只換欄位寫法，觸發線與停止線數值不變：進攻 0.90、中性 0.55；刪 `max_rotation_fraction`、`min_new_conviction`、`release_margin`），切換前的樣板存為 `config/policy_versions/2026-11-09-exposure-rotation-v1.json`，其餘門檻與閘門開關不變；先前的策略識別與可得時間更新（`strategy-2026-11-09-turnfacts-v1`）沿用同一段說明。審查前樣板原樣保存在 `config/policy_versions/2026-11-09-before-review.json`；該檔是當日審查前的內容快照，**不是**其中舊 `available_at` 日期當時的策略還原。封存 run 仍讀自己保存的 Policy，不改寫歷史。用新版策略重跑較早 cutoff 僅能是明確標示的反事實評測。
 
@@ -73,8 +73,8 @@
 | `event_direction` | v1 **已開啟**（2026-11-10 使用者決定，與 `quality_dip_facts` 一起）：優質股第二階段（紀錄用），前提 `quality_dip_facts`——事件分析師每則事件多填 `direction`（`positive`／`negative`／`neutral`／`unknown`），`quality_dip_facts` 的新壞事事件面改為「視窗內新可得、high 且該則方向為 negative」（缺方向列不知道）；不新增報告版本、不影響配置；開啟＝加 `{"event_direction": {"version": "v1"}}`，回滾＝刪除該欄位 |
 | `exposure_view` | v1 **已開啟（2026-11-10，使用者決定）**；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`：Agent 主導曝險的階段 1（事實與紀錄）——風險 Agent 簡報多附組合曝險事實（組合 beta、持股 beta、低 beta 占比與檔數、現金權重、持股產業權重〔金融保險另列〕、最近一個交易池上漲日的池報酬與持股依起始權重的當日貢獻；背景、不可引用），輸出多一個必填列舉 `exposure_view`（`keep_defensive`／`start_rebuild`／`rebuild`，非 `keep_defensive` 須引用市場層級證據），**純紀錄、不接進任何配置**；`agent_swap` 也開啟時換股提名簡報另附轉向、加權指數、組合曝險、上漲日報酬與候選新股 beta（背景，不改提名驗證）。前提 `exposure_rotation`、`cash_stance_turn_facts`、`market_index_facts` 與 `typed_evidence_v1`；`team_inputs` 另存選配鍵 `exposure_facts`（不升版、須 2.7 以上），Finalizer 整份重算。見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md) |
 | `cash_ceiling_fix`、`stock_limit_headroom`、`buy_gap_reserve`（`buy_gap_reserve_rate 0.03`）、`sector_fit`、`turnover_fit` | 皆 `v1`；`insufficient_funds_policy void_batch` |
-| `reentry_cooldown` | `{version v1, days 3}` |
-| `drawdown_derisk` | `{version v4, max_derisk_fraction 0.25}`（v4 於 2026-11-08 開啟） |
+| `reentry_cooldown` | `{version v2, days 3}`（2026-11-10 17:40 由 v1 切到 v2：冷卻名單只計交易 Agent 自己的出場；v3 已實作、尚未開啟） |
+| `drawdown_derisk` | `{version v5, max_derisk_fraction 0.25}`（v4 於 2026-11-08 開啟，2026-11-10 17:40 切到 v5：減碼順序由交易 Agent 給） |
 | `drawdown_control` | `neutral_at 0.05`、`defensive_at 0.10`、`release_neutral_below 0.03`、`release_defensive_below 0.07`；`history_ref` 由 pipeline 綁定 |
 | `stock_weight_fit` | `v1`（單股上限減碼不依此欄位開關，一律由程式執行） |
 | rules | `max_turnover_rate 0.3`（policy）、`max_sector_weight 0.6`、`reuse_sell_proceeds true`、`minimum_active_share 0.15`、現金 `< 0.25`、持股 20～30 檔、單股 10%（2330 為 25%） |
@@ -87,7 +87,7 @@
 已開啟（2026-11-10，紀錄用）：`market_index_facts` v1（風險 Agent 簡報附證交所加權指數收盤、當日漲跌、近 5／20 日報酬與離高點回檔，背景事實、不可引用；補上晚間決策看不到隔夜行情的缺口；不新增輸出欄位、不影響配置；設定在 `config/decision_policy.json` 的 `position_sizing.market_index_facts`，回滾＝刪除該欄位，見[計畫](market_index_facts_plan.md)）。
 已開啟（2026-11-10，紀錄用，使用者決定）：`exposure_view` v1（風險 Agent 簡報附組合曝險事實並多填列舉 `exposure_view`，`agent_swap` 開啟時提名簡報附轉向與曝險事實；背景、不可引用、純紀錄、不影響配置；設定在 `config/decision_policy.json` 的 `position_sizing.exposure_view`，回滾＝刪掉該欄位，見[計畫](agent_led_exposure_plan.md)）。
 
-已實作、尚未開啟：`agent_swap.exposure`（Agent 主導曝險階段 2、3；v1 影子、v2 依風險 Agent 的 `exposure_view` 取用 `purpose: exposure` 的換股配對；前提 `agent_swap`、`exposure_view`；`max_pairs_by_view` 不得高於 `max_swaps_per_run`；`team_inputs` 不升版；回滾＝刪掉 `position_sizing.agent_swap.exposure`，見[計畫](agent_led_exposure_plan.md)）。
+v1 影子已於 2026-11-10 19:45 開啟（`policy_id strategy-2026-11-10-exposure-shadow-1`，回滾樣板 `config/policy_versions/2026-11-10-before-exposure-shadow.json`）、v2 尚未開啟：`agent_swap.exposure`（Agent 主導曝險階段 2、3；v1 影子、v2 依風險 Agent 的 `exposure_view` 取用 `purpose: exposure` 的換股配對；前提 `agent_swap`、`exposure_view`；`max_pairs_by_view` 不得高於 `max_swaps_per_run`；`team_inputs` 不升版；回滾＝刪掉 `position_sizing.agent_swap.exposure`，見[計畫](agent_led_exposure_plan.md)）。
 
 未開啟：
 
@@ -95,6 +95,11 @@
 | --- | --- |
 | `position_sizing.high_conviction_cash_floor` | 與 `cash_ratio_range` 互斥，目前正式設定沒有這個欄位；行為見[決策鏈契約](decision-contracts.md#高信心現金下限high_conviction_cash_floor)，只在人改設定時才生效 |
 | `agent_swap` v2（換股改由提名配置） | **已實作、尚未開啟**（正式設定目前是 v1 影子）：配置依交易 Agent 的有序提名換股，換出者由程式標 `exit`＋`AGENT_SWAP`、換入者 `AGENT_SWAP_FILL`；提名可行性取消只取消該對並留 `AGENT_SWAP_CANCELLED:<原因>`，換出者不賣；與 `rotation.forced_swap`、`exposure_rotation.conviction_gap_swap` 互斥，`exposure_rotation` 的換股步驟停用（`EXPOSURE_ROTATION_SKIPPED:agent_swap`）；pipeline 綁 `nominated_pairs`／`nomination_ref`，`portfolio_slots` 升 1.1。是否切 v2 由人在影子期後決定（見[計畫](agent_nominated_rotation_plan.md#6-需人決定事項)） |
+
+已開啟（2026-11-10，目前值見上表；以下為行為說明）：
+
+| 閘門 | 說明 |
+| --- | --- |
 | `drawdown_derisk` v5 | **已開啟（2026-11-10 17:40）**：回撤減碼的數字全同 v4，只把「先賣誰」由 ATR 順序改成交易 Agent 的釋出順序（`release_order`，`team_inputs` 選配鍵、不升版本；pipeline 綁 `release_symbols`／`release_ref`）；順序驗證用盡或呼叫失敗時退回 v4 順序並留 `DERISK_ORDER_SKIPPED:order_*`。見[自主權計畫](agent_autonomy_plan.md) |
 | `reentry_cooldown` v2／v3 | **v2 已開啟（2026-11-10 17:40）、v3 已實作尚未開啟**：v2 冷卻名單只計交易 Agent 自己的 `exit`／`forced_exit`（程式賣出不計）；v3 名單同 v2 但不再擋買單，改成交易 Agent 簡報的 `cooldown:<代號>` 提示，買回須在 `adopted_claim_ids` 回應，沒回應的買單由配置取消（`RISK_REENTRY_COOLDOWN`） |
 | `cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2 | **皆已於 2026-11-10 17:58 開啟**（回滾樣板 `config/policy_versions/2026-11-10-before-cash-v2.json`）：`cash_fit_order` v2 新股只買得到零頭時不再整筆取消（不允許 `cash_fit_min_fill_ratio`）；`high_conviction_cash_priority` v2 保留現金先給 high、移除「high 被縮減後擋掉後面中低信心新股」；`held_weight_budget` v2 預算算法同 v1，只多附交易 Agent 簡報的持股權重事實（`team_inputs.held_weight_facts`，選配鍵、不升版本，需 `selection_ranking`） |

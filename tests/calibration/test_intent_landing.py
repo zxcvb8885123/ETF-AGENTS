@@ -69,6 +69,48 @@ class IntentLandingTest(unittest.TestCase):
         self.assertEqual(day["overridden_sells"][0]["flags"], ["RISK_DRAWDOWN"])
         self.assertEqual(report["totals"]["landed"], 1)
 
+    def test_conviction_layers_and_unrecorded_policy(self):
+        self.save()
+        report = intent_landing_report(self.root)
+        self.assertEqual(report["report_version"], "intent_landing.v2")
+        self.assertEqual(report["totals"]["by_conviction"], {
+            "high": {"landed": 1, "unlanded": 0}, "low": {"landed": 0, "unlanded": 1}, "medium": {"landed": 0, "unlanded": 1}})
+        self.assertEqual([segment["policy_id"] for segment in report["by_policy"]], ["未記錄"])
+
+    def add_run(self, run_id, day, policy_id, sold_intent="hold"):
+        artifacts = make_artifacts(
+            run_id,
+            [("1101.TW", "buy", "high"), ("1102.TW", "buy", "medium"), ("1104.TW", sold_intent, None)],
+            [order("1101.TW", "buy", "1000"), order("1104.TW", "sell", "300", "exit")],
+            [{"symbol": "1102.TW", "code": "MAX_POSITIONS", "detail": "x"}],
+        )
+        artifacts["policy"] = {"policy_id": policy_id}
+        return self.store.save(run_id, artifacts, day=day)
+
+    def test_segments_by_policy_sum_to_totals(self):
+        self.add_run("decision-20261103T231233Z", "2026-11-04", "strat-a+trade-decision:decision-20261103T231233Z")
+        self.add_run("decision-20261104T231233Z", "2026-11-05", "strat-a+trade-decision:decision-20261104T231233Z", "add")
+        self.add_run("decision-20261105T231233Z", "2026-11-06", "strat-b+trade-decision:decision-20261105T231233Z")
+        report = intent_landing_report(self.root)
+        segments = {segment["policy_id"]: segment for segment in report["by_policy"]}
+        self.assertEqual(list(segments), ["strat-a", "strat-b"])
+        self.assertEqual((segments["strat-a"]["run_count"], segments["strat-a"]["buy_add_intents"], segments["strat-a"]["landed"]), (2, 5, 2))
+        self.assertEqual(segments["strat-a"]["overridden_sell_gross_amount"], "600")
+        self.assertEqual(segments["strat-a"]["by_conviction"]["high"], {"landed": 2, "unlanded": 0})
+        self.assertEqual((segments["strat-a"]["first_date"], segments["strat-a"]["last_date"]), ("2026-11-04", "2026-11-05"))
+        totals = report["totals"]
+        for key in ("buy_add_intents", "landed", "unlanded"):
+            self.assertEqual(sum(segment[key] for segment in segments.values()), totals[key])
+        self.assertEqual(sum(int(segment["overridden_sell_gross_amount"]) for segment in segments.values()), int(totals["overridden_sell_gross_amount"]))
+        self.assertEqual(sum(int(segment["sell_gross_amount"]) for segment in segments.values()), int(totals["sell_gross_amount"]))
+        self.assertNotIn("target", json.dumps(report, ensure_ascii=False).lower())
+
+    def test_invalid_policy_id_is_rejected(self):
+        run_dir = self.add_run("decision-20261103T231233Z", "2026-11-04", "strat-a")
+        self.rewrite(run_dir, "policy", lambda p: p.update(policy_id=""))
+        with self.assertRaises(CalibrationError):
+            intent_landing_report(self.root)
+
     def test_agent_exit_is_not_override(self):
         self.artifacts["intent"]["items"][3]["intent"] = "exit"
         self.save()
@@ -165,6 +207,16 @@ class ArchivedRunsReproductionTest(unittest.TestCase):
         self.assertEqual((totals["buy_add_intents"], totals["landed"]), (256, 40))
         self.assertEqual(totals["unlanded_reasons"]["MAX_POSITIONS"], 163)
         self.assertEqual(totals["unlanded_reasons"]["NO_FLAG"], 25)
+
+    def test_policy_segments_sum_to_archived_totals(self):
+        totals = self.report["totals"]
+        segments = self.report["by_policy"]
+        self.assertEqual(sum(segment["buy_add_intents"] for segment in segments), 256)
+        self.assertEqual(sum(segment["landed"] for segment in segments), 40)
+        self.assertEqual(sum(segment["unlanded"] for segment in segments), 216)
+        self.assertEqual(sum(int(segment["overridden_sell_gross_amount"]) for segment in segments), 48450690)
+        self.assertEqual(totals["overridden_sell_gross_amount"], "48450690")
+        self.assertEqual(sum(segment["run_count"] for segment in segments), self.report["run_count"])
 
     def test_since_1104(self):
         totals = intent_landing_report(REAL_DECISIONS, since="2026-11-04")["totals"]

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-10-cash-v2-1",
-  "available_at": "2026-11-10T17:58:00+08:00",
+  "policy_id": "strategy-2026-11-10-exposure-shadow-1",
+  "available_at": "2026-11-10T19:45:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -79,7 +79,7 @@
         "confirmed": {"defensive_target": "0.55", "max_swaps_per_run": 4, "min_holding_days": 0}
       }
     },
-    "agent_swap": {"version": "v1", "max_swaps_per_run": 2, "min_holding_days": 5},
+    "agent_swap": {"version": "v1", "max_swaps_per_run": 2, "min_holding_days": 5, "exposure": {"version": "v1"}},
     "cash_ceiling_fix": "v1",
     "stock_limit_headroom": "v1",
     "buy_gap_reserve": "v1",

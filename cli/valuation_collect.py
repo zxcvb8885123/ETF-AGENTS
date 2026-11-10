@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from etf_agent.data.universe import UniverseLoader
 from etf_agent.data.valuation import (
-    FinMindValuationProvider, OfficialValuationProvider, ValuationCollector, listed_codes, validate_valuation_run,
+    FinMindValuationProvider, OfficialValuationProvider, ValuationCollector, listed_codes, summarize_valuation_audits, validate_valuation_run,
 )
 
 
@@ -32,7 +32,12 @@ def main():
     check = sub.add_parser("validate", help="以原始回應整份重建並比對")
     check.add_argument("run_id")
     check.add_argument("--output-root", type=Path, default=ROOT / "artifacts/valuation_collection")
+    summary_cmd = sub.add_parser("audit-summary", help="唯讀：逐資料日彙總已保存的稽核結果（不連外部端點）")
+    summary_cmd.add_argument("--output-root", type=Path, default=ROOT / "artifacts/valuation_collection")
     args = parser.parse_args()
+    if args.command == "audit-summary":
+        print(json.dumps(summarize_valuation_audits(args.output_root), ensure_ascii=False, indent=2))
+        return 0
     if args.command == "validate":
         print(json.dumps(validate_valuation_run(args.output_root, args.run_id), ensure_ascii=False, indent=2))
         return 0

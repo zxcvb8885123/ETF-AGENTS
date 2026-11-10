@@ -1,6 +1,6 @@
 # 市場轉向時的持股曝險：由 Agent 判斷、程式守界線
 
-狀態（2026-11-10）：**階段 1（事實與紀錄）已實作，閘門 `position_sizing.exposure_view` 已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`**（使用者 2026-11-10 下令開工階段 1；實作紀錄見第 10 節）；階段 2、3 尚未實作，開工需使用者另行下令。第 7 節五項設計取捨已由使用者於 2026-11-10 決定；這只決定了設計；開啟閘門是使用者另行決定的。第 1～9 節是計畫原文（撰寫時不改程式、設定、Skill 與既有文件）；文中 `exposure_view` 已照暫名實作，`purpose`、`review:<代號>:exposure` 等其餘新名稱仍是提案、名稱暫定。
+狀態（2026-11-10）：**階段 1（事實與紀錄）已實作，閘門 `position_sizing.exposure_view` 已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`**（使用者 2026-11-10 下令開工階段 1；實作紀錄見第 10 節）；階段 2、3（`agent_swap.exposure`）已實作、閘門尚未開啟（見第 11 節）。第 7 節五項設計取捨已由使用者於 2026-11-10 決定；這只決定了設計；開啟閘門是使用者另行決定的。第 1～9 節是計畫原文（撰寫時不改程式、設定、Skill 與既有文件）；文中 `exposure_view` 已照暫名實作，`purpose`、`review:<代號>:exposure` 等其餘新名稱仍是提案、名稱暫定。
 
 數字是用 2026-11-10 封存 run（`decision-20261109T230435Z`）的 `team_inputs.json`、`intent.json`、`debate.json`、`decision_input.json` 以暫存腳本唯讀重算的，證據等級一律是 `replay_reference_only`：只說明「當天 Agent 會看到什麼事實」，不代表 Agent 會怎麼判斷，也不代表改了績效會更好。
 

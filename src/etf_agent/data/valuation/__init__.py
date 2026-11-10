@@ -3,8 +3,9 @@
 from .contracts import ValuationError, parse_roc_date
 from .provider import FinMindValuationProvider, OfficialValuationProvider
 from .repository import valuation_store
+from .summary import summarize_valuation_audits
 from .service import ValuationCollector, listed_codes
 from .validator import validate_valuation_run
 
 __all__ = ["FinMindValuationProvider", "OfficialValuationProvider", "ValuationCollector", "ValuationError",
-           "listed_codes", "parse_roc_date", "valuation_store", "validate_valuation_run"]
+           "listed_codes", "summarize_valuation_audits", "parse_roc_date", "valuation_store", "validate_valuation_run"]

@@ -14,8 +14,8 @@
 | `prices.py` | 官方成交均價查詢，只讀 SQLite；沿用帳本的 `OfficialCloseMarket` | `OfficialPriceBook` |
 | `repository.py` | 觀測的不可變保存，獨立根目錄 `artifacts/calibration/` | `CalibrationRepository` |
 | `service.py` | 記錄決策與對答案；`latest_per_entry_day`（同成交日取 cutoff 最晚、回報被取代者）與 `day_returns`（單日逐檔報酬與池平均）供 `evaluation.grid` 沿用同一口徑 | `build_observation`、`record_day`、`record_all`、`evaluate`、`latest_per_entry_day`、`day_returns` |
-| `intent_landing.py` | 唯讀統計 buy／add 意圖落地率、未落地原因（旗標組合）、旗標次數與「Agent 標 hold／add 卻被賣」的清單與金額；先驗證 manifest，缺檔、雜湊或欄位不符整批拒絕；CLI：`cli/calibration.py intent-landing [--since YYYY-MM-DD]` | `intent_landing_report` |
-| `shadow_swap_report.py` | 唯讀統計 `agent_swap` v1 影子提名：每日狀態次數、配對、換入／換出股與信心，並依 v2 規則離線估算「若開 v2 會成交哪幾對」與取消原因分佈（上限估計，動態取消無法重現），與同日實際訂單對照；標 `replay_reference_only`；缺檔、雜湊、snapshot／cutoff 不一致整批拒絕，無影子 run 回報 `no_shadow_data`；CLI：`cli/calibration.py shadow-swap [--since YYYY-MM-DD]` | `shadow_swap_report` |
+| `intent_landing.py` | 唯讀統計 buy／add 意圖落地率、未落地原因（旗標組合）、旗標次數與「Agent 標 hold／add 卻被賣」的清單與金額（報告 `intent_landing.v2` 另有依 `policy_id` 分段的 `by_policy`，以及落地與未落地各依信心 high／medium／low 的 `by_conviction`；沒有 `policy.json` 的 run 歸「未記錄」；分段加總必等於合計；不設目標、不判斷達標）；先驗證 manifest，缺檔、雜湊或欄位不符整批拒絕；CLI：`cli/calibration.py intent-landing [--since YYYY-MM-DD]` | `intent_landing_report` |
+| `shadow_swap_report.py` | 唯讀統計 `agent_swap` v1 影子提名：每日狀態次數、配對、換入／換出股與信心，並依 v2 規則離線估算「若開 v2 會成交哪幾對」與取消原因分佈（上限估計，動態取消無法重現），與同日實際訂單對照；標 `replay_reference_only`；`shadow_swap_report.v2` 另統計論點提示的 `nominated`／`kept`、提名 `purpose` 分布、提名高信心持股的對數與 `lower_conviction_review` 的 `nominated`／`kept` 檔數及 `kept` 理由原文、買進意圖中信心低於 `rotation.min_new_conviction` 的檔數、換出者 10 個影子決策日內又被提名為換入的次數，封存沒有的欄位（例如沒開 `agent_swap.exposure` 時的 `purpose`）一律回報「未記錄」、不補值；缺檔、雜湊、snapshot／cutoff 不一致整批拒絕，無影子 run 回報 `no_shadow_data`；CLI：`cli/calibration.py shadow-swap [--since YYYY-MM-DD]` | `shadow_swap_report` |
 | `gap_audit.py` | 決策價與成交均價的偏離、開盤漲跌停、缺均價清單 | `execution_gap_report` |
 
 ## 口徑

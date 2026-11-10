@@ -33,9 +33,10 @@
 - [sizing_rotation_v2_design.md](sizing_rotation_v2_design.md)、[sizing_rotation_v2_plan.md](sizing_rotation_v2_plan.md)：配置、權重與滿檔換股（後者已併入前者）。
 - [cash_buffer_high_conviction_plan.md](cash_buffer_high_conviction_plan.md)、[limit_aware_conviction_weights_plan.md](limit_aware_conviction_weights_plan.md)、[agent_cash_ratio_range_plan.md](agent_cash_ratio_range_plan.md)：2026-11-05 的三個配置閘門設計計畫（高信心現金下限、高信心份額下限、姿態內現金子等級；內含重放數字，`replay_reference_only`），目前啟用狀態以 `config/decision_policy.json` 與 [status.md](status.md) 為準。
 - [quality_dip_plan.md](quality_dip_plan.md)：優質股被大盤拖累時的進場判斷；第一階段事實（`quality_dip_facts`）、第二階段（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，已掛進資料排程）已實作、三個閘門 2026-11-10 已開啟（純紀錄）；第三階段（改走換股提名）、估值 V2／V3 尚未實作。
-- [agent_led_exposure_plan.md](agent_led_exposure_plan.md)：市場轉向時的持股曝險改由 Agent 判斷；階段 1（`exposure_view`，事實與紀錄）已實作並開啟（2026-11-10，使用者決定；純紀錄、不影響配置）；階段 2、3（`agent_swap.exposure`，提名 `purpose` 與依 `exposure_view` 取用曝險配對）已實作、尚未開啟，階段 2（提名 `purpose`）與階段 3（配置讀 `exposure_view`）尚未實作。
-- [agent_autonomy_plan.md](agent_autonomy_plan.md)：把策略裁量還給 Agent 的分階段計畫；階段 0（`intent-landing` 統計）已實作，階段 3 的 `agent_swap` v1 影子已開啟（2026-11-10），其餘階段（`reentry_cooldown` v2／v3、`drawdown_derisk` v5、階段 4 的 v2 版本）已實作、尚未開啟。
+- [agent_led_exposure_plan.md](agent_led_exposure_plan.md)：市場轉向時的持股曝險改由 Agent 判斷；階段 1（`exposure_view`，事實與紀錄）已實作並開啟（2026-11-10，使用者決定；純紀錄、不影響配置）；階段 2、3（`agent_swap.exposure`，提名 `purpose` 與依 `exposure_view` 取用曝險配對）已實作、尚未開啟。
+- [agent_autonomy_plan.md](agent_autonomy_plan.md)：把策略裁量還給 Agent 的分階段計畫；階段 0（`intent-landing` 統計）已實作，已開啟（2026-11-10）：`agent_swap` v1 影子、`reentry_cooldown` v2、`drawdown_derisk` v5、現金三個 v2；已實作、尚未開啟：`agent_swap` v2、`reentry_cooldown` v3。
 - [agent_nominated_rotation_plan.md](agent_nominated_rotation_plan.md)：換股由交易 Agent 提名（階段 3）的詳細設計；v1 影子已開啟、v2 配置與 `shadow-swap` 報告已實作、尚未開啟。
+- [follow_up_plan.md](follow_up_plan.md)：Agent 自主權線的後續優化與上線計畫（2026-11-10）；目前狀態、依證據排序的項目、「現在可以開」清單（撰寫時為沒有）與 12 個工作包。
 - [runtime-artifacts.md](runtime-artifacts.md)：執行時產物資料夾。
 
 ### 操作
@@ -94,6 +95,7 @@
 | 2026-11-08 | `architecture.md` 與 `decision-details.md` 的兩份「附錄：名稱對照」合併為 `glossary.md`，兩處附錄改為連結。 |
 | 2026-11-08 | `AGENTS.md` 瘦身為原則與邊界；契約與閘門細節搬到新檔 `decision-contracts.md`，閘門啟用狀態表集中到 `status.md`。 |
 | 2026-11-10 | 索引加入 `agent_autonomy_plan.md`、`agent_nominated_rotation_plan.md`；同步 `agent_swap` v1 影子（已開啟）與已實作未開啟版本的狀態、契約、`team_inputs` 2.9 與名稱對照。 |
+| 2026-11-10 | 同步 `status.md` 閘門表與各計畫的進度敘述（`reentry_cooldown` v2、`drawdown_derisk` v5、現金三個 v2 已開啟）；索引加入 `follow_up_plan.md`。 |
 
 ## 維護規則
 

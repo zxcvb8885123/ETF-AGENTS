@@ -5,7 +5,9 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from etf_agent.core import canonical_sha256
-from etf_agent.data.valuation import ValuationCollector, ValuationError, parse_roc_date, validate_valuation_run, valuation_store
+from etf_agent.data.valuation import (
+    ValuationCollector, ValuationError, parse_roc_date, summarize_valuation_audits, validate_valuation_run, valuation_store,
+)
 from etf_agent.data.valuation.contracts import normalize_metric
 
 
@@ -183,6 +185,88 @@ class ValuationCollectionTests(unittest.TestCase):
         universe = [SimpleNamespace(symbol="2330.TW", code="2330"), SimpleNamespace(symbol="3718.TWO", code="3718")]
         self.assertEqual(listed_codes(universe), ["2330"])
 
+REAL_VALUATION_ROOT = Path(__file__).resolve().parents[2] / "artifacts" / "valuation_collection"
+
+
+class ValuationAuditSummaryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def collect(self, day, minute, responses, codes, per="10"):
+        raw = official([(code, per, "1", "3") for code in codes], day=day)
+        clock = lambda: datetime(2026, 11, 10, 0, minute, tzinfo=timezone.utc)
+        return ValuationCollector(self.root, FakeOfficial(raw), FakeFinMind(responses), clock).collect(codes)
+
+    def test_no_runs_is_explicit(self):
+        report = summarize_valuation_audits(self.root)
+        self.assertEqual((report["status"], report["run_count"], report["consecutive_all_matched_days"]), ("no_valuation_runs", 0, 0))
+        self.assertEqual(report["evidence_grade"], "replay_reference_only")
+
+    def test_days_adopted_run_rejections_and_streak(self):
+        good = finmind("1101", [("2026-11-09", "10", "1", "3")])
+        # 同一資料日兩個 run：第一個 FinMind 不可用，第二個一檔相符、一檔數值不符。
+        self.collect("1151109", 10, {"1101": RuntimeError("額度"), "1102": "{}"}, ["1101", "1102"])
+        self.collect("1151109", 20, {"1101": good, "1102": finmind("1102", [("2026-11-09", "11", "1", "3")])}, ["1101", "1102"])
+        report = summarize_valuation_audits(self.root)
+        self.assertEqual((report["status"], report["run_count"]), ("ok", 2))
+        day = report["days"][0]
+        self.assertEqual(day["data_date"], "2026-11-09")
+        self.assertEqual(day["adopted_run_id"], "valuation-20261110T002000Z")
+        self.assertEqual((day["requested"], day["matched"], day["rejected"]), (2, 1, 1))
+        self.assertEqual(day["reject_reasons"], {"VALUE_MISMATCH": 1})
+        self.assertEqual(day["rejected_symbols"], [{"code": "1102", "reject_reason": "VALUE_MISMATCH", "mismatched_metrics": ["per"]}])
+        self.assertEqual([run["matched"] for run in day["runs"]], [0, 1])
+        self.assertEqual(report["consecutive_all_matched_days"], 0)
+        # 下一個資料日全部相符：連續天數從最新一天往回數。
+        self.collect("1151110", 30, {"1101": finmind("1101", [("2026-11-10", "10", "1", "3")])}, ["1101"])
+        report = summarize_valuation_audits(self.root)
+        self.assertEqual([d["all_matched"] for d in report["days"]], [False, True])
+        self.assertEqual(report["consecutive_all_matched_days"], 1)
+
+    def test_tampered_run_rejects_whole_batch(self):
+        summary = ValuationCollector(self.root, FakeOfficial(official([("1101", "10", "1", "3")])), FakeFinMind(
+            {"1101": finmind("1101", [("2026-11-09", "10", "1", "3")])}), CLOCK).collect(["1101"])
+        run_dir = valuation_store(self.root).verify(summary["run_id"])
+        path = run_dir / "audit.json"
+        path.write_text(path.read_text().replace('"matched": 1', '"matched": 0'))
+        with self.assertRaises(ValuationError):
+            summarize_valuation_audits(self.root)
+
+    def test_audit_inconsistent_with_records_is_rejected_even_if_resealed(self):
+        summary = ValuationCollector(self.root, FakeOfficial(official([("1101", "10", "1", "3")])), FakeFinMind(
+            {"1101": finmind("1101", [("2026-11-09", "10", "1", "3")])}), CLOCK).collect(["1101"])
+        run_dir = valuation_store(self.root).verify(summary["run_id"])
+        audit = json.loads((run_dir / "audit.json").read_text())
+        audit["matched"], audit["rejected"] = 0, 1
+        (run_dir / "audit.json").write_text(json.dumps(audit))
+        manifest = json.loads((run_dir / "manifest.json").read_text())
+        manifest["artifacts"]["audit"]["sha256"] = canonical_sha256(audit)
+        manifest.pop("manifest_sha256")
+        manifest["manifest_sha256"] = canonical_sha256(manifest)
+        (run_dir / "manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaises(ValuationError):
+            summarize_valuation_audits(self.root)
+
+    def test_does_not_write_or_fetch(self):
+        self.collect("1151109", 10, {"1101": RuntimeError("額度")}, ["1101"])
+        before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
+        summarize_valuation_audits(self.root)
+        self.assertEqual(before, sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*")))
+
+
+@unittest.skipUnless((REAL_VALUATION_ROOT / "2026-11-10").is_dir(), "沒有封存的 artifacts/valuation_collection，略過重現文件數字")
+class ArchivedValuationSummaryTests(unittest.TestCase):
+    """重現 docs/follow_up_plan.md 第 1.3 節的估值 V1 數字（replay_reference_only）。"""
+
+    def test_archived_summary(self):
+        report = summarize_valuation_audits(REAL_VALUATION_ROOT)
+        first = next(day for day in report["days"] if day["data_date"] == "2026-11-09")
+        self.assertEqual((first["requested"], first["matched"], first["rejected"]), (100, 96, 4))
+        self.assertEqual(first["reject_reasons"], {"VALUE_MISMATCH": 4})
+        self.assertGreaterEqual(len(first["runs"]), 2)
+        self.assertFalse(first["all_matched"])  # 之後每天都會多收資料日，連續天數不寫死，只驗證首日不是全部相符
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,9 @@
 - 每日與合計的提名狀態次數（completed／not_needed／exhausted／unavailable）、提名配對數、換入與換出股及其信心；
 - 依 v2 配置規則（`allocation.py` 的 `_agent_swap`：依 Agent 先後、減碼日略過、換入者不換股即有名額則不需要、
   換出者不可用、`max_swaps_per_run` 上限）對每一對估算結果與被取消的原因分佈；
+- 論點提示 `thesis_hint_responses` 的 `nominated`／`kept` 數、提名的 `purpose` 分布、提名高信心持股的對數與當次
+  `lower_conviction_review` 的 `nominated`／`kept` 檔數及 `kept` 理由原文、買進意圖中信心低於 `rotation.min_new_conviction` 的檔數、
+  換出者在之後 10 個影子決策日內又被提名為換入的次數；封存沒有的欄位一律回報「未記錄」，不補值、不推測；
 - 與同日實際訂單對照（影子期實際配置不讀提名，訂單與沒有閘門時相同）。
 
 估算的限制（報告內也會寫明）：影子 run 的實際配置就是「不換股」的基準，所以只能用它的訂單與旗標推論；
@@ -22,16 +25,18 @@ import json
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Union
 
 from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.core.run_layout import list_run_dirs
 from etf_agent.decision.contracts import artifact_content_sha256
-from etf_agent.decision.swap_nomination import STATUS_COMPLETED, STATUSES
+from etf_agent.decision.exposure_swap import PURPOSES
+from etf_agent.decision.sizing import CONVICTION_LEVELS
+from etf_agent.decision.swap_nomination import HINT_RESPONSES, STATUS_COMPLETED, STATUSES
 
 from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, CalibrationError, require_mapping, require_sequence
 
-REPORT_VERSION = "shadow_swap_report.v1"
+REPORT_VERSION = "shadow_swap_report.v2"
 NO_SHADOW_DATA = "no_shadow_data"
 OK = "ok"
 REQUIRED_ARTIFACTS = ("intent", "proposal", "policy", "team_inputs")
@@ -46,11 +51,17 @@ UNFILLED_REASONS = {
 }
 WOULD_FILL = "would_fill"  # 估計可成交（上限）
 UNNEEDED = "unneeded"  # 換入者在影子基準已有買單：v2 不需要這一對
+UNRECORDED = "未記錄"  # 封存裡沒有這個欄位：不補值、不推測（舊影子 run 沒有 purpose 與 lower_conviction_review）
+RENOMINATION_WINDOW = 10  # 換出後幾個影子決策日內又被提名為換入（以影子 run 的先後計，不含沒有影子資料的日子）
+HIGH = "high"
 SKIPPED_PREFIX = "skipped:"
 CANCELLED_PREFIX = "cancelled:"
 LIMITATION = (
     "影子 run 的實際配置不讀提名，只能以它的訂單與旗標推論 v2 的結果；現金、單股權重、產業、換手、Active Share 與風險審查修正"
-    "造成的動態取消無法離線重現，estimated_fills 是上限。減碼日以影子基準出現 %s 旗標近似判定。" % DERISK_FLAG
+    "造成的動態取消無法離線重現，estimated_fills 是上限。減碼日以影子基準出現 %s 旗標近似判定。"
+    "「%s」表示封存沒有該欄位（例如沒開 agent_swap.exposure 時沒有 purpose 與 lower_conviction_review），不補值。"
+    "換出後再被提名買回以影子 run 先後計 %d 個、不含沒有影子資料的日子；影子期提名的換出者實際並未賣出。"
+    % (DERISK_FLAG, UNRECORDED, RENOMINATION_WINDOW)
 )
 
 
@@ -75,6 +86,22 @@ def _positive_int(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise CalibrationError("%s 必須是非負整數" % label)
     return value
+
+
+def _review_entries(value: object, label: str) -> List[Dict[str, object]]:
+    """整理 `thesis_hint_responses`／`lower_conviction_review`：每項必須是 nominated／kept；kept 理由原文照錄。"""
+    entries: List[Dict[str, object]] = []
+    for index, entry in enumerate(require_sequence(value, label)):
+        entry = require_mapping(entry, "%s[%d]" % (label, index))
+        response = entry.get("response")
+        if response not in HINT_RESPONSES:
+            raise CalibrationError("%s[%d].response 必須是 %s" % (label, index, "／".join(HINT_RESPONSES)))
+        reason = entry.get("reason")
+        entries.append({
+            "symbol": _symbol(entry.get("symbol"), "%s[%d].symbol" % (label, index)), "response": response,
+            "reason": reason if isinstance(reason, str) else UNRECORDED,
+        })
+    return entries
 
 
 def _load_shadow_run(run_dir: Path) -> Optional[Dict[str, object]]:
@@ -150,10 +177,33 @@ def _load_shadow_run(run_dir: Path) -> Optional[Dict[str, object]]:
             raise CalibrationError("%s 提名的換入股 %s 不是第一輪 buy" % (label, buy))
         if sell not in items or items[sell]["intent"] != "hold":
             raise CalibrationError("%s 提名的換出股 %s 不是第一輪 hold" % (label, sell))
+        purpose = raw.get("purpose", UNRECORDED)
+        if purpose != UNRECORDED and purpose not in PURPOSES:
+            raise CalibrationError("%s 的提名 purpose 不合法：%r" % (label, purpose))
         pairs.append({
             "buy_symbol": buy, "buy_conviction": items[buy].get("conviction"),
             "sell_symbol": sell, "sell_conviction": items[sell].get("conviction"),
+            "purpose": purpose,
         })
+
+    hints = _review_entries(nomination.get("thesis_hint_responses"), "%s thesis_hint_responses" % label)
+    review = None  # None＝封存沒有這個欄位（agent_swap.exposure 沒開）
+    if "lower_conviction_review" in nomination:
+        review = _review_entries(nomination["lower_conviction_review"], "%s lower_conviction_review" % label)
+    if status != STATUS_COMPLETED and (hints or review):
+        raise CalibrationError("%s 的 %s 提名不得有論點提示回應或高信心讓位交代" % (label, status))
+    min_new = None
+    rotation = sizing.get("rotation") if isinstance(sizing, Mapping) else None
+    if isinstance(rotation, Mapping) and rotation.get("min_new_conviction") in CONVICTION_LEVELS:
+        min_new = rotation["min_new_conviction"]
+    below_threshold: Union[int, str] = UNRECORDED
+    if min_new is not None:
+        limit_index = CONVICTION_LEVELS.index(min_new)
+        below_threshold = sum(
+            1 for item in items.values()
+            if item["intent"] == "buy" and item.get("conviction") in CONVICTION_LEVELS
+            and CONVICTION_LEVELS.index(item["conviction"]) > limit_index
+        )
 
     order_proposal = require_mapping(proposal.get("order_proposal"), "%s order_proposal" % label)
     buys: Dict[str, str] = {}
@@ -185,6 +235,7 @@ def _load_shadow_run(run_dir: Path) -> Optional[Dict[str, object]]:
     return {
         "run_id": label, "date": run_dir.parent.name, "status": status, "pairs": pairs, "limit": limit,
         "buys": buys, "sells": sells, "flags": flags, "flag_counts": flag_counts,
+        "hints": hints, "review": review, "min_new_conviction": min_new or UNRECORDED, "below_threshold": below_threshold,
         "derisk_day": flag_counts.get(DERISK_FLAG, 0) > 0,
     }
 
@@ -223,10 +274,31 @@ def _estimate(run: Mapping[str, object]) -> List[Dict[str, object]]:
     return results
 
 
+def _review_summary(run: Mapping[str, object], pairs: List[Dict[str, object]]) -> Dict[str, object]:
+    """提名高信心持股的對數與當次 lower_conviction_review；封存沒有該欄位就整段回報「未記錄」。"""
+    high_pairs = sum(1 for pair in pairs if pair["sell_conviction"] == HIGH)
+    review = run["review"]
+    if review is None:
+        return {"high_conviction_victim_pairs": high_pairs, "lower_conviction_review": UNRECORDED}
+    kept = [entry for entry in review if entry["response"] == "kept"]
+    return {
+        "high_conviction_victim_pairs": high_pairs,
+        "lower_conviction_review": {
+            "nominated": len(review) - len(kept), "kept": len(kept),
+            "kept_reasons": [{"symbol": entry["symbol"], "reason": entry["reason"]} for entry in kept],
+        },
+    }
+
+
 def _summarize_run(run: Mapping[str, object]) -> Dict[str, object]:
     pairs = _estimate(run)
     outcomes = Counter(str(pair["estimated_outcome"]) for pair in pairs)
+    hints = Counter(entry["response"] for entry in run["hints"])
     return {
+        "thesis_hints": {"nominated": hints.get("nominated", 0), "kept": hints.get("kept", 0)},
+        "purposes": dict(sorted(Counter(str(pair["purpose"]) for pair in pairs).items())),
+        **_review_summary(run, pairs),
+        "min_new_conviction": run["min_new_conviction"], "buy_intents_below_min_new_conviction": run["below_threshold"],
         "date": run["date"], "run_id": run["run_id"], "nomination_status": run["status"],
         "nominated_pairs": len(pairs), "derisk_day_estimate": run["derisk_day"], "max_swaps_per_run": run["limit"],
         "pairs": pairs,
@@ -264,13 +336,39 @@ def shadow_swap_report(decisions_root: Path, since: Optional[str] = None) -> Dic
     if not runs:
         return _empty_report(root, since, skipped)
     days = [_summarize_run(run) for run in runs]
+    for index, day in enumerate(days):
+        recent_sells = {pair["sell_symbol"] for earlier in days[max(0, index - RENOMINATION_WINDOW):index] for pair in earlier["pairs"]}
+        day["renominated_as_buy_within_%d_days" % RENOMINATION_WINDOW] = sorted(
+            {pair["buy_symbol"] for pair in day["pairs"]} & recent_sells)
     statuses: Counter = Counter({status: 0 for status in STATUSES})
     outcomes: Counter = Counter()
     buy_convictions: Counter = Counter()
     sell_convictions: Counter = Counter()
     buys_nominated: Counter = Counter()
     sells_nominated: Counter = Counter()
+    hint_totals: Counter = Counter()
+    purposes: Counter = Counter()
+    review_totals: Counter = Counter()
+    kept_reasons: List[Dict[str, object]] = []
+    below_threshold: Union[int, str] = 0
+    renominated = 0
     for day in days:
+        hint_totals.update(day["thesis_hints"])
+        purposes.update(day["purposes"])
+        review_totals["high_conviction_victim_pairs"] += day["high_conviction_victim_pairs"]
+        review = day["lower_conviction_review"]
+        if review == UNRECORDED:
+            review_totals["unrecorded_days"] += 1
+        else:
+            review_totals["recorded_days"] += 1
+            review_totals["nominated"] += review["nominated"]
+            review_totals["kept"] += review["kept"]
+            kept_reasons.extend({"date": day["date"], **entry} for entry in review["kept_reasons"])
+        if day["buy_intents_below_min_new_conviction"] == UNRECORDED or below_threshold == UNRECORDED:
+            below_threshold = UNRECORDED
+        else:
+            below_threshold += day["buy_intents_below_min_new_conviction"]
+        renominated += len(day["renominated_as_buy_within_%d_days" % RENOMINATION_WINDOW])
         statuses[day["nomination_status"]] += 1
         outcomes.update(day["estimated_outcomes"])
         for pair in day["pairs"]:
@@ -300,6 +398,15 @@ def shadow_swap_report(decisions_root: Path, since: Optional[str] = None) -> Dic
             "estimated_unneeded": outcomes.get(UNNEEDED, 0),
             "estimated_skipped": skipped_reasons,
             "estimated_cancelled": cancelled,
+            "thesis_hints": {"nominated": hint_totals.get("nominated", 0), "kept": hint_totals.get("kept", 0)},
+            "purposes": dict(sorted(purposes.items())),
+            "high_conviction_victim_pairs": review_totals.get("high_conviction_victim_pairs", 0),
+            "lower_conviction_review": {
+                "recorded_days": review_totals.get("recorded_days", 0), "unrecorded_days": review_totals.get("unrecorded_days", 0),
+                "nominated": review_totals.get("nominated", 0), "kept": review_totals.get("kept", 0), "kept_reasons": kept_reasons,
+            },
+            "buy_intents_below_min_new_conviction": below_threshold,
+            "renominated_as_buy_within_%d_days" % RENOMINATION_WINDOW: renominated,
             "actual_orders": sum(day["actual_orders"] for day in days),
             "actual_max_positions_flags": sum(day["actual_max_positions_flags"] for day in days),
         },

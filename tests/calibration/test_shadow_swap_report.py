@@ -110,6 +110,98 @@ class ShadowSwapReportTest(unittest.TestCase):
         self.assertEqual(totals["sell_conviction"], {"low": 4, "medium": 1})
         self.assertEqual(totals["actual_orders"], 1)
 
+    def test_missing_optional_fields_are_reported_as_unrecorded(self):
+        self.save()
+        report = shadow_swap_report(self.root)
+        self.assertEqual(report["report_version"], "shadow_swap_report.v2")
+        day = report["days"][0]
+        self.assertEqual(day["purposes"], {"未記錄": 5})
+        self.assertEqual(day["lower_conviction_review"], "未記錄")
+        self.assertEqual(day["high_conviction_victim_pairs"], 0)
+        self.assertEqual(day["thesis_hints"], {"nominated": 0, "kept": 0})
+        self.assertEqual(day["min_new_conviction"], "未記錄")
+        self.assertEqual(day["buy_intents_below_min_new_conviction"], "未記錄")
+        totals = report["totals"]
+        self.assertEqual(totals["purposes"], {"未記錄": 5})
+        self.assertEqual(totals["lower_conviction_review"]["unrecorded_days"], 1)
+        self.assertEqual(totals["lower_conviction_review"]["recorded_days"], 0)
+        self.assertEqual(totals["buy_intents_below_min_new_conviction"], "未記錄")
+        self.assertEqual(totals["renominated_as_buy_within_10_days"], 0)
+
+    def exposure_artifacts(self, run_id, pairs, intents, review, hints, rotation=None):
+        nom = nomination(pairs=pairs)
+        nom["trade_decision_id"] = "trade-decision:%s" % run_id
+        nom["thesis_hint_responses"] = hints
+        nom["lower_conviction_review"] = review
+        nom["content_sha256"] = artifact_content_sha256({k: v for k, v in nom.items() if k != "content_sha256"})
+        artifacts = make_artifacts(nom, intents, ORDERS, FLAGS)
+        artifacts["intent"]["decision_id"] = artifacts["proposal"]["trade_intent_result_id"] = nom["trade_decision_id"]
+        if rotation is not None:
+            artifacts["policy"]["position_sizing"]["rotation"] = rotation
+        return artifacts
+
+    def test_purpose_review_hints_and_renomination_are_counted(self):
+        first_pairs = [dict(pair("1102.TW", "2001.TW"), purpose="thesis"), dict(pair("1103.TW", "2003.TW"), purpose="exposure")]
+        intents = [s for s in INTENTS] + [("1106.TW", "buy", "low")]
+        intents[5] = ("2001.TW", "hold", "high")
+        first = self.exposure_artifacts(
+            RUN_ID, first_pairs, intents,
+            [{"symbol": "2002.TW", "response": "kept", "reason": "題材未變"}, {"symbol": "2003.TW", "response": "nominated", "reason": "x"}],
+            [{"symbol": "2001.TW", "response": "nominated", "reason": "r"}, {"symbol": "2004.TW", "response": "kept", "reason": "r"}],
+            rotation={"min_new_conviction": "medium"},
+        )
+        self.store.save(RUN_ID, first, day="2026-11-11")
+        second_id = "decision-20261112T231233Z"
+        # 第二天提名「2001.TW」為換入：它前一天被提名為換出者，且在第二天的意圖裡要是第一輪 buy。
+        intents_two = [("2001.TW", "buy", "high"), ("2002.TW", "hold", "low")]
+        second = self.exposure_artifacts(
+            second_id, [dict(pair("2001.TW", "2002.TW"), purpose="exposure")], intents_two, [], [])
+        self.store.save(second_id, second, day="2026-11-12")
+        report = shadow_swap_report(self.root)
+        first_day, second_day = report["days"]
+        self.assertEqual(first_day["purposes"], {"exposure": 1, "thesis": 1})
+        self.assertEqual(first_day["high_conviction_victim_pairs"], 1)
+        self.assertEqual(first_day["lower_conviction_review"], {
+            "nominated": 1, "kept": 1, "kept_reasons": [{"symbol": "2002.TW", "reason": "題材未變"}]})
+        self.assertEqual(first_day["thesis_hints"], {"nominated": 1, "kept": 1})
+        self.assertEqual(first_day["min_new_conviction"], "medium")
+        self.assertEqual(first_day["buy_intents_below_min_new_conviction"], 1)
+        self.assertEqual(first_day["renominated_as_buy_within_10_days"], [])
+        self.assertEqual(second_day["renominated_as_buy_within_10_days"], ["2001.TW"])
+        self.assertEqual(second_day["lower_conviction_review"], {"nominated": 0, "kept": 0, "kept_reasons": []})
+        totals = report["totals"]
+        self.assertEqual(totals["purposes"], {"exposure": 2, "thesis": 1})
+        self.assertEqual(totals["thesis_hints"], {"nominated": 1, "kept": 1})
+        self.assertEqual(totals["high_conviction_victim_pairs"], 1)
+        self.assertEqual(totals["lower_conviction_review"]["recorded_days"], 2)
+        self.assertEqual(totals["lower_conviction_review"]["kept_reasons"], [
+            {"date": "2026-11-11", "symbol": "2002.TW", "reason": "題材未變"}])
+        self.assertEqual(totals["renominated_as_buy_within_10_days"], 1)
+        # 第二天沒有 rotation 設定：合計回報「未記錄」，不補值。
+        self.assertEqual(totals["buy_intents_below_min_new_conviction"], "未記錄")
+
+    def test_invalid_purpose_hint_or_review_response_is_rejected(self):
+        def bad_purpose(a):
+            a["team_inputs"]["swap_nomination"]["nominations"][0]["purpose"] = "quality_dip"
+            a["team_inputs"]["swap_nomination"]["content_sha256"] = artifact_content_sha256(
+                {k: v for k, v in a["team_inputs"]["swap_nomination"].items() if k != "content_sha256"})
+        self.assert_invalid(bad_purpose)
+
+    def test_invalid_hint_response_is_rejected(self):
+        def mutate(a):
+            a["team_inputs"]["swap_nomination"]["thesis_hint_responses"] = [{"symbol": "2001.TW", "response": "maybe", "reason": "x"}]
+            a["team_inputs"]["swap_nomination"]["content_sha256"] = artifact_content_sha256(
+                {k: v for k, v in a["team_inputs"]["swap_nomination"].items() if k != "content_sha256"})
+        self.assert_invalid(mutate)
+
+    def test_program_status_with_review_is_rejected(self):
+        def mutate(a):
+            nom = nomination("exhausted")
+            nom["lower_conviction_review"] = [{"symbol": "2001.TW", "response": "kept", "reason": "x"}]
+            nom["content_sha256"] = artifact_content_sha256({k: v for k, v in nom.items() if k != "content_sha256"})
+            a["team_inputs"]["swap_nomination"] = nom
+        self.assert_invalid(mutate)
+
     def test_status_branches_are_counted_across_days(self):
         self.save()
         for index, status in enumerate(("not_needed", "exhausted", "unavailable")):

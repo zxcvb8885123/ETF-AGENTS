@@ -299,6 +299,7 @@ class ReplayTests(unittest.TestCase):
         helper.setUp()
         plain = helper.template(live_policy_template)
         plain["position_sizing"].pop("exposure_view", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
+        plain["position_sizing"].get("agent_swap", {}).pop("exposure", None)  # 子閘門依賴 exposure_view，要一併拿掉
         gated = copy.deepcopy(plain)
         gated["position_sizing"]["exposure_view"] = dict(GATE)
         plain_policy, plain_notes = helper.replay(plain)

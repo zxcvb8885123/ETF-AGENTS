@@ -49,6 +49,21 @@
 
 4. **如果你先手動跑並上傳了，07:00 又重做成功**，主檔會換成新的一份，請重新上傳，否則帳本記的是新決策、交出去的是舊的，隔天對帳會對不上。
 
+5. **每個決策日：看換股影子與意圖落地率（唯讀、不花 Agent 用量）。** 兩個報告都標 `evidence_grade: replay_reference_only`，只說明「當時發生了什麼」，不是績效，也不設目標：
+
+   ```bash
+   .venv/bin/python cli/calibration.py intent-landing --since 2026-11-11
+   .venv/bin/python cli/calibration.py shadow-swap
+   ```
+
+   看這四個指標（先看「違反 Agent 明確意思」的，再看落地率本身）：
+   1. hold／add 被程式賣出的金額（`overridden_sell_gross_amount`）。舊基準只有 2026-11-04 一次、旗標全是 `RISK_DRAWDOWN`。
+   2. `RISK_CASH_FIT` 的次數（`cash_fit_order` v2 下預期不再出現）。
+   3. `RISK_REENTRY_COOLDOWN`：`reentry_cooldown` v2 下只該擋 Agent 自己出場的股票。
+   4. 減碼日是否留下 `DERISK_ORDER_SKIPPED:order_*`（減碼順序驗證失敗而退回 ATR 順序）。
+
+   `intent-landing` 另有依 `policy_id` 分段的 `by_policy` 與依信心分層的 `by_conviction`；新基準以 2026-11-11 起另立一段，與舊 11 份（256 筆 buy／add、40 筆有買單）分開看。落地率數字目標由人在新基準滿 10 個決策日（`calibration.MIN_DECISION_DAYS`）後再決定，報告不輸出目標或達標與否。`shadow-swap` 沒有影子 run 時回報 `no_shadow_data`。
+
 ## 怎麼看排程結果
 
 每次 `run` 結束（成功、失敗、略過都算）會跳一則 macOS 本機通知，並在 `var/logs/daily_status.log` 加一行：
@@ -255,6 +270,12 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 ```
 
 退出碼：0 全部相符、2 有股票被拒絕、1 整份失敗。官方端點沒有歷史，所以每天都要收。已掛在 `start.sh` 的資料階段（`com.etf-agents.data`，20:00、06:00 各一次），以盡力而為包住，失敗只記錄、不設資料狀態、不中斷決策或 D-Plan。回滾＝設 `VALUATION_COLLECT=0`（或刪掉 `start.sh` 的該區塊），並可刪除 `artifacts/valuation_collection/`，不影響任何決策。
+
+`audit-summary` 是唯讀子命令，不連外部端點、不寫入任何檔案：先驗證每個 run 的 manifest 與雜湊、核對 `audit.json` 與 `records.json`，再逐資料日列出採用的 run（相符檔數最多、並列取較晚者；全部 run 仍逐一列出）、要求／相符／拒絕檔數、拒絕原因與代號，並算「連續全部相符的資料日數」（只數已收集的資料日，沒有交易日曆可對照）。任何一份 run 不合格即整批拒絕，沒有 run 時回報 `no_valuation_runs`。報告帶 `evidence_grade: replay_reference_only`，只彙總已保存的稽核結果，不進決策、簡報或報告。
+
+```bash
+.venv/bin/python cli/valuation_collect.py audit-summary
+```
 
 ## 每週的人工事項：策略反思放行
 
