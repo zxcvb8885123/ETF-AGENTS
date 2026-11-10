@@ -43,6 +43,22 @@ def gateless_policy_template():
     return template
 
 
+def fill_dip_assessment(task, output):
+    """正式樣板開了 quality_dip_assessment 時，交易 Schema 另要求 dip_assessment：舊夾具的交易輸出沒有它，這裡補上
+    （buy／add 填 undetermined，其餘 null），好像真實 Agent 照 Schema 填寫；沒有此欄位的 Schema 與輸出原樣不動。
+    只補夾具沒寫的值，夾具自己填的值（含錯值）照舊。"""
+    try:
+        properties = task.schema["properties"]["items"]["items"]["properties"]
+    except (KeyError, TypeError):
+        return output
+    if "dip_assessment" not in properties or not isinstance(output, dict) or "items" not in output:
+        return output
+    items = [dict(row) for row in output["items"]]
+    for row in items:
+        row.setdefault("dip_assessment", "undetermined" if row.get("intent") in ("buy", "add") else None)
+    return dict(output, items=items)
+
+
 class FakeRunner:
     """依 Agent 名稱依序回傳預先準備的結構化輸出，並記錄提示詞。"""
 
@@ -57,7 +73,8 @@ class FakeRunner:
         self.prompts.append((task.name, task.prompt))
         if not self.outputs.get(task.name):
             raise AssertionError("未預期的 Agent 呼叫：%s" % task.name)
-        return AgentCall(task.name, 0, self.outputs[task.name].pop(0), 0.01)
+        output = self.outputs[task.name].pop(0)
+        return AgentCall(task.name, 0, fill_dip_assessment(task, output), 0.01)
 
 
 # PipelineWorld 用 DecisionInputBuilder 建 bundle，預設帶 evidence_policy=typed_evidence_v1：

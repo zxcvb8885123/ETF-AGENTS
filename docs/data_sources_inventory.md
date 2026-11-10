@@ -16,6 +16,7 @@
 | [官方財報](#官方財報) | MOPS 損益表、資產負債表 | `scripts/collect_financial_statements.py` | 可 |
 | [公司基本資料](#公司基本資料) | 證交所／櫃買中心公司資料 | `scripts/collect_sector_classification.py` | 候選；正式讀已驗證的檔案 |
 | [產業比較資料](#產業比較資料) | 證交所／櫃買中心各產業 EPS 統計（t187ap14） | `cli/industry_peer_collect.py` | 否（C1 只收集與稽核） |
+| [估值資料（V1）](#估值資料v1) | 證交所 `BWIBBU_ALL`（當日）、FinMind `TaiwanStockPER`（歷史） | `cli/valuation_collect.py collect` | 否（V1 只收集與稽核，不進決策與簡報；僅上市股） |
 | [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 部分：現金流經核對後使用；其餘僅補抓去年同期時使用 |
 | [個股新聞](#個股新聞) | FinMind 個股新聞 | `scripts/collect_supplemental_sources.py finmind-news` | 可，只進事件分析師的公司事件 |
 | [正式帳本價量](#正式帳本價量) | 證交所／櫃買中心官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
@@ -98,6 +99,28 @@ Yahoo 缺某天時，用前後 Yahoo 的還原係數換算：
   - 現金流量表：與官方累計稅前淨利相符才轉成 Snapshot 文件（`scripts/collect_cash_flow.py`），進基本面分析。
   - 單季損益：用來補去年同期累計，需手動執行[基本面缺口補抓](fundamental_data_repair.md)。
 - 限制：FinMind 的 `date` 是財報期間，不是發布時間；其餘候選資料尚未接入 Snapshot 或歷史回測。
+
+## 估值資料（V1）
+
+### 是什麼
+
+上市股每日本益比（PER）、股價淨值比（PBR）、殖利率。設計見 [優質股計畫第 2.6 節](quality_dip_plan.md)；來源核對紀錄見 [2026-11-10 估值來源核對](source_audit/2026-11-10_valuation_sources.md)。
+
+### 怎麼用
+
+- 官方當日資料（證交所 `BWIBBU_ALL`，無歷史）是核對基準；FinMind `TaiwanStockPER` 提供歷史。同一資料日的三個欄位以 Decimal、兩位小數逐檔比對，**完全相符才接受**；不符、任一邊缺、資料日對不上、欄位名變更一律拒絕該檔，不取平均、不擇一、不填假值。
+- `available_at` 一律是實際抓取時間，不回填。FinMind 資料日之前的歷史標 `unverified_history`（無法逐日核對）；資料日當天標 `verified_against_official`。
+- PER／PBR 為空、0 或負：記 `null` 與原因碼（`NOT_PROVIDED`、`NONPOSITIVE`），不當成 0，也不當成便宜。
+- 每次抓取存成不可變 run（`artifacts/valuation_collection/<日期>/valuation-<UTC 時間>/`），含官方與 FinMind 原始回應、逐檔紀錄、歷史、稽核摘要；更正另存新 run。`cli/valuation_collect.py validate <run_id>` 以原始回應整份重建並比對。
+- **授權登記**：`license_status=approved`、範圍 `valuation_v1_collection_and_audit_only`、核准日 2026-11-10、核准人使用者。只限 V1 收集與稽核，不進決策、簡報或報告。
+
+### 限制
+
+- 只收上市股（交易池 100 檔）。上櫃端點（櫃買中心 `tpex_mainboard_peratio_analysis`）是否為正式端點、口徑與授權尚未確認，上櫃股估值一律不可用。
+- 官方端點沒有歷史，所以 FinMind 在開始收集之前的歷史無法逐日核對。
+- PER 的 EPS 基準與殖利率的股利基準尚待確認，確認前不得進簡報。
+- 預設只補資料日前 14 天；第一次建歷史請加 `--history-start 2019-01-02` 之類的明確起日。
+- 失敗（官方端點、金鑰、格式）退出碼 1，部分股票被拒絕退出碼 2。尚未排進每日流程；排程時必須是盡力而為，失敗不得讓 D-Plan 失敗。
 
 ## 個股新聞
 

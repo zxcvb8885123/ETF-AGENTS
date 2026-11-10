@@ -101,6 +101,13 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 任何 bar 晚於最近交易日、bar 或文件可得時間缺時區、bar 可得時間晚於 cutoff 一律拒絕；晚於 cutoff 的文件不計入；bundle 須有 `fundamental_period_policy`。
 - 不新增 Agent 輸出欄位、不影響名額／權重／股數／現金／排序／Guard；回放不讀它（樣板帶閘門時 policy 照樣綁，配置不受影響）。
 
+### 優質股第二階段（`quality_dip_assessment` v1、`event_direction` v1，紀錄用）
+
+設計與實作紀錄見 [quality_dip_plan.md](quality_dip_plan.md#10-第二階段估值-v1-實作紀錄與第三階段修訂2026-11-10第六版)；啟用狀態見 status.md（已實作、尚未開啟）。兩個閘門都只由人設定、前提 `quality_dip_facts`，沒有欄位的舊 Policy／舊報告／舊 run 逐位元不變：
+
+- `quality_dip_assessment`：交易 Agent 的 buy／add 必填列舉 `dip_assessment`，其餘意圖填 `null`；Validator 只驗必填、值域與 fail-closed（價格事實不可用只能 `undetermined`；缺 `team_inputs.dip_facts` 或非 `typed_evidence_v1` 即拒絕），不驗與意圖、信心或 `candidate` 的對應，也不進 Policy 綁定。Finalizer、回放與每日 pipeline 以 Policy 閘門重建同一個驗證。
+- `event_direction`：事件分析師每則事件的 `direction` 列舉。事件報告**不新增 `schema_version`**：`AnalystReportValidator` 對 `direction` 採「有就必須是列舉值」，每日 pipeline 產出與 Finalizer 在閘門開啟時才要求必填。閘門同時切換 `quality_dip_facts` 新壞事的事件面判準（`high_event_negative_direction`；沒有閘門仍是整檔 `event_outlook` 的 `high_event_negative_outlook`），`validate_dip_facts` 依 Policy 重算。
+
 ### 組合曝險事實與風險 Agent 的回補意見（`position_sizing.exposure_view` v1，Agent 主導曝險階段 1，紀錄用）
 
 設計見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md)；啟用狀態見 status.md（已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`）。前提 `exposure_rotation`、`cash_stance_turn_facts`、`market_index_facts`（GATE_PREREQUISITES）與 `typed_evidence_v1`（驗證現金姿態時檢查）。閘門存在時：
@@ -108,7 +115,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - `decision/exposure_facts.py` 只依 bundle 與 Policy 中配置前後相同的欄位（`exposure_rotation.beta_window_days`、`sector_by_symbol`）重算，不讀任何 Agent 輸出：組合曝險直接重用 `build_exposure_review`（同口徑）再加持股數與低 beta 檔數；產業權重依 Policy 綁定的 `sector_by_symbol`，金融保險（`industry:17`）另列，缺代碼歸 `unknown`；上漲日＝最近 20 個交易日內最近一個交易池等權報酬（與 `turn_facts` 同一個函式）大於 0 的日子，持股當日貢獻＝Σ（本次決策起始權重 × 當日收盤報酬），任一持股缺行情即 null（不當成 0），沒有上漲日即 `unavailable`；非持股的 beta 用同一個 `BetaModel`。
 - 任何 bar 晚於最近交易日、bar 可得時間缺時區或晚於 cutoff 一律拒絕。
 - 風險 Agent 簡報附 `exposure_facts`（背景、`citable=false`、沒有 facts_id 與 evidence_id；不含交易 Agent 的意圖與信心統計），輸出多一個必填列舉 `exposure_view`（`keep_defensive`／`start_rebuild`／`rebuild`）：值域外或缺少即拒絕；非 `keep_defensive` 時 `evidence_ids` 須含市場層級證據（專屬檢查）；理由寫出 `exposure_facts` 鍵名或 facts_id 即拒絕；沒有閘門時輸出帶此欄位即拒絕。三個驗證點（風險階段、`apply_trade_decision`、Finalizer）用同一個 `validate_cash_stance`。
-- `agent_swap` 也開啟時，換股提名簡報多一個 `exposure_facts` 區塊（轉向、`turn_state`、加權指數、組合曝險、產業權重、上漲日與持股當日報酬、提名候選的 beta），全部是背景；**不改 `swap_nomination.py` 的提名驗證規則與既有欄位**（`purpose`、曝險事實編號與 `lower_conviction_review` 是階段 2）。
+- `agent_swap` 也開啟時，換股提名簡報多一個 `exposure_facts` 區塊（轉向、`turn_state`、加權指數、組合曝險、產業權重、上漲日與持股當日報酬、提名候選的 beta），全部是背景；階段 1 本身不改提名驗證規則與既有欄位（`purpose`、曝險事實編號與 `lower_conviction_review` 屬子閘門 `agent_swap.exposure`，見[換股提名](#換股提名agent_swap)）。
 - 純紀錄：不影響名額、權重、股數、現金、換股與 Guard；回放略過閘門（notes 標 `exposure_view: ignored_in_replay`）並拿掉封存姿態的 `exposure_view`。
 
 ### 論點檢視背景與策略教訓
@@ -160,6 +167,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 封存狀態四種：`completed`、`not_needed`（沒有需要或可提名的對，程式封存、不呼叫 Agent）、`exhausted`（驗證用盡）、`unavailable`（暫時性失敗）。**提名失敗只取消該動作**（降級，不是整天失敗），其餘決策照常；安全拒絕與硬規則失敗仍整份拒絕。Finalizer 無法證明 Agent 真的失敗，只核對狀態形狀與配置未使用提名。
 - **v1 影子**：提名封存並由 Finalizer 重建，配置完全不讀提名，訂單與旗標與沒有此欄位時相同；出現 `nominated_pairs`／`nomination_ref` 即拒絕；回放略過此閘門。
 - **v2（尚未開啟）**：與 `rotation.forced_swap`、`exposure_rotation.conviction_gap_swap` 互斥；pipeline 在 5c 後綁 `nominated_pairs`（有序）與 `nomination_ref`，Finalizer 以 `team_inputs` 的提名重算比對，重建配置只讀 Policy。配置在曝險換股之前依序試算：減碼日整個略過（`AGENT_SWAP_SKIPPED:derisk_day`）、提名 `exhausted`／`unavailable` 不換（`AGENT_SWAP_SKIPPED:nomination_*`）、換入者不換股即有名額者不使用該對（`AGENT_SWAP_UNNEEDED`）、其餘不可行的對只取消該對（`AGENT_SWAP_CANCELLED:<原因>`，換出者不賣、不會只賣不買）；成交的對換出者標 `exit`＋`AGENT_SWAP`、換入者 `AGENT_SWAP_FILL`，不改寫交易 Agent 意圖；`exposure_rotation` 的換股步驟停用（`EXPOSURE_ROTATION_SKIPPED:agent_swap`）；`portfolio_slots` 升 1.1。
+- **`agent_swap.exposure`（Agent 主導曝險階段 2、3，已實作、尚未開啟）**：`agent_swap` 內的子閘門，前提 `agent_swap` 與 `exposure_view`，只由人設定、策略反思禁區。`{"version":"v1"}` 影子：提名驗證與封存照新規則，配置略過所有 `purpose: exposure` 配對（thesis 配對照常）；`{"version":"v2","max_pairs_by_view":{"start_rebuild":n,"rebuild":m}}`（需 `agent_swap` v2、0≤n≤m≤`max_swaps_per_run`）：配置依風險 Agent 的 `exposure_view`（pipeline 綁進 `exposure.view`，Finalizer 與現金姿態比對）取用——`keep_defensive` 一對都不成交（`AGENT_SWAP_CANCELLED:exposure_view`、換出者不賣、不補挑），其餘取清單前 n／m 對、超過取消（`exposure_cap`，尾端先捨棄），再走與 thesis 配對相同的可行性檢查；減碼日、換手、現金、單股、產業、檔數等界線與降級不變。提名驗證：每對必填 `purpose`；`exposure` 配對的換出依據必須含該持股自己的 `review:<代號>:exposure`（程式由 `exposure_facts` 與該股行情 evidence_id 算出、只能用於 `exposure` 的換出依據、不得放買進依據、第一輪不可採納，不需要空頭論點，仍須持有天數與可交易）；提名 `high` 信心持股做 `exposure` 配對時，`lower_conviction_review` 須逐檔交代全部 medium／low 持股剛好一次（`nominated` 須在某對 exposure 的 `sell_symbol`、`kept` 附理由且不得被換出），且高信心配對排在所有 medium／low 的 exposure 配對之後；否則該欄必須為 `[]`；理由出現曝險區塊識別碼即拒絕。程式封存（exhausted／unavailable）帶空清單。`team_inputs` 不升版（沿用 2.9），Finalizer 以 `exposure_facts` 重算整份提名。
 - 設計與實作註記見[換股提名計畫](agent_nominated_rotation_plan.md)；唯讀統計 `cli/calibration.py shadow-swap`（估算是上限、`replay_reference_only`）與 `intent-landing`。
 
 ### Agent 自主權線：已實作、尚未開啟的版本

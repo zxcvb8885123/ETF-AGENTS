@@ -186,6 +186,7 @@ class AgentSwapGateTests(unittest.TestCase):
         self.assertEqual(before, [])
         self.assertEqual(set(AGENT_SWAP_FIELDS), {
             "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
+            "exposure",  # Agent 主導曝險階段 2、3 的子閘門（decision/exposure_swap.py）
         })
 
 

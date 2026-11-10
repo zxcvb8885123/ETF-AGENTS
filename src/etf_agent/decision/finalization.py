@@ -23,6 +23,7 @@ from .revision import RevisionHistoryValidator
 from .analysts import analyst_report_names, MARKET_SCOPED_VERSIONS, fundamental_period_policy, validate_fundamental_metrics
 from .prior_decision import PriorDecisionContextValidator
 from .drawdown import validate_drawdown_control
+from .exposure_swap import EXPOSURE_SWAP_V2, exposure_swap_gate
 from .exposure import exposure_rotation_gate, hold_conviction_enabled, validate_exposure_review, validate_held_since
 from .position_review import validate_position_review
 from .selection_ranking import SelectionRankingValidator, rank_by_symbol
@@ -32,7 +33,7 @@ from .recency import cash_stance_recency_gate
 from .rebound import rebound_gate, validate_effective_state, validate_turn_state
 from .turn_facts import cash_stance_turn_facts_gate
 from .swap_nomination import SWAP_NOMINATION_KEY, agent_swap_gate, validate_team_swap_nomination
-from .dip_facts import DIP_FACTS_KEY, quality_dip_facts_gate, validate_dip_facts
+from .dip_facts import DIP_FACTS_KEY, quality_dip_assessment_gate, quality_dip_facts_gate, validate_dip_facts
 from .exposure_facts import EXPOSURE_FACTS_KEY, exposure_view_gate, validate_exposure_facts
 from .reentry_cooldown import recent_exit_symbols
 from .release_order import RELEASE_ORDER_KEY, validate_team_release_order
@@ -544,6 +545,7 @@ class DecisionFinalizer:
                 hold_conviction=hold_conviction_enabled(self.policy),
                 dip_facts=team.get(DIP_FACTS_KEY) if dip_gate is not None else None,
                 reentry_hint_symbols=reentry_hint_symbols(self.policy.get("position_sizing")),
+                dip_assessment=quality_dip_assessment_gate(self.policy.get("position_sizing")) is not None,
             ).validate(self.intent)
         )
         stance = team.get("cash_stance")
@@ -600,6 +602,14 @@ class DecisionFinalizer:
         for field, value in expected.items():
             if sizing.get(field) != value:
                 errors.append("DecisionPolicy.position_sizing.%s 與交易決策或現金姿態不一致" % field)
+        # agent_swap.exposure v2（版本閘門）：Policy 綁定的 view 必須等於風險 Agent 現金姿態的 exposure_view（配置只讀 Policy）。
+        # v1（影子）不綁定；沒有閘門的舊 run 完全不碰這段。
+        exposure_swap = exposure_swap_gate(sizing)
+        if exposure_swap is not None:
+            bound_view = exposure_swap.get("view") if exposure_swap.get("version") == EXPOSURE_SWAP_V2 else None
+            expected_view = stance.get("exposure_view") if isinstance(stance, Mapping) and exposure_swap.get("version") == EXPOSURE_SWAP_V2 else None
+            if bound_view != expected_view:
+                errors.append("DecisionPolicy.position_sizing.agent_swap.exposure.view 與現金姿態的 exposure_view 不一致")
         return errors
 
 

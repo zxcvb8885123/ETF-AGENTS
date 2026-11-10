@@ -47,6 +47,18 @@
 
 Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：程式算的交易池轉向事實（`turn_facts`、`turn_state`）、加權指數事實（`market_index_facts`）、組合 beta／低 beta 占比／現金權重（`portfolio`）、持股產業權重（`sectors`）、最近一個交易池上漲日的池報酬與持股當日報酬及貢獻（`up_day`、`holdings`），以及提名候選新股的 beta 與上行／下行捕捉（`candidate_betas`）。它**全部是背景**（`citable=false`、沒有 evidence_id），只幫你看清組合與市場的處境；不可放進 `buy_basis_ids`／`sell_basis_ids`，也不改變上面任何一條提名規則。持股當日貢獻是以本次決策的起始權重估計，缺資料的欄位為 null，不要自行補數字。
 
+## `purpose` 與 `lower_conviction_review`（簡報有 `exposure_swap` 區塊時才適用）
+
+簡報含 `exposure_swap` 時，每一對多填列舉 `purpose`，輸出多一個 `lower_conviction_review`；沒有這個區塊就完全不適用，照上面的規則。上面「市場參與度低本身不是賣出理由」「不得純粹為了買別檔而賣」兩句，只在 `purpose=exposure` 的配對放寬為：以曝險事實加上你的取捨說明讓位；`thesis` 配對維持原句。
+
+- `thesis`：和上面完全相同，換出者要有自己的空頭論點或持股事實（`sell_basis_ids` 照舊）。
+- `exposure`：你判斷組合在反彈日跟不上市場（例如低 beta、上行捕捉弱、持股當日報酬落後交易池），要讓出位置給新股。換出者的 `sell_basis_ids` **必須含它自己的曝險事實 `review:<代號>:exposure`**（簡報該持股的 `exposure_basis`，只能用在這個目的、只能是被換出那檔自己的），也可另加它在第一輪已採納的論點；不需要空頭論點。`reason` 寫清楚為什麼讓位、為什麼新股的位置更值得。曝險事實是程式算的事實，不是賣出指令；你仍要說明取捨。
+- `buy_basis_ids` 照舊只放新股的多頭論點，不得放曝險事實編號。
+- **順序**：同一份清單裡，中、低信心持股的 `exposure` 配對排在高信心持股的 `exposure` 配對之前；清單尾端會最先被程式捨棄。
+- `lower_conviction_review`：只有當你要提名**高信心持股**以 `exposure` 讓位時才填，否則輸出 `[]`。填的時候，簡報 `lower_conviction_symbols` 的每一檔都要交代剛好一次：`nominated`（已在某一對 `exposure` 的 `sell_symbol`）或 `kept`（不讓位，附一句 `reason`）。
+- 程式依風險 Agent 的 `exposure_view` 決定這些 `exposure` 配對今天用不用、最多用幾對；你不必也不得考慮這件事，只要提名你真的認為值得的配對。
+- 文字欄位不得寫出曝險事實區塊或前次決策的識別碼。
+
 ## 輸出
 
 只輸出 JSON：
@@ -68,3 +80,5 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 ```
 
 理由用簡短繁體中文，不寫英文等級或識別碼以外的程式用語。
+
+簡報有 `exposure_swap` 時，每對另有 `"purpose": "thesis"` 或 `"exposure"`，頂層另有 `"lower_conviction_review": []`（或逐檔交代，見上節）。

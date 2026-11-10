@@ -206,8 +206,11 @@ AGENT_SWAP_V2 = "v2"
 AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 # v2 另有 pipeline 在 5c 之後綁定的 nominated_pairs（有序配對，依 Agent 先後）與 nomination_ref（提名封存的識別與狀態）；
 # 樣板不得預填，Finalizer 以 team_inputs 的提名重算比對，重建配置只讀 Policy。v1（影子）不綁、出現即拒絕。
+# exposure 是 Agent 主導曝險階段 2、3 的子閘門（decision/exposure_swap.py）：提名每對多 purpose、輸出多 lower_conviction_review；
+# 有 exposure 時 nominated_pairs 每對另有 purpose。沒有 exposure 的 Policy 逐位元維持原行為。
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
+    "exposure",
 }
 NOMINATION_REF_FIELDS = {"nomination_id", "sha256", "status"}
 NOMINATION_STATUSES = ("completed", "not_needed", "exhausted", "unavailable")  # 同 swap_nomination.STATUSES（那邊 import 本模組，不能反向）
@@ -349,6 +352,13 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "thesis_hint_symbols／verdicts_ref 由 pipeline 綁定（swap_nomination.bind_thesis_hints），重建只讀 Policy；team_inputs 須為 2.9",
     ),
     GateRule(
+        "agent_swap.exposure",
+        requires=("agent_swap", "exposure_view"),
+        note="Agent 主導曝險階段 2（v1 影子：提名多 purpose 與 lower_conviction_review，配置不讀 exposure 配對）、階段 3（v2：配置依風險 Agent 的 "
+             "exposure_view 取用 exposure 配對，對數上限由 max_pairs_by_view 對映且不得高於 agent_swap.max_swaps_per_run，v2 須 agent_swap=v2）；"
+             "view 由 apply_trade_decision 綁定、Finalizer 以現金姿態重算；形狀與值域由 exposure_swap.validate_exposure_swap_gate 檢查；team_inputs 仍是 2.9、不升版",
+    ),
+    GateRule(
         "cash_stance_recency",
         note="風險 Agent 簡報附 evidence_recency（內容時間分組）並多填 recency_reconciliation 列舉；"
              "前提 evidence_policy=typed_evidence_v1 在重建現金姿態時檢查（Policy 看不到 bundle）；與 cash_ratio_range 可獨立開關",
@@ -369,6 +379,20 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "以背景給技術／基本面分析師與交易 Agent（不給多空研究員），不新增 Agent 輸出欄位、不影響配置；"
              "bundle 須有 fundamental_period_policy（建事實時檢查，事實讀 team_inputs 2.6 的基本面指標）；"
              "team_inputs 另存 dip_facts（選配鍵，與本閘門雙向同時存在），Finalizer 整份重算",
+    ),
+    GateRule(
+        "event_direction",
+        requires=("quality_dip_facts",),
+        note="優質股階段 2：事件分析師對每則事件多填 direction 列舉（positive／negative／neutral／unknown），"
+             "quality_dip_facts 的新壞事事件面改為「視窗內新可得、materiality high 且 direction negative」（缺 direction 列不知道）；"
+             "不影響配置；前提 quality_dip_facts；Finalizer 另要求事件報告每則事件都有 direction",
+    ),
+    GateRule(
+        "quality_dip_assessment",
+        requires=("quality_dip_facts",),
+        note="優質股階段 2（紀錄用）：交易 Agent 對每個 buy／add 多填列舉 dip_assessment（not_a_dip／market_driven／oversold_cause_unclear／"
+             "stock_specific／undetermined），與意圖、信心不設對應、不影響配置；前提 quality_dip_facts，需 evidence_policy=typed_evidence_v1"
+             "（驗證交易意圖時檢查）；該股價格事實 unavailable 時只能 undetermined",
     ),
     GateRule(
         "exposure_view",
@@ -614,6 +638,12 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "quality_dip_facts" in sizing:
         from .dip_facts import validate_quality_dip_facts_gate
         validate_quality_dip_facts_gate(sizing, errors)
+    if "event_direction" in sizing:
+        from .dip_facts import validate_event_direction_gate
+        validate_event_direction_gate(sizing, errors)
+    if "quality_dip_assessment" in sizing:
+        from .dip_facts import validate_quality_dip_assessment_gate
+        validate_quality_dip_assessment_gate(sizing, errors)
     if "exposure_view" in sizing:
         from .exposure_facts import validate_exposure_view_gate
         validate_exposure_view_gate(sizing, errors)
@@ -660,6 +690,9 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
         elif hints is None:
             errors.append("%s.verdicts_ref 必須附 thesis_hint_symbols" % prefix)
     _validate_agent_swap_binding(gate, prefix, errors)
+    if "exposure" in gate:
+        from .exposure_swap import validate_exposure_swap_gate
+        validate_exposure_swap_gate(sizing, errors)
     exposure = sizing.get("exposure_rotation")
     if isinstance(exposure, Mapping) and exposure.get("version") != "v3":
         errors.append("%s 只允許用於 exposure_rotation.version=v3（提供 hold 信心、持有天數與 exposure_review）" % prefix)
@@ -692,12 +725,17 @@ def _validate_agent_swap_binding(gate: Mapping[str, object], prefix: str, errors
         errors.append("%s.nomination_ref.status 只允許 %s" % (prefix, "／".join(NOMINATION_STATUSES)))
     else:
         status = ref["status"]
+    # agent_swap.exposure 啟用時每對另有 purpose（thesis／exposure）；沒有時欄位集合與舊版完全相同。
+    with_purpose = "exposure" in gate
+    pair_fields = {"buy_symbol", "sell_symbol"} | ({"purpose"} if with_purpose else set())
     if not isinstance(pairs, list) or not all(
-        isinstance(pair, Mapping) and set(pair) == {"buy_symbol", "sell_symbol"}
-        and all(isinstance(v, str) and v and v == v.upper() for v in pair.values()) and pair["buy_symbol"] != pair["sell_symbol"]
+        isinstance(pair, Mapping) and set(pair) == pair_fields
+        and all(isinstance(v, str) and v and (v == v.upper() or key == "purpose") for key, v in pair.items())
+        and pair["buy_symbol"] != pair["sell_symbol"] and (not with_purpose or pair["purpose"] in ("thesis", "exposure"))
         for pair in pairs
     ):
-        errors.append("%s.nominated_pairs 必須是 {buy_symbol, sell_symbol}（大寫、不得相同）的清單" % prefix)
+        errors.append("%s.nominated_pairs 必須是 {%s}（代號大寫、不得相同%s）的清單" % (
+            prefix, ", ".join(sorted(pair_fields)), "、purpose 為 thesis／exposure" if with_purpose else ""))
         return
     if len({pair["buy_symbol"] for pair in pairs}) != len(pairs) or len({pair["sell_symbol"] for pair in pairs}) != len(pairs):
         errors.append("%s.nominated_pairs 的 buy_symbol、sell_symbol 各最多出現一次" % prefix)

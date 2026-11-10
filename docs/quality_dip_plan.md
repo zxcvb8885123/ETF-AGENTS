@@ -1,6 +1,8 @@
 # 優質股被大盤拖累時的進場判斷（`quality_dip`）：設計計畫
 
-狀態（2026-11-10，第五版）：**第一階段（事實與標示，閘門 `position_sizing.quality_dip_facts` v1）已實作、閘門預設關閉、尚未開啟**——正式設定沒有這個欄位，是否開啟由人決定；第二、三階段與估值（V1～V3）、資料 A／B 都尚未實作。實作紀錄與待確認項目的結論見第 9 章。以下第四版內容保留原樣（第 1～8 章的「尚未實作」指第四版當時）。
+狀態（2026-11-10，第六版）：**第二階段（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，未掛排程）已實作，並於 2026-11-10 隨第一階段一起由使用者開啟（純紀錄、不影響配置；回滾＝刪掉三個欄位，樣板快照 `config/policy_versions/2026-11-10-before-quality-dip.json`）；第三階段改走換股提名、尚未實作（見第 10 章）；V2、V3 與資料 A／B 未做。**
+
+第五版狀態：**第一階段（事實與標示，閘門 `position_sizing.quality_dip_facts` v1）已實作、閘門預設關閉、尚未開啟**——正式設定沒有這個欄位，是否開啟由人決定；第二、三階段與估值（V1～V3）、資料 A／B 都尚未實作。實作紀錄與待確認項目的結論見第 9 章。以下第四版內容保留原樣（第 1～8 章的「尚未實作」指第四版當時）。
 
 第四版狀態：**只有計畫，尚未實作，沒有任何閘門；開工需使用者另行下令**。設計取捨已由使用者於 2026-11-10 回覆「照建議」定案（第 7.2 節）；這只決定了設計，不是實作或開啟閘門的指令。本檔不改程式、設定與既有文件。第二版依使用者意見改了兩件事：主軸改為短期價格事實、財報為輔；品質條件由「六條全真才合格」改為「沒有新的重大壞事」，年減與缺資料只列為疑慮，不擋進場。第三版再加一條：跌幅超出大盤所能解釋、但查無新壞事的股票另列為「超跌候選」，與「被大盤拖累候選」並列、分開標示（第 2.4 節）；並新增估值資料接入計畫（第 2.6 節：資料拿得到、系統尚未接入）。
 
@@ -403,11 +405,11 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 | 階段 | 範圍 | 完成條件 | 文件同步 |
 | --- | --- | --- | --- |
 | 1 事實（紀錄） | `decision/dip_facts.py`（價格事實、三個清單）、技術／基本面分析師簡報、交易 Agent `dip_background`、`team_inputs` 另存與 Finalizer 重算、閘門登記、測試 | 全套測試通過；用本案例重算出第 6.1 節的表；人決定是否開啟 | `README.md`、`AGENTS.md` 閘門清單、`docs/status.md` 閘門表、`docs/glossary.md`、`docs/decision-contracts.md`（新小節與 `team_inputs` 版本表）、`docs/architecture.md`、`docs/README.md` 索引、`src/etf_agent/decision/README.md`；Skill：`technical-analyst`、`fundamental-analyst`、`bull-researcher`、`bear-researcher`、`trader`（`references/data-rules.md`） |
-| 2 列舉（紀錄） | 交易 Agent `dip_assessment`；事件分析師的每則事件方向列舉（事件報告新版本、另設版本閘門）；schema（`automation/agent_schemas.py`）、驗證 | 第 1 階段開啟後驗證失敗沒有明顯增加 | `docs/status.md`、`docs/glossary.md`、`docs/decision-contracts.md`、`docs/architecture.md`；Skill：`trader`、事件分析師 |
-| 3 換股（影響配置） | `quality_dip_swap`、`decision/allocation.py` 配對、旗標、回放略過 | 第 1、2 階段開啟並累積數個決策日的即時紀錄，人看過後決定（已決定不與前兩階段一起開；觀察天數由人定） | 全部上述文件，另加 `docs/decision-details.md`、`docs/operations.md`（回滾方式）；Skill：`trader`、`portfolio-risk-review` |
+| 2 列舉（紀錄，**已實作、未開啟**，見第 10 章） | 交易 Agent `dip_assessment`；事件分析師的每則事件方向列舉（事件報告新版本、另設版本閘門）；schema（`automation/agent_schemas.py`）、驗證 | 第 1 階段開啟後驗證失敗沒有明顯增加 | `docs/status.md`、`docs/glossary.md`、`docs/decision-contracts.md`、`docs/architecture.md`；Skill：`trader`、事件分析師 |
+| 3 換股（影響配置，**第六版改走換股提名**，見第 10.3 節；以下範圍欄為第四版原文） | `quality_dip_swap`、`decision/allocation.py` 配對、旗標、回放略過 | 第 1、2 階段開啟並累積數個決策日的即時紀錄，人看過後決定（已決定不與前兩階段一起開；觀察天數由人定） | 全部上述文件，另加 `docs/decision-details.md`、`docs/operations.md`（回滾方式）；Skill：`trader`、`portfolio-risk-review` |
 | 資料 A（待辦） | FinMind 去年同期補抓排進每日流程 | 補抓失敗不得讓當日決策失敗；補抓結果仍須與官方金額核對 | `docs/fundamental_data_repair.md`、`docs/operations.md`、`docs/status.md` |
 | 資料 B（待辦，另案） | Yahoo Finance 財報備援：已決定排在資料 A 之後，先只做唯讀比對（見 [fundamental_data_gaps_plan.md](fundamental_data_gaps_plan.md)） | 資料 A 上線後看缺口剩多少；未定案前不得進正式計算 | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
-| 估值 V1（待辦） | 官方與 FinMind 估值的取得、逐檔核對、不可變保存；只收集與稽核，不進決策；先做上市股 | 使用者下令開工；授權登記隨實作完成（第 2.6 節） | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
+| 估值 V1（**已實作、未排程**，見第 10.2 節） | 官方與 FinMind 估值的取得、逐檔核對、不可變保存；只收集與稽核，不進決策；先做上市股 | 使用者下令開工；授權登記隨實作完成（第 2.6 節） | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
 | 估值 V2（待辦） | `valuation_position` 以背景進簡報，閘門 `valuation_facts` 預設關閉 | V1 連續核對相符達人指定天數；口徑釐清（視窗已定案） | 同第 1 階段的文件與 Skill：`fundamental-analyst`、`trader` |
 | 估值 V3（未定） | 新證據政策版本，估值可引用（對映 `price`） | V2 有即時紀錄後由人決定 | `docs/decision-contracts.md`、`AGENTS.md`、各研究與交易 Skill |
 
@@ -492,3 +494,28 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 
 - 是否開啟 `quality_dip_facts`（開啟後每日決策會多算一次全池事實、分析師與交易簡報變長）。
 - 第二、三階段與估值 V1 的開工。
+
+## 10. 第二階段、估值 V1 實作紀錄與第三階段修訂（2026-11-10，第六版）
+
+### 10.1 第二階段（已實作、閘門預設關閉、尚未開啟；證據等級 `replay_reference_only`）
+
+兩個閘門都只由人設定、策略反思不得改（已登記 `FORBIDDEN_PREFIXES`）、前提都是 `quality_dip_facts`；沒有欄位的舊 Policy、舊報告與舊 run 簡報、Schema、驗證逐位元不變。開啟＝在 `position_sizing` 加 `{"quality_dip_assessment": {"version": "v1"}}`（交易 Agent 列舉）與／或 `{"event_direction": {"version": "v1"}}`（事件方向）；回滾＝刪除該欄位。
+
+- **`quality_dip_assessment` v1**（`decision/dip_facts.py`、`decision/trader.py`）：交易 Agent 對每個 buy／add 多填列舉 `dip_assessment`（`not_a_dip`／`market_driven`／`oversold_cause_unclear`／`stock_specific`／`undetermined`），其餘意圖填 `null`。驗證只核必填、值域，以及 fail-closed：該股價格事實不可用（整份 unavailable、`price_pattern` 為 `unavailable` 或事實裡找不到該股）時只能 `undetermined`；沒有 `team_inputs.dip_facts` 或決策輸入不是 `typed_evidence_v1` 即拒絕。列舉與意圖、信心、`candidate` **不設對應**，不進 Policy 綁定與配置；Finalizer、回放與每日 pipeline 都以 Policy 閘門重建同一個驗證（`TradeDecisionValidator(dip_assessment=…)`）。Schema 只在閘門開啟時才多這個欄位（`trade_schema_with_dip_assessment`）。
+- **`event_direction` v1**（`decision/dip_facts.py`、`decision/analysts.py`）：事件分析師對每則事件（含個股新聞）多填 `direction`（`positive`／`negative`／`neutral`／`unknown`），只描述該則事件對公司的方向，與 `materiality`、整檔 `event_outlook` 分開。與第四版計畫「新報告版本」的差異：**不新增報告 `schema_version`**，而是比照 `counter_evidence`／`corroborated_by` 的做法，`AnalystReportValidator` 對 `direction` 採「有就必須是列舉值、沒有照舊有效」，只有每日 pipeline 產出時傳 `require_event_direction=True` 才必填；理由是辯論驗證（`stance.py`）等下游驗證看不到 Policy，新增版本字串會牽動全部 `MARKET_SCOPED_VERSIONS` 的使用處。Finalizer 在閘門開啟時另要求事件報告每則事件都有合法 `direction`。
+- **新壞事事件面的判準隨閘門切換**：沒有 `event_direction` 時仍是第 2.2 節的弱判準（整檔 `event_outlook` 為 negative 且視窗內有 high 事件，項目 `high_event_negative_outlook`）；有閘門時改為「視窗內新可得、`materiality` 為 high 且 `direction` 為 negative」（項目 `high_event_negative_direction`），high 事件缺 `direction` 列入 `unknown`（`EVENT_DIRECTION_MISSING`），不當成通過也不當成利空。`validate_dip_facts` 依 Policy 的 `event_direction` 閘門重算，所以兩種判準的封存 run 各自可重建。第二階段仍遵守第 9.1 節 (c)：分析師階段的 `fundamental_flags` 仍是 `event_check: not_applied`。
+- 測試：`tests/decision/test_quality_dip_assessment.py`、`tests/decision/test_event_direction.py`，以及 `tests/research/test_analysts.py` 的 `direction` 驗證。Skill：`trader`（`references/data-rules.md`「dip_assessment」節與新壞事事件面說明）、`event-analyst`（「事件方向」節）。
+- 兩者開啟前的建議：先開第一階段 `quality_dip_facts` 並看過幾個決策日的簡報與重算結果；`event_direction` 開啟後事件分析師輸出變長、驗證失敗率要觀察。
+
+### 10.2 估值 V1（已實作、未排程；只收集與稽核，不進決策、簡報或報告）
+
+只做上市股（`BWIBBU_ALL`）與 FinMind `TaiwanStockPER` 的逐檔核對與不可變保存，細節見 [資料來源清單](data_sources_inventory.md#估值資料v1)與 [來源核對紀錄](source_audit/2026-11-10_valuation_sources.md)。指令：`cli/valuation_collect.py collect`、`validate <run_id>`。**每日排程尚未掛上**（官方端點沒有歷史，越早每天跑越好；掛上時必須以盡力而為包住，失敗只記錄、不得讓 D-Plan 失敗），也尚未用真實端點驗證過（測試只用 mock）。V2 的進入條件（連續核對相符的天數由人指定、EPS 與殖利率基準待釐清、上櫃端點待確認）都未滿足，所以**沒有做 V2、V3**。
+
+### 10.3 第三階段修訂：改走換股提名（使用者 2026-11-10 選 A；尚未實作）
+
+第 4.2 節的 `quality_dip_swap`（程式依條件配對換股）**不再建**。理由：[Agent 主導曝險計畫](agent_led_exposure_plan.md)與[自主權計畫](agent_autonomy_plan.md)已決定「換誰」改由交易 Agent 在 `agent_swap` 第二輪提名，不另開程式配對路徑。新的做法（設計，未實作）：
+
+- 優質股換股是提名配對的一種用途：沿用 `agent_swap` 的有序配對清單；與曝險階段 2 的 `purpose` 欄位合用同一個列舉（例如新增 `quality_dip`），**不另開欄位**，兩個計畫的列舉要一起定。
+- 買進側依據仍須是新股已採納的多頭論點；候選標示與 `dip_assessment` 只是簡報背景，不是依據。第 4.2 節第 4～7 項（無新壞事、非價格多頭 claim、`turn_assessment` 至少 `turn_unconfirmed`、可交易且不在冷卻）改成提名 Validator 與配置前置的結構檢查（程式只驗結構，不判斷理由好壞）；超跌候選預設排除的規則與 `oversold` 區塊照第 4.2 節。
+- 現金下限、換手上限、檔數、單股上限、回撤下限、減碼日略過一律不放寬；買進金額不超過賣款。
+- **前提與阻礙**：`agent_swap` 目前只有 v1 影子（配置不讀提名），v2 未開啟；曝險階段 2（`purpose`）正由另一個工作階段實作中（同一批檔案：`swap_nomination.py`、`allocation.py`）。所以本階段**不在這次寫程式**，避免與它衝突；等曝險階段 2 落地、`purpose` 列舉定案，且第 1、2 階段累積數個決策日的紀錄後，由人決定開工。

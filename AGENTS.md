@@ -79,11 +79,14 @@
 - 已開啟（紀錄）：`cash_stance_turn_facts`（紀錄工具，簡報附交易池轉向事實、風險 Agent 多填列舉 `turn_assessment`，列舉與姿態不設對應，見 [`docs/turn_facts_plan.md`](docs/turn_facts_plan.md)）。
 - 已開啟（紀錄）：`market_index_facts` v1（風險 Agent 簡報附加權指數事實，背景、不可引用、不改配置；見 [`docs/market_index_facts_plan.md`](docs/market_index_facts_plan.md)）。
 - 已開啟（紀錄）：`exposure_view` v1（2026-11-10 使用者決定開啟；Agent 主導曝險階段 1：風險 Agent 簡報附組合曝險事實、背景、不可引用，並多填列舉 `exposure_view`；`agent_swap` 也開時提名簡報附轉向與曝險事實；純紀錄、不改配置；回滾＝刪掉 `position_sizing.exposure_view`；見 [`docs/agent_led_exposure_plan.md`](docs/agent_led_exposure_plan.md)）。
+- 已實作、尚未開啟（Agent 主導曝險階段 2、3）：`agent_swap.exposure`（v1 影子／v2 正式，前提 `agent_swap` 與 `exposure_view`）：提名每對多填列舉 `purpose`（`thesis`／`exposure`）、換出者可引用程式算的曝險事實 `review:<代號>:exposure`（只用於 `exposure` 配對、第一輪不可採納）、提名 `high` 信心持股讓位時須以 `lower_conviction_review` 逐檔交代 medium／low 持股且高信心配對排清單尾端；v2 依風險 Agent 的 `exposure_view` 取用 `exposure` 配對（`keep_defensive` 一對都不成交、換出者不賣；對數上限 `max_pairs_by_view` 不得高於 `max_swaps_per_run`），硬性界線與降級規則不變。把它的行為當成現行行為是錯的。
 - 已開啟（反彈）：`rebound_participation` v2（前提 `exposure_rotation` v3）：程式只整理事實，風險 Agent 的 `turn_assessment` 單獨決定是否放寬防守姿態下的曝險換股，缺資料恆為 none、永不升級；不放寬現金與換手。v1 保留供舊 run 重建；見 [`docs/rebound_participation_v2_plan.md`](docs/rebound_participation_v2_plan.md)。
 - 已開啟（換股影子）：`agent_swap` v1（2026-11-10，`max_swaps_per_run 2`、`min_holding_days 5`）：只封存提名、配置不讀、回放略過；`team_inputs` 2.9；回滾＝刪掉 `position_sizing.agent_swap`。
-- 已實作、尚未開啟（Agent 自主權線，見 [`docs/agent_autonomy_plan.md`](docs/agent_autonomy_plan.md)）：`agent_swap` v2（依提名配置，與 `forced_swap`、`conviction_gap_swap` 互斥）、`reentry_cooldown` v2／v3、`drawdown_derisk` v5（減碼順序由交易 Agent 給，`team_inputs.release_order`）、`cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`team_inputs.held_weight_facts`）。把它們的行為當成現行行為是錯的。
+- 已開啟（Agent 自主權線，2026-11-10 17:40 切換，`policy_id strategy-2026-11-10-autonomy-gates-1`；回滾以 `config/policy_versions/2026-11-10-before-autonomy-gates.json` 為準）：`reentry_cooldown` v2（冷卻只計交易 Agent 自己的出場）、`drawdown_derisk` v5（減碼順序由交易 Agent 給，`team_inputs.release_order`）。
+- 已實作、尚未開啟（Agent 自主權線，見 [`docs/agent_autonomy_plan.md`](docs/agent_autonomy_plan.md)）：`agent_swap` v2（依提名配置，與 `forced_swap`、`conviction_gap_swap` 互斥）、`reentry_cooldown` v3、`cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`team_inputs.held_weight_facts`）。把它們的行為當成現行行為是錯的。
 - 已實作、尚未開啟：`slot_recycle`。把它的行為當成現行行為是錯的。
-- 已實作、尚未開啟：`quality_dip_facts`（優質股被大盤拖累的第一階段事實，紀錄用、不影響配置；見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md)）。把它的行為當成現行行為是錯的。
+- 已開啟（紀錄）：`quality_dip_facts` v1（2026-11-10 使用者決定開啟；優質股被大盤拖累的事實，紀錄用、不影響配置；見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md)；回滾＝刪掉 `position_sizing.quality_dip_facts`，同時須刪掉依賴它的下兩項）。
+- 已開啟（紀錄）：`quality_dip_assessment` v1（交易 Agent 對 buy／add 多填 `dip_assessment` 列舉）與 `event_direction` v1（事件分析師每則事件多填 `direction`，並切換 `quality_dip_facts` 新壞事的事件面判準）：2026-11-10 使用者決定與 `quality_dip_facts` 一起開啟，純紀錄、不影響配置，回放略過（見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md#10-第二階段估值-v1-實作紀錄與第三階段修訂2026-11-10第六版)）。優質股第三階段（換股）改走換股提名、尚未實作；估值 V1（`cli/valuation_collect.py`，只收集與稽核、不進決策、尚未掛排程）已實作，V2、V3 未做。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界

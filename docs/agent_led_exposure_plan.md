@@ -274,3 +274,16 @@ Agent 的輸出只有列舉、代號、識別碼與文字，沒有數字。
 - **team_inputs**：選配鍵 `exposure_facts`（做法同 `dip_facts`），不升版、須 2.7 以上，與閘門雙向檢查，Finalizer 整份重算。`exposure_view` 放在現金姿態內（同 `turn_assessment`）。與 `agent_swap` 的 2.9 白名單不衝突：選配鍵在版本白名單之外另行檢查。
 - **封存資料唯讀重算**（2026-11-10 `decision-20261109T230435Z`，`replay_reference_only`）：組合 beta 0.105601、持股 beta 0.128716、低 beta 占比 0.635254（18／27 檔）、現金 0.179580、金融保險 8 檔 0.260000、上漲日為 11-09（最近交易日）池報酬 +0.055064、持股當日貢獻 +0.006667，與第 5.1 節一致；第 5.1 節表中 7 檔的權重、beta、當日報酬也一致（`tests/decision/test_exposure_view.py`）。
 - **階段 2 待辦**（本次刻意不做）：提名的 `purpose`、曝險事實編號 `review:<代號>:exposure`、`lower_conviction_review`、提名理由的背景識別碼檢查（需要改 `SwapNominationValidator`，屬於換股提名的驗證規則），以及第 4.3 節 1、2 項對換股提名計畫與 Skill 禁令句子的同步修改。
+
+## 11. 階段 2、3 實作紀錄（2026-11-10）
+
+使用者下令做階段 2、3；**閘門沒有開**（`config/decision_policy.json` 未改），行為為「已實作、尚未開啟」。
+
+- **閘門**：`position_sizing.agent_swap.exposure`，v1 影子（只有 `version`）／v2 正式（另有 `max_pairs_by_view`＝`start_rebuild`、`rebuild` 兩格整數，0≤`start_rebuild`≤`rebuild`≤`max_swaps_per_run`；`view` 由 pipeline 綁）。前提 `agent_swap` 與 `exposure_view`（`GATE_PREREQUISITES` 的 `agent_swap.exposure`）；v2 另需 `agent_swap` v2。`keep_defensive` 沒有對數格：恆為 0。策略反思不得改（`agent_swap` 前綴已在禁區）。沒有這個欄位的 Policy 逐位元不變。程式在 `decision/exposure_swap.py`。
+- **階段 2（提名）**：每對必填 `purpose`；曝險事實 `review:<代號>:exposure`（`exposure_basis_by_symbol`：持股權重、beta、上行／下行捕捉、產業、上漲日報酬，附該股行情 evidence_id，由 `team_inputs.exposure_facts` 重算）；`exposure` 配對的換出者不需要空頭論點；`lower_conviction_review`（第 3.4 節）；提名理由出現曝險事實區塊識別碼即拒絕。Agent 輸出 Schema 為 `SWAP_NOMINATION_EXPOSURE_SCHEMA`（多 `purpose`、`lower_conviction_review`，其餘欄位不變）。簡報與提示不告知影子期，v1／v2 完全相同。
+- **階段 3（配置）**：`allocation._agent_swap` 在 v2 依綁定的 `view`：`keep_defensive` 取消全部 exposure 配對（`AGENT_SWAP_CANCELLED:exposure_view`）；其餘依 `max_pairs_by_view` 取清單前幾對、超過取消（`exposure_cap`，尾端的高信心配對先捨棄）；留下的與 thesis 配對走同一套可行性檢查與降級。v1 影子配置略過 exposure 配對。減碼日整個略過；`exposure_rotation` 的換股步驟照舊停用。
+- **第 4.3 節 1、2 項同步**：Skill `references/swap-nomination.md` 加條件式一節（簡報有 `exposure_swap` 才適用，保留原句）；換股提名計畫第 2.4 節加例外說明。
+- **回答原先的開放問題**：`team_inputs` 不升版（沿用 2.9，`exposure_facts` 本來就是選配鍵）；順序驗證是逐檔（`lower_conviction_review` 的每個 symbol）；exposure 配對仍遵守名額語意——換入者不換股即有名額時為 `AGENT_SWAP_UNNEEDED`，該對不佔對數上限。
+- **Finalizer**：`apply_trade_decision` 把風險 Agent 的 `exposure_view` 綁進 Policy，Finalizer 比對綁定值與現金姿態；`apply_swap_nomination` 綁含 `purpose` 的配對；缺 `exposure_facts` 拒絕。
+- **測試**：`tests/decision/test_exposure_swap.py`、`test_exposure_swap_allocation.py`、`tests/automation/test_exposure_swap_pipeline.py`。
+- **尚未做**：開閘門（需人決定，先看第 1、2 階段即時紀錄）；影子報告（`calibration/shadow_swap_report.py`）尚未統計 `purpose` 與 `kept`。

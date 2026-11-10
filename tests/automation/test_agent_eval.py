@@ -308,7 +308,7 @@ class RealPolicyEvaluationModeTests(unittest.TestCase):
         self.assertEqual(notes["evaluation_mode"], "counterfactual")
         self.assertTrue(notes["available_at_overridden"])
         self.assertEqual(early["available_at"], early_cutoff)
-        _, later = _eval_template(self.POLICY, "2026-11-10T07:00:00+08:00")
+        _, later = _eval_template(self.POLICY, "2026-11-11T07:00:00+08:00")
         self.assertEqual(later["evaluation_mode"], "as_available")
         self.assertFalse(later["available_at_overridden"])
 

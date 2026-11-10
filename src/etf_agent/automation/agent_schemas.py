@@ -38,17 +38,20 @@ def analyst_schema(typed: bool = False):
     return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
 
 
-def event_analyst_schema(typed: bool = False):
+def event_analyst_schema(typed: bool = False, direction: bool = False):
+    """``direction``（position_sizing.event_direction）為 True 時每則事件多一個必填列舉 direction；預設 False，Schema 逐位元不變。"""
+    event_fields = {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT,
+                    "counter_evidence": _strings(), "pending_confirmations": _strings(), "corroborated_by": _strings()}
+    if direction:
+        from etf_agent.decision.dip_facts import EVENT_DIRECTIONS
+
+        event_fields["direction"] = {"enum": list(EVENT_DIRECTIONS)}
     item = {
         **_analyst_item(typed),
         "event_outlook": {"enum": list(OUTLOOKS)},
         "events": {
             "type": "array",
-            "items": _object(
-                {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT,
-                 "counter_evidence": _strings(), "pending_confirmations": _strings(), "corroborated_by": _strings()},
-                ("evidence_id", "materiality", "summary", "counter_evidence", "pending_confirmations", "corroborated_by"),
-            ),
+            "items": _object(event_fields, tuple(event_fields)),
         },
     }
     return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
@@ -85,6 +88,15 @@ TRADE_SCHEMA = _object(
     {"items": {"type": "array", "items": _object(_TRADE_ITEM, list(_TRADE_ITEM))}},
     ("items",),
 )
+# 只在 Policy 啟用 position_sizing.quality_dip_assessment（版本閘門）時使用：每個 item 另加列舉 dip_assessment（不是數字）；
+# strict schema 要求全部列入 required，所以非 buy／add 填 null（Validator 檢查）。沒有此閘門時沿用 TRADE_SCHEMA，逐位元不變。
+def trade_schema_with_dip_assessment() -> dict:
+    from etf_agent.decision.dip_facts import DIP_ASSESSMENTS
+
+    item = {**_TRADE_ITEM, "dip_assessment": {"enum": list(DIP_ASSESSMENTS) + [None]}}
+    return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
+
+
 _RANK_ENTRY = _object({"symbol": _TEXT, "reason": _TEXT}, ("symbol", "reason"))
 _RANK_TIER = _object(
     {"conviction": {"enum": list(CONVICTION_LEVELS)}, "ordered": {"type": "array", "items": _RANK_ENTRY}},
@@ -108,6 +120,23 @@ SWAP_NOMINATION_SCHEMA = _object(
         "no_nomination_reason": {"type": "string"},
     },
     ("nominations", "thesis_hint_responses", "no_nomination_reason"),
+)
+# 只在 Policy 啟用 position_sizing.agent_swap.exposure（版本閘門）時使用：每對另加列舉 purpose，頂層另加 lower_conviction_review
+# （沒有提名高信心持股的 exposure 配對時填空陣列；Validator 檢查）。沒有此閘門時沿用 SWAP_NOMINATION_SCHEMA，逐位元不變。
+_LOWER_CONVICTION_ENTRY = _object(
+    {"symbol": _TEXT, "response": {"enum": ["nominated", "kept"]}, "reason": {"type": "string"}}, ("symbol", "response", "reason"),
+)
+_SWAP_PAIR_EXPOSURE = _object(
+    {**_SWAP_PAIR["properties"], "purpose": {"enum": ["thesis", "exposure"]}}, tuple(_SWAP_PAIR["required"]) + ("purpose",),
+)
+SWAP_NOMINATION_EXPOSURE_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR_EXPOSURE},
+        "lower_conviction_review": {"type": "array", "items": _LOWER_CONVICTION_ENTRY},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "no_nomination_reason": {"type": "string"},
+    },
+    ("nominations", "lower_conviction_review", "thesis_hint_responses", "no_nomination_reason"),
 )
 # 回撤減碼的釋出順序（position_sizing.drawdown_derisk v5）：只有代號、依據識別碼與文字，沒有任何數字欄位；順序就是陣列順序。
 _RELEASE_ENTRY = _object(

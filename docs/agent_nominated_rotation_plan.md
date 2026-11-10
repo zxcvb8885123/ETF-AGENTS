@@ -84,6 +84,8 @@
 
 ### 2.4 每筆提名必須引用的依據（不得新增事實或 claim）
 
+> 已實作、尚未開啟的例外（[曝險計畫](agent_led_exposure_plan.md) 第 4.3 節）：`agent_swap.exposure` 啟用時，`purpose: exposure` 的配對換出依據改為持股自己的曝險事實 `review:<代號>:exposure`，不要求第一輪已採納的空頭論點；`thesis` 配對維持本節規則。
+
 | 欄位 | 可引用的範圍 | 規則 |
 | --- | --- | --- |
 | `buy_basis_ids` | 該新股在本次交易決策中**已採納**的多頭 claim | 至少一個；沿用 buy 本來就要求的多頭依據 |

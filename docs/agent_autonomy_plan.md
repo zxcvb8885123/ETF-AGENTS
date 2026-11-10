@@ -5,10 +5,23 @@
 | 階段 | 實作 | 開啟 |
 | --- | --- | --- |
 | 0 意圖落地率 | `calibration/intent_landing.py`、`cli/calibration.py intent-landing` | 唯讀工具，已可用 |
-| 1 `reentry_cooldown` v2 | 已實作 | 未開啟 |
-| 2 `drawdown_derisk` v5（`release_order`） | 已實作（`decision/release_order.py`、Skill `references/release-order.md`） | 未開啟 |
+| 1 `reentry_cooldown` v2 | 已實作 | **已於 2026-11-10 17:40 開啟** |
+| 2 `drawdown_derisk` v5（`release_order`） | 已實作（`decision/release_order.py`、Skill `references/release-order.md`） | **已於 2026-11-10 17:40 開啟** |
 | 3 `agent_swap`（步驟 1–6，細節見[換股提名計畫](agent_nominated_rotation_plan.md)） | v1 影子（提名、封存、`team_inputs` 2.9、降級版 `agent_step_degradable`）、v2 配置與 `shadow-swap` 報告皆已實作 | **v1 已於 2026-11-10 開啟**（`max_swaps_per_run 2`、`min_holding_days 5`）；v2 未開啟 |
 | 4 現金與冷卻 | `cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`held_weight_facts`）、`reentry_cooldown` v3 皆已實作 | 未開啟（`slot_recycle` 仍未開啟） |
+
+### 三份相關計畫的總表（2026-11-10）
+
+三份計畫都在把「換誰、買賣多少」的裁量還給 Agent，但範圍、閘門與回滾各自獨立，所以不合併，只在此對照順序與依賴。
+
+| 計畫 | 做什麼 | 閘門 | 目前進度 | 依賴 |
+| --- | --- | --- | --- | --- |
+| 本計畫（階段 0～4） | 取消程式挑股，改成 Agent 提名與給順序 | `agent_swap`、`reentry_cooldown` v2／v3、`drawdown_derisk` v5 等 | 全部已實作；只有 `agent_swap` v1 影子已開 | 階段 3 影子跑滿 10 個決策日（`calibration.MIN_DECISION_DAYS`）才考慮 v2 |
+| [換股提名](agent_nominated_rotation_plan.md) | 本計畫階段 3 的細部設計 | `agent_swap` v1／v2 | v1 影子已開、v2 已實作未開 | 由 `shadow-swap` 報告決定是否切 v2 |
+| [曝險主導](agent_led_exposure_plan.md) | 風險 Agent 看組合曝險，曝險理由併入換股提名 | `exposure_view` | 階段 1 已開（純紀錄）；階段 2（提名多 `purpose`）、階段 3（配置讀取）已實作、尚未開啟（`agent_swap.exposure`） | 階段 3 要先開 `agent_swap` v2 |
+| [優質股](quality_dip_plan.md) | 找出被大盤拖累的優質股 | `quality_dip_facts` | 階段 1、階段 2（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，未排程）已實作未開；階段 3 尚未實作（等曝險階段 2 的 `purpose` 列舉）；估值 V2／V3 未做 | 階段 3 的換股要走換股提名，不另開路徑 |
+
+建議順序：換股提名影子期 → 決定 v2 → 曝險階段 2 → 曝險階段 3；優質股階段 1 的事實紀錄可隨時由人決定是否開，不擋其他項。
 
 **實作註記（與下文設計不符或補充之處，下文各節保留當時的設計與推論）**：
 

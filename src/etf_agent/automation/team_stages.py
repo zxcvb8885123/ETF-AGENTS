@@ -41,6 +41,7 @@ from etf_agent.decision import (
 from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_market_report
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.exposure_facts import EXPOSURE_FACTS_KEY, nomination_exposure_brief
+from etf_agent.decision.exposure_swap import exposure_swap_gate
 from etf_agent.decision.held_weight_facts import held_weight_brief
 from etf_agent.decision.sizing import reentry_hint_id
 from etf_agent.decision.market_index import market_index_facts
@@ -79,8 +80,10 @@ from .agent_schemas import (
     EVENT_BATCH_SIZE,
     RANKING_SCHEMA,
     RELEASE_ORDER_SCHEMA,
+    SWAP_NOMINATION_EXPOSURE_SCHEMA,
     SWAP_NOMINATION_SCHEMA,
     TRADE_SCHEMA,
+    trade_schema_with_dip_assessment,
     _CLAIM_KIND_RULES,
     _EVENT_RULES,
     _FINDING_KIND_RULES,
@@ -128,9 +131,19 @@ _DIP_ANALYST_RULES = (
     "本批輸入含 dip_facts_background 與各股的 %s（程式算的事實，不是訊號，數字不可改寫；區塊本身沒有 evidence_id，"
     "引用時用各列附的該股既有證據編號），依 SKILL.md「優質股被大盤拖累的事實」節處理。"
 )
+_EVENT_DIRECTION_RULES = (
+    "每則事件另填列舉 direction（positive／negative／neutral／unknown）：只描述這一則事件對公司的方向，不是整檔 event_outlook，"
+    "也不是你對股價的預測；看不出來就填 unknown，依 SKILL.md「事件方向」節處理。"
+)
 _DIP_TRADER_RULES = (
     "本批輸入含 dip_background 與各股的 dip（程式算的價格事實、財報三個清單與候選標示，只是背景、沒有 evidence_id、不可引用，"
     "也不得寫進理由），依 data-rules.md「優質股被大盤拖累的事實」處理。"
+)
+_DIP_ASSESSMENT_RULES = (
+    "每個 buy／add 另填列舉 dip_assessment（其餘意圖填 null）：not_a_dip＝這檔不是在大盤下跌中被拖累或超跌；market_driven＝跌幅主要可由大盤解釋；"
+    "oversold_cause_unclear＝比大盤多跌、原因不明、你仍判斷值得買；stock_specific＝多跌有個股原因；undetermined＝無法判斷。"
+    "該股 dip.price_pattern 為 unavailable 時只能填 undetermined。這只是紀錄你怎麼看，與意圖、信心不設對應，不影響名額與權重；"
+    "依 data-rules.md「dip_assessment」處理。"
 )
 
 
@@ -145,12 +158,13 @@ class TeamStagesMixin:
 
     def run_analyst_team(
         self, bundle: Mapping[str, object], momentum: Mapping[str, object], database_path: Optional[Path] = None,
-        dip_gate: Optional[Mapping[str, object]] = None,
+        dip_gate: Optional[Mapping[str, object]] = None, event_direction: bool = False,
     ) -> Dict[str, Dict[str, object]]:
         """三位分析師逐批執行；事件與市場情緒共用一位 Agent、一份報告。
 
         ``dip_gate`` 是 position_sizing.quality_dip_facts 閘門物件：有時技術分析師多拿逐檔 ``market_attribution``／``price_position``、
-        基本面分析師多拿 ``fundamental_flags``（不含 price_pattern／candidate）；沒有閘門時簡報與舊版逐鍵相同。"""
+        基本面分析師多拿 ``fundamental_flags``（不含 price_pattern／candidate）；沒有閘門時簡報與舊版逐鍵相同。
+        ``event_direction``（position_sizing.event_direction 閘門）為 True 時事件分析師每則事件另填 direction 列舉；False 時 Schema 與驗證不變。"""
         metrics = compute_fundamental_metrics(bundle)
         # bundle 有 fundamental_period_policy 時，指標另進 team_inputs 2.6 供 Finalizer 重算比對（沒有財報時為 None）。
         self.fundamental_metrics = metrics
@@ -199,7 +213,7 @@ class TeamStagesMixin:
                     {row["symbol"]: len(row["events"]) + len(row.get("news", [])) for row in brief["symbols"]},
                     EVENT_BATCH_SIZE, EVENT_BATCH_MAX_EVENTS)
             plans[analyst] = (brief, analyst_batches, program_items)
-            jobs.extend(self._analyst_batch_jobs(bundle, analyst, brief, analyst_batches))
+            jobs.extend(self._analyst_batch_jobs(bundle, analyst, brief, analyst_batches, event_direction))
         partials = self._run_jobs(jobs)
         cursor = 0
         for analyst in LLM_ANALYSTS:
@@ -213,7 +227,7 @@ class TeamStagesMixin:
             combined = merge_batch_items(analyst_batches, outputs, analyst)
             report = (seal_event_market_report(bundle, brief["report_envelope"], combined)
                       if analyst == "event" else seal_report(brief["report_envelope"], combined))
-            errors = AnalystReportValidator(bundle, analyst).validate(report)
+            errors = AnalystReportValidator(bundle, analyst, require_event_direction=event_direction and analyst == "event").validate(report)
             if errors:
                 raise DailyPipelineError("%s 分析報告合併後驗證失敗：%s" % (analyst, "；".join(errors[:10])))
             reports[analyst] = report
@@ -222,7 +236,7 @@ class TeamStagesMixin:
 
     def _analyst_batch_jobs(
         self, bundle: Mapping[str, object], analyst: str, brief: Dict[str, object],
-        analyst_batches: Sequence[Mapping[str, object]],
+        analyst_batches: Sequence[Mapping[str, object]], event_direction: bool = False,
     ) -> List[Tuple[str, Callable[[], Dict[str, object]]]]:
         """每批一個任務；任務各自綁定本批的 brief、Validator 與提示，可安全同時執行。"""
         typed = evidence_policy(bundle) is not None
@@ -247,7 +261,9 @@ class TeamStagesMixin:
                 }
             name = "%s_b%d" % (analyst, batch["batch_index"])
             brief_path = self.save_brief("brief_%s" % name, batch_brief)
-            validator = AnalystReportValidator(bundle, analyst, symbols=batch["symbols"])
+            validator = AnalystReportValidator(
+                bundle, analyst, symbols=batch["symbols"], require_event_direction=event_direction and analyst == "event",
+            )
             task = AgentTask(
                 name,
                 "你是 $%s-analyst。先讀 %s，再讀本批輸入摘要 %s。只輸出本批 %d 檔股票（%s），每一檔都必須出現一次。%s"
@@ -255,9 +271,9 @@ class TeamStagesMixin:
                     analyst, self.root / ("tradeagent/analysis/%s/%s-analyst/SKILL.md" % (analyst, analyst)), brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]),
                     _SHARED_RULES + (_EVENT_RULES if analyst == "event" else "") + (_FINDING_KIND_RULES if typed else "")
-                    + dip_rules,
+                    + dip_rules + (_EVENT_DIRECTION_RULES if event_direction and analyst == "event" else ""),
                 ),
-                event_analyst_schema(typed) if analyst == "event" else analyst_schema(typed),
+                event_analyst_schema(typed, event_direction) if analyst == "event" else analyst_schema(typed),
             )
             return name, lambda: self.agent_step(
                 task,
@@ -390,6 +406,7 @@ class TeamStagesMixin:
         dip_facts: Optional[Mapping[str, object]] = None,
         held_weight_facts: Optional[Mapping[str, object]] = None,
         reentry_hint_symbols: Optional[Sequence[str]] = None,
+        dip_assessment: bool = False,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
@@ -399,7 +416,9 @@ class TeamStagesMixin:
         ``position_review`` 是 ``build_position_review`` 算好的持股檢視（policy 有 ``position_review`` 才有）：
         警示 ``review_id`` 必須和 claim 一樣處理一次，停損／停利的判斷仍由 Agent 做，數字由程式算。
         ``exposure_review`` 是 ``build_exposure_review`` 算好的曝險檢視（policy 有 ``exposure_rotation`` 才有）：每檔持股的 beta 與捕捉
-        當背景事實附在 brief（不可引用），並讓 hold 也必填 conviction；換股由程式依帳本與 beta 決定，Agent 不輸出任何數字。"""
+        當背景事實附在 brief（不可引用），並讓 hold 也必填 conviction；換股由程式依帳本與 beta 決定，Agent 不輸出任何數字。
+        ``dip_assessment``（position_sizing.quality_dip_assessment 閘門，需 ``dip_facts``）為 True 時，buy／add 另填列舉 dip_assessment
+        （紀錄用）；False 時 Schema 與驗證逐位元不變。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
         background, prior_by_symbol = prior_decision_brief(prior_context) if prior_context is not None else (None, {})
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
@@ -477,13 +496,13 @@ class TeamStagesMixin:
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols)
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols, dip_assessment=dip_assessment)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
                 "再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔整合兩方論點、記錄每個論點的採納或否決，"
                 "再依持股與交易條件形成單一交易意圖；整合方式、理由寫法、欄位與限制都依參考文件。"
-                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s%s%s"
+                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), len(batch["symbols"]),
@@ -492,11 +511,12 @@ class TeamStagesMixin:
                     _REVIEW_RULES if position_review is not None else "",
                     _EXPOSURE_RULES if exposure_review is not None else "",
                     _DIP_TRADER_RULES if dip_facts is not None else "",
+                    _DIP_ASSESSMENT_RULES if dip_assessment else "",
                     _HELD_WEIGHT_RULES if held_weight_facts is not None else "",
                     _COOLDOWN_RULES if set(hint_symbols) & set(batch["symbols"]) else "",
                     _SHARED_RULES,
                 ),
-                TRADE_SCHEMA,
+                trade_schema_with_dip_assessment() if dip_assessment else TRADE_SCHEMA,
             )
             return name, lambda: self.agent_step(
                 task, lambda output: seal_trade_decision(envelope, output["items"]), validator.validate
@@ -509,6 +529,7 @@ class TeamStagesMixin:
         errors = TradeDecisionValidator(
             bundle, momentum, debate, prior_context=prior_context, position_review=position_review,
             hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols,
+            dip_assessment=dip_assessment,
         ).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
@@ -516,6 +537,7 @@ class TeamStagesMixin:
         (self.run_dir / "trader_report.md").write_text(
             render_trader_report(
                 bundle, momentum, debate, decision, position_review, hold_conviction, reentry_hint_symbols=reentry_hint_symbols,
+                dip_facts=dip_facts, dip_assessment=dip_assessment,
             ), encoding="utf-8"
         )
         return decision
@@ -584,20 +606,26 @@ class TeamStagesMixin:
         不呼叫 Agent；驗證最多三次嘗試，用盡封存 ``exhausted``、暫時性失敗重試後仍失敗封存 ``unavailable``（空清單，其餘決策照常）；
         安全拒絕仍整個停止。v1（影子）與 v2 的簡報、提示與 Skill 完全相同，這裡不讀 ``agent_swap.version``。"""
         envelope = nomination_envelope(bundle, trade_decision, ranking, "swap-nomination:%s" % run_id)
+        # agent_swap.exposure（版本閘門，Agent 主導曝險階段 2、3）：每對另有 purpose、輸出另有 lower_conviction_review；
+        # 簡報與驗證另需 exposure_facts。沒有閘門時 Schema、簡報與封存逐位元不變。
+        exposure_swap = exposure_swap_gate(policy.get("position_sizing")) is not None
+        if exposure_swap and exposure_facts is None:
+            raise DailyPipelineError("policy 啟用 agent_swap.exposure 時必須有 exposure_facts（position_sizing.exposure_view）")
         try:
-            facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review)
+            facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, exposure_facts)
         except (DecisionToolError, KeyError, TypeError, ValueError) as error:
             raise DailyPipelineError("換股提名無法由共同輸入建立事實：%s" % error) from error
         validator = SwapNominationValidator(
             bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, prior_context=prior_context,
+            exposure_facts=exposure_facts,
         )
         if not needs_nomination(facts):
-            nomination = program_nomination(envelope, STATUS_NOT_NEEDED)
+            nomination = program_nomination(envelope, STATUS_NOT_NEEDED, exposure=exposure_swap)
         else:
             try:
                 brief = swap_nomination_brief(
                     bundle, policy, trade_decision, ranking, debate, position_review, exposure_review,
-                    load_thesis_verdicts(self.root, bundle["decision_cutoff"]),
+                    load_thesis_verdicts(self.root, bundle["decision_cutoff"]), exposure_facts if exposure_swap else None,
                 )
                 if exposure_facts is not None:
                     # exposure_view（版本閘門，Agent 主導曝險階段 1）：附轉向、加權指數、組合曝險、上漲日報酬與新股 beta 事實
@@ -605,7 +633,7 @@ class TeamStagesMixin:
                     brief = dict(brief)
                     brief[EXPOSURE_FACTS_KEY] = nomination_exposure_brief(
                         exposure_facts, [str(row["symbol"]) for row in brief["candidates"]],
-                        turn_facts(bundle), market_index_facts(bundle), turn_state,
+                        turn_facts(bundle), market_index_facts(bundle), turn_state, exposure_swap,
                     )
             except (DecisionToolError, KeyError, TypeError, ValueError) as error:
                 raise DailyPipelineError("換股提名簡報建立失敗：%s" % error) from error
@@ -617,17 +645,18 @@ class TeamStagesMixin:
                 "每一對引用簡報列出的依據識別碼並附白話理由；沒有合適的配對就輸出空清單並說明原因。"
                 "簡報的 thesis_hints 每檔都必須在 thesis_hint_responses 回應一次。%s"
                 % (self.root / "tradeagent/trading/trader/references/swap-nomination.md", brief_path, _SHARED_RULES)
-                + (NOMINATION_EXPOSURE_PROMPT if exposure_facts is not None else ""),
-                SWAP_NOMINATION_SCHEMA,
+                + (NOMINATION_EXPOSURE_PROMPT if exposure_facts is not None else "")
+                + (NOMINATION_PURPOSE_PROMPT if exposure_swap else ""),
+                SWAP_NOMINATION_EXPOSURE_SCHEMA if exposure_swap else SWAP_NOMINATION_SCHEMA,
             )
             fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
             outcome = self.agent_step_degradable(
-                task, lambda output: seal_swap_nomination(envelope, output), validator.validate, fingerprint,
+                task, lambda output: seal_swap_nomination(envelope, output, exposure_swap), validator.validate, fingerprint,
             )
             if outcome.artifact is not None:
                 nomination = outcome.artifact
             elif outcome.status in (STATUS_EXHAUSTED, STATUS_UNAVAILABLE):
-                nomination = program_nomination(envelope, outcome.status, outcome.errors)
+                nomination = program_nomination(envelope, outcome.status, outcome.errors, exposure_swap)
             else:
                 raise DailyPipelineError("換股提名未預期的步驟狀態：%s" % outcome.status)
         errors = validator.validate(nomination)
@@ -694,6 +723,13 @@ class TeamStagesMixin:
 NOMINATION_EXPOSURE_PROMPT = (
     "簡報含 exposure_facts（程式算的轉向、加權指數、組合曝險、產業權重、上漲日報酬與新股 beta 事實）：全部是背景、沒有 evidence_id、"
     "不可放進依據，也不改變上面的提名規則，用法見 swap-nomination.md「exposure_facts」節。"
+)
+
+
+NOMINATION_PURPOSE_PROMPT = (
+    "每一對另填列舉 purpose：thesis＝以換出股自己已採納的空頭論點或持股檢視事實讓位；exposure＝為了提高市場參與度讓位，換出依據必須含簡報該持股"
+    "exposure_basis 的曝險事實編號。另填 lower_conviction_review：沒有提名第一輪信心為 high 的持股做 exposure 配對時填空陣列，否則依簡報 "
+    "exposure_swap 的規則逐檔交代 medium／low 持股；用法見 swap-nomination.md「purpose 與 lower_conviction_review」節。"
 )
 
 

@@ -40,6 +40,7 @@ from .sizing import (
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
 )
+from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -1021,11 +1022,29 @@ class AllocationOrderEngine:
             note("AGENT_SWAP_SKIPPED:nomination_%s" % status, portfolio, "換股提名%s，本次不換股；其餘決策照常" % (
                 "的驗證在嘗試用盡後仍未通過" if status == "exhausted" else "的 Agent 呼叫在暫時性失敗重試後仍失敗"))
             return targets
+        # agent_swap.exposure（Agent 主導曝險，版本閘門）：v1（影子）整個略過 purpose=exposure 的配對、不留任何旗標（與沒有閘門時相同）；
+        # v2 在 keep_defensive 時取消全部 exposure 配對（換出者不賣），其餘依 max_pairs_by_view 限制取用對數。沒有閘門時不經過這裡。
+        exposure_binding = exposure_swap_binding(self.policy.get("position_sizing"))
+        exposure_pairs: Set[Tuple[str, str]] = set()
+        if exposure_binding is not None:
+            labelled = list(zip(pairs, exposure_binding["purposes"]))  # type: ignore[arg-type]
+            if exposure_binding["version"] == "v1":
+                pairs = [pair for pair, purpose in labelled if purpose != PURPOSE_EXPOSURE]
+            else:
+                exposure_pairs = {pair for pair, purpose in labelled if purpose == PURPOSE_EXPOSURE}
         if not pairs:
             return targets
         if derisk_day:
             note("AGENT_SWAP_SKIPPED:derisk_day", portfolio, "當日由 drawdown_derisk 減碼，換股提名整個略過（防守補現金當天不換股買進）")
             return targets
+        if exposure_pairs and exposure_binding["view"] == "keep_defensive":  # type: ignore[index]
+            for buy, sell in pairs:
+                if (buy, sell) in exposure_pairs:
+                    cancel(buy, sell, "exposure_view")
+            pairs = [pair for pair in pairs if pair not in exposure_pairs]
+            exposure_pairs = set()
+            if not pairs:
+                return targets
         ordered, weights, skipped, budget, held_frozen = targets
         candidate_set = set(ordered)
         needed: List[Tuple[str, str]] = []
@@ -1049,6 +1068,18 @@ class AllocationOrderEngine:
                 cancel(buy, sell, "victim_unavailable")
             else:
                 needed.append((buy, sell))
+        if exposure_pairs:
+            # 每次最多取用 max_pairs_by_view 對映的 exposure 對數（人設的硬上限）；超過的從清單尾端取消，高信心配對排在尾端所以最先被捨棄。
+            used, kept_pairs = 0, []
+            cap = int(exposure_binding["caps"][exposure_binding["view"]])  # type: ignore[index]
+            for buy, sell in needed:
+                if (buy, sell) in exposure_pairs:
+                    if used >= cap:
+                        cancel(buy, sell, "exposure_cap")
+                        continue
+                    used += 1
+                kept_pairs.append((buy, sell))
+            needed = kept_pairs
         limit = int((self.policy["position_sizing"]["agent_swap"])["max_swaps_per_run"])
         for buy, sell in needed[limit:]:
             cancel(buy, sell, "swap_cap")
@@ -1075,7 +1106,8 @@ class AllocationOrderEngine:
             target_shares[sell] = 0
             active_symbols.discard(sell)
             order_intents[sell] = "exit"
-            note(AGENT_SWAP_VICTIM_CODE, sell, "交易 Agent 第二輪提名換出，換入 %s（程式只檢查可行性；交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % buy)
+            note(AGENT_SWAP_VICTIM_CODE, sell, "交易 Agent 第二輪提名換出，換入 %s（程式只檢查可行性；交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % buy
+                 + ("；目的：曝險（風險 Agent 的 exposure_view 為 %s）" % exposure_binding["view"] if (buy, sell) in exposure_pairs else ""))  # type: ignore[index]
             note(AGENT_SWAP_FILL_CODE, buy, "原本被持股名額擋下；交易 Agent 第二輪提名換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % sell)
         return result
 

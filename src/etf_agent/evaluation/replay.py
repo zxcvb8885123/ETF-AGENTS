@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time
+from etf_agent.decision.dip_facts import quality_dip_assessment_gate
 from etf_agent.decision.exposure import hold_conviction_enabled
 from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.core.run_layout import list_run_dirs
@@ -189,6 +190,7 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
             hold_conviction=hold_conviction_enabled(files["policy"]),
             dip_facts=team.get("dip_facts") if isinstance(team.get("dip_facts"), Mapping) else None,
             reentry_hint_symbols=reentry_hint_symbols(files["policy"].get("position_sizing")),
+            dip_assessment=quality_dip_assessment_gate(files["policy"].get("position_sizing")) is not None,
         ).validate(files["intent"])
     except DecisionToolError as error:
         errors = [str(error)]
@@ -256,6 +258,15 @@ def bind_replay_policy(
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "exposure_view"}
             base["content_sha256"] = decision_policy_sha256(base)
         bound_stance = {key: value for key, value in bound_stance.items() if key != "exposure_view"}
+        # 優質股的三個紀錄閘門（quality_dip_facts／quality_dip_assessment／event_direction）只約束 Agent 當天的輸出與 team_inputs，
+        # 不影響配置：回放略過並各標一次；沒有這些閘門的舊回放 notes 與 policy 逐位元不變。
+        dip_ignored = [
+            field for field in ("quality_dip_assessment", "event_direction", "quality_dip_facts")
+            if isinstance(base.get("position_sizing"), Mapping) and field in base["position_sizing"]
+        ]
+        if dip_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key not in dip_ignored}
+            base["content_sha256"] = decision_policy_sha256(base)
         # agent_swap 依賴 exposure_rotation／rebound_participation（回放都略過）與封存 run 沒有的換股提名：必須先於它們移除，
         # 否則前提驗證會失敗；沒有閘門的舊回放 notes 與 policy 逐位元不變。
         swap_ignored = isinstance(base.get("position_sizing"), Mapping) and "agent_swap" in base["position_sizing"]
@@ -318,6 +329,8 @@ def bind_replay_policy(
         notes["agent_swap"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
+    for field in dip_ignored:
+        notes[field] = "ignored_in_replay"
     if release_replayed_as_v4:
         notes["drawdown_derisk_v5"] = "replayed_as_v4"
     return policy, notes

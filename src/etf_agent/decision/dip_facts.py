@@ -37,6 +37,14 @@ from .fields import DecisionToolError, decimal_value, reject_unknown_fields
 from .momentum import MIN_REGIME_COVERAGE
 
 QUALITY_DIP_FACTS = "v1"
+QUALITY_DIP_ASSESSMENT = "v1"
+QUALITY_DIP_ASSESSMENT_FIELDS = {"version"}
+# 事件分析師對每則事件的方向列舉（position_sizing.event_direction 啟用才有）：只描述該則事件對公司的方向，不是整檔 event_outlook。
+QUALITY_DIP_EVENT_DIRECTION = "v1"
+QUALITY_DIP_EVENT_DIRECTION_FIELDS = {"version"}
+EVENT_DIRECTIONS = ("positive", "negative", "neutral", "unknown")
+# 交易 Agent 對 buy／add 的列舉（紀錄用，與意圖、信心不設對應）：價格事實不可用時只能 undetermined。
+DIP_ASSESSMENTS = ("not_a_dip", "market_driven", "oversold_cause_unclear", "stock_specific", "undetermined")
 QUALITY_DIP_FACTS_FIELDS = {"version"}
 DIP_FACTS_SCHEMA_VERSION = "1.0"
 DIP_FACTS_KEY = "dip_facts"  # team_inputs 的選配鍵：與 Policy 閘門雙向同時存在
@@ -96,6 +104,73 @@ def validate_quality_dip_facts_gate(sizing: Mapping[str, object], errors: List[s
     reject_unknown_fields(gate, QUALITY_DIP_FACTS_FIELDS, prefix, errors)
     if gate.get("version") != QUALITY_DIP_FACTS:
         errors.append("%s.version 只允許 %s" % (prefix, QUALITY_DIP_FACTS))
+
+
+def quality_dip_assessment_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """quality_dip_assessment 啟用時回傳閘門物件；沒有閘門回 None（交易意圖欄位與舊版完全相同，出現 dip_assessment 即拒絕）。"""
+    gate = sizing.get("quality_dip_assessment") if isinstance(sizing, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def validate_quality_dip_assessment_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """閘門形狀：{version: v1}。前提 quality_dip_facts 由 GATE_PREREQUISITES 檢查，typed_evidence_v1 在驗證交易意圖時檢查。"""
+    gate = sizing["quality_dip_assessment"]
+    prefix = "position_sizing.quality_dip_assessment"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, QUALITY_DIP_ASSESSMENT_FIELDS, prefix, errors)
+    if gate.get("version") != QUALITY_DIP_ASSESSMENT:
+        errors.append("%s.version 只允許 %s" % (prefix, QUALITY_DIP_ASSESSMENT))
+
+
+def event_direction_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """event_direction 啟用時回傳閘門物件；沒有閘門回 None（事件報告與新壞事的事件面判準與舊版相同）。"""
+    gate = sizing.get("event_direction") if isinstance(sizing, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def validate_event_direction_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """閘門形狀：{version: v1}。前提 quality_dip_facts 由 GATE_PREREQUISITES 檢查。"""
+    gate = sizing["event_direction"]
+    prefix = "position_sizing.event_direction"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, QUALITY_DIP_EVENT_DIRECTION_FIELDS, prefix, errors)
+    if gate.get("version") != QUALITY_DIP_EVENT_DIRECTION:
+        errors.append("%s.version 只允許 %s" % (prefix, QUALITY_DIP_EVENT_DIRECTION))
+
+
+def validate_event_directions(event_report: Mapping[str, object], errors: List[str]) -> None:
+    """event_direction 啟用時，事件報告的每則事件都必須有列舉內的 direction（Finalizer 重建驗證用）。"""
+    for item in event_report.get("items", []):
+        for event in item.get("events", []) if isinstance(item, Mapping) else []:
+            if not isinstance(event, Mapping) or event.get("direction") not in EVENT_DIRECTIONS:
+                errors.append(
+                    "team_inputs.analyst_reports.event：%s 的事件 %s 必須有 direction（%s）；已啟用 position_sizing.event_direction"
+                    % (item.get("symbol"), event.get("evidence_id") if isinstance(event, Mapping) else "?", "／".join(EVENT_DIRECTIONS))
+                )
+
+
+def validate_dip_assessment(
+    item: Mapping[str, object], symbol: str, prefix: str, facts: Optional[Mapping[str, object]], errors: List[str],
+) -> None:
+    """buy／add 的 ``dip_assessment``：必填、只驗列舉值域；該股價格事實不可用（含整份 unavailable、找不到該股）時只能 undetermined。
+    不驗與意圖、信心或 candidate 的對應（純紀錄，不影響配置）。"""
+    value = item.get("dip_assessment")
+    if value not in DIP_ASSESSMENTS:
+        errors.append("%s.dip_assessment 必須是 %s" % (prefix, "／".join(DIP_ASSESSMENTS)))
+        return
+    if not isinstance(facts, Mapping):
+        errors.append("%s：quality_dip_assessment 需要 team_inputs.dip_facts（無法確認該股價格事實是否可用）" % prefix)
+        return
+    row = next((entry for entry in facts.get("items", []) if str(entry.get("symbol", "")).upper() == symbol), None)  # type: ignore[union-attr]
+    unavailable = facts.get("data_status") != "available" or row is None or row.get("price_pattern") == "unavailable"
+    if unavailable and value != "undetermined":
+        errors.append(
+            "%s.dip_assessment：該股價格事實為 unavailable（資料不足，無法判斷是否被大盤拖累），只能填 undetermined" % prefix
+        )
 
 
 def _q(value: Decimal) -> str:
@@ -481,8 +556,13 @@ def _cash_flow_flags(cash: Optional[Mapping[str, object]], concerns: List[Dict[s
 
 
 def _event_flags(event_item: Optional[Mapping[str, object]], documents: _Documents, base: Optional[str],
-                 adverse: List[Dict[str, object]], unknown: List[Dict[str, object]]) -> None:
-    """事件面：整檔 event_outlook 為 negative，且視窗內新可得的事件有 materiality: high（第二階段前的弱判準）。"""
+                 adverse: List[Dict[str, object]], unknown: List[Dict[str, object]], by_direction: bool = False) -> None:
+    """事件面。舊判準：整檔 event_outlook 為 negative，且視窗內新可得的事件有 materiality: high。
+    ``by_direction``（position_sizing.event_direction）：改看每則事件——視窗內新可得、materiality high 且 direction 為 negative；
+    high 事件缺 direction（舊報告或 Agent 漏填）列「不知道」，不當成通過也不當成利空。"""
+    if by_direction:
+        _event_direction_flags(event_item, documents, base, adverse, unknown)
+        return
     if not isinstance(event_item, Mapping):
         unknown.append({"item": "high_event_negative_outlook", "reason_code": "NO_EVENT_REPORT_ITEM"})
         return
@@ -501,6 +581,31 @@ def _event_flags(event_item: Optional[Mapping[str, object]], documents: _Documen
         adverse.append({"item": "high_event_negative_outlook", "evidence_ids": sorted(high)})
 
 
+def _event_direction_flags(event_item: Optional[Mapping[str, object]], documents: _Documents, base: Optional[str],
+                           adverse: List[Dict[str, object]], unknown: List[Dict[str, object]]) -> None:
+    if not isinstance(event_item, Mapping):
+        unknown.append({"item": "high_event_negative_direction", "reason_code": "NO_EVENT_REPORT_ITEM"})
+        return
+    negative: List[str] = []
+    undirected: List[str] = []
+    for event in event_item.get("events", []):
+        if not isinstance(event, Mapping) or event.get("materiality") != "high":
+            continue
+        moment = documents.available_by_evidence.get(str(event.get("evidence_id")))
+        if moment is None or not _is_new(moment, base):
+            continue
+        direction = event.get("direction")
+        if direction == "negative":
+            negative.append(str(event["evidence_id"]))
+        elif direction not in EVENT_DIRECTIONS:
+            undirected.append(str(event["evidence_id"]))
+    if negative:
+        adverse.append({"item": "high_event_negative_direction", "evidence_ids": sorted(negative)})
+    if undirected:
+        unknown.append({"item": "high_event_negative_direction", "reason_code": "EVENT_DIRECTION_MISSING",
+                        "evidence_ids": sorted(undirected)})
+
+
 def _sorted(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
     return sorted(rows, key=lambda row: canonical_sha256(row))
 
@@ -512,7 +617,7 @@ def _latest_iso(rows: Sequence[Tuple[object, Mapping[str, object]]]) -> Optional
 def _fundamental_flags(
     bundle: Mapping[str, object], fundamental_metrics: Optional[Mapping[str, object]], documents: _Documents,
     cash: Mapping[str, Mapping[str, object]], base: Optional[str], symbol: str,
-    event_report: Optional[Mapping[str, object]],
+    event_report: Optional[Mapping[str, object]], event_direction: bool = False,
 ) -> Dict[str, object]:
     metrics_by_symbol = {
         str(item.get("symbol", "")).upper(): item
@@ -528,7 +633,7 @@ def _fundamental_flags(
     _cash_flow_flags(cash.get(symbol), concerns, unknown)
     if event_report is not None:
         items = {str(item.get("symbol", "")).upper(): item for item in event_report.get("items", []) if isinstance(item, Mapping)}
-        _event_flags(items.get(symbol), documents, base, adverse, unknown)
+        _event_flags(items.get(symbol), documents, base, adverse, unknown, event_direction)
     revenue_rows = documents.of("monthly_revenue", symbol)
     financial_rows = documents.of("financial_statement", symbol)
     newest = [moment for moment, _ in (*revenue_rows, *financial_rows)]
@@ -558,7 +663,7 @@ def _require_inputs(bundle: Mapping[str, object]):
 
 def _compute(
     bundle: Mapping[str, object], gate: Mapping[str, object], fundamental_metrics: Optional[Mapping[str, object]],
-    event_report: Optional[Mapping[str, object]],
+    event_report: Optional[Mapping[str, object]], event_direction: bool = False,
 ) -> Tuple[Dict[str, object], Dict[str, Dict[str, object]], List[str]]:
     errors: List[str] = []
     validate_quality_dip_facts_gate({"quality_dip_facts": gate}, errors)
@@ -569,7 +674,9 @@ def _compute(
     documents = _Documents(bundle, cutoff)
     cash = cash_flow_context(bundle)
     for symbol, entry in per_symbol.items():
-        entry["fundamental_flags"] = _fundamental_flags(bundle, fundamental_metrics, documents, cash, base, symbol, event_report)
+        entry["fundamental_flags"] = _fundamental_flags(
+            bundle, fundamental_metrics, documents, cash, base, symbol, event_report, event_direction,
+        )
     return meta, per_symbol, gaps
 
 
@@ -584,12 +691,13 @@ def _candidate(pattern: str, flags: Mapping[str, object]) -> Tuple[str, Optional
 
 def build_dip_facts(
     bundle: Mapping[str, object], gate: Mapping[str, object], fundamental_metrics: Optional[Mapping[str, object]],
-    event_report: Mapping[str, object],
+    event_report: Mapping[str, object], event_direction: bool = False,
 ) -> Dict[str, object]:
-    """完整事實（交易 Agent 背景與 team_inputs.dip_facts）：含事件面一項、price_pattern 與 candidate。"""
+    """完整事實（交易 Agent 背景與 team_inputs.dip_facts）：含事件面一項、price_pattern 與 candidate。
+    ``event_direction`` 為 True（position_sizing.event_direction）時事件面改看每則事件的 direction；預設 False，與舊版逐位元相同。"""
     if not isinstance(event_report, Mapping):
         raise DecisionToolError("dip_facts 需要事件分析師報告（事件面負面一項）")
-    meta, per_symbol, gaps = _compute(bundle, gate, fundamental_metrics, event_report)
+    meta, per_symbol, gaps = _compute(bundle, gate, fundamental_metrics, event_report, event_direction)
     items = []
     for symbol in sorted(per_symbol):
         entry = per_symbol[symbol]
@@ -658,8 +766,13 @@ def validate_dip_facts(
     reports = team.get("analyst_reports")
     event = reports.get("event") if isinstance(reports, Mapping) else None
     metrics = team.get("fundamental_metrics")
+    by_direction = event_direction_gate(policy.get("position_sizing")) is not None
+    if by_direction and isinstance(event, Mapping):
+        validate_event_directions(event, errors)
     try:
-        expected = build_dip_facts(bundle, gate, metrics if isinstance(metrics, Mapping) else None, event)  # type: ignore[arg-type]
+        expected = build_dip_facts(
+            bundle, gate, metrics if isinstance(metrics, Mapping) else None, event, by_direction,  # type: ignore[arg-type]
+        )
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:
         errors.append("%s 無法以共同輸入重算：%s" % (prefix, error))
         return
@@ -700,7 +813,9 @@ def dip_reference_tokens(facts: Optional[Mapping[str, object]]) -> List[str]:
 
 
 __all__ = [
-    "CANDIDATES", "DIP_FACTS_KEY", "PRICE_PATTERNS", "QUALITY_DIP_FACTS", "analyst_dip_view", "build_dip_facts",
+    "CANDIDATES", "DIP_ASSESSMENTS", "DIP_FACTS_KEY", "QUALITY_DIP_ASSESSMENT", "quality_dip_assessment_gate",
+    "EVENT_DIRECTIONS", "event_direction_gate", "validate_event_direction_gate", "validate_event_directions",
+    "validate_dip_assessment", "validate_quality_dip_assessment_gate", "PRICE_PATTERNS", "QUALITY_DIP_FACTS", "analyst_dip_view", "build_dip_facts",
     "dip_background_brief", "dip_reference_tokens", "quality_dip_facts_gate", "validate_dip_facts",
     "validate_quality_dip_facts_gate",
 ]

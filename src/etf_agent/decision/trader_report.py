@@ -69,11 +69,15 @@ def render_trader_report(
     position_review: Optional[Mapping[str, object]] = None,
     hold_conviction: bool = False,
     reentry_hint_symbols: Optional[Sequence[str]] = None,
+    dip_facts: Optional[Mapping[str, object]] = None,
+    dip_assessment: bool = False,
 ) -> str:
-    """保留原判斷，只將識別碼、等級與長段落轉成閱讀版。"""
+    """保留原判斷，只將識別碼、等級與長段落轉成閱讀版。
+
+    ``dip_facts``／``dip_assessment`` 與交易驗證一致（quality_dip_facts／quality_dip_assessment 閘門）；沒有閘門時驗證不變。"""
     errors = TradeDecisionValidator(
         bundle, momentum, debate, position_review=position_review, hold_conviction=hold_conviction,
-        reentry_hint_symbols=reentry_hint_symbols,
+        reentry_hint_symbols=reentry_hint_symbols, dip_facts=dip_facts, dip_assessment=dip_assessment,
     ).validate(trade)
     if errors:
         raise DecisionToolError("交易整合結果驗證失敗：" + "；".join(errors))

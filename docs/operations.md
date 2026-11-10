@@ -243,6 +243,18 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 
 各排程的日誌位置：`daily` 在 `var/logs/launchd.log`；`data`、`finmind-news` 在 `artifacts/daily/`；看門狗、反思與隔夜背景在 `var/logs/`。
 
+## 估值資料收集（V1，選用、尚未掛排程）
+
+只收集與稽核，不進決策、簡報或報告；僅上市股。每次抓取是一個不可變 run（`artifacts/valuation_collection/<日期>/valuation-<UTC 時間>/`）。
+
+```bash
+.venv/bin/python cli/valuation_collect.py collect                              # 每天一次；預設補資料日前 14 天
+.venv/bin/python cli/valuation_collect.py collect --history-start 2019-01-02   # 第一次建歷史
+.venv/bin/python cli/valuation_collect.py validate <run_id>                    # 以原始回應整份重建比對
+```
+
+退出碼：0 全部相符、2 有股票被拒絕、1 整份失敗。官方端點沒有歷史，越早每天跑越好；之後掛進排程時必須以盡力而為包住，失敗只記錄、不得讓決策或 D-Plan 失敗。回滾＝停止執行並刪除 `artifacts/valuation_collection/`，不影響任何決策。
+
 ## 每週的人工事項：策略反思放行
 
 週五的反思週報會提出策略調整提案，週六 10:00 自動套用「降低風險方向」的提案。週報標 `needs_human` 的提案（加風險或方向不明）要你看過後手動放行，編號必須是最近一份待套用的反思：

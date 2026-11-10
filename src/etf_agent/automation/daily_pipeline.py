@@ -38,7 +38,7 @@ from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
-from etf_agent.decision.dip_facts import build_dip_facts, quality_dip_facts_gate
+from etf_agent.decision.dip_facts import build_dip_facts, event_direction_gate, quality_dip_assessment_gate, quality_dip_facts_gate
 from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, apply_swap_nomination, bind_thesis_hints
@@ -294,8 +294,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         with self._timed("analysts"):
             # quality_dip_facts（版本閘門）：技術／基本面分析師簡報多附程式事實；沒有閘門（或只評測分析師）時簡報與舊版逐鍵相同。
             dip_gate = quality_dip_facts_gate((base_policy or {}).get("position_sizing"))
-            analysts = (self.run_analyst_team(bundle, momentum, database_path, dip_gate=dip_gate) if dip_gate is not None
-                        else self.run_analyst_team(bundle, momentum, database_path))
+            direction = event_direction_gate((base_policy or {}).get("position_sizing")) is not None
+            analysts = (self.run_analyst_team(bundle, momentum, database_path, dip_gate=dip_gate, event_direction=direction)
+                        if dip_gate is not None else self.run_analyst_team(bundle, momentum, database_path))
         if stop_after == "analysts":
             return
 
@@ -369,7 +370,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         if dip_gate is not None:
             if fundamental_period_policy(bundle) is None:
                 raise DailyPipelineError("policy 啟用 quality_dip_facts 時 bundle 必須有 fundamental_period_policy（team_inputs 2.6 以上）")
-            dip_facts = build_dip_facts(bundle, dip_gate, self.fundamental_metrics, analysts["event"])
+            dip_facts = build_dip_facts(bundle, dip_gate, self.fundamental_metrics, analysts["event"], direction)
             self.save_artifact("dip_facts", dip_facts)
 
         # held_weight_budget v2：持股權重事實（現有權重、單股上限、high 份額下限）只給交易 Agent 當背景，另存進
@@ -388,6 +389,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 exposure_review, **({"dip_facts": dip_facts} if dip_facts is not None else {}),
                 **({"held_weight_facts": held_weight_facts} if held_weight_facts is not None else {}),
                 **({"reentry_hint_symbols": reentry_hints} if reentry_hints is not None else {}),
+                **({"dip_assessment": True} if quality_dip_assessment_gate((base_policy or {}).get("position_sizing")) is not None else {}),
             )
 
         # 樣板啟用 position_sizing.selection_ranking 才加這一步；沒有的樣板維持舊排序與 team_inputs 版本。

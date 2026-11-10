@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-10-rebound-v2-1",
-  "available_at": "2026-11-10T01:37:00+08:00",
+  "policy_id": "strategy-2026-11-10-autonomy-gates-1",
+  "available_at": "2026-11-10T17:40:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -60,6 +60,9 @@
     "cash_stance_turn_facts": {"version": "v1"},
     "market_index_facts": {"version": "v1"},
     "exposure_view": {"version": "v1"},
+    "quality_dip_facts": {"version": "v1"},
+    "quality_dip_assessment": {"version": "v1"},
+    "event_direction": {"version": "v1"},
     "exposure_rotation": {
       "version": "v3",
       "beta_window_days": 60,
@@ -86,11 +89,11 @@
     "sector_fit": "v1",
     "turnover_fit": "v1",
     "reentry_cooldown": {
-      "version": "v1",
+      "version": "v2",
       "days": 3
     },
     "drawdown_derisk": {
-      "version": "v4",
+      "version": "v5",
       "max_derisk_fraction": "0.25"
     },
     "rotation": {
