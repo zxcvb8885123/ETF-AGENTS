@@ -166,6 +166,18 @@ CASH_ANCHOR_FIELDS = {"status", "ratio", "source"}
 CASH_ANCHOR_SOURCE_FIELDS = {
     "run_id", "selection", "target_session_start", "decision_sha256", "proposal_id", "proposal_sha256",
 }
+# 換股改由交易 Agent 提名（agent_swap 版本閘門，只由人設定；docs/agent_nominated_rotation_plan.md 第 3 節）：
+# v1 為影子（跑第二輪提名、封存、重建驗證，配置完全不讀提名，訂單與旗標與沒有此欄位時相同）；
+# v2 為正式（配置依提名換股，且與 rotation.forced_swap、exposure_rotation.conviction_gap_swap 互斥）。
+# thesis_hint_symbols／verdicts_ref 由 pipeline 綁定（thesis_verdicts 的 broken 名單），樣板不得預填，重建只讀 Policy。
+# 省略此欄位的舊 Policy／舊 Decision run 逐位元維持原重建行為。
+AGENT_SWAP_V1 = "v1"
+AGENT_SWAP_V2 = "v2"
+AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
+AGENT_SWAP_FIELDS = {"version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref"}
+AGENT_SWAP_REQUIRED_FIELDS = {"version", "max_swaps_per_run", "min_holding_days"}
+AGENT_SWAP_MAX_SWAPS = (1, 10)
+AGENT_SWAP_MIN_HOLDING_DAYS = (0, 60)
 _TWO_DECIMALS = re.compile(r"^0\.[0-9]{2}$")
 _ANCHOR_RATIO = re.compile(r"^[01]\.[0-9]{8}$")
 
@@ -289,6 +301,16 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="持股 beta 事實＋hold 信心＋有上限有死區的曝險換股；position_review（Policy 頂層）由 DecisionPolicyValidator 檢查；"
              "held_since_by_symbol 由 pipeline 依帳本綁定（bind_holding_days），Finalizer 以帳本重算；team_inputs 須為 2.7；"
              "內含 hold_conviction（必填 v1）與 conviction_gap_swap（選填 v1）的值域由 validate_exposure_rotation_gate 檢查",
+    ),
+    GateRule(
+        "agent_swap",
+        requires=(
+            "selection_ranking", "rotation", "held_add_priority", "reentry_cooldown", "turnover_fit", "cash_buffer_floor",
+            "exposure_rotation", "rebound_participation",
+        ),
+        note="換股改由交易 Agent 第二輪提名：v1 影子（配置不讀提名）、v2 正式；頂層 position_review、exposure_rotation=v3、"
+             "rebound_participation=v2 與 v2 的互斥（rotation.forced_swap、exposure_rotation.conviction_gap_swap）由 _validate_agent_swap 檢查；"
+             "thesis_hint_symbols／verdicts_ref 由 pipeline 綁定（swap_nomination.bind_thesis_hints），重建只讀 Policy；team_inputs 須為 2.9",
     ),
     GateRule(
         "cash_stance_recency",
@@ -526,6 +548,54 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "rebound_participation" in sizing:
         from .rebound import validate_rebound_gate
         validate_rebound_gate(sizing, errors)
+    if "agent_swap" in sizing:
+        _validate_agent_swap(sizing, errors)
+
+
+def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> None:
+    """agent_swap 的形狀、值域與版本相依。其他閘門「存在」的前提由 GATE_PREREQUISITES 檢查；這裡檢查它們的版本，
+    以及 v2 與舊換股路徑（forced_swap、conviction_gap_swap）的互斥。頂層 position_review 在 validate_position_sizing 檢查。"""
+    gate = sizing["agent_swap"]
+    prefix = "position_sizing.agent_swap"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, AGENT_SWAP_FIELDS, prefix, errors)
+    missing = sorted(AGENT_SWAP_REQUIRED_FIELDS - set(gate))
+    if missing:
+        errors.append("%s 缺少必要欄位（由人設定，程式不提供預設值）：%s" % (prefix, "、".join(missing)))
+    version = gate.get("version")
+    if version not in AGENT_SWAP_VERSIONS:
+        errors.append("%s.version 只允許 %s" % (prefix, "／".join(AGENT_SWAP_VERSIONS)))
+    for field, (low, high) in (("max_swaps_per_run", AGENT_SWAP_MAX_SWAPS), ("min_holding_days", AGENT_SWAP_MIN_HOLDING_DAYS)):
+        if field in gate:
+            value = gate[field]
+            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+                errors.append("%s.%s 必須是 %d～%d 的整數" % (prefix, field, low, high))
+    hints, ref = gate.get("thesis_hint_symbols"), gate.get("verdicts_ref")
+    if hints is not None:
+        if (not isinstance(hints, list) or not hints or not all(isinstance(s, str) and s and s == s.upper() for s in hints)
+                or hints != sorted(set(hints))):
+            errors.append("%s.thesis_hint_symbols 必須是排序且不重複的非空大寫代號清單（只能由 pipeline 綁定）" % prefix)
+        if "verdicts_ref" not in gate:
+            errors.append("%s.thesis_hint_symbols 必須附 verdicts_ref" % prefix)
+    if "verdicts_ref" in gate:
+        if not isinstance(ref, Mapping) or set(ref) != VERDICTS_REF_FIELDS or not all(isinstance(v, str) and v for v in ref.values()):
+            errors.append("%s.verdicts_ref 欄位必須是 verdicts_id、as_of、sha256 的非空字串" % prefix)
+        elif hints is None:
+            errors.append("%s.verdicts_ref 必須附 thesis_hint_symbols" % prefix)
+    exposure = sizing.get("exposure_rotation")
+    if isinstance(exposure, Mapping) and exposure.get("version") != "v3":
+        errors.append("%s 只允許用於 exposure_rotation.version=v3（提供 hold 信心、持有天數與 exposure_review）" % prefix)
+    rebound = sizing.get("rebound_participation")
+    if isinstance(rebound, Mapping) and rebound.get("version") != "v2":
+        errors.append("%s 只允許用於 rebound_participation.version=v2（team_inputs 2.9 是 2.8 的超集）" % prefix)
+    if version == AGENT_SWAP_V2:
+        rotation = sizing.get("rotation")
+        if isinstance(rotation, Mapping) and "forced_swap" in rotation:
+            errors.append("%s.version=v2 不得與 rotation.forced_swap 同時啟用（論點被推翻改為提名時必須回應的提示）" % prefix)
+        if isinstance(exposure, Mapping) and "conviction_gap_swap" in exposure:
+            errors.append("%s.version=v2 不得與 exposure_rotation.conviction_gap_swap 同時啟用（換股由 Agent 提名）" % prefix)
 
 
 def _ratio_in_open_unit(raw: object, label: str, errors: List[str], allow_one: bool) -> None:
@@ -968,6 +1038,8 @@ def validate_position_sizing(
     validate_gate_prerequisites(sizing, errors)
     _validate_volatility_exponent(sizing, errors)
     _validate_execution_gates(sizing, errors)
+    if "agent_swap" in sizing and "position_review" not in policy:
+        errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
     if "cash_ratio_range" in sizing:
         _validate_cash_ratio_range(policy, sizing, errors)
     _validate_rotation(sizing, errors)

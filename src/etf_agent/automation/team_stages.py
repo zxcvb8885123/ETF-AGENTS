@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.decision import (
     AnalystReportValidator,
+    DecisionToolError,
     PriorDecisionContextValidator,
     ResearchDebateBundleValidator,
     StancePacketValidator,
@@ -16,6 +17,7 @@ from etf_agent.decision import (
     build_prior_decision_context,
     build_research_debate,
     build_stance_brief,
+    canonical_sha256,
     compute_fundamental_metrics,
     find_prior_decision_run,
     prior_decision_brief,
@@ -37,6 +39,18 @@ from etf_agent.decision import (
 from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_market_report
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.stance import STANCE_ROLES
+from etf_agent.decision.swap_nomination import (
+    STATUS_EXHAUSTED,
+    STATUS_NOT_NEEDED,
+    STATUS_UNAVAILABLE,
+    SwapNominationValidator,
+    nomination_envelope,
+    nomination_facts,
+    needs_nomination,
+    program_nomination,
+    seal_swap_nomination,
+    swap_nomination_brief,
+)
 from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
 from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_brief
 
@@ -45,6 +59,7 @@ from .agent_schemas import (
     EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
     RANKING_SCHEMA,
+    SWAP_NOMINATION_SCHEMA,
     TRADE_SCHEMA,
     _CLAIM_KIND_RULES,
     _EVENT_RULES,
@@ -472,3 +487,64 @@ class TeamStagesMixin:
             raise DailyPipelineError("SelectionRanking 驗證失敗：" + "；".join(errors[:10]))
         self.save_artifact("selection_ranking", ranking)
         return ranking
+
+    def run_swap_nomination(
+        self,
+        bundle: Mapping[str, object],
+        policy: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+        ranking: Mapping[str, object],
+        debate: Mapping[str, object],
+        position_review: Mapping[str, object],
+        exposure_review: Mapping[str, object],
+        prior_context: Optional[Mapping[str, object]],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """5c 換股提名（agent_swap 閘門）：交易 Agent 在入選排序之後，提名「用哪檔新股換掉哪檔持股」的有序清單。
+
+        ``policy`` 是 5c 時的基礎 Policy（reentry_cooldown、持有天數與論點提示已綁入）。程式判定不需要時直接封存 ``not_needed``、
+        不呼叫 Agent；驗證最多三次嘗試，用盡封存 ``exhausted``、暫時性失敗重試後仍失敗封存 ``unavailable``（空清單，其餘決策照常）；
+        安全拒絕仍整個停止。v1（影子）與 v2 的簡報、提示與 Skill 完全相同，這裡不讀 ``agent_swap.version``。"""
+        envelope = nomination_envelope(bundle, trade_decision, ranking, "swap-nomination:%s" % run_id)
+        try:
+            facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review)
+        except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+            raise DailyPipelineError("換股提名無法由共同輸入建立事實：%s" % error) from error
+        validator = SwapNominationValidator(
+            bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, prior_context=prior_context,
+        )
+        if not needs_nomination(facts):
+            nomination = program_nomination(envelope, STATUS_NOT_NEEDED)
+        else:
+            try:
+                brief = swap_nomination_brief(
+                    bundle, policy, trade_decision, ranking, debate, position_review, exposure_review,
+                    load_thesis_verdicts(self.root, bundle["decision_cutoff"]),
+                )
+            except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+                raise DailyPipelineError("換股提名簡報建立失敗：%s" % error) from error
+            brief_path = self.save_brief("brief_swap_nomination", brief)
+            task = AgentTask(
+                "swap_nominator",
+                "你是 $trader 交易 Agent，現在做**第三步：換股提名**。先讀 %s，再讀 %s。"
+                "第一輪與入選排序已完成；你只決定「若需要名額，依序用哪檔新股換掉哪檔持股」，輸出有先後的配對清單，"
+                "每一對引用簡報列出的依據識別碼並附白話理由；沒有合適的配對就輸出空清單並說明原因。"
+                "簡報的 thesis_hints 每檔都必須在 thesis_hint_responses 回應一次。%s"
+                % (self.root / "tradeagent/trading/trader/references/swap-nomination.md", brief_path, _SHARED_RULES),
+                SWAP_NOMINATION_SCHEMA,
+            )
+            fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
+            outcome = self.agent_step_degradable(
+                task, lambda output: seal_swap_nomination(envelope, output), validator.validate, fingerprint,
+            )
+            if outcome.artifact is not None:
+                nomination = outcome.artifact
+            elif outcome.status in (STATUS_EXHAUSTED, STATUS_UNAVAILABLE):
+                nomination = program_nomination(envelope, outcome.status, outcome.errors)
+            else:
+                raise DailyPipelineError("換股提名未預期的步驟狀態：%s" % outcome.status)
+        errors = validator.validate(nomination)
+        if errors:
+            raise DailyPipelineError("SwapNomination 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("swap_nomination", nomination)
+        return nomination

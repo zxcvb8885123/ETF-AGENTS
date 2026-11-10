@@ -246,7 +246,7 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 ## 旁觀者（不在決策鏈內）
 
-- **校準**（`src/etf_agent/calibration/`）：只讀已封存決策與官方價量，記錄信心與多空強度，價格到齊後算前瞻報酬並審計前日收盤與當日均價的差距。決策、自動化與風控都不匯入它。口徑見[校準旁觀者](../src/etf_agent/calibration/README.md)。
+- **校準**（`src/etf_agent/calibration/`）：只讀已封存決策與官方價量，記錄信心與多空強度，價格到齊後算前瞻報酬審計前日收盤與當日均價的差距，並統計買進意圖落地率（`cli/calibration.py intent-landing`，唯讀）。決策、自動化與風控都不匯入它。口徑見[校準旁觀者](../src/etf_agent/calibration/README.md)。
 - **策略反思**（`src/etf_agent/strategy_reflection/`）：每週讓 Agent 提出策略旋鈕調整提案，經程式驗證與影子回放才改寫 `config/decision_policy.json`。
   - 自動套用只放行降風險方向；加風險或方向不明的提案只封存並標「需人處理」，須人用 `apply-pending --allow-risk-increase <reflection_id>` 套用。
   - 影子回放比的是對交易池等權基準的超額，且在兩段不重疊子區間都不得劣於基準或目前策略。回放只重算封存的 Agent 意圖，**不是對 LLM 判斷的前瞻驗證**，只有比賽期間的即時紀錄才算證據。

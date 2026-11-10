@@ -167,6 +167,8 @@ FORBIDDEN_PREFIXES = (
     "slot_recycle",
     # 反彈參與閘門：程式狀態與風險 Agent 列舉雙鑰匙放寬曝險換股，切換程式路徑，只由人設定（含綁定的 effective_state）。
     "rebound_participation",
+    # 換股改由交易 Agent 提名：版本、對數上限、最短持有天數與綁定的 thesis_hint_symbols／verdicts_ref，切換程式路徑，只由人設定。
+    "agent_swap",
 )
 
 

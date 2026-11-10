@@ -493,7 +493,7 @@ class TeamInputsTests(unittest.TestCase):
     def test_version_table_and_builder(self):
         self.assertEqual(TEAM_FIELDS_BY_VERSION[REBOUND_TEAM_VERSION], REBOUND_TEAM_FIELDS)
         self.assertEqual(TEAM_FIELDS_BY_VERSION["2.7"] | {"turn_state"}, REBOUND_TEAM_FIELDS)
-        self.assertEqual(EXPOSURE_TEAM_VERSIONS, ("2.7", "2.8"))
+        self.assertEqual(EXPOSURE_TEAM_VERSIONS, ("2.7", "2.8", "2.9"))  # 2.9（換股提名）是 2.8 的超集，同樣含曝險檢視
         self.assertEqual(REBOUND_TEAM_VERSION, "2.8")
 
     def test_builder_requires_the_exposure_review_and_keeps_older_versions_unchanged(self):

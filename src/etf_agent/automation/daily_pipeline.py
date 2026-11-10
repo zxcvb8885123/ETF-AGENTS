@@ -39,6 +39,7 @@ from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
+from etf_agent.decision.swap_nomination import agent_swap_gate, bind_thesis_hints, unsupported_gate_version
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
 
@@ -275,6 +276,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             base_policy = bind_holding_days(base_policy, bundle, holdings_history, nav_history)
             if exposure_rotation_gate(base_policy.get("position_sizing")) is not None and fundamental_period_policy(bundle) is None:
                 raise DailyPipelineError("policy 啟用 exposure_rotation 時 bundle 必須有 fundamental_period_policy（team_inputs 2.7 是 2.6 的超集）")
+            swap_unsupported = unsupported_gate_version(base_policy.get("position_sizing"))
+            if swap_unsupported is not None:  # agent_swap v2 的配置尚未實作：Agent 呼叫前就停止，不靜默當影子跑
+                raise DailyPipelineError(swap_unsupported)
             base_policy["content_sha256"] = decision_policy_sha256(base_policy)
             errors = DecisionPolicyValidator(bundle).validate(base_policy, nav_history)
             if errors:
@@ -301,6 +305,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         assert base_policy is not None
         # 強制換股只認「論點被推翻」名單；名單綁進 policy，重建驗證不讀結論檔。
         base_policy = bind_forced_swap(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
+        # 換股提名的論點提示名單同樣綁進 policy（只在啟用 agent_swap 時）；重建驗證只讀 policy。
+        if agent_swap_gate(base_policy.get("position_sizing")) is not None:
+            base_policy = bind_thesis_hints(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
         # 出場冷卻名單由決策庫確定性取得並綁進 policy；重建驗證只讀 policy，不重掃決策庫。
         base_policy = bind_reentry_cooldown(base_policy, self.decision_repository, bundle)
         # 前次決策背景先載入（只給交易 Agent）：cash_ratio_range 的前次現金比例必須取自同一個前次 run。
@@ -357,6 +364,18 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self.log("[decision 5b] 交易 Agent 第二輪：同信心等級內決定入選先後")
             with self._timed("ranking"):
                 ranking = self.run_selection_ranking(bundle, momentum, analysts, debate, trade, decision_run_id)
+
+        # 樣板啟用 position_sizing.agent_swap（v1 影子）才加這一步；5c 的提名只封存、不影響配置，team_inputs 升為 2.9。
+        swap_nomination = None
+        if agent_swap_gate(base_policy.get("position_sizing")) is not None:
+            if ranking is None or position_review is None or exposure_review is None or turn_state is None:
+                raise DailyPipelineError(
+                    "policy 啟用 agent_swap 時也必須啟用 selection_ranking、position_review、exposure_rotation 與 rebound_participation"
+                    "（team_inputs 2.9 是 2.8 的超集）")
+            self.log("[decision 5c] 交易 Agent 第三步：換股提名（有先後的配對清單）")
+            with self._timed("swap_nomination"):
+                swap_nomination = self.run_swap_nomination(
+                    bundle, base_policy, trade, ranking, debate, position_review, exposure_review, prior_context, decision_run_id)
 
         self.log("[decision 6] 建立 policy，風險 Agent 給現金姿態")
         self.save_artifact("policy_base", base_policy)
@@ -424,6 +443,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"fundamental_metrics": self.fundamental_metrics} if fundamental_period_policy(bundle) is not None else {}),
             **({"exposure_review": exposure_review} if exposure_review is not None else {}),
             **({"turn_state": turn_state} if turn_state is not None else {}),
+            **({"swap_nomination": swap_nomination} if swap_nomination is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history

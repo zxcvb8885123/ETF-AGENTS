@@ -91,6 +91,23 @@ _RANK_TIER = _object(
     ("conviction", "ordered"),
 )
 RANKING_SCHEMA = _object({"tiers": {"type": "array", "items": _RANK_TIER}}, ("tiers",))
+# 5c 換股提名（position_sizing.agent_swap）：只有代號、依據識別碼、列舉與文字，沒有任何數字欄位。
+# no_nomination_reason 只在 nominations 為空時出現，所以不列入 required（有提名時 Validator 拒絕此欄位）。
+_SWAP_PAIR = _object(
+    {"buy_symbol": _TEXT, "sell_symbol": _TEXT, "buy_basis_ids": _strings(1), "sell_basis_ids": _strings(1), "reason": _TEXT},
+    ("buy_symbol", "sell_symbol", "buy_basis_ids", "sell_basis_ids", "reason"),
+)
+_THESIS_HINT_RESPONSE = _object(
+    {"symbol": _TEXT, "response": {"enum": ["nominated", "kept"]}, "reason": _TEXT}, ("symbol", "response", "reason"),
+)
+SWAP_NOMINATION_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "no_nomination_reason": _TEXT,
+    },
+    ("nominations", "thesis_hint_responses"),
+)
 CASH_STANCE_SCHEMA = _object(
     {"level": {"enum": list(CASH_STANCES)}, "breadth": {"enum": list(POSITION_BREADTHS)},
      "rationale": _TEXT, "evidence_ids": _strings(1)},

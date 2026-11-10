@@ -70,6 +70,7 @@ _MIN_SECRET_LENGTH = 8
 LATER_STAGE_GLOBS = (
     "research_debate*", "debate*", "intent*", "trade_decision*",
     "trader_*", "brief_trader_*", "team_inputs*", "selection_ranking*",
+    "swap_nomination*", "swap_nominator*",  # 5c 換股提名（agent_swap）的輸出與嘗試紀錄，研究員不得讀
 )
 
 

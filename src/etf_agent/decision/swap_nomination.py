@@ -1,0 +1,893 @@
+"""換股提名（階段 3 的 5c）：交易 Agent 在入選排序之後、風險 Agent 之前，提名「用哪檔新股換掉哪檔持股」。
+
+設計見 ``docs/agent_nominated_rotation_plan.md``。本模組只含純函式與 Validator（不碰 pipeline、不呼叫 Agent）：
+
+- 信封與封存：``nomination_envelope``／``seal_swap_nomination``／``program_nomination``，做法同 ``selection_ranking``；
+  ``status`` 有四種：``completed``（Agent 提名，含空清單）、``not_needed``（程式判定不需要，不呼叫 Agent）、
+  ``exhausted``（驗證用盡）、``unavailable``（暫時性失敗），後兩者由程式封存、``nominations`` 為空。
+- 事實：``nomination_facts`` 以同一份 bundle、Policy、交易決策、排序、持股檢視與曝險檢視確定性算出可提名的新股與持股、
+  可引用的依據、對數上限與必須回應的論點提示；簡報、``not_needed`` 判定與 Validator 共用它，Finalizer 才能整份重算。
+- 靜態檢查（2.6 A 段）：結構、新股與持股資格、依據引用、論點提示回應、保守現金與換手下界。動態可行性（名額、單股權重、
+  產業、Active Share 等）留到配置，不在這裡檢查。
+- 論點提示綁定：``bind_thesis_hints``／``validate_thesis_hint_binding``，做法同 ``thesis_verdicts.bind_forced_swap``。
+
+Agent 只輸出代號、依據識別碼、列舉與文字，不輸出任何數字；所有數字（對數上限、成本與現金估計）都由程式計算。
+v1（影子）與 v2（正式）的簡報完全相同，函式不讀 ``agent_swap.version``，Agent 不會被告知目前是影子期。
+"""
+
+from __future__ import annotations
+
+import copy
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+
+from .contracts import (
+    DecisionToolError,
+    artifact_content_sha256,
+    decimal_value,
+    reject_unknown_fields,
+    required_string,
+    snapshot_execution_price,
+    validate_forbidden_keys,
+)
+from .exposure import holding_days_by_symbol
+from .position_review import position_ids_by_symbol, review_ids_by_symbol
+from .prior_decision import prior_reference_tokens
+from .selection_ranking import rank_by_symbol
+from .sizing import (
+    CONVICTION_LEVELS,
+    allowed_cash_grades,
+    cash_grade_grid,
+    cash_ratio_gate,
+    reentry_blocked_symbols,
+)
+from .trader import REDUCING, claims_by_symbol
+
+
+SWAP_NOMINATION_VERSION = "1.0"
+STATUS_COMPLETED = "completed"
+STATUS_NOT_NEEDED = "not_needed"
+STATUS_EXHAUSTED = "exhausted"
+STATUS_UNAVAILABLE = "unavailable"
+STATUSES = (STATUS_COMPLETED, STATUS_NOT_NEEDED, STATUS_EXHAUSTED, STATUS_UNAVAILABLE)
+PROGRAM_STATUSES = (STATUS_NOT_NEEDED, STATUS_EXHAUSTED, STATUS_UNAVAILABLE)
+ENVELOPE_FIELDS = {
+    "schema_version", "nomination_id", "bundle_id", "snapshot_id", "decision_cutoff", "bundle_hash",
+    "trade_decision_id", "trade_decision_sha256", "selection_ranking_id", "selection_ranking_sha256",
+    "status", "nominations", "thesis_hint_responses", "no_nomination_reason", "errors", "content_sha256",
+}
+# Agent 的輸出只有這三個鍵；其餘一律拒絕（封存時以 ``x_`` 前綴保留下來讓 Validator 看見，不會覆蓋信封欄位）。
+AGENT_OUTPUT_FIELDS = {"nominations", "thesis_hint_responses", "no_nomination_reason"}
+NOMINATION_FIELDS = {"buy_symbol", "sell_symbol", "buy_basis_ids", "sell_basis_ids", "reason"}
+HINT_RESPONSE_FIELDS = {"symbol", "response", "reason"}
+HINT_RESPONSES = ("nominated", "kept")
+MAX_DEGRADED_ERRORS = 10
+PROGRAM_REASONS = {
+    STATUS_NOT_NEEDED: "沒有需要換股的名額缺口或沒有可提名的配對，由程式直接封存，不呼叫 Agent。",
+    STATUS_EXHAUSTED: "提名的確定性驗證在嘗試用盡後仍未通過，由程式封存為空清單；本次不換股。",
+    STATUS_UNAVAILABLE: "提名的 Agent 呼叫在暫時性失敗重試後仍失敗，由程式封存為空清單；本次不換股。",
+}
+# 新股不可提名的原因代碼、持股不可提名的原因代碼（簡報與 Validator 共用）。
+CANDIDATE_REASONS = ("not_tradable", "reentry_cooldown", "no_price", "conviction_below_threshold", "no_bull_basis")
+VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_bear_basis")
+MONEY = Decimal("1")  # 與 allocation.MONEY 相同的整元進位；估計用，不要求與配置逐位相同
+PRICE_QUANTUM = Decimal("0.01")
+RATE_QUANTUM = Decimal("0.000001")
+BRIEF_NOTE = (
+    "以下事實全部由程式計算。每一對提名都要有換入股自己已採納的多頭論點、換出股自己已採納的空頭論點或持股檢視事實；"
+    "不得引用第一輪已否決的 claim，也不得純粹為了買別檔而賣。名額、權重、張數與現金一律由程式計算，background 區塊沒有 evidence_id，"
+    "只能參考，不可放進依據，文字欄位不得寫出前次決策識別碼。"
+)
+
+
+# ---------------------------------------------------------------- 信封與封存
+
+def nomination_envelope(
+    bundle: Mapping[str, object], trade_decision: Mapping[str, object], ranking: Mapping[str, object], nomination_id: str,
+) -> Dict[str, object]:
+    return {
+        "schema_version": SWAP_NOMINATION_VERSION,
+        "nomination_id": nomination_id,
+        "bundle_id": bundle["bundle_id"],
+        "snapshot_id": bundle["snapshot_id"],
+        "decision_cutoff": bundle["decision_cutoff"],
+        "bundle_hash": bundle["bundle_sha256"],
+        "trade_decision_id": trade_decision["decision_id"],
+        "trade_decision_sha256": trade_decision["content_sha256"],
+        "selection_ranking_id": ranking["ranking_id"],
+        "selection_ranking_sha256": ranking["content_sha256"],
+    }
+
+
+def _seal(body: Dict[str, object]) -> Dict[str, object]:
+    body["content_sha256"] = artifact_content_sha256(body)
+    return body
+
+
+def seal_swap_nomination(envelope: Mapping[str, object], raw: object) -> Dict[str, object]:
+    """把 Agent 的原始輸出補上信封並封存為 ``completed``。
+
+    這個函式不會因 Agent 輸出的形狀而拋錯（``build`` 必須是全函式）：任何不符的內容原樣保留，交給 Validator 回報；
+    Agent 多給的頂層鍵以 ``x_`` 前綴保留（不會覆蓋信封欄位），Validator 會以「含未允許欄位」拒絕。"""
+    output = raw if isinstance(raw, Mapping) else {}
+    body: Dict[str, object] = {
+        **dict(envelope),
+        "status": STATUS_COMPLETED,
+        "nominations": copy.deepcopy(output.get("nominations")),
+        "thesis_hint_responses": copy.deepcopy(output.get("thesis_hint_responses")),
+        "errors": [],
+    }
+    if "no_nomination_reason" in output:
+        body["no_nomination_reason"] = copy.deepcopy(output["no_nomination_reason"])
+    for key in sorted(str(key) for key in output if str(key) not in AGENT_OUTPUT_FIELDS):
+        body["x_%s" % key] = copy.deepcopy(output[key])
+    if not isinstance(raw, Mapping):
+        body["x_output_not_object"] = True
+    return _seal(body)
+
+
+def program_nomination(envelope: Mapping[str, object], status: str, errors: Sequence[str] = ()) -> Dict[str, object]:
+    """程式封存的提名：``not_needed``（不呼叫 Agent）、``exhausted``、``unavailable``；清單恆為空。"""
+    if status not in PROGRAM_STATUSES:
+        raise DecisionToolError("程式只能封存 %s" % "／".join(PROGRAM_STATUSES))
+    return _seal({
+        **dict(envelope),
+        "status": status,
+        "nominations": [],
+        "thesis_hint_responses": [],
+        "no_nomination_reason": PROGRAM_REASONS[status],
+        "errors": [str(error) for error in errors][:MAX_DEGRADED_ERRORS],
+    })
+
+
+def nominations_of(nomination: Optional[Mapping[str, object]]) -> List[Dict[str, object]]:
+    """配置可使用的提名（依 Agent 的先後）：只有 ``completed`` 才有，其餘（含 None）一律空清單。"""
+    if not isinstance(nomination, Mapping) or nomination.get("status") != STATUS_COMPLETED:
+        return []
+    return [dict(item) for item in nomination.get("nominations") or [] if isinstance(item, Mapping)]
+
+
+# ---------------------------------------------------------------- 事實
+
+def untradable_symbols(bundle: Mapping[str, object]) -> Set[str]:
+    """明確交易狀態包中非 allowed 的標的；沒有狀態包時回空集合。
+
+    與 ``AllocationOrderEngine._untradable`` 同源同規則（那是實例方法，這裡不改 allocation，維持小而純的複本；
+    第 6 步接入配置時應讓兩者共用一個函式）。"""
+    status_bundle = bundle.get("trading_status_bundle")
+    assessment = bundle.get("tradability_assessment")
+    if not isinstance(status_bundle, Mapping) or not isinstance(assessment, Mapping):
+        return set()
+    return {
+        str(item.get("symbol", "")).upper()
+        for item in assessment.get("symbols", [])
+        if isinstance(item, Mapping) and item.get("symbol") and str(item.get("state", "unknown")) != "allowed"
+    }
+
+
+def _gate(policy: Mapping[str, object]) -> Mapping[str, object]:
+    sizing = policy.get("position_sizing")
+    gate = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    if not isinstance(gate, Mapping):
+        raise DecisionToolError("DecisionPolicy 沒有 position_sizing.agent_swap，不應建立換股提名")
+    return gate
+
+
+def _held_shares(bundle: Mapping[str, object]) -> Dict[str, int]:
+    return {
+        str(position["symbol"]).upper(): int(position["shares"])
+        for position in bundle["account_snapshot"]["positions"] if int(position.get("shares", 0)) > 0
+    }
+
+
+def _roles(
+    debate: Mapping[str, object], position_review: Optional[Mapping[str, object]],
+) -> Dict[str, Dict[str, str]]:
+    """每檔可引用的識別碼 → 角色（bull／bear／review／position），組法同 ``TradeDecisionValidator``。"""
+    roles = claims_by_symbol(debate)
+    for symbol, flags in review_ids_by_symbol(position_review).items():
+        roles.setdefault(symbol, {}).update({review: "review" for review in flags})
+    for symbol, identifier in position_ids_by_symbol(position_review).items():
+        roles.setdefault(symbol, {})[identifier] = "position"
+    return roles
+
+
+def _claim_texts(debate: Mapping[str, object]) -> Dict[str, str]:
+    texts: Dict[str, str] = {}
+    for packet in debate.get("packets", []):
+        for item in packet.get("items", []):
+            for claim in item.get("claims", []):
+                texts[str(claim["claim_id"])] = str(claim.get("text", ""))
+    return texts
+
+
+def _decimal_text(value: Decimal) -> str:
+    return str(value.quantize(RATE_QUANTUM))
+
+
+def nomination_facts(
+    bundle: Mapping[str, object],
+    policy: Mapping[str, object],
+    trade_decision: Mapping[str, object],
+    ranking: Mapping[str, object],
+    debate: Mapping[str, object],
+    position_review: Optional[Mapping[str, object]],
+    exposure_review: Optional[Mapping[str, object]],
+) -> Dict[str, object]:
+    """提名的全部確定性事實；簡報、``not_needed`` 判定與 Validator 共用。缺任何必要輸入拋 ``DecisionToolError``（fail-closed）。
+
+    ``policy`` 是 5c 時的基礎 Policy：reentry_cooldown 名單、持有天數（exposure_rotation.held_since_by_symbol）與
+    agent_swap 綁定都已由 pipeline 綁入；姿態、廣度與信心等級要到風險 Agent 之後才綁，這裡不讀。"""
+    gate = _gate(policy)
+    sizing = policy["position_sizing"]
+    rotation = sizing.get("rotation")
+    if not isinstance(rotation, Mapping):
+        raise DecisionToolError("換股提名需要 position_sizing.rotation")
+    if not isinstance(position_review, Mapping) or not isinstance(exposure_review, Mapping):
+        raise DecisionToolError("換股提名需要持股檢視與曝險檢視")
+    held = _held_shares(bundle)
+    prices = {str(row["symbol"]).upper() for row in bundle["snapshot"]["latest_prices"]}
+    untradable = untradable_symbols(bundle)
+    blocked = set(reentry_blocked_symbols(sizing) or [])
+    ranks = rank_by_symbol(ranking)
+    roles = _roles(debate, position_review)
+    days = holding_days_by_symbol(policy, bundle)
+    min_new = str(rotation["min_new_conviction"])
+    if min_new not in CONVICTION_LEVELS:
+        raise DecisionToolError("rotation.min_new_conviction 無效")
+    min_days = int(gate["min_holding_days"])
+    exposure = {str(item["symbol"]).upper(): item for item in exposure_review.get("items", []) if isinstance(item, Mapping)}
+    items = {str(item["symbol"]).upper(): item for item in trade_decision.get("items", []) if isinstance(item, Mapping)}
+
+    def adopted(symbol: str, wanted: Set[str]) -> List[str]:
+        item = items[symbol]
+        return sorted(
+            str(claim) for claim in item.get("adopted_claim_ids", [])
+            if roles.get(symbol, {}).get(str(claim)) in wanted
+        )
+
+    candidates: List[Dict[str, object]] = []
+    for symbol in sorted(items):
+        item = items[symbol]
+        if item.get("intent") != "buy" or symbol in held:
+            continue
+        conviction = str(item.get("conviction"))
+        basis = adopted(symbol, {"bull"})
+        reasons = [
+            code for code, failed in (
+                ("not_tradable", symbol in untradable),
+                ("reentry_cooldown", symbol in blocked),
+                ("no_price", symbol not in prices),
+                ("conviction_below_threshold", conviction not in CONVICTION_LEVELS or CONVICTION_LEVELS.index(conviction) > CONVICTION_LEVELS.index(min_new)),
+                ("no_bull_basis", not basis),
+            ) if failed
+        ]
+        candidates.append({
+            "symbol": symbol, "conviction": conviction, "rank": ranks.get(symbol), "rationale": str(item.get("rationale", "")),
+            "basis_ids": basis, "reasons": reasons, "nominable": not reasons,
+        })
+    candidates.sort(key=lambda row: (
+        CONVICTION_LEVELS.index(row["conviction"]) if row["conviction"] in CONVICTION_LEVELS else len(CONVICTION_LEVELS),
+        row["rank"] if isinstance(row["rank"], int) else 10 ** 6, row["symbol"],
+    ))
+
+    victims: List[Dict[str, object]] = []
+    for symbol in sorted(held):
+        item = items.get(symbol)
+        if item is None or item.get("intent") != "hold":
+            continue
+        basis = adopted(symbol, {"bear", "review", "position"})
+        reasons = [
+            code for code, failed in (
+                ("not_tradable", symbol in untradable),
+                ("holding_days_short", days[symbol] < min_days),
+                ("no_bear_basis", not basis),
+            ) if failed
+        ]
+        facts = exposure.get(symbol, {})
+        victims.append({
+            "symbol": symbol, "hold_conviction": item.get("conviction"), "weight": facts.get("weight"),
+            "holding_days": days[symbol], "rationale": str(item.get("rationale", "")),
+            "basis_ids": basis, "reasons": reasons, "nominable": not reasons,
+        })
+
+    exits = sorted(
+        symbol for symbol in held
+        if items.get(symbol, {}).get("intent") in {"exit", "forced_exit"} and symbol not in untradable
+    )
+    max_positions = int(policy["max_positions"])
+    min_positions = int(policy["min_positions"])
+    breadth = sizing.get("positions_by_breadth")
+    narrowest = min(int(value) for value in breadth.values()) if isinstance(breadth, Mapping) and breadth else max_positions
+    target = max(min(narrowest, max_positions), min_positions)
+    free_slots = max(0, target - len(held))
+    pair_cap = min(int(gate["max_swaps_per_run"]), max(0, int(rotation["max_swaps_per_run"]) - len(exits)))
+    hint_symbols = [str(symbol) for symbol in gate.get("thesis_hint_symbols") or []]
+    required_hints = sorted(
+        symbol for symbol in hint_symbols if symbol in held and items.get(symbol, {}).get("intent") == "hold"
+    )
+    nominable_buys = [row["symbol"] for row in candidates if row["nominable"]]
+    nominable_sells = [row["symbol"] for row in victims if row["nominable"]]
+    return {
+        "candidates": candidates,
+        "victims": victims,
+        "first_round_exits": exits,
+        "held_positions": len(held),
+        "max_positions": max_positions,
+        "min_positions": min_positions,
+        "positions_by_breadth": dict(breadth) if isinstance(breadth, Mapping) else None,
+        "conservative_free_slots": free_slots,
+        "pair_cap": pair_cap,
+        "min_new_conviction": min_new,
+        "min_holding_days": min_days,
+        "required_hint_responses": required_hints,
+        "nominable_buys": nominable_buys,
+        "nominable_sells": nominable_sells,
+    }
+
+
+def needs_nomination(facts: Mapping[str, object]) -> bool:
+    """是否需要呼叫 Agent（2.7）：可提名新股多於「保守空名額 ＋ 第一輪出場數」、至少一檔可提名持股、對數上限大於 0。
+
+    5c 時廣度未知，空名額用最窄的廣度估計（持股 26 檔、之後選 concentrated 22 檔時實際空名額為 0），才不會漏呼叫。"""
+    buys = facts["nominable_buys"]
+    return (
+        len(buys) > int(facts["conservative_free_slots"]) + len(facts["first_round_exits"])  # type: ignore[arg-type]
+        and bool(facts["nominable_sells"]) and int(facts["pair_cap"]) > 0  # type: ignore[arg-type]
+    )
+
+
+# ---------------------------------------------------------------- 成本與現金估計（保守下界，不要求逐位等於配置）
+
+class SwapEstimator:
+    """5c 的保守現金與換手估計：第一輪賣單、每對提名的賣出淨額與新股一張含費成本。
+
+    費率、滑價、整張口徑取自 Policy；現金緩衝取「今日可選最高現金格點」（沒有 ``cash_ratio_range`` 時取各姿態緩衝的最大值），
+    換手用 Policy 的基礎 ``max_turnover_rate``（反彈放寬的有效狀態到風險 Agent 之後才綁定，這裡不採用）。"""
+
+    def __init__(self, bundle: Mapping[str, object], policy: Mapping[str, object], trade_decision: Mapping[str, object]):
+        self.policy = policy
+        sizing = policy["position_sizing"]
+        account = bundle["account_snapshot"]
+        latest = {str(row["symbol"]).upper(): row for row in bundle["snapshot"]["latest_prices"]}
+        self.prices = {symbol: snapshot_execution_price(row, symbol) for symbol, row in latest.items()}
+        self.held = _held_shares(bundle)
+        for symbol in self.held:
+            if symbol not in self.prices:
+                raise DecisionToolError("持股 %s 缺少同 Snapshot 的行情，無法估計換股成本" % symbol)
+        self.settled_cash = decimal_value(account["settled_cash"], "account_snapshot.settled_cash")
+        self.nav = decimal_value(account["cash"], "account_snapshot.cash") + sum(
+            (Decimal(shares) * self.prices[symbol] for symbol, shares in self.held.items()), Decimal(0))
+        if self.nav <= 0:
+            raise DecisionToolError("依 cutoff 行情重算的 NAV 必須大於 0")
+        self.lot = int(policy["lot_size"])
+        self.commission_rate = decimal_value(policy["commission_rate"], "commission_rate")
+        self.tax_rate = decimal_value(policy["sell_tax_rate"], "sell_tax_rate")
+        self.minimum_commission = decimal_value(policy["minimum_commission"], "minimum_commission")
+        self.slippage = decimal_value(policy["slippage_bps"], "slippage_bps") / Decimal("10000")
+        self.trim_fraction = decimal_value(policy["trim_fraction"], "trim_fraction")
+        self.turnover_cap = decimal_value(policy["max_turnover_rate"], "max_turnover_rate")
+        self.reuse = bool(policy["reuse_sell_proceeds"])
+        self.gap_reserve = Decimal(0)
+        if "buy_gap_reserve" in sizing:
+            self.gap_reserve = decimal_value(sizing.get("buy_gap_reserve_rate", "0.03"), "buy_gap_reserve_rate")
+        self.cash_ratio = self._highest_cash_ratio(sizing)
+        untradable = untradable_symbols(bundle)
+        self.first_round_sells: Dict[str, int] = {}
+        for item in trade_decision.get("items", []):
+            symbol = str(item["symbol"]).upper()
+            if symbol not in self.held or symbol in untradable:
+                continue
+            shares = self.held[symbol]
+            if item.get("intent") in {"exit", "forced_exit"}:
+                self.first_round_sells[symbol] = shares
+            elif item.get("intent") == "trim":
+                trimmed = int((Decimal(shares) * self.trim_fraction / Decimal(self.lot)).to_integral_value(rounding=ROUND_FLOOR)) * self.lot
+                if trimmed > 0:
+                    self.first_round_sells[symbol] = trimmed
+
+    @staticmethod
+    def _highest_cash_ratio(sizing: Mapping[str, object]) -> Decimal:
+        gate = cash_ratio_gate(sizing)
+        if gate is not None:
+            grid, allowed = cash_grade_grid(gate), allowed_cash_grades(gate)
+            return max(grid[level][grade] for level in allowed for grade in allowed[level])
+        buffers = sizing.get("cash_buffer_by_stance")
+        if not isinstance(buffers, Mapping) or not buffers:
+            raise DecisionToolError("無法決定今日可選最高現金比例")
+        return max(decimal_value(value, "cash_buffer_by_stance") for value in buffers.values())
+
+    def _execution(self, symbol: str, side: str) -> Decimal:
+        factor = Decimal(1) + self.slippage if side == "buy" else Decimal(1) - self.slippage
+        return (self.prices[symbol] * factor).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+
+    def _commission(self, gross: Decimal) -> Decimal:
+        return max(gross * self.commission_rate, self.minimum_commission).quantize(MONEY, rounding=ROUND_CEILING)
+
+    def gross(self, symbol: str, side: str, shares: int) -> Decimal:
+        return self._execution(symbol, side) * Decimal(shares)
+
+    def sell_net(self, symbol: str, shares: int) -> Decimal:
+        gross = self.gross(symbol, "sell", shares)
+        return gross - self._commission(gross) - (gross * self.tax_rate).quantize(MONEY, rounding=ROUND_CEILING)
+
+    def buy_one_lot_cost(self, symbol: str) -> Decimal:
+        gross = self.gross(symbol, "buy", self.lot)
+        return (gross + self._commission(gross)) * (Decimal(1) + self.gap_reserve)
+
+    def usable_cash(self) -> Decimal:
+        """起始可用現金：已交割現金扣掉最高現金格點的緩衝，不為負（現金已低於緩衝時只剩賣款可用）。"""
+        return max(Decimal(0), self.settled_cash - self.nav * self.cash_ratio)
+
+    def affordable_lots(self, symbol: str) -> int:
+        cost = self.buy_one_lot_cost(symbol)
+        cash = self.usable_cash()
+        if self.reuse:
+            cash += sum((self.sell_net(sold, shares) for sold, shares in self.first_round_sells.items()), Decimal(0))
+        return int(cash // cost) if cost > 0 else 0
+
+    def check_pairs(self, pairs: Sequence[Tuple[str, str]]) -> List[str]:
+        """依清單先後累計每對「賣出淨額 − 新股一張含費成本」，並檢查換手下界；回傳錯誤（空清單為通過）。"""
+        errors: List[str] = []
+        cash = self.usable_cash()
+        gross = Decimal(0)
+        if self.reuse:
+            cash += sum((self.sell_net(sold, shares) for sold, shares in self.first_round_sells.items()), Decimal(0))
+        gross += sum((self.gross(sold, "sell", shares) for sold, shares in self.first_round_sells.items()), Decimal(0))
+        for index, (buy, sell) in enumerate(pairs):
+            if sell not in self.held or buy not in self.prices:
+                continue  # 資格錯誤由其他檢查回報
+            if self.reuse:
+                cash += self.sell_net(sell, self.held[sell])
+            cash -= self.buy_one_lot_cost(buy)
+            gross += self.gross(sell, "sell", self.held[sell]) + self.gross(buy, "buy", self.lot)
+            if cash < 0:
+                errors.append(
+                    "nominations[%d]（買 %s／賣 %s）依序累計後，以今日可選最高現金格點估計仍買不起新股一張" % (index, buy, sell))
+                break
+        if gross > self.nav * self.turnover_cap:
+            errors.append(
+                "提名連同第一輪賣單的成交額估計超過換手上限 %s" % format(self.turnover_cap, ".0%"))
+        return errors
+
+
+# ---------------------------------------------------------------- 簡報
+
+def swap_nomination_brief(
+    bundle: Mapping[str, object],
+    policy: Mapping[str, object],
+    trade_decision: Mapping[str, object],
+    ranking: Mapping[str, object],
+    debate: Mapping[str, object],
+    position_review: Mapping[str, object],
+    exposure_review: Mapping[str, object],
+    verdicts: Optional[Mapping[str, object]] = None,
+) -> Dict[str, object]:
+    """5c 給交易 Agent 的簡報（全部由程式算）。不讀 ``agent_swap.version``：影子與正式的簡報完全相同。
+
+    ``verdicts`` 是 ``thesis_verdicts.load_thesis_verdicts`` 的結果；只有其雜湊與 Policy 綁定的 ``verdicts_ref`` 一致時，
+    才附上提示持股的檢視摘要（背景，``citable=false``），否則只列代號。"""
+    facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review)
+    estimator = SwapEstimator(bundle, policy, trade_decision)
+    texts = _claim_texts(debate)
+    reviews = {str(item["symbol"]).upper(): item for item in position_review.get("items", []) if isinstance(item, Mapping)}
+    exposure = {str(item["symbol"]).upper(): item for item in exposure_review.get("items", []) if isinstance(item, Mapping)}
+    roles = _roles(debate, position_review)
+
+    def basis_row(symbol: str, identifier: str) -> Dict[str, object]:
+        role = roles[symbol][identifier]
+        row: Dict[str, object] = {"id": identifier, "kind": role}
+        if role in {"bull", "bear"}:
+            row["text"] = texts.get(identifier, "")
+        elif role == "review":
+            row["text"] = "持股檢視警示：%s（程式事實，不是賣出指令）" % identifier.rsplit(":", 1)[-1]
+        else:
+            item = reviews.get(symbol, {})
+            row["facts"] = {key: item.get(key) for key in (
+                "unrealized_return", "retrace_from_high_5d", "retrace_from_high_20d", "relative_to_pool_5d", "relative_to_pool_20d") if key in item}
+        return row
+
+    candidates = []
+    for row in facts["candidates"]:  # type: ignore[union-attr]
+        symbol = str(row["symbol"])
+        entry: Dict[str, object] = {
+            "symbol": symbol, "conviction": row["conviction"], "rank_in_tier": row["rank"], "trader_rationale": row["rationale"],
+            "nominable": row["nominable"], "blocked_reasons": row["reasons"],
+            "buy_basis": [basis_row(symbol, identifier) for identifier in row["basis_ids"]],
+        }
+        if row["nominable"]:
+            entry["one_lot_cost"] = str(estimator.buy_one_lot_cost(symbol).quantize(MONEY, rounding=ROUND_CEILING))
+        candidates.append(entry)
+    holdings = []
+    for row in facts["victims"]:  # type: ignore[union-attr]
+        symbol = str(row["symbol"])
+        facts_row = exposure.get(symbol, {})
+        holdings.append({
+            "symbol": symbol, "hold_conviction": row["hold_conviction"], "weight": row["weight"],
+            "holding_days": row["holding_days"], "trader_rationale": row["rationale"],
+            "nominable": row["nominable"], "blocked_reasons": row["reasons"],
+            "sell_basis": [basis_row(symbol, identifier) for identifier in row["basis_ids"]],
+            "background": {
+                "citable": False, "beta": facts_row.get("beta"), "up_capture": facts_row.get("up_capture"),
+                "down_capture": facts_row.get("down_capture"),
+            },
+        })
+    gate = _gate(policy)
+    ref = gate.get("verdicts_ref")
+    summaries: Dict[str, str] = {}
+    if isinstance(verdicts, Mapping) and isinstance(ref, Mapping) and verdicts.get("sha256") == ref.get("sha256"):
+        summaries = {str(item["symbol"]).upper(): str(item["summary"]) for item in verdicts.get("items", []) if item.get("verdict") == "broken"}
+    hints = [
+        {"symbol": symbol, "citable": False, **({"weekly_review_summary": summaries[symbol]} if symbol in summaries else {})}
+        for symbol in facts["required_hint_responses"]  # type: ignore[union-attr]
+    ]
+    cheapest = [estimator.affordable_lots(str(row["symbol"])) for row in facts["candidates"] if row["nominable"]]  # type: ignore[union-attr]
+    return {
+        "note": BRIEF_NOTE,
+        "pair_limit": facts["pair_cap"],
+        "min_new_conviction": facts["min_new_conviction"],
+        "min_holding_days": facts["min_holding_days"],
+        "candidates": candidates,
+        "holdings": holdings,
+        "thesis_hints": hints,
+        "background": {
+            "citable": False,
+            "held_positions": facts["held_positions"],
+            "max_positions": facts["max_positions"],
+            "min_positions": facts["min_positions"],
+            "positions_by_breadth": facts["positions_by_breadth"],
+            "breadth_note": "今天的持股廣度由風險 Agent 稍後決定；上表只是各廣度對應的目標檔數。",
+            "first_round_exit_count": len(facts["first_round_exits"]),  # type: ignore[arg-type]
+            "candidate_count": len(facts["nominable_buys"]),  # type: ignore[arg-type]
+            "cash_note": "以今日可選最高現金格點估計，最多能負擔的新股張數（只是提示，最後以配置為準）。",
+            "affordable_lots_estimate": max(cheapest) if cheapest else 0,
+        },
+    }
+
+
+# ---------------------------------------------------------------- Validator
+
+def _text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _id_list(value: object, label: str, errors: List[str]) -> List[str]:
+    if not isinstance(value, list) or not value or not all(_text(item) for item in value):
+        errors.append("%s 必須是非空的字串清單" % label)
+        return []
+    if len(set(value)) != len(value):
+        errors.append("%s 不得重複" % label)
+    return [str(item) for item in value]
+
+
+class SwapNominationValidator:
+    """提名必須綁定同一份交易決策與排序，且依 ``status`` 分別驗證：
+
+    - ``not_needed``：程式以同一規則重算必須「不需要」，形狀是固定的空清單；反過來，需要時封存 ``not_needed`` 一律拒絕。
+    - ``exhausted``／``unavailable``：只在「需要」時才可能發生；形狀是固定的空清單加非空 ``errors``（Finalizer 無法證明 Agent
+      真的失敗，只能核對形狀與配置沒有使用任何提名）。
+    - ``completed``：Agent 的提名，逐項做 2.6 A 段靜態檢查。
+    """
+
+    def __init__(
+        self,
+        bundle: Mapping[str, object],
+        policy: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+        ranking: Mapping[str, object],
+        debate: Mapping[str, object],
+        position_review: Optional[Mapping[str, object]],
+        exposure_review: Optional[Mapping[str, object]],
+        prior_context: Optional[Mapping[str, object]] = None,
+    ):
+        self.bundle = dict(bundle)
+        self.policy = policy
+        self.trade = dict(trade_decision)
+        self.ranking = dict(ranking)
+        self.debate = debate
+        self.position_review = position_review
+        self.exposure_review = exposure_review
+        self.prior_tokens = prior_reference_tokens(prior_context)
+
+    def validate(self, nomination: Mapping[str, object]) -> List[str]:
+        errors: List[str] = []
+        if not isinstance(nomination, Mapping):
+            return ["SwapNomination 必須是物件"]
+        validate_forbidden_keys(nomination, "SwapNomination", errors)
+        reject_unknown_fields(nomination, ENVELOPE_FIELDS, "SwapNomination", errors)
+        try:
+            expected = nomination_envelope(self.bundle, self.trade, self.ranking, str(nomination.get("nomination_id")))
+        except KeyError as error:
+            return errors + ["SwapNomination 無法建立信封：缺少 %s" % error]
+        for field, value in expected.items():
+            if nomination.get(field) != value:
+                errors.append("SwapNomination.%s 與交易決策或入選排序不一致" % field)
+        try:
+            required_string(nomination, "nomination_id")
+        except DecisionToolError as error:
+            errors.append("SwapNomination.%s" % error)
+        if nomination.get("content_sha256") != artifact_content_sha256(nomination):
+            errors.append("SwapNomination.content_sha256 與內容不一致")
+        status = nomination.get("status")
+        if status not in STATUSES:
+            return errors + ["SwapNomination.status 必須是 %s" % "／".join(STATUSES)]
+        try:
+            facts = nomination_facts(
+                self.bundle, self.policy, self.trade, self.ranking, self.debate, self.position_review, self.exposure_review)
+        except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+            return errors + ["SwapNomination 無法以共同輸入重算事實：%s" % error]
+        needed = needs_nomination(facts)
+        if status == STATUS_NOT_NEEDED and needed:
+            errors.append("本次需要提名（可提名新股多於保守空名額、且有可提名持股與對數額度），不得封存 not_needed")
+        if status != STATUS_NOT_NEEDED and not needed:
+            errors.append("本次不需要提名，必須由程式封存 not_needed，不得有 %s" % status)
+        if status in PROGRAM_STATUSES:
+            self._validate_program_shape(nomination, str(status), errors)
+            return errors
+        self._validate_completed(nomination, facts, errors)
+        return errors
+
+    def _validate_program_shape(self, nomination: Mapping[str, object], status: str, errors: List[str]) -> None:
+        if nomination.get("nominations") != [] or nomination.get("thesis_hint_responses") != []:
+            errors.append("status=%s 的 nominations 與 thesis_hint_responses 必須是空陣列" % status)
+        if nomination.get("no_nomination_reason") != PROGRAM_REASONS[status]:
+            errors.append("status=%s 的 no_nomination_reason 必須是程式固定文字" % status)
+        problems = nomination.get("errors")
+        if status == STATUS_NOT_NEEDED:
+            if problems != []:
+                errors.append("status=not_needed 的 errors 必須為空陣列")
+        elif (not isinstance(problems, list) or not problems or len(problems) > MAX_DEGRADED_ERRORS
+              or not all(_text(item) for item in problems)):
+            errors.append("status=%s 的 errors 必須是 1～%d 筆非空字串" % (status, MAX_DEGRADED_ERRORS))
+
+    def _validate_completed(self, nomination: Mapping[str, object], facts: Mapping[str, object], errors: List[str]) -> None:
+        if nomination.get("errors") != []:
+            errors.append("SwapNomination.errors 在 status=completed 必須為空陣列")
+        nominations = nomination.get("nominations")
+        responses = nomination.get("thesis_hint_responses")
+        if not isinstance(nominations, list):
+            errors.append("SwapNomination.nominations 必須是陣列")
+            nominations = []
+        if not isinstance(responses, list):
+            errors.append("SwapNomination.thesis_hint_responses 必須是陣列")
+            responses = []
+        if len(nominations) > int(facts["pair_cap"]):  # type: ignore[arg-type]
+            errors.append("提名對數 %d 超過本次上限 %d" % (len(nominations), int(facts["pair_cap"])))  # type: ignore[arg-type]
+        if nominations:
+            if "no_nomination_reason" in nomination:
+                errors.append("有提名時不得出現 no_nomination_reason")
+        elif not _text(nomination.get("no_nomination_reason")):
+            errors.append("nominations 為空時 no_nomination_reason 必須是非空字串")
+        texts: List[Tuple[str, object]] = []
+        if "no_nomination_reason" in nomination:
+            texts.append(("no_nomination_reason", nomination["no_nomination_reason"]))
+        roles = _roles(self.debate, self.position_review)
+        candidates = {str(row["symbol"]): row for row in facts["candidates"]}  # type: ignore[union-attr]
+        victims = {str(row["symbol"]): row for row in facts["victims"]}  # type: ignore[union-attr]
+        items = {str(item["symbol"]).upper(): item for item in self.trade.get("items", [])}
+        pairs: List[Tuple[str, str]] = []
+        buys: List[str] = []
+        sells: List[str] = []
+        for index, entry in enumerate(nominations):
+            prefix = "nominations[%d]" % index
+            if not isinstance(entry, Mapping):
+                errors.append("%s 必須是物件" % prefix)
+                continue
+            reject_unknown_fields(entry, NOMINATION_FIELDS, prefix, errors)
+            buy, sell = entry.get("buy_symbol"), entry.get("sell_symbol")
+            for label, symbol in (("buy_symbol", buy), ("sell_symbol", sell)):
+                if not _text(symbol) or symbol != str(symbol).upper():
+                    errors.append("%s.%s 必須是大寫代號字串" % (prefix, label))
+            if not (_text(buy) and _text(sell)):
+                continue
+            buy, sell = str(buy), str(sell)
+            if buy == sell:
+                errors.append("%s 換入與換出不得是同一檔：%s" % (prefix, buy))
+            self._check_buy(prefix, buy, candidates, items, errors)
+            self._check_sell(prefix, sell, victims, items, errors)
+            buys.append(buy)
+            sells.append(sell)
+            pairs.append((buy, sell))
+            self._check_basis(prefix, "buy_basis_ids", entry.get("buy_basis_ids"), buy, {"bull"}, candidates, roles, items, errors)
+            self._check_basis(prefix, "sell_basis_ids", entry.get("sell_basis_ids"), sell, {"bear", "review", "position"}, victims, roles, items, errors)
+            if not _text(entry.get("reason")):
+                errors.append("%s.reason 必須是非空字串" % prefix)
+            else:
+                texts.append((prefix + ".reason", entry["reason"]))
+        for label, symbols in (("buy_symbol", buys), ("sell_symbol", sells)):
+            repeated = sorted({symbol for symbol in symbols if symbols.count(symbol) > 1})
+            if repeated:
+                errors.append("%s 在清單中只能出現一次：%s" % (label, ", ".join(repeated)))
+        errors.extend(self._validate_hints(responses, facts, set(sells), texts))
+        for label, value in texts:
+            cited = sorted(token for token in self.prior_tokens if isinstance(value, str) and token in value)
+            if cited:
+                errors.append("%s 不得引用前次決策背景（%s）；它不是本次證據" % (label, ", ".join(cited)))
+        if pairs and not errors:
+            try:
+                errors.extend(SwapEstimator(self.bundle, self.policy, self.trade).check_pairs(pairs))
+            except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+                errors.append("無法估計提名的保守現金與換手：%s" % error)
+
+    @staticmethod
+    def _check_buy(prefix: str, symbol: str, candidates: Mapping[str, Mapping[str, object]], items: Mapping[str, Mapping[str, object]], errors: List[str]) -> None:
+        row = candidates.get(symbol)
+        if row is None:
+            item = items.get(symbol)
+            why = "不在交易池" if item is None else "第一輪不是 buy 或已持有（intent=%s）" % item.get("intent")
+            errors.append("%s.buy_symbol %s 不能作為換入股：%s" % (prefix, symbol, why))
+        elif not row["nominable"]:
+            errors.append("%s.buy_symbol %s 不能作為換入股：%s" % (prefix, symbol, "、".join(row["reasons"])))  # type: ignore[arg-type]
+
+    @staticmethod
+    def _check_sell(prefix: str, symbol: str, victims: Mapping[str, Mapping[str, object]], items: Mapping[str, Mapping[str, object]], errors: List[str]) -> None:
+        row = victims.get(symbol)
+        if row is None:
+            item = items.get(symbol)
+            why = "不在交易池" if item is None else "未持有或第一輪不是 hold（intent=%s）" % item.get("intent")
+            errors.append("%s.sell_symbol %s 不能作為換出股：%s" % (prefix, symbol, why))
+        elif not row["nominable"]:
+            errors.append("%s.sell_symbol %s 不能作為換出股：%s" % (prefix, symbol, "、".join(row["reasons"])))  # type: ignore[arg-type]
+
+    @staticmethod
+    def _check_basis(
+        prefix: str, label: str, value: object, symbol: str, wanted: Set[str], rows: Mapping[str, Mapping[str, object]],
+        roles: Mapping[str, Mapping[str, str]], items: Mapping[str, Mapping[str, object]], errors: List[str],
+    ) -> None:
+        identifiers = _id_list(value, "%s.%s" % (prefix, label), errors)
+        allowed = set(rows[symbol]["basis_ids"]) if symbol in rows else set()  # type: ignore[arg-type]
+        item = items.get(symbol, {})
+        rejected = set(item.get("rejected_claim_ids", []))
+        own = roles.get(symbol, {})
+        owned_elsewhere = {identifier for other, mapping in roles.items() if other != symbol for identifier in mapping}
+        for identifier in identifiers:
+            if identifier in allowed:
+                continue
+            if identifier in rejected:
+                why = "第一輪已否決，不能作為依據"
+            elif identifier in own and own[identifier] not in wanted:
+                why = "角色是 %s，不是可引用的%s依據" % (own[identifier], "多頭" if "bull" in wanted else "空頭或持股")
+            elif identifier in own:
+                why = "第一輪沒有採納，不能作為依據"
+            elif identifier in owned_elsewhere:
+                why = "屬於其他股票"
+            else:
+                why = "不存在"
+            errors.append("%s.%s 的 %s 不可引用（%s）：%s" % (prefix, label, symbol, why, identifier))
+
+    def _validate_hints(
+        self, responses: Sequence[object], facts: Mapping[str, object], sold: Set[str], texts: List[Tuple[str, object]],
+    ) -> List[str]:
+        errors: List[str] = []
+        required = [str(symbol) for symbol in facts["required_hint_responses"]]  # type: ignore[union-attr]
+        seen: List[str] = []
+        for index, entry in enumerate(responses):
+            prefix = "thesis_hint_responses[%d]" % index
+            if not isinstance(entry, Mapping):
+                errors.append("%s 必須是物件" % prefix)
+                continue
+            reject_unknown_fields(entry, HINT_RESPONSE_FIELDS, prefix, errors)
+            symbol, response = entry.get("symbol"), entry.get("response")
+            if not _text(symbol):
+                errors.append("%s.symbol 必須是非空字串" % prefix)
+                continue
+            seen.append(str(symbol))
+            if response not in HINT_RESPONSES:
+                errors.append("%s.response 必須是 %s" % (prefix, "／".join(HINT_RESPONSES)))
+            elif response == "nominated" and symbol not in sold:
+                errors.append("%s 回應 nominated 的 %s 必須是某一對的 sell_symbol" % (prefix, symbol))
+            elif response == "kept" and symbol in sold:
+                errors.append("%s 回應 kept 的 %s 不得出現在 sell_symbol" % (prefix, symbol))
+            if not _text(entry.get("reason")):
+                errors.append("%s.reason 必須是非空字串" % prefix)
+            else:
+                texts.append((prefix + ".reason", entry["reason"]))
+        repeated = sorted({symbol for symbol in seen if seen.count(symbol) > 1})
+        if repeated:
+            errors.append("thesis_hint_responses 每檔只能回應一次：%s" % ", ".join(repeated))
+        missing = sorted(set(required) - set(seen))
+        extra = sorted(set(seen) - set(required))
+        if missing:
+            errors.append("thesis_hint_responses 漏回應論點提示：%s" % ", ".join(missing))
+        if extra:
+            errors.append("thesis_hint_responses 含不需回應的股票：%s" % ", ".join(extra))
+        return errors
+
+
+# ---------------------------------------------------------------- 論點提示綁定
+
+def _expected_binding(verdicts: Optional[Mapping[str, object]]) -> Optional[Tuple[List[str], Dict[str, str]]]:
+    if verdicts is None:
+        return None
+    broken = sorted({str(item["symbol"]).upper() for item in verdicts["items"] if item["verdict"] == "broken"})  # type: ignore[union-attr]
+    if not broken:
+        return None
+    return broken, {"verdicts_id": str(verdicts["verdicts_id"]), "as_of": str(verdicts["as_of"]), "sha256": str(verdicts["sha256"])}
+
+
+def bind_thesis_hints(policy: Mapping[str, object], verdicts: Optional[Mapping[str, object]]) -> Dict[str, object]:
+    """把「論點被推翻」名單綁進 Policy 的 ``agent_swap``（只在樣板啟用 agent_swap 時；做法同 ``bind_forced_swap``）。
+
+    樣板不得預填：綁定時先清掉既有的 ``thesis_hint_symbols``／``verdicts_ref``，再依結論重綁；沒有可用結論或沒有 broken 時不綁
+    （提示名單為空）。重建只讀 Policy。回傳新的 policy 物件，呼叫端須重算 content_sha256。"""
+    bound = copy.deepcopy(dict(policy))
+    sizing = bound.get("position_sizing")
+    gate = sizing.get("agent_swap") if isinstance(sizing, dict) else None
+    if not isinstance(gate, dict):
+        return bound
+    gate.pop("thesis_hint_symbols", None)
+    gate.pop("verdicts_ref", None)
+    expected = _expected_binding(verdicts)
+    if expected is not None:
+        gate["thesis_hint_symbols"], gate["verdicts_ref"] = expected
+    return bound
+
+
+def validate_thesis_hint_binding(policy: Mapping[str, object], verdicts: Optional[Mapping[str, object]]) -> List[str]:
+    """以重讀的論點檢視結論重算綁定並與 Policy 比對：樣板預填、缺漏或與結論不符一律回錯誤。沒有 agent_swap 的 Policy 不檢查。"""
+    sizing = policy.get("position_sizing")
+    gate = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    if not isinstance(gate, Mapping):
+        return []
+    expected = _expected_binding(verdicts)
+    actual = (gate.get("thesis_hint_symbols"), gate.get("verdicts_ref")) if "thesis_hint_symbols" in gate or "verdicts_ref" in gate else None
+    if expected is None and actual is not None:
+        return ["position_sizing.agent_swap 的 thesis_hint_symbols／verdicts_ref 與論點檢視結論不符（結論沒有可用的 broken 項目，不得預填）"]
+    if expected is not None and (actual is None or list(actual[0] or []) != expected[0] or actual[1] != expected[1]):  # type: ignore[arg-type]
+        return ["position_sizing.agent_swap 的 thesis_hint_symbols／verdicts_ref 與重讀的論點檢視結論不一致"]
+    return []
+
+
+# ---------------------------------------------------------------- 閘門與 team_inputs 2.9
+
+SWAP_NOMINATION_KEY = "swap_nomination"
+SUPPORTED_GATE_VERSIONS = ("v1",)  # 目前只支援影子（v1）；v2 的配置尚未實作，pipeline 與 Finalizer 一律拒絕
+
+
+def agent_swap_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """``position_sizing.agent_swap`` 閘門；沒有（或 sizing 不是物件）時回 None。"""
+    gate = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def unsupported_gate_version(sizing: object) -> Optional[str]:
+    """閘門存在但版本目前不支援時回錯誤訊息（v2 的配置步驟尚未實作，不得靜默當 v1 跑）；否則 None。"""
+    gate = agent_swap_gate(sizing)
+    if gate is not None and gate.get("version") not in SUPPORTED_GATE_VERSIONS:
+        return "position_sizing.agent_swap.version=%s 的配置尚未實作，目前只支援 %s（影子）" % (
+            gate.get("version"), "／".join(SUPPORTED_GATE_VERSIONS))
+    return None
+
+
+def validate_team_swap_nomination(
+    bundle: Mapping[str, object],
+    policy: Mapping[str, object],
+    trade_decision: Mapping[str, object],
+    debate: Mapping[str, object],
+    team: Mapping[str, object],
+    errors: List[str],
+) -> None:
+    """Finalizer 對 team_inputs 2.9 的 ``swap_nomination`` 整份重建驗證（信封、雜湊、事實重算與 2.6 A 段靜態檢查）。
+
+    只讀 team_inputs 內已由其他檢查驗證過的入選排序、持股檢視、曝險檢視與前次決策背景；缺任何一項即拒絕。"""
+    unsupported = unsupported_gate_version(policy.get("position_sizing"))
+    if unsupported is not None:
+        errors.append(unsupported)
+        return
+    nomination = team.get(SWAP_NOMINATION_KEY)
+    if not isinstance(nomination, Mapping):
+        errors.append("team_inputs.swap_nomination 必須是物件")
+        return
+    ranking, review, exposure = team.get("selection_ranking"), team.get("position_review"), team.get("exposure_review")
+    if not all(isinstance(value, Mapping) for value in (ranking, review, exposure)):
+        errors.append("team_inputs.swap_nomination 需要同一份入選排序、持股檢視與曝險檢視才能重建")
+        return
+    prior = team.get("prior_decision_context")
+    try:
+        problems = SwapNominationValidator(
+            bundle, policy, trade_decision, ranking, debate, review, exposure,  # type: ignore[arg-type]
+            prior_context=prior if isinstance(prior, Mapping) else None,
+        ).validate(nomination)
+    except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+        problems = ["無法重建驗證：%s" % error]
+    errors.extend("team_inputs.swap_nomination：%s" % problem for problem in problems)
