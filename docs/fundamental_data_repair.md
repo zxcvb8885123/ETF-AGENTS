@@ -11,11 +11,16 @@
 | Data Agent（資料端） | 抓取、口徑核對、版本保存 |
 | 基本面分析師 | 只解讀已驗證的資料 |
 
-## 現況：只能手動執行
+## 現況：手動模式與每日排程模式
 
 - 入口：`.venv/bin/python cli/fundamental_repair.py`，環境須有 `FINMIND_TOKEN`。
-- **每日排程不會自動呼叫**，只供互動研究。補抓的文件會寫進共用資料庫，之後的每日 Snapshot 會納入。所以只有手動補過的股票才有年增率（見[成長訊號缺口](fundamental_growth_signal_plan.md)）。
-- CLI 不自動讀取或輸出憑證，也不執行後續交易 Agent。每次補抓另建新的 Snapshot 與不可變 manifest，屬研究模式，不是正式每日決策輸入或備援 D-Plan。
+- **手動模式**（預設）：互動研究用，補抓的文件寫進共用資料庫，之後的每日 Snapshot 會納入。
+- **每日排程模式**（`--scheduled`，2026-11-10 實作，`start.sh` 在 FinMind 候選擷取之後自動呼叫，`PRIOR_REPAIR=0` 關閉）：只補「官方最新期別在共用資料庫還沒有去年同期文件」的股票，已有的一律跳過，所以平時幾乎 0 次 FinMind 呼叫。核對規則、時間規則與寫入的文件和手動模式完全相同；差別是只寫共用資料庫，不建研究用 Snapshot、不寫 manifest 與 `artifacts/fundamental_repairs/`，只覆寫一份摘要 `artifacts/data/fundamental_prior_repair_latest.json`（不含金鑰）。
+  - 每輪最多呼叫 `--max-symbols` 檔（預設 60，`start.sh` 以 `PRIOR_REPAIR_MAX` 調整）；超過的下一輪再補。確定補不了的 7828.TWO、3718.TWO 排在最後，每天各試一次，原因固定記在摘要的 `known_unrepairable`，不重試、不算失敗。
+  - 額度或憑證錯誤立即停止本輪（exit 1），已寫入的保留、其餘維持原狀；單檔核對不過只記入 `unverified`（exit 2）；兩者在 `start.sh` 都只讓資料狀態標為部分完成，不中斷每日決策。
+  - 仍每輪向官方開放資料取當期累計當核對基準（不需金鑰；相同內容由資料庫去重）。FinMind 呼叫沿用逐檔連網，原始回應保持單一真實回應可稽核；曾評估改讀 `supplemental_facts` 不連網，但它會把同值去重、看不出暫時值又回復，與既有文件有 67% 不同，故不採用。
+  - 金鑰只由 `start.sh` 以 `docker compose run -e FINMIND_TOKEN` 傳入該步驟；錯誤訊息進入摘要與原始回應存檔前會遮蔽金鑰值。
+- CLI 不自動讀取或輸出憑證，也不執行後續交易 Agent。手動模式每次補抓另建新的 Snapshot 與不可變 manifest，屬研究模式，不是正式每日決策輸入或備援 D-Plan。
 - 失敗時交回確切缺口，不無限重試；憑證或額度失敗就停止本輪。
 
 ```bash

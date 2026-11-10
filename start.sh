@@ -315,8 +315,30 @@ if [ "$DAILY_RUN" -eq 1 ]; then
         break
       fi
     done
+    # 官方最新期別尚無去年同期文件的股票才逐檔呼叫 FinMind，與官方當期累計完全相符才寫入共用資料庫；
+    # 平時已有同期文件幾乎 0 次呼叫。PRIOR_REPAIR=0 關閉；每輪上限 PRIOR_REPAIR_MAX（預設 60 檔）。
+    # 失敗只降級：該檔維持原狀，不中斷每日決策，也不建研究用 Snapshot。
+    if [ "${PRIOR_REPAIR:-1}" != "0" ]; then
+      echo "[3b+/4] 補抓去年同期累計損益（FinMind 單季合計，與官方當期完全相符才納入）"
+      set +e
+      docker compose run --rm -e FINMIND_TOKEN agent python3 cli/fundamental_repair.py --scheduled \
+        --max-symbols "${PRIOR_REPAIR_MAX:-60}" \
+        --report artifacts/data/fundamental_prior_repair_latest.json >/dev/null
+      PRIOR_REPAIR_EXIT=$?
+      set -e
+      if [ "$PRIOR_REPAIR_EXIT" -eq 1 ]; then
+        echo "去年同期補抓中止（額度、憑證或官方基準問題）；其餘股票維持原狀。詳見 artifacts/data/fundamental_prior_repair_latest.json" >&2
+        DATA_STATUS=2
+      elif [ "$PRIOR_REPAIR_EXIT" -ne 0 ]; then
+        echo "去年同期補抓部分未完成（exit ${PRIOR_REPAIR_EXIT}）；未完成的股票年增率維持資料不足。詳見 artifacts/data/fundamental_prior_repair_latest.json" >&2
+        DATA_STATUS=2
+      fi
+      stage_time "去年同期補抓"
+    else
+      echo "[3b+/4] PRIOR_REPAIR=0；略過去年同期補抓。"
+    fi
   else
-    echo "未設定 FINMIND_TOKEN；略過 FinMind 候選擷取。" >&2
+    echo "未設定 FINMIND_TOKEN；略過 FinMind 候選擷取與去年同期補抓。" >&2
     DATA_STATUS=2
   fi
   # 已擷取的 FinMind 現金流量表以官方累計稅前淨利核對後轉成 Snapshot 文件；不連網，失敗只讓現金流降級。

@@ -45,6 +45,7 @@ docker compose version
 - 官方月營收、重大訊息、已到期的季度財報
 - 公司基本資料與產業分類
 - 選配的 FinMind 財報候選（財報只在公布區間內變動，首次補約 3 年歷史，之後每天只更新一次；`FORCE_FETCH=1` 可強制重抓行情與財報）
+- 去年同期補抓（`cli/fundamental_repair.py --scheduled`，沿用 `FINMIND_TOKEN`，與候選擷取同一組金鑰取得順序並以 `docker compose run -e FINMIND_TOKEN` 傳入）：只補尚無同期文件的股票；`PRIOR_REPAIR=0` 關閉、`PRIOR_REPAIR_MAX` 調整每輪上限（預設 60）；沒有金鑰時與候選擷取一起略過
 
 交易池空白時，只抓 TWSE 全部可解析的證券，研究資料不更新，以結束碼 2 回報。
 

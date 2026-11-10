@@ -2,6 +2,7 @@
 """資料不足時的確定性補抓入口；不執行分析或交易 Agent。"""
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,14 @@ from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.core import parse_aware_time
 from etf_agent.data.corporate import CorporateDataCollector, OfficialCorporateProvider
 from etf_agent.data.database import MarketDataDatabase
-from etf_agent.data.fundamental_repair import FundamentalRepairProvider, OfficialCompanyProfileProvider
+from etf_agent.data.fundamental_repair import (
+    DEFAULT_SCHEDULED_MAX_SYMBOLS,
+    FundamentalRepairProvider,
+    OfficialCompanyProfileProvider,
+    redact_secret,
+    run_scheduled_repair,
+)
+from etf_agent.data.supplemental_sources import FinMindFundamentalProvider
 from etf_agent.data.snapshot import DataAgentService
 from etf_agent.data.universe import UniverseLoader
 
@@ -29,6 +37,23 @@ OFFICIAL_INCOME_SOURCES = (
 )
 
 
+def run_scheduled(args, database, universe, anchors, anchor_failures):
+    """排程退出碼：0 全部完成或已有同期文件；2 部分未通過核對或超過上限（預期、降級）；1 額度或憑證錯誤。"""
+    token = os.environ.get("FINMIND_TOKEN", "")
+    summary = run_scheduled_repair(database, universe, anchors, FinMindFundamentalProvider(token),
+                                   args.max_symbols, args.database, token)
+    summary["official_anchor_failures"] = [redact_secret(item, token) for item in anchor_failures]
+    summary["generated_at"] = datetime.now(timezone.utc).isoformat()
+    text = json.dumps(summary, ensure_ascii=False, indent=2)
+    if args.report is not None:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    if summary["status"] == "aborted":
+        return 1
+    return 2 if summary["status"] == "partial" or anchor_failures else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="補抓官方當期與 FinMind 去年同期累計財報")
     parser.add_argument("--database", type=Path, default=ROOT / "var/etf_agent.db")
@@ -36,6 +61,11 @@ def main():
     parser.add_argument("--decision-cutoff", help="歷史截止時間；新抓資料晚於它時拒絕補入")
     parser.add_argument("--symbols", nargs="+", help="僅補抓指定交易池股票，例如 1101.TW 2330.TW")
     parser.add_argument("--output-root", type=Path, default=ROOT / "artifacts/fundamental_repairs")
+    parser.add_argument("--scheduled", action="store_true",
+                        help="排程模式：只補『官方最新期別尚無去年同期文件』的股票，只寫共用資料庫，不建 Snapshot 與輸出目錄")
+    parser.add_argument("--max-symbols", type=int, default=DEFAULT_SCHEDULED_MAX_SYMBOLS,
+                        help="排程模式每輪最多呼叫 FinMind 的檔數（預設 %(default)s）")
+    parser.add_argument("--report", type=Path, help="排程模式摘要 JSON 的寫入路徑（覆寫最新一份，不含金鑰）")
     args = parser.parse_args()
     if args.decision_cutoff is not None:
         parse_aware_time(args.decision_cutoff, "decision_cutoff")
@@ -66,6 +96,8 @@ def main():
         anchors = [item for item in anchors if item.document.symbol in set(args.symbols)]
     if not anchors:
         raise ValueError("官方核對基準不可用；停止補抓：" + "；".join(anchor_failures or ["沒有符合的股票"]))
+    if args.scheduled:
+        return run_scheduled(args, database, universe, anchors, anchor_failures)
     profiles = CorporateDataCollector(database, [OfficialCompanyProfileProvider()]).collect(universe)
     repair = CorporateDataCollector(database, [FundamentalRepairProvider(anchors, args.decision_cutoff)]).collect(universe)
     cutoff = args.decision_cutoff or datetime.now(timezone.utc).isoformat()
@@ -89,5 +121,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (ValueError, RuntimeError) as error:
-        print("補抓停止：%s" % error, file=sys.stderr)
+        print("補抓停止：%s" % redact_secret(error, os.environ.get("FINMIND_TOKEN", "")), file=sys.stderr)
         raise SystemExit(1)

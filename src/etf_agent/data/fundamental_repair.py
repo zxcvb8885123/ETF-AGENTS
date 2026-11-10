@@ -2,12 +2,14 @@
 
 import calendar
 import json
+import sqlite3
+from pathlib import Path
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import NamedTuple
 
 from etf_agent.core import canonical_json, canonical_sha256, parse_aware_time, parse_decimal
-from .corporate import CorporateRecord, FinancialStatement, FinancialStatementFact, SourceDocument, OfficialCorporateProvider
+from .corporate import CorporateDataCollector, CorporateRecord, FinancialStatement, FinancialStatementFact, SourceDocument, OfficialCorporateProvider
 from .supplemental_sources import FinMindFundamentalProvider, FINMIND_ENDPOINT
 
 
@@ -221,29 +223,47 @@ class FundamentalRepairProvider:
     source = "FINMIND_VERIFIED_PRIOR"
     url = FINMIND_ENDPOINT
 
-    def __init__(self, anchors, decision_cutoff=None, provider=None):
+    def __init__(self, anchors, decision_cutoff=None, provider=None, skip_external_ids=frozenset(),
+                 max_symbols=None, secret=None):
         self.anchors = list(anchors)
         self.decision_cutoff = decision_cutoff
         self.provider = provider or FinMindFundamentalProvider()
+        # 排程模式專用：已有去年同期文件的股票不呼叫 FinMind；每輪最多處理 max_symbols 檔。
+        # 兩者預設不限制，手動模式行為不變。
+        self.skip_external_ids = frozenset(skip_external_ids)
+        self.max_symbols = max_symbols
+        # 錯誤訊息進入原始回應存檔與警告前先遮蔽金鑰值。
+        self.secret = secret
+        if max_symbols is not None and (isinstance(max_symbols, bool) or not isinstance(max_symbols, int) or max_symbols < 1):
+            raise ValueError("max_symbols 必須是正整數")
         if decision_cutoff is not None:
             parse_aware_time(decision_cutoff, "decision_cutoff")
 
     def fetch(self):
         captures = []
         failures = []
+        skipped = 0
+        deferred = 0
         for anchor in self.anchors:
             statement = anchor.financial_statement
             if statement is None or statement.industry not in SUPPORTED_REPAIR_INDUSTRIES:
+                continue
+            if prior_external_id(statement) in self.skip_external_ids:
+                skipped += 1
+                continue
+            if self.max_symbols is not None and len(captures) >= self.max_symbols:
+                deferred += 1
                 continue
             try:
                 raw = self.provider.fetch("TaiwanStockFinancialStatements", statement.symbol.split(".")[0],
                                           date(statement.fiscal_year - 1, 1, 1), date.fromisoformat(statement.period_end))
             except (ValueError, RuntimeError) as error:
-                failures.append("%s：%s；停止本輪補抓" % (statement.symbol, error))
+                failures.append(redact_secret("%s：%s；停止本輪補抓" % (statement.symbol, error), self.secret))
                 break
             captures.append({"symbol": statement.symbol, "raw": json.loads(raw),
                              "fetched_at": datetime.now(timezone.utc).isoformat()})
-        return canonical_json({"captures": captures, "failures": failures}), datetime.now(timezone.utc).isoformat()
+        return canonical_json({"captures": captures, "failures": failures, "skipped_existing": skipped,
+                               "deferred_by_limit": deferred}), datetime.now(timezone.utc).isoformat()
 
     def parse(self, payload, fetched_at):
         decoded = json.loads(payload)
@@ -257,3 +277,77 @@ class FundamentalRepairProvider:
             except ValueError as error:
                 warnings.append("%s：%s" % (capture["symbol"], error))
         return records, warnings, sum(len(item["raw"].get("data", [])) for item in captures)
+
+
+def prior_external_id(statement):
+    """某期官方累計對應的去年同期補抓文件識別（與 verified_prior_record 的 external_id 一致）。"""
+    return "%s:%s:Q%s" % (statement.symbol, statement.fiscal_year - 1, statement.fiscal_quarter)
+
+
+def stored_prior_external_ids(database_path):
+    """唯讀取得共用資料庫已有的去年同期補抓文件識別；資料庫不存在時視為沒有。"""
+    path = Path(database_path)
+    if not path.exists():
+        return frozenset()
+    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        rows = connection.execute("SELECT DISTINCT external_id FROM source_documents WHERE source = ?",
+                                  (FundamentalRepairProvider.source,)).fetchall()
+    finally:
+        connection.close()
+    return frozenset(row[0] for row in rows)
+
+
+# 排程模式每輪最多呼叫 FinMind 的檔數；平時已有同期文件的股票全部跳過，幾乎為 0 次。
+DEFAULT_SCHEDULED_MAX_SYMBOLS = 60
+# 確定補不了的股票：排程每天仍嘗試一次（成本一次呼叫），原因固定記錄，不重試、不計入失敗。
+KNOWN_UNREPAIRABLE = {
+    "7828.TWO": "缺 2025-03-31 可比單季資料，FinMind 沒有提供；不推算、不借用其他主體歷史",
+    "3718.TWO": "自 2026-08 才 100% 認列中強光電營收，沒有可比的去年同期；不推算、不借用其他主體歷史",
+}
+
+
+def redact_secret(text, secret):
+    """日誌與報告不得含金鑰值；金鑰未設定或太短時不處理（避免誤蓋掉一般字元）。"""
+    if secret and len(secret) >= 8:
+        return str(text).replace(secret, "[已遮蔽]")
+    return str(text)
+
+
+def run_scheduled_repair(database, universe, anchors, finmind_provider, max_symbols=DEFAULT_SCHEDULED_MAX_SYMBOLS,
+                         database_path=None, secret=None):
+    """排程模式：只把核對通過的去年同期文件寫進共用資料庫，不建 Snapshot。
+
+    ``status``：completed（全部完成或跳過）、partial（部分未通過核對或超過上限）、
+    aborted（額度或憑證錯誤，本輪停止，其餘維持原狀）。
+    """
+    skip = stored_prior_external_ids(database_path) if database_path is not None else frozenset()
+    ordered = sorted(anchors, key=lambda item: (item.document.symbol in KNOWN_UNREPAIRABLE, item.document.symbol))
+    provider = FundamentalRepairProvider(ordered, provider=finmind_provider, skip_external_ids=skip,
+                                         max_symbols=max_symbols, secret=secret)
+    result = CorporateDataCollector(database, [provider]).collect(universe)
+    prefix = provider.source + "："
+    aborted = [w for w in result.warnings if "停止本輪補抓" in w]
+    known, unverified = {}, []
+    for warning in result.warnings:
+        if warning in aborted:
+            continue
+        body = warning[len(prefix):] if warning.startswith(prefix) else warning
+        symbol = body.split("：", 1)[0]
+        if symbol in KNOWN_UNREPAIRABLE:
+            known[symbol] = KNOWN_UNREPAIRABLE[symbol]
+        else:
+            unverified.append(body)
+    response = result.responses[0] if result.responses else None
+    detail = json.loads(response.payload) if response is not None else {}
+    deferred = int(detail.get("deferred_by_limit", 0))
+    status = "aborted" if aborted or result.failures else "partial" if unverified or deferred else "completed"
+    summary = {
+        "status": status, "mode": "scheduled_prior_repair", "max_symbols": max_symbols,
+        "attempted": len(detail.get("captures", [])), "skipped_existing": int(detail.get("skipped_existing", 0)),
+        "deferred_by_limit": deferred, "stored_documents": result.stored_documents,
+        "duplicate_documents": result.duplicate_documents,
+        "known_unrepairable": known, "unverified": unverified, "aborted": aborted,
+        "failures": list(result.failures), "run_id": result.run_id, "snapshot_built": False,
+    }
+    return json.loads(redact_secret(json.dumps(summary, ensure_ascii=False), secret))
