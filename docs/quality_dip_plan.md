@@ -1,6 +1,6 @@
 # 優質股被大盤拖累時的進場判斷（`quality_dip`）：設計計畫
 
-狀態（2026-11-10，第三版）：**只有計畫，尚未實作，沒有任何閘門**。本檔不改程式、設定與既有文件。第二版依使用者意見改了兩件事：主軸改為短期價格事實、財報為輔；品質條件由「六條全真才合格」改為「沒有新的重大壞事」，年減與缺資料只列為疑慮，不擋進場。第三版再加一條：跌幅超出大盤所能解釋、但查無新壞事的股票另列為「超跌候選」，與「被大盤拖累候選」並列、分開標示（第 2.4 節）；並新增估值資料接入計畫（第 2.6 節：資料拿得到、系統尚未接入）。
+狀態（2026-11-10，第四版）：**只有計畫，尚未實作，沒有任何閘門；開工需使用者另行下令**。設計取捨已由使用者於 2026-11-10 回覆「照建議」定案（第 7.2 節）；這只決定了設計，不是實作或開啟閘門的指令。本檔不改程式、設定與既有文件。第二版依使用者意見改了兩件事：主軸改為短期價格事實、財報為輔；品質條件由「六條全真才合格」改為「沒有新的重大壞事」，年減與缺資料只列為疑慮，不擋進場。第三版再加一條：跌幅超出大盤所能解釋、但查無新壞事的股票另列為「超跌候選」，與「被大盤拖累候選」並列、分開標示（第 2.4 節）；並新增估值資料接入計畫（第 2.6 節：資料拿得到、系統尚未接入）。
 
 文中的案例數字是用 2026-11-10 封存 run 的 `decision_input.json`／`team_inputs.json`／`intent.json`／`debate.json` 以暫存腳本唯讀重算的（腳本不在專案內）；第 2.6 節的估值數字是 2026-11-10 唯讀呼叫公開端點取得的。證據等級一律是 `replay_reference_only`：只代表「同一份輸入會算出什麼事實」，不是對 LLM 判斷的前瞻驗證，也不代表買了會賺。
 
@@ -91,7 +91,7 @@
 - 事件分析師的每則事件只有 `materiality`，沒有方向；方向只有整檔的 `event_outlook`。當天 150 檔的 `event_outlook` 是 neutral 85、positive 58、unknown 7，**沒有任何一檔是 negative**。所以「high 且負面」當天一檔都不會觸發。
 - 2308 的美國 337 調查公告（`document:5193`）被評為 `medium`，該檔 `event_outlook` 是 positive（因為同時有 10 月營收年增 30% 的 high 事件）。**程式的新壞事清單抓不到它。**
 - 「交易 Agent 採納了事件類空頭論點」也不能當程式判準：2308（337 調查）與 2327（上半年不分派盈餘）當天都採納了 `material_event` 種類的空頭 claim，後者照樣買進。
-- 結論：「是不是重大壞事」程式做不到可靠判定，只能列事實；真正的判斷在空頭研究員的 claim 與交易 Agent 的取捨。若要讓程式這一條有用，須讓事件分析師對每則事件多給方向列舉，這會改事件報告契約，列為需使用者決定的項目（第 7.2 節）。
+- 結論：「是不是重大壞事」程式做不到可靠判定，只能列事實；真正的判斷在空頭研究員的 claim 與交易 Agent 的取捨。已決定（第 7.2 節第 4 項）：第二階段讓事件分析師對每則事件多給方向列舉，屆時這一項改為「視窗內有 `materiality: high` 且方向為負面的事件」。這會改事件報告契約與版本，須另設版本閘門、舊報告驗證不變；在那之前這一項照上表的整檔 `event_outlook` 計算。
 
 ### 2.3 「低於本來價值」：誠實的範圍
 
@@ -121,15 +121,15 @@
 
 疑慮與不知道都不影響標示（不擋，也不加分）。兩個候選分開標示，不合併成一個「跌深」事實。
 
-**「明顯」怎麼定義而不設門檻**。三種做法：
+**「明顯」怎麼定義而不設門檻**。三種做法，已決定採 A（第 7.2 節第 1 項）：
 
 | 做法 | 內容 | 取捨 |
 | --- | --- | --- |
-| A（建議） | 程式只用殘差的正負分類，另附殘差數值、交易池內由弱到強的名次與樣本數；「多跌得明不明顯」由交易 Agent 的列舉判斷（第 3.3 節） | 沒有任何擬合數字，符合「確定性歸程式、不確定性歸 LLM」。代價是標示本身很寬，不能單看標示 |
-| B | 以交易池相對名次切一刀（例如最弱的四分之一才標超跌） | 會隨市況自動調整、不是報酬率門檻；但「四分之一」仍是一個人設的數字，沒有樣本支持，名次差一名就翻面 |
-| C | 人在 Policy 設殘差門檻 | 最直觀，但正是本專案在 `rebound_participation` v1 踩過的過擬合做法，不建議 |
+| A（已採用） | 程式只用殘差的正負分類，另附殘差數值、交易池內由弱到強的名次與樣本數；「多跌得明不明顯」由交易 Agent 的列舉判斷（第 3.3 節） | 沒有任何擬合數字，符合「確定性歸程式、不確定性歸 LLM」。代價是標示本身很寬，不能單看標示 |
+| B（未採用） | 以交易池相對名次切一刀（例如最弱的四分之一才標超跌） | 會隨市況自動調整、不是報酬率門檻；但「四分之一」仍是一個人設的數字，沒有樣本支持，名次差一名就翻面 |
+| C（未採用） | 人在 Policy 設殘差門檻 | 最直觀，但正是本專案在 `rebound_participation` v1 踩過的過擬合做法，不建議 |
 
-採 A 時必須知道的事實：**標示很寬**。當天 149 檔有殘差的股票中，`beyond_market` 72 檔、`market_explained` 56 檔、`no_decline` 21 檔；扣掉月營收轉負的，超跌候選約 66 檔、被大盤拖累候選約 55 檔。也就是八成的股票都是某一種候選。候選標示只是分類，**不是訊號**；有鑑別力的是殘差名次（2308 是第 4 弱）與 Agent 的判斷。
+採 A 必須知道的事實：**標示很寬**。當天 149 檔有殘差的股票中，`beyond_market` 72 檔、`market_explained` 56 檔、`no_decline` 21 檔；扣掉月營收轉負的，超跌候選約 66 檔、被大盤拖累候選約 55 檔。也就是八成的股票都是某一種候選。候選標示只是分類，**不是訊號**；有鑑別力的是殘差名次（2308 是第 4 弱）與 Agent 的判斷。
 
 邊界上的雜訊：殘差在零附近（例如 2327 的 +0.5、2382 的 +2.9）時，正負只差在 beta 估計誤差。簡報 note 要明講「殘差接近零時兩種標示沒有實質差別，請看數值與名次」。
 
@@ -182,7 +182,7 @@
 
 | 能算的確定性事實 | 限制 |
 | --- | --- |
-| 目前 PER／PBR 在該股自身歷史區間的位置（百分位、區間最小／中位／最大、樣本數、起訖日） | 視窗長度必須寫死在版本內，並同時列出多個視窗（見下方 2308 的例子） |
+| 目前 PER／PBR 在該股自身歷史區間的位置（百分位、區間最小／中位／最大、樣本數、起訖日） | 已決定並列三個視窗：近 250 日、近 750 日、全部可得歷史；寫死在版本內（見下方 2308 的例子） |
 | 目前 PER／PBR 在交易池當日橫斷面的名次 | 跨產業直接比沒有意義，只能當描述 |
 | 相對同產業中位數 | **目前做不到**：Snapshot 只有上市股的 `company_profile.industry_code`（100 檔），沒有名稱對應、沒有上櫃股；交易池內同產業樣本常只有個位數。需要另接產業分類來源才談得上 |
 
@@ -203,7 +203,7 @@
 
 - 進簡報的方式：估值位置是第三個獨立事實 `valuation_position`，**不併入** `price_pattern` 或 `candidate`。「超跌候選且 PER 位於近一年低位」仍然是兩個並列的事實，程式不合成結論。
 - 可否引用：
-  - 建議先當背景（`citable=false`，比照 `market_index_facts`）給基本面分析師與交易 Agent。現行 `typed_evidence_v1` 下，未登記的文件種類本來就不能被任何 claim 引用，所以先接資料不會動到既有驗證。
+  - 先當背景（`citable=false`，比照 `market_index_facts`）給基本面分析師與交易 Agent。現行 `typed_evidence_v1` 下，未登記的文件種類本來就不能被任何 claim 引用，所以先接資料不會動到既有驗證。
   - 之後若要可引用，建議對映到既有的 `price` 種類，不新增種類。理由：PER／PBR 是「股價除以財報數字」的每日價格衍生值；新增種類要改 `CLAIM_KINDS`、全部 schema 與 Skill。對映變更屬於證據政策，須出新版本（例如 `typed_evidence_v2`），舊 bundle 不變。歸在 `price` 也讓它自動適用「單獨價格論點不構成買進依據」的規則。
 - 第三階段條件：**不建議**把估值位置寫成程式條件（那就是門檻）。它只透過交易 Agent 的判斷起作用。
 
@@ -211,15 +211,15 @@
 
 | 步驟 | 內容 | 進入條件 |
 | --- | --- | --- |
-| V1 收集與稽核 | 每日抓官方（上市；上櫃確認後加入）與 FinMind，逐檔核對，存不可變原始回應與核對結果；**不進決策、不進簡報** | 使用者登記兩個來源的授權狀態；上櫃端點確認 |
-| V2 位置事實（背景） | 程式算 `valuation_position`，以 `citable=false` 進基本面分析師與交易 Agent 簡報；閘門 `position_sizing.valuation_facts`，預設關閉 | V1 連續核對相符達人指定的天數；口徑待確認項目（EPS 基準、殖利率基準）已釐清；視窗定案 |
+| V1 收集與稽核 | 每日抓官方與 FinMind，逐檔核對，存不可變原始回應與核對結果；**不進決策、不進簡報**。已決定先做上市股，上櫃端點確認後再加入 | 使用者已同意核准證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 用於 V1；`license_status` 的實際登記屬實作的一部分，尚未做 |
+| V2 位置事實（背景） | 程式算 `valuation_position`，以 `citable=false` 進基本面分析師與交易 Agent 簡報；閘門 `position_sizing.valuation_facts`，預設關閉 | V1 連續核對相符達人指定的天數；口徑待確認項目（EPS 基準、殖利率基準）已釐清（視窗已定案） |
 | V3 可引用 | 新證據政策版本，對映 `price` | V2 開啟後有即時紀錄；人決定 |
 
-V1 與第一階段（價格事實）互不相依，可以並行。
+V1 與第一階段（價格事實）互不相依，可以並行。官方端點沒有歷史，所以 V1 越早開始，可核對的時間點資料越多；但開始收集仍需使用者下令開工。
 
 ## 3. Agent 邊界
 
-### 3.1 建議的邊界（第一階段）
+### 3.1 邊界（第一階段，已決定）
 
 | 角色 | 拿到什麼 | 能不能引用 | 輸出有沒有變 |
 | --- | --- | --- | --- |
@@ -248,9 +248,9 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 
 比照 `turn_assessment`：交易 Agent 對每個 buy／add 多填列舉 `dip_assessment` ∈ `not_a_dip`／`market_driven`／`oversold_cause_unclear`／`stock_specific`／`undetermined`。`oversold_cause_unclear` 的意思是「比大盤多跌、原因不明、我仍判斷值得買」；`stock_specific` 是「多跌有個股原因」。驗證只核必填、值域，以及一條 fail-closed：該股價格事實 `data_status` 為 unavailable 時只能填 `undetermined`。列舉與意圖、信心**不設對應**，不影響配置；目的是累積「Agent 怎麼判、之後怎麼走」的即時紀錄。
 
-### 3.4 替代方案（不建議現在做）
+### 3.4 替代方案（未採用）
 
-把事實區塊直接放進多空研究員的簡報。代價是簡報內容取決於 Policy 閘門，而 `shared_input_sha256` 不含 Policy，必須在閘門存在時把事實雜湊併入共同輸入雜湊（舊 run 公式不變），辯論驗證與 Finalizer 都要跟著改。
+把事實區塊直接放進多空研究員的簡報。使用者已決定不採用（第 7.2 節第 7 項）。代價是簡報內容取決於 Policy 閘門，而 `shared_input_sha256` 不含 Policy，必須在閘門存在時把事實雜湊併入共同輸入雜湊（舊 run 公式不變），辯論驗證與 Finalizer 都要跟著改。
 
 ## 4. 配置面
 
@@ -260,13 +260,13 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 | --- | --- | --- | --- |
 | 1 | `position_sizing.quality_dip_facts` | `{"version": "v1"}`；視窗長度是版本內的程式常數，不是旋鈕 | 否（紀錄） |
 | 2 | `position_sizing.quality_dip_assessment` | `{"version": "v1"}`；前提 `quality_dip_facts`、`typed_evidence_v1` | 否（紀錄） |
-| 3 | `position_sizing.quality_dip_swap` | `{"version": "v1", "max_swaps_per_run", "max_entry_weight", "min_new_conviction", "min_holding_days", "min_turn_assessment"}`，全部必填、程式不給預設；選填 `oversold` 區塊（沒寫＝超跌候選不走換股，見第 4.2 節） | 是 |
+| 3 | `position_sizing.quality_dip_swap` | `{"version": "v1", "max_swaps_per_run", "max_entry_weight", "min_new_conviction", "min_holding_days", "min_turn_assessment"}`，全部必填、程式不給預設；`min_turn_assessment` 只允許 `turn_unconfirmed` 或 `turn_confirmed`（已決定必須有轉向跡象）；選填 `oversold` 區塊（沒寫＝超跌候選不走換股，見第 4.2 節） | 是 |
 
 三個欄位都要登記到 `decision/sizing.py` 的 `GATE_PREREQUISITES` 與 `strategy_reflection/contracts.py` 的 `FORBIDDEN_PREFIXES`。沒有欄位的舊 Policy／舊 run：簡報逐鍵相同、`team_inputs` 與雜湊逐位元不變。回放比照既有做法略過（notes 標 `quality_dip_swap: ignored_in_replay`）。
 
 `team_inputs`：事實要另存並由 Finalizer 整份重算（比照 `fundamental_metrics`）。目前版本鏈是線性超集（2.8 ⊃ 2.7 ⊃ …，見 `decision/finalization.py`），新增「2.9 = 2.8 加 `dip_facts`」在正式設定下可行（目前就是 2.8），但會讓它依賴 `rebound_participation`。是否改成「與 Policy 閘門雙向檢查的選配鍵」**待實作時確認**。
 
-### 4.2 第三階段的行為（建議，尚未決定要不要做）
+### 4.2 第三階段的行為（設計已決定；尚未實作，是否開啟另由人決定）
 
 只做一件事：**滿檔時，讓交易 Agent 判為「被大盤拖累」的買進候選可以用換股取得名額**。它是 `conviction_gap_swap` 的延伸（現行只允許 high 新股換 low 持股），不新增現金、不新增檔數。
 
@@ -277,15 +277,15 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 3. 交易 Agent 的 `dip_assessment` 為 `market_driven`。
 4. `new_adverse_facts` 為空。**疑慮與不知道都不擋。**
 5. 交易 Agent 本次至少採納一個該股、種類不是 `price` 的多頭 claim（程式可驗 `claim_kind` 與 `adopted_claim_ids`）。這一條是把「缺資料不算通過」落實成「要有該股自己的營運或事件依據」，不是否決缺資料的股票。
-6. 風險 Agent 的 `turn_assessment` 不低於 `min_turn_assessment`。
+6. 風險 Agent 的 `turn_assessment` 不低於 `min_turn_assessment`，而且至少是 `turn_unconfirmed`；`no_turn_evidence` 時整個閘門不動作。
 7. 可交易、不在 `reentry_cooldown` 名單。
 
-**超跌候選在第三階段的處理**：`quality_dip_swap` v1 **預設不含超跌候選**（`candidate` 為 `oversold` 的買進不走這條換股，照現行規則排隊）。只有人在閘門另外明寫 `oversold: {"max_swaps_per_run", "max_entry_weight"}` 才納入，而且除了上面第 1、5、6、7 項，還要全部成立：
+**超跌候選在第三階段的處理**（已決定）：`quality_dip_swap` v1 **預設不含超跌候選**（`candidate` 為 `oversold` 的買進不走這條換股，照現行規則排隊）。只有人在閘門另外明寫 `oversold: {"max_swaps_per_run", "max_entry_weight"}` 才納入，而且除了上面第 1、5、6、7 項，還要全部成立：
 
 - `dip_assessment` 為 `oversold_cause_unclear`（交易 Agent 明確承認原因不明仍要買）。
 - 新壞事清單為空。
 - 交易 Agent 採納的該股多頭 claim 至少一個不是 `price` 種類（與第 5 項相同，這裡是必要條件而不是補強）。
-- `turn_assessment` 至少 `turn_unconfirmed`，不受 `min_turn_assessment` 設得更鬆影響。
+- `turn_assessment` 至少 `turn_unconfirmed`（與第 6 項相同）。
 - 檔數與單檔權重用 `oversold` 自己的上限，且不得高於被大盤拖累候選的上限；兩類合計仍受本閘門 `max_swaps_per_run` 封頂。
 - 現金下限、換手上限、買進不超過賣款等規則完全相同，不另放寬。
 
@@ -335,7 +335,7 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 | 空頭論點照舊 | 一 | 空頭研究員的事件 claim 不受標示影響，交易 Agent 仍須逐一採納或否決 |
 | 預設排除 | 三 | `quality_dip_swap` 不含超跌候選，除非人另外明寫 `oversold` 區塊 |
 | 非價格多頭依據 | 三 | 交易 Agent 採納的多頭 claim 至少一個不是 `price` 種類 |
-| 轉向跡象 | 三 | `turn_assessment` 至少 `turn_unconfirmed` |
+| 轉向跡象 | 三 | `turn_assessment` 至少 `turn_unconfirmed`（已決定，兩類候選都適用） |
 | 硬上限 | 三 | 專屬的每次檔數與單檔權重上限，不高於被大盤拖累候選；買進不超過賣款 |
 | 不放寬 | 全部 | 現金下限、換手上限、檔數、單股上限、Guard、回撤下限一律不動；減碼日與回撤強制防守略過 |
 | 買進後 | 全部 | `position_review` 的 `loss_alert` 0.15 與相對交易池報酬照舊檢視 |
@@ -401,12 +401,12 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 | 階段 | 範圍 | 完成條件 | 文件同步 |
 | --- | --- | --- | --- |
 | 1 事實（紀錄） | `decision/dip_facts.py`（價格事實、三個清單）、技術／基本面分析師簡報、交易 Agent `dip_background`、`team_inputs` 另存與 Finalizer 重算、閘門登記、測試 | 全套測試通過；用本案例重算出第 6.1 節的表；人決定是否開啟 | `README.md`、`AGENTS.md` 閘門清單、`docs/status.md` 閘門表、`docs/glossary.md`、`docs/decision-contracts.md`（新小節與 `team_inputs` 版本表）、`docs/architecture.md`、`docs/README.md` 索引、`src/etf_agent/decision/README.md`；Skill：`technical-analyst`、`fundamental-analyst`、`bull-researcher`、`bear-researcher`、`trader`（`references/data-rules.md`） |
-| 2 列舉（紀錄） | 交易 Agent `dip_assessment`、schema（`automation/agent_schemas.py`）、驗證 | 第 1 階段開啟後驗證失敗沒有明顯增加 | `docs/status.md`、`docs/glossary.md`、`docs/decision-contracts.md`；Skill：`trader` |
-| 3 換股（影響配置） | `quality_dip_swap`、`decision/allocation.py` 配對、旗標、回放略過 | 人看過第 1、2 階段的即時紀錄後決定（時程見第 7.2 節第 1 項） | 全部上述文件，另加 `docs/decision-details.md`、`docs/operations.md`（回滾方式）；Skill：`trader`、`portfolio-risk-review` |
+| 2 列舉（紀錄） | 交易 Agent `dip_assessment`；事件分析師的每則事件方向列舉（事件報告新版本、另設版本閘門）；schema（`automation/agent_schemas.py`）、驗證 | 第 1 階段開啟後驗證失敗沒有明顯增加 | `docs/status.md`、`docs/glossary.md`、`docs/decision-contracts.md`、`docs/architecture.md`；Skill：`trader`、事件分析師 |
+| 3 換股（影響配置） | `quality_dip_swap`、`decision/allocation.py` 配對、旗標、回放略過 | 第 1、2 階段開啟並累積數個決策日的即時紀錄，人看過後決定（已決定不與前兩階段一起開；觀察天數由人定） | 全部上述文件，另加 `docs/decision-details.md`、`docs/operations.md`（回滾方式）；Skill：`trader`、`portfolio-risk-review` |
 | 資料 A（待辦） | FinMind 去年同期補抓排進每日流程 | 補抓失敗不得讓當日決策失敗；補抓結果仍須與官方金額核對 | `docs/fundamental_data_repair.md`、`docs/operations.md`、`docs/status.md` |
-| 資料 B（待辦，另案） | Yahoo Finance 財報備援：授權登記、官方核對、`available_at` 規則，三者定案後才實作 | 來源核對文件完成；未定案前不得進正式計算 | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
-| 估值 V1（待辦） | 官方與 FinMind 估值的取得、逐檔核對、不可變保存；只收集與稽核，不進決策 | 使用者登記授權；上櫃端點確認（第 2.6 節） | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
-| 估值 V2（待辦） | `valuation_position` 以背景進簡報，閘門 `valuation_facts` 預設關閉 | V1 連續核對相符達人指定天數；口徑與視窗定案 | 同第 1 階段的文件與 Skill：`fundamental-analyst`、`trader` |
+| 資料 B（待辦，另案） | Yahoo Finance 財報備援：已決定排在資料 A 之後，先只做唯讀比對（見 [fundamental_data_gaps_plan.md](fundamental_data_gaps_plan.md)） | 資料 A 上線後看缺口剩多少；未定案前不得進正式計算 | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
+| 估值 V1（待辦） | 官方與 FinMind 估值的取得、逐檔核對、不可變保存；只收集與稽核，不進決策；先做上市股 | 使用者下令開工；授權登記隨實作完成（第 2.6 節） | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
+| 估值 V2（待辦） | `valuation_position` 以背景進簡報，閘門 `valuation_facts` 預設關閉 | V1 連續核對相符達人指定天數；口徑釐清（視窗已定案） | 同第 1 階段的文件與 Skill：`fundamental-analyst`、`trader` |
 | 估值 V3（未定） | 新證據政策版本，估值可引用（對映 `price`） | V2 有即時紀錄後由人決定 | `docs/decision-contracts.md`、`AGENTS.md`、各研究與交易 Skill |
 
 資料 A、B、估值 V1 與第 1 階段互不相依，可以並行；資料 A、B 只影響「不知道」的多寡。每階段都要保留切換前的 Policy 樣板於 `config/policy_versions/`，回滾＝刪除該欄位。
@@ -415,17 +415,21 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 
 名額、現金、權重的任何改動；新的 Agent 輸出欄位；新的資料來源；估值事實（估值只先做 V1 的收集與稽核，不進簡報）。
 
-### 7.2 需要使用者決定
+### 7.2 已決定（使用者 2026-11-10 回覆「照建議」）
 
-1. **超跌候選怎麼定義「明顯」**：(A) 程式只用殘差正負分類並附名次，由交易 Agent 列舉判斷；(B) 以交易池相對名次切一刀（例如最弱四分之一）。建議 A：沒有擬合數字；代價是標示很寬，當天約 66 檔都是超跌候選。
-2. **超跌候選能不能走第三階段換股**：(A) 預設不含，只當紀錄；之後由人另開 `oversold` 區塊並套用全部額外條件；(B) 第三階段一開就含。建議 A：這一條的接刀風險最高，而且程式分不出跌過頭與真有壞事。
-3. **第三階段的時程**：(A) 第 1、2 階段開啟後累積數個決策日的紀錄、人看過再開；(B) 三個階段一起做完一起開。建議 A，觀察天數由人定，並明寫這是樣本不足下由人承擔風險的決定。
-4. **事件要不要加方向列舉**：(A) 事件分析師對每則事件多給方向（讓「high 且負面」真的抓得到東西，需改事件報告契約與版本）；(B) 不改。建議 A，排在第 2 階段一起做；它對超跌候選尤其重要。
-5. **估值資料的授權登記與起步範圍**：(A) 先核准並登記證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER`，只做 V1 收集與核對（上市股），上櫃端點確認後再加；(B) 等上櫃端點也確認後一起開始。建議 A：官方沒有歷史，晚一天開始就少一天可核對的時間點資料。
-6. **估值位置的視窗**：(A) 並列近 250 日、近 750 日與全部可得歷史三個視窗；(B) 只給一個視窗。建議 A（2308 的例子顯示單一視窗會誤導）。
-7. **事實給誰看**：(A) 只給分析師與交易 Agent 當背景；(B) 另外直接放進多空研究員簡報。建議 A。
-8. **第三階段要不要要求轉向跡象**：(A) `turn_assessment` 至少 `turn_unconfirmed`；(B) 任何情況都可。建議 A。
-9. **Yahoo 財報備援的優先序**：(A) 先把 FinMind 補抓排進每日流程，看缺口剩多少再決定；(B) 兩者同時做。建議 A。
+以下九項都採用原先標示的建議選項。**這些是設計取捨的決定，不是開工指令：全部尚未實作，開工需使用者另行下令；閘門是否開啟仍由人逐一決定。**
+
+1. **超跌候選怎麼定義「明顯」**：程式只用殘差正負分類並附名次，由交易 Agent 列舉判斷。理由：沒有擬合數字；代價是標示很寬（當天約 66 檔是超跌候選），已寫進第 2.4 節。
+2. **超跌候選能不能走第三階段換股**：預設不含，只當紀錄；之後由人另開 `oversold` 區塊並套用全部額外條件。理由：接刀風險最高，程式分不出跌過頭與真有壞事。
+3. **第三階段的時程**：第 1、2 階段開啟後累積數個決策日的紀錄、人看過再開，觀察天數由人定。理由：先有即時紀錄；樣本仍然不足，開啟是人承擔風險的決定，不代表驗證通過。
+4. **事件方向列舉**：事件分析師對每則事件多給方向，排在第 2 階段。理由：現行契約下「high 且負面」當天一檔都抓不到。
+5. **估值授權與起步範圍**：核准證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 用於 V1 收集與核對，先做上市股，上櫃端點確認後再加。理由：官方沒有歷史，越早開始可核對的時間點資料越多。
+6. **估值位置的視窗**：並列近 250 日、近 750 日與全部可得歷史。理由：2308 的例子顯示單一視窗會誤導。
+7. **事實給誰看**：只給分析師與交易 Agent 當背景，多空研究員經分析師報告取得。理由：不動共同輸入雜湊與多空隔離。
+8. **第三階段的轉向跡象**：`turn_assessment` 至少 `turn_unconfirmed`。理由：財報不再把關後，這是僅剩的接刀防線之一。
+9. **Yahoo 財報備援的優先序**：先把 FinMind 補抓排進每日流程，看缺口剩多少再決定 Yahoo。理由：今天補抓後缺口已很小，Yahoo 實測暫時補不到。
+
+仍待確認的技術問題（不是取捨，實作時查明）：`BetaModel` 視窗平移對 `exposure_review` 重建的影響、`team_inputs` 線性版本鏈、櫃買估值端點、PER 的 EPS 基準與殖利率基準。
 
 ## 8. 摘要
 
@@ -438,4 +442,4 @@ V1 與第一階段（價格事實）互不相依，可以並行。
 - 案例：2327、2454、2317、2382 是被大盤拖累候選（後兩檔其實跌得比交易池少）；2308 是超跌候選，同時有 337 調查未定。
 - 當天買單：第一、二階段不會多出買單（名額已滿）；第三階段開啟最多多一對換股，且預設不含超跌候選，不會是 2308。
 - 第一階段：只有價格事實、三個財報清單與候選標示進簡報（閘門 `quality_dip_facts`，預設關閉、不影響配置），Finalizer 整份重算，舊 run 逐位元不變。
-- 需要使用者決定：超跌怎麼定義明顯、超跌能否走換股、第三階段時程、事件方向列舉、估值授權與視窗（共 9 項，見第 7.2 節）。
+- 設計取捨九項已由使用者決定照建議（第 7.2 節）；全部尚未實作，開工需使用者另行下令。
