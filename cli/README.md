@@ -32,6 +32,7 @@
 | `decision_delivery.py` | 從封存 Decision run 建立風控後中文 JSON／Markdown；重建驗證及拒絕診斷，不產 D-Plan |
 | `fundamental_research.py` | 基本面研究的唯讀資料包、指標、結果驗證與封存 |
 | `fundamental_repair.py` | 資料不足時補抓官方當期與 FinMind 去年同期累計財報；`--scheduled` 為每日排程模式（只補尚無同期文件的股票、有檔數上限、只寫資料庫不建 Snapshot）；不執行分析或交易 Agent |
+| `industry_peer_collect.py` | 產業比較 C1：收集 t187ap14（上市、上櫃）、建立產業代碼↔名稱表、交易池與官方損益表逐檔核對；只收集與稽核，不進決策。退出碼 0 完成、2 部分來源失敗、1 全部失敗 |
 | `market_news.py` | 全市場新聞補抓（`capture`／`backfill`）、已判讀輸入接入（`integrate`）與來源使用核對（`review`） |
 | `overnight_market.py` | 隔夜市場背景（Yahoo 美股指數、EWT／TSM、日韓指數、VIX 與期交所官網夜盤報價）補抓（`capture`）與截止前結果檢視（`show`，需 `--latest-trade-date`）；授權未核准時 `show` 為 unavailable |
 | `market_fear_greed.py` | 台股恐懼貪婪指標來源補抓（`capture`）與截止前分數檢視（`show`） |

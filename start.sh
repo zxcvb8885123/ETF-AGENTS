@@ -263,6 +263,22 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     DATA_STATUS=2
   fi
   stage_time "產業分類"
+  # 產業比較 C1：收集 t187ap14 各產業 EPS 統計、建立代碼與名稱對照、與官方損益表逐檔核對。
+  # 只收集與稽核，不進決策；INDUSTRY_PEER=0 關閉。失敗只降級（exit 2）或略過，不中斷每日決策。
+  if [ "${INDUSTRY_PEER:-1}" != "0" ]; then
+    echo "[3b+/4] 收集產業比較資料（t187ap14，只收集與稽核、不進決策）"
+    set +e
+    docker compose run --rm agent python3 cli/industry_peer_collect.py >/dev/null
+    INDUSTRY_PEER_EXIT=$?
+    set -e
+    if [ "$INDUSTRY_PEER_EXIT" -ne 0 ]; then
+      echo "產業比較資料未完整（exit ${INDUSTRY_PEER_EXIT}）；不影響正式決策。詳見 artifacts/data/industry_peer_latest.json" >&2
+      DATA_STATUS=2
+    fi
+    stage_time "產業比較資料"
+  else
+    echo "[3b+/4] INDUSTRY_PEER=0；略過產業比較資料收集。"
+  fi
   if [ -z "${FINMIND_TOKEN:-}" ] && [ -r .env ]; then
     FINMIND_TOKEN=$(sed -n 's/^FINMIND_TOKEN=//p' .env | sed -n '1p')
     export FINMIND_TOKEN
