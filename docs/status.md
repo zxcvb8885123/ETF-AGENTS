@@ -72,7 +72,7 @@
 | `drawdown_control` | `neutral_at 0.05`、`defensive_at 0.10`、`release_neutral_below 0.03`、`release_defensive_below 0.07`；`history_ref` 由 pipeline 綁定 |
 | `stock_weight_fit` | `v1`（單股上限減碼不依此欄位開關，一律由程式執行） |
 | rules | `max_turnover_rate 0.3`（policy）、`max_sector_weight 0.6`、`reuse_sell_proceeds true`、`minimum_active_share 0.15`、現金 `< 0.25`、持股 20～30 檔、單股 10%（2330 為 25%） |
-| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.7（`exposure_rotation` 開啟時） |
+| bundle | `evidence_policy: typed_evidence_v1`、`fundamental_period_policy: per_symbol_latest_available_v1`（新 bundle 預設），`team_inputs` 2.8（`exposure_rotation` 開啟為 2.7、`rebound_participation` 再開啟為 2.8，目前兩者皆開） |
 | `config/strategy_reflection.json` | `enabled true`、`auto_apply false` |
 
 未開啟：`high_conviction_cash_floor`。
