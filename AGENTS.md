@@ -86,7 +86,7 @@
 - 已實作、尚未開啟（Agent 自主權線，見 [`docs/agent_autonomy_plan.md`](docs/agent_autonomy_plan.md)）：`agent_swap` v2（依提名配置，與 `forced_swap`、`conviction_gap_swap` 互斥）、`reentry_cooldown` v3、`cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2（`team_inputs.held_weight_facts`）。把它們的行為當成現行行為是錯的。
 - 已實作、尚未開啟：`slot_recycle`。把它的行為當成現行行為是錯的。
 - 已開啟（紀錄）：`quality_dip_facts` v1（2026-11-10 使用者決定開啟；優質股被大盤拖累的事實，紀錄用、不影響配置；見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md)；回滾＝刪掉 `position_sizing.quality_dip_facts`，同時須刪掉依賴它的下兩項）。
-- 已開啟（紀錄）：`quality_dip_assessment` v1（交易 Agent 對 buy／add 多填 `dip_assessment` 列舉）與 `event_direction` v1（事件分析師每則事件多填 `direction`，並切換 `quality_dip_facts` 新壞事的事件面判準）：2026-11-10 使用者決定與 `quality_dip_facts` 一起開啟，純紀錄、不影響配置，回放略過（見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md#10-第二階段估值-v1-實作紀錄與第三階段修訂2026-11-10第六版)）。優質股第三階段（換股）改走換股提名、尚未實作；估值 V1（`cli/valuation_collect.py`，只收集與稽核、不進決策、尚未掛排程）已實作，V2、V3 未做。
+- 已開啟（紀錄）：`quality_dip_assessment` v1（交易 Agent 對 buy／add 多填 `dip_assessment` 列舉）與 `event_direction` v1（事件分析師每則事件多填 `direction`，並切換 `quality_dip_facts` 新壞事的事件面判準）：2026-11-10 使用者決定與 `quality_dip_facts` 一起開啟，純紀錄、不影響配置，回放略過（見 [`docs/quality_dip_plan.md`](docs/quality_dip_plan.md#10-第二階段估值-v1-實作紀錄與第三階段修訂2026-11-10第六版)）。優質股第三階段（換股）改走換股提名、尚未實作；估值 V1（`cli/valuation_collect.py`，只收集與稽核、不進決策）已實作並於 2026-11-10 掛進資料排程（`start.sh`，`VALUATION_COLLECT=0` 關閉），V2、V3 未做。
 - 未開啟：`high_conviction_cash_floor`。把它的行為當成現行行為是錯的。
 
 ### 子 Agent 執行器與安全邊界

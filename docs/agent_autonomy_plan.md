@@ -19,7 +19,7 @@
 | 本計畫（階段 0～4） | 取消程式挑股，改成 Agent 提名與給順序 | `agent_swap`、`reentry_cooldown` v2／v3、`drawdown_derisk` v5 等 | 全部已實作；只有 `agent_swap` v1 影子已開 | 階段 3 影子跑滿 10 個決策日（`calibration.MIN_DECISION_DAYS`）才考慮 v2 |
 | [換股提名](agent_nominated_rotation_plan.md) | 本計畫階段 3 的細部設計 | `agent_swap` v1／v2 | v1 影子已開、v2 已實作未開 | 由 `shadow-swap` 報告決定是否切 v2 |
 | [曝險主導](agent_led_exposure_plan.md) | 風險 Agent 看組合曝險，曝險理由併入換股提名 | `exposure_view` | 階段 1 已開（純紀錄）；階段 2（提名多 `purpose`）、階段 3（配置讀取）已實作、尚未開啟（`agent_swap.exposure`） | 階段 3 要先開 `agent_swap` v2 |
-| [優質股](quality_dip_plan.md) | 找出被大盤拖累的優質股 | `quality_dip_facts` | 階段 1、階段 2（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，未排程）已實作未開；階段 3 尚未實作（等曝險階段 2 的 `purpose` 列舉）；估值 V2／V3 未做 | 階段 3 的換股要走換股提名，不另開路徑 |
+| [優質股](quality_dip_plan.md) | 找出被大盤拖累的優質股 | `quality_dip_facts` | 階段 1、階段 2（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，已掛進資料排程）已實作未開；階段 3 尚未實作（等曝險階段 2 的 `purpose` 列舉）；估值 V2／V3 未做 | 階段 3 的換股要走換股提名，不另開路徑 |
 
 建議順序：換股提名影子期 → 決定 v2 → 曝險階段 2 → 曝險階段 3；優質股階段 1 的事實紀錄可隨時由人決定是否開，不擋其他項。
 

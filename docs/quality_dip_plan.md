@@ -1,6 +1,6 @@
 # 優質股被大盤拖累時的進場判斷（`quality_dip`）：設計計畫
 
-狀態（2026-11-10，第六版）：**第二階段（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，未掛排程）已實作，並於 2026-11-10 隨第一階段一起由使用者開啟（純紀錄、不影響配置；回滾＝刪掉三個欄位，樣板快照 `config/policy_versions/2026-11-10-before-quality-dip.json`）；第三階段改走換股提名、尚未實作（見第 10 章）；V2、V3 與資料 A／B 未做。**
+狀態（2026-11-10，第六版）：**第二階段（`quality_dip_assessment`、`event_direction`）與估值 V1（收集與稽核，2026-11-10 已掛進資料排程）已實作；第二階段並於 2026-11-10 隨第一階段一起由使用者開啟（純紀錄、不影響配置；回滾＝刪掉三個欄位，樣板快照 `config/policy_versions/2026-11-10-before-quality-dip.json`）；第三階段改走換股提名、尚未實作（見第 10 章）；V2、V3 與資料 A／B 未做。**
 
 第五版狀態：**第一階段（事實與標示，閘門 `position_sizing.quality_dip_facts` v1）已實作、閘門預設關閉、尚未開啟**——正式設定沒有這個欄位，是否開啟由人決定；第二、三階段與估值（V1～V3）、資料 A／B 都尚未實作。實作紀錄與待確認項目的結論見第 9 章。以下第四版內容保留原樣（第 1～8 章的「尚未實作」指第四版當時）。
 
@@ -409,7 +409,7 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 | 3 換股（影響配置，**第六版改走換股提名**，見第 10.3 節；以下範圍欄為第四版原文） | `quality_dip_swap`、`decision/allocation.py` 配對、旗標、回放略過 | 第 1、2 階段開啟並累積數個決策日的即時紀錄，人看過後決定（已決定不與前兩階段一起開；觀察天數由人定） | 全部上述文件，另加 `docs/decision-details.md`、`docs/operations.md`（回滾方式）；Skill：`trader`、`portfolio-risk-review` |
 | 資料 A（待辦） | FinMind 去年同期補抓排進每日流程 | 補抓失敗不得讓當日決策失敗；補抓結果仍須與官方金額核對 | `docs/fundamental_data_repair.md`、`docs/operations.md`、`docs/status.md` |
 | 資料 B（待辦，另案） | Yahoo Finance 財報備援：已決定排在資料 A 之後，先只做唯讀比對（見 [fundamental_data_gaps_plan.md](fundamental_data_gaps_plan.md)） | 資料 A 上線後看缺口剩多少；未定案前不得進正式計算 | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
-| 估值 V1（**已實作、未排程**，見第 10.2 節） | 官方與 FinMind 估值的取得、逐檔核對、不可變保存；只收集與稽核，不進決策；先做上市股 | 使用者下令開工；授權登記隨實作完成（第 2.6 節） | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
+| 估值 V1（**已實作、已掛進資料排程**，見第 10.2 節） | 官方與 FinMind 估值的取得、逐檔核對、不可變保存；只收集與稽核，不進決策；先做上市股 | 使用者下令開工；授權登記隨實作完成（第 2.6 節） | `docs/data_sources_inventory.md`、`docs/source_audit/`、`docs/status.md` |
 | 估值 V2（待辦） | `valuation_position` 以背景進簡報，閘門 `valuation_facts` 預設關閉 | V1 連續核對相符達人指定天數；口徑釐清（視窗已定案） | 同第 1 階段的文件與 Skill：`fundamental-analyst`、`trader` |
 | 估值 V3（未定） | 新證據政策版本，估值可引用（對映 `price`） | V2 有即時紀錄後由人決定 | `docs/decision-contracts.md`、`AGENTS.md`、各研究與交易 Skill |
 
@@ -507,9 +507,9 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 - 測試：`tests/decision/test_quality_dip_assessment.py`、`tests/decision/test_event_direction.py`，以及 `tests/research/test_analysts.py` 的 `direction` 驗證。Skill：`trader`（`references/data-rules.md`「dip_assessment」節與新壞事事件面說明）、`event-analyst`（「事件方向」節）。
 - 兩者開啟前的建議：先開第一階段 `quality_dip_facts` 並看過幾個決策日的簡報與重算結果；`event_direction` 開啟後事件分析師輸出變長、驗證失敗率要觀察。
 
-### 10.2 估值 V1（已實作、未排程；只收集與稽核，不進決策、簡報或報告）
+### 10.2 估值 V1（已實作、已掛進資料排程；只收集與稽核，不進決策、簡報或報告）
 
-只做上市股（`BWIBBU_ALL`）與 FinMind `TaiwanStockPER` 的逐檔核對與不可變保存，細節見 [資料來源清單](data_sources_inventory.md#估值資料v1)與 [來源核對紀錄](source_audit/2026-11-10_valuation_sources.md)。指令：`cli/valuation_collect.py collect`、`validate <run_id>`。**每日排程尚未掛上**（官方端點沒有歷史，越早每天跑越好；掛上時必須以盡力而為包住，失敗只記錄、不得讓 D-Plan 失敗），也尚未用真實端點驗證過（測試只用 mock）。V2 的進入條件（連續核對相符的天數由人指定、EPS 與殖利率基準待釐清、上櫃端點待確認）都未滿足，所以**沒有做 V2、V3**。
+只做上市股（`BWIBBU_ALL`）與 FinMind `TaiwanStockPER` 的逐檔核對與不可變保存，細節見 [資料來源清單](data_sources_inventory.md#估值資料v1)與 [來源核對紀錄](source_audit/2026-11-10_valuation_sources.md)。指令：`cli/valuation_collect.py collect`、`validate <run_id>`。**已於 2026-11-10 由使用者下令掛進每日資料排程**（`start.sh` 的資料階段，20:00、06:00 各一次，`VALUATION_COLLECT=0` 關閉，失敗只記錄、不影響資料狀態與決策）。真實端點驗證：官方端點已實測（2026-11-10 回 1087 檔、100 檔交易池上市股都找得到）；FinMind 端因執行環境沒有 `FINMIND_TOKEN` 尚未實測，其餘靠 mock 測試。V2 的進入條件（連續核對相符的天數由人指定、EPS 與殖利率基準待釐清、上櫃端點待確認）都未滿足，所以**沒有做 V2、V3**。
 
 ### 10.3 第三階段修訂：改走換股提名（使用者 2026-11-10 選 A；尚未實作）
 

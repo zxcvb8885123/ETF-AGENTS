@@ -11,6 +11,7 @@
 | 平日 20:00、06:00 | 更新行情、月營收、重大訊息、財報等資料；06:00 先抓好 FinMind 財報，07:00 決策只重抓輕量的事件與新聞資料 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 去年同期補抓：官方最新期別尚無去年同期文件的股票才逐檔呼叫 FinMind，通過核對才寫入；`PRIOR_REPAIR=0` 關閉，`PRIOR_REPAIR_MAX`（預設 60）為每輪檔數上限；摘要與失敗原因在 `artifacts/data/fundamental_prior_repair_latest.json`，失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 產業比較資料 C1：收集 t187ap14（上市、上櫃）、與官方損益表逐檔核對；只收集與稽核、不進決策；`INDUSTRY_PEER=0` 關閉；摘要在 `artifacts/data/industry_peer_latest.json`，部分來源失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
+| 平日 20:00、06:00（同一資料排程內） | 估值資料 V1：證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 逐檔核對、不可變保存；只收集與稽核、不進決策；`VALUATION_COLLECT=0` 關閉；失敗只在日誌留警告，不影響資料狀態與決策；需 `FINMIND_TOKEN`，沒有時只保存官方原始回應；run 在 `artifacts/valuation_collection/` | `com.etf-agents.data` |
 | 平日 20:40 | 抓個股新聞 | `com.etf-agents.finmind-news` |
 | 週一至週四、週日 21:00 | 用當天收盤資料做「下一個交易日」的決策與 D-Plan，當作備案 | `com.etf-agents.daily` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
@@ -243,7 +244,7 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 
 各排程的日誌位置：`daily` 在 `var/logs/launchd.log`；`data`、`finmind-news` 在 `artifacts/daily/`；看門狗、反思與隔夜背景在 `var/logs/`。
 
-## 估值資料收集（V1，選用、尚未掛排程）
+## 估值資料收集（V1，已掛進資料排程）
 
 只收集與稽核，不進決策、簡報或報告；僅上市股。每次抓取是一個不可變 run（`artifacts/valuation_collection/<日期>/valuation-<UTC 時間>/`）。
 
@@ -253,7 +254,7 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 .venv/bin/python cli/valuation_collect.py validate <run_id>                    # 以原始回應整份重建比對
 ```
 
-退出碼：0 全部相符、2 有股票被拒絕、1 整份失敗。官方端點沒有歷史，越早每天跑越好；之後掛進排程時必須以盡力而為包住，失敗只記錄、不得讓決策或 D-Plan 失敗。回滾＝停止執行並刪除 `artifacts/valuation_collection/`，不影響任何決策。
+退出碼：0 全部相符、2 有股票被拒絕、1 整份失敗。官方端點沒有歷史，所以每天都要收。已掛在 `start.sh` 的資料階段（`com.etf-agents.data`，20:00、06:00 各一次），以盡力而為包住，失敗只記錄、不設資料狀態、不中斷決策或 D-Plan。回滾＝設 `VALUATION_COLLECT=0`（或刪掉 `start.sh` 的該區塊），並可刪除 `artifacts/valuation_collection/`，不影響任何決策。
 
 ## 每週的人工事項：策略反思放行
 
