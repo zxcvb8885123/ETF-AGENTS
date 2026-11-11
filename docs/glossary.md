@@ -79,6 +79,7 @@
 | `reuse_sell_proceeds` | 賣款當日可用（淨額交割） | rules；`ledger/execution.py`、`ledger/account.py` | — |
 | `sector_fit`、`max_sector_weight` | 產業上限只按整張縮減當日買進增量，不賣既有持股 | `sector_fit` 在 policy、上限在 rules；`decision/risk.py`、`decision/allocation.py` | `RISK_SECTOR_WEIGHT` |
 | `turnover_fit`、`max_turnover_rate` | 換手上限：先逐筆縮減買單；賣單本身就超過時依 ATR 留住出場持股 | policy；`decision/allocation.py` | `TURNOVER_LIMIT`（逐筆縮減）、`RISK_TURNOVER`（留住出場） |
+| `liquidity_fit`、`max_participation` | 買單流動性縮減：買單股數縮到 max_participation × 20 日均量以內（向下取整張，不足一張取消） | policy；`decision/liquidity_fit.py`、`decision/allocation.py` | `LIQUIDITY_LIMIT`、`LIQUIDITY_UNAVAILABLE` |
 | `reentry_cooldown`（`version`、`days`、流程綁入的名單） | 出場後 N 日內不再買進未持有的新股；名單由每日流程從決策庫取得 | policy；`decision/reentry_cooldown.py`（`recent_exit_symbols`、`bind_reentry_cooldown`）、`decision/allocation.py` | `RISK_REENTRY_COOLDOWN` |
 | `reentry_cooldown` v2／v3（已實作、尚未開啟） | v2 名單只計交易 Agent 自己的 exit／forced_exit；v3 名單同 v2 但改成簡報的 `cooldown:<代號>` 提示，買回須在 `adopted_claim_ids` 回應，沒回應由配置取消買單 | policy；`decision/reentry_cooldown.py`、`decision/trader.py`、`decision/allocation.py` | `RISK_REENTRY_COOLDOWN` |
 | `cash_fit_order` v2、`high_conviction_cash_priority` v2（已實作、尚未開啟） | v2：新股只買得到零頭時不整筆取消（不允許 `cash_fit_min_fill_ratio`）；v2：移除「high 被縮減後擋後面中低信心新股」 | policy；`decision/sizing.py`、`decision/allocation.py` | — |

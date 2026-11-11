@@ -11,3 +11,5 @@
 - `2026-11-11-before-proceeds-to-add.json`：2026-11-11 開啟 `agent_swap.proceeds_to_add` 之前的正式樣板（`policy_id: strategy-2026-11-11-derisk-day-view-1`）。要回滾，刪掉 `position_sizing.agent_swap.proceeds_to_add`（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-11-before-revision-bounds.json`：2026-11-11 開啟 `position_sizing.revision_bounds` 之前的正式樣板（`policy_id: strategy-2026-11-11-alerts-v2-1`）。要回滾，刪掉 `position_sizing.revision_bounds`（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-11-before-swap-priority.json`：2026-11-11 開啟 `agent_swap.entry_reserve.swap_priority` 之前的正式樣板（`policy_id: strategy-2026-11-11-revision-bounds-1`）。要回滾，刪掉 `position_sizing.agent_swap.entry_reserve.swap_priority`（舊 run 仍讀各自封存的 `policy.json`）。
+- `2026-11-11-before-liquidity-fit.json`：2026-11-11 開啟 `position_sizing.liquidity_fit` 之前的正式樣板（`policy_id: strategy-2026-11-11-swap-priority-1`）。要回滾，刪掉 `position_sizing.liquidity_fit`（舊 run 仍讀各自封存的 `policy.json`）。
+- `2026-11-11-before-probe-3.json`：2026-11-11 把 probe 曝險配對由 2 改 3 之前的正式樣板（`policy_id: strategy-2026-11-11-liquidity-fit-1`）。要回滾，把 `offense.by_view.probe.max_exposure_pairs` 與 `agent_swap.exposure.max_pairs_by_view.probe` 改回 2。

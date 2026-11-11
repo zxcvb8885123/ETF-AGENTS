@@ -188,6 +188,7 @@ FORBIDDEN_PREFIXES = (
     "trader_background_record",
     # 風險修正動作的數值下限與步距：放寬或收緊都是改變風控界線，只由人設定。
     "revision_bounds",
+    "liquidity_fit",
 )
 
 

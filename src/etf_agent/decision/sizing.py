@@ -458,6 +458,12 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "agent_swap.verdicts_ref 一致（無法證明來源檔當時沒有別的版本）；簡報形狀、驗證與配置不變；回放略過",
     ),
     GateRule(
+        "liquidity_fit",
+        note="買單流動性縮減（v1）：配置引擎在其他縮減之後，把買單股數縮到人填 max_participation × 20 日均量以內（向下取整張，不足一張取消該筆）；"
+             "只縮買單、不改寫交易 Agent 意圖，旗標 LIQUIDITY_LIMIT；缺均量不縮並留 LIQUIDITY_UNAVAILABLE；沒有此欄位的舊 Policy 逐位元不變；"
+             "不影響 team_inputs（自訂檢查在 liquidity_fit.validate_liquidity_fit_gate）",
+    ),
+    GateRule(
         "revision_bounds",
         note="風險修正動作的數值界線（v1）：reduce_max_stock_weight／reduce_turnover_limit 的 value 不得低於人填的下限、須為 step 的整數倍"
              "（自訂檢查在 validate_revision_bounds_gate，驗證在 RiskReviewValidator._validate_action）；這是「Agent 不輸出數字」的已知例外，"
@@ -1540,6 +1546,9 @@ def validate_position_sizing(
         validate_stop_exit_gate(policy, errors)
     if "revision_bounds" in sizing:
         validate_revision_bounds_gate(policy, errors)
+    if "liquidity_fit" in sizing:
+        from .liquidity_fit import validate_liquidity_fit_gate
+        validate_liquidity_fit_gate(policy, errors)
     if "agent_swap" in sizing and "position_review" not in policy:
         errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
     if "cash_ratio_range" in sizing:

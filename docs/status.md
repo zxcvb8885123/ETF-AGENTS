@@ -41,7 +41,7 @@
 
 ### 版本閘門啟用狀態
 
-這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-11 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-11-swap-priority-1`，`available_at: 2026-11-11T22:40:00+08:00`；本表 `position_review` 以外的數值以此核對）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
+這是閘門啟用狀態與目前數值的**唯一出處**（其他文件只連結這裡）。2026-11-11 依 `config/decision_policy.json`（`policy_id: strategy-2026-11-11-probe-3-1`，`available_at: 2026-11-11T23:30:00+08:00`；本表 `position_review` 以外的數值以此核對）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）與 `config/strategy_reflection.json` 核對；改設定時請同步更新本表。各閘門的行為與條件見[決策鏈契約](decision-contracts.md)，名稱說明見[名稱對照](glossary.md)。
 
 2026-11-09 17:50 把 `exposure_rotation` 由 v1 切到 v2（只換欄位寫法，觸發線與停止線數值不變：進攻 0.90、中性 0.55；刪 `max_rotation_fraction`、`min_new_conviction`、`release_margin`），切換前的樣板存為 `config/policy_versions/2026-11-09-exposure-rotation-v1.json`，其餘門檻與閘門開關不變；先前的策略識別與可得時間更新（`strategy-2026-11-09-turnfacts-v1`）沿用同一段說明。審查前樣板原樣保存在 `config/policy_versions/2026-11-09-before-review.json`；該檔是當日審查前的內容快照，**不是**其中舊 `available_at` 日期當時的策略還原。封存 run 仍讀自己保存的 Policy，不改寫歷史。用新版策略重跑較早 cutoff 僅能是明確標示的反事實評測。
 
@@ -92,7 +92,7 @@
 
 **v2 已於 2026-11-10 23:20 開啟（使用者決定；`max_pairs_by_view` `start_rebuild 1`／`rebuild 2`；回滾樣板 `config/policy_versions/2026-11-10-before-exposure-v2.json`）**；v1 影子曾於 2026-11-10 19:45 開啟（`policy_id strategy-2026-11-10-exposure-shadow-1`，回滾樣板 `config/policy_versions/2026-11-10-before-exposure-shadow.json`）、v2 已於 23:20 開啟：`agent_swap.exposure`（Agent 主導曝險階段 2、3；v1 影子、v2 依風險 Agent 的 `exposure_view` 取用 `purpose: exposure` 的換股配對；前提 `agent_swap`、`exposure_view`；`max_pairs_by_view` 不得高於 `max_swaps_per_run`；`team_inputs` 不升版；回滾＝刪掉 `position_sizing.agent_swap.exposure`，見[計畫](agent_led_exposure_plan.md)）。
 
-未開啟：
+以下表格列「尚未開啟」與「分階段開啟的閘門明細」；**以每列的第二欄標示為準**（標「已開啟」的就是現行設定，標「尚未開啟」的才不是）：
 
 | 閘門 | 說明 |
 | --- | --- |
@@ -107,6 +107,8 @@
 | `position_sizing.valuation_facts`（估值 V2） | **已實作、尚未開啟**（2026-11-10；正式設定沒有這個欄位）：PER／PBR 在自身歷史區間的位置（近 250／750 個資料列與全部可得歷史並列）以背景給基本面分析師與交易 Agent，`team_inputs.valuation_facts` 選配鍵、Finalizer 整份重算；不影響配置。**V1 收集的紀錄授權範圍是「只收集與稽核」，即使開啟也全部 `LICENSE_SCOPE_NOT_APPROVED`**，要先由人核准新的用途範圍並改 V1 契約（只改收集器常數會讓既有 run 重建失敗）。見[優質股計畫](quality_dip_plan.md#105-估值-v2-實作紀錄2026-11-10第七版) |
 | `position_sizing.revision_bounds` v1（風險修正數值界線） | **已開啟**（2026-11-11 18:33，使用者決定；`policy_id strategy-2026-11-11-revision-bounds-1`；`min_max_stock_weight 0.06`、`min_max_turnover_rate 0.15`、`step 0.01`；回滾樣板 `config/policy_versions/2026-11-11-before-revision-bounds.json`）：風險審查修正動作 `reduce_max_stock_weight`／`reduce_turnover_limit` 的 `value` 須不低於人填下限、且為人填 `step` 的整數倍；下限與步距全部由人填；沒有閘門時行為不變；不影響配置與 `team_inputs`。回滾＝刪掉該欄位。見[決策契約](decision-contracts.md)與[設計審查修正計畫](audit_fix_plan.md) B |
 | `agent_swap.entry_reserve.swap_priority` v1（換股優先順序） | **已開啟**（2026-11-11 22:40，使用者決定；`policy_id strategy-2026-11-11-swap-priority-1`；回滾樣板 `config/policy_versions/2026-11-11-before-swap-priority.json`）：（1）換股試算的名額保護只計分到至少一張的新股（`slot_recycle` 以權重 0 保留、買不到一張的新股不再擋換股）；（2）`turnover_fit` 縮買單時，已保留預算的換股換入者排在其他買單之後才縮。只有版本欄位、沒有人填數字；不改寫交易 Agent 意圖、不影響 `team_inputs`；沒有該欄位時行為逐位元不變。起因：2026-11-12 的 run 6 組提名只成交 1 組，同輸入重跑開啟後 5 組成交、Guard 通過、換手 29.9%（`replay_reference_only`）。回滾＝刪掉該欄位 |
+| `position_sizing.liquidity_fit` v1（買單流動性縮減） | **已開啟**（2026-11-11 23:05，使用者決定；`policy_id strategy-2026-11-11-liquidity-fit-1`；`max_participation 0.10`，與風險審查的流動性警示線同值；回滾樣板 `config/policy_versions/2026-11-11-before-liquidity-fit.json`）：配置引擎在其他縮減之後，把買單股數縮到「`max_participation` × 20 日均量」以內（向下取整張，不足一張取消該筆），旗標 `LIQUIDITY_LIMIT`；缺均量不縮並留 `LIQUIDITY_UNAVAILABLE`。只縮買單、不改寫交易 Agent 意圖、不影響 `team_inputs`；沒有該欄位時行為逐位元不變。起因：2026-11-12 的 8415.TWO 買單是 20 日均量的 1.64 倍，風險 Agent 只能整筆移除；同輸入重跑（不排除）縮為 54 張、Guard 通過（`replay_reference_only`）。回滾＝刪掉該欄位 |
+| `offense.by_view.probe.max_exposure_pairs`／`agent_swap.exposure.max_pairs_by_view.probe`（小量先試的曝險配對數） | **2026-11-11 23:30 由 2 改 3（使用者決定 B；`policy_id strategy-2026-11-11-probe-3-1`；回滾樣板 `config/policy_versions/2026-11-11-before-probe-3.json`）**：只改兩個人填數字，`beta_stop 0.40`、`max_size medium`、`offense_off_drawdown 0.12` 與強制防守線不變；多一組曝險配對約多 2%～4% NAV 的高 beta（fable 審查估計）。回滾＝兩處改回 2 |
 | `agent_swap` v2（換股改由提名配置） | **已於 2026-11-10 20:10 開啟**（使用者決定、未等影子期；同時移除 `rotation.forced_swap` 與 `exposure_rotation.conviction_gap_swap`；`policy_id strategy-2026-11-10-agent-swap-v2-1`）：配置依交易 Agent 的有序提名換股，換出者由程式標 `exit`＋`AGENT_SWAP`、換入者 `AGENT_SWAP_FILL`；提名可行性取消只取消該對並留 `AGENT_SWAP_CANCELLED:<原因>`，換出者不賣；與 `rotation.forced_swap`、`exposure_rotation.conviction_gap_swap` 互斥，`exposure_rotation` 的換股步驟停用（`EXPOSURE_ROTATION_SKIPPED:agent_swap`）；pipeline 綁 `nominated_pairs`／`nomination_ref`，`portfolio_slots` 升 1.1。（v2 已開啟；原先「影子期後再決定」的說明見[計畫](agent_nominated_rotation_plan.md#6-需人決定事項)；現行 `max_swaps_per_run` 為 5，非此列寫的 2） |
 
 已開啟（2026-11-10，目前值見上表；以下為行為說明）：

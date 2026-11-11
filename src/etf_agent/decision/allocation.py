@@ -41,6 +41,7 @@ from .sizing import (
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
 )
+from .liquidity_fit import liquidity_fit_limit
 from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 from .offense import capped_size, offense_bound, thesis_size_cap_active
@@ -897,6 +898,8 @@ class AllocationOrderEngine:
         constraint_flags.extend(sector_flags)
         orders, projected_cash, turnover_flags = self._fit_turnover(current, orders, projected_cash, marked_nav, effective)
         constraint_flags.extend(turnover_flags)
+        orders, projected_cash, liquidity_flags = self._fit_liquidity(orders, projected_cash, effective)
+        constraint_flags.extend(liquidity_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1
@@ -2420,6 +2423,57 @@ class AllocationOrderEngine:
             }
         fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
         return fitted, cash, [flags[symbol] for symbol in sorted(flags)]
+
+    def _fit_liquidity(
+        self,
+        orders: List[Dict[str, object]],
+        cash: Decimal,
+        effective: Mapping[str, object],
+    ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
+        """``liquidity_fit``（版本閘門）：買單股數縮到 max_participation × 20 日均量以內（向下取整張，不足一張取消該筆）。
+
+        只縮買單、不碰賣單、不改寫交易 Agent 意圖；縮減釋出的現金留在現金，不再分配。缺均量的買單不縮並留
+        LIQUIDITY_UNAVAILABLE。沒有閘門的舊 run 原樣返回。"""
+        limit = liquidity_fit_limit(self.policy.get("position_sizing"))
+        if limit is None:
+            return orders, cash, []
+        volumes = {
+            str(item["symbol"]).upper(): item.get("average_volume_20d")
+            for item in MomentumEngine(self.context.bundle).run()["items"]
+        }
+        lot = int(effective["lot_size"])
+        fitted: List[Dict[str, object]] = []
+        flags: List[Dict[str, object]] = []
+        for order in orders:
+            symbol = str(order["symbol"])
+            volume = volumes.get(symbol.upper())
+            if order["side"] != "buy":
+                fitted.append(order)
+                continue
+            if volume is None or decimal_value(volume, "%s.average_volume_20d" % symbol) <= 0:
+                flags.append({
+                    "symbol": symbol, "code": "LIQUIDITY_UNAVAILABLE",
+                    "detail": "缺 20 日均量，買單未依流動性縮減（交易 Agent 的意圖未被改寫）",
+                })
+                fitted.append(order)
+                continue
+            cap = int((limit * decimal_value(volume, "%s.average_volume_20d" % symbol) / lot).to_integral_value(rounding=ROUND_FLOOR)) * lot
+            shares = int(order["shares"])
+            if shares <= cap:
+                fitted.append(order)
+                continue
+            cash -= decimal_value(order["net_cash_impact"], "net_cash_impact")
+            if cap > 0:
+                replacement = self._order(symbol, "buy", cap, str(order["intent"]), effective)
+                fitted.append(replacement)
+                cash += decimal_value(replacement["net_cash_impact"], "net_cash_impact")
+            flags.append({
+                "symbol": symbol, "code": "LIQUIDITY_LIMIT",
+                "detail": "買單超過 20 日均量的 %s：買進股數由 %d 降為 %d（向下取整張%s，交易 Agent 的意圖未被改寫）"
+                % (format(limit, ".0%"), shares, cap, "，不足一張取消該筆" if cap == 0 else ""),
+            })
+        fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
+        return fitted, cash, sorted(flags, key=lambda item: str(item["symbol"]))
 
     def _drawdown_derisk(
         self,
