@@ -34,7 +34,7 @@ from .sizing import (
     HELD_WEIGHT_BUDGET, HIGH_CONVICTION_CASH_PRIORITY,
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
-    conviction_weights, derisk_day_uses_agent_view, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
+    conviction_weights, derisk_day_uses_agent_view, proceeds_to_add_enabled, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
     agent_swap_binding, high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, release_order_binding,
     slot_recycle_enabled, validate_position_sizing,
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
@@ -51,6 +51,7 @@ EXPOSURE_FILL_CODES = ("EXPOSURE_ROTATION_FILL", "CONVICTION_GAP_SWAP_FILL")
 # agent_swap v2（版本閘門）的旗標代碼：換出者、換入者；v1（影子）與沒有閘門的 run 不會出現。
 AGENT_SWAP_VICTIM_CODE = "AGENT_SWAP"
 AGENT_SWAP_FILL_CODE = "AGENT_SWAP_FILL"
+AGENT_SWAP_PROCEEDS_CODE = "AGENT_SWAP_PROCEEDS_TO_ADD"  # proceeds_to_add：換入者沒有買單、賣款流向高信心加碼持股
 # 換入者沒有買單時，依該股最後一個縮減旗標判定取消原因（旗標代碼依配置步驟先後；沒有對應旗標一律 no_buy_order）。
 AGENT_SWAP_UNFILLED_REASONS = {
     "RISK_CASH_FIT": "cash_fit", "CASH_BUFFER": "cash_fit", "RISK_CASH_SOFT_FLOOR": "cash_fit",
@@ -298,6 +299,7 @@ class AllocationOrderEngine:
             raise DecisionToolError("DecisionPolicy 驗證失敗：" + "；".join(errors))
         self.policy = dict(policy)
         self.prices = self._latest_prices()
+        self._proceeds_accepted: Set[str] = set()  # proceeds_to_add：本次重算中接受「賣款流向加碼持股」的換入者（只在 _run_exposure 迴圈內有值）
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
         self._beta_model: Optional[BetaModel] = None
@@ -468,6 +470,13 @@ class AllocationOrderEngine:
         agent_gated = agent_swap_binding(self.policy.get("position_sizing")) is not None
         excluded_fills: Set[str] = set()
         agent_cancelled: Dict[str, str] = {}
+        proceeds_gate = agent_gated and proceeds_to_add_enabled(self.policy.get("position_sizing"))
+        self._proceeds_accepted = set()
+        tiers = (self.policy.get("position_sizing") or {}).get("conviction_by_symbol") or {}
+        high_adds = {
+            str(item.get("symbol", "")).upper() for item in intent_result.get("items", [])
+            if isinstance(item, Mapping) and item.get("intent") == "add" and tiers.get(str(item.get("symbol", "")).upper()) == "high"
+        }
         while True:
             body = self._run(
                 intent_result, excluded_symbols, overrides, revision_count, parent_proposal_id, kept_exits,
@@ -480,6 +489,23 @@ class AllocationOrderEngine:
             bought = {str(order["symbol"]).upper() for order in body["order_proposal"]["orders"] if order["side"] == "buy"}
             unfilled = fills - bought
             agent_unfilled = agent_fills - bought
+            if proceeds_gate:
+                # proceeds_to_add：有高信心加碼持股真的買進時，沒有任何縮減旗標的換入者改標流向加碼、不取消；
+                # 沒有（或下一輪不再成立）就照舊取消。接受名單與取消名單都只增減一次方向，所以必定收斂。
+                holdings = {str(p["symbol"]).upper() for p in self.context.bundle["account_snapshot"]["positions"]}
+                funded = (high_adds & holdings) & bought
+                accepted = {symbol for symbol in agent_unfilled if self._unfilled_reason(body, symbol) == "no_buy_order"} if funded else set()
+                lost = {symbol for symbol in self._proceeds_accepted if not funded}
+                if lost:
+                    self._proceeds_accepted -= lost
+                    for symbol in sorted(lost):
+                        agent_cancelled[symbol] = "no_buy_order"
+                    continue
+                new_accepted = accepted - self._proceeds_accepted
+                if new_accepted:
+                    self._proceeds_accepted |= new_accepted
+                    continue
+                agent_unfilled = agent_unfilled - self._proceeds_accepted
             if not unfilled and not agent_unfilled:
                 return body
             excluded_fills |= unfilled
@@ -1196,7 +1222,10 @@ class AllocationOrderEngine:
                  + ("；目的：曝險（風險 Agent 的 exposure_view 為 %s）" % exposure_binding["view"] if (buy, sell) in exposure_pairs else "")  # type: ignore[index]
                  + ("；目的：優質股被大盤拖累（買進權重上限 %s、買進金額不超過本筆賣款）" % format(entry_weights[(buy, sell)], ".2%")
                     if (buy, sell) in entry_weights else ""))
-            note(AGENT_SWAP_FILL_CODE, buy, "原本被持股名額擋下；交易 Agent 第二輪提名換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % sell)
+            if buy in self._proceeds_accepted:
+                note(AGENT_SWAP_PROCEEDS_CODE, buy, "額度被高信心加碼持股占用、本檔沒有買單；換出 %s 的賣款流向高信心加碼持股，換股照常成立（交易 Agent 的意圖未被改寫）" % sell)
+            else:
+                note(AGENT_SWAP_FILL_CODE, buy, "原本被持股名額擋下；交易 Agent 第二輪提名換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % sell)
             if (buy, sell) in entry_weights and quality_fills is not None:
                 quality_fills[buy] = (sell, entry_weights[(buy, sell)])
         return result

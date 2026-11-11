@@ -385,6 +385,7 @@ class ReplayTests(unittest.TestCase):
                 sizing["agent_swap"]["exposure"] = {"version": "v1"}
                 sizing["agent_swap"]["quality_dip"]["version"] = "v1"  # 同理：v2 只允許配 agent_swap v2
                 sizing["agent_swap"].pop("derisk_day_view", None)  # 同理：它需要 agent_swap.exposure v2
+                sizing["agent_swap"].pop("proceeds_to_add", None)  # 同理：它需要 agent_swap v2
             return bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])
 
         v1_policy, v1_notes = replay("v1")

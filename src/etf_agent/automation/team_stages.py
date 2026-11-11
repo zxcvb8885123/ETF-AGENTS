@@ -97,6 +97,7 @@ from .agent_schemas import (
 )
 from etf_agent.decision import evidence_policy
 from .batching import merge_batch_items, universe_batches, weighted_batches
+from .event_reuse import reusable_event_items
 
 
 # 本次 brief 含哪些背景區塊，提示只用一句指向 data-rules.md 的對應小節；規則本身只寫在那裡（與 Validator 同步）。
@@ -216,6 +217,12 @@ class TeamStagesMixin:
                 self.log("  [事件] %d 檔無重大訊息%s，由程式輸出 unknown，其餘 %d 檔交給 Agent（個股新聞 %d 則）" % (
                     len(skipped), "或新聞" if news_checked else "", len(brief["symbols"]) - len(skipped),
                     sum(len(row.get("news", [])) for row in brief["symbols"])))
+                agent_symbols = [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped]
+                reused = self._reusable_event_items(bundle, brief, agent_symbols, event_direction) if self.event_reuse else []
+                if reused:
+                    reused_symbols = {item["symbol"] for item in reused}
+                    program_items = [*program_items, *reused]  # 沿用的項目與程式產出的 unknown 一起當作不送 Agent 的偽批次
+                    skipped = skipped | reused_symbols
                 analyst_batches = weighted_batches(
                     [row["symbol"] for row in brief["symbols"] if row["symbol"] not in skipped],
                     {row["symbol"]: len(row["events"]) + len(row.get("news", [])) for row in brief["symbols"]},
@@ -241,6 +248,24 @@ class TeamStagesMixin:
             reports[analyst] = report
             self.save_artifact("analyst_%s" % analyst, report)
         return reports
+
+    def _reusable_event_items(
+        self, bundle: Mapping[str, object], brief: Mapping[str, object], agent_symbols: Sequence[str], event_direction: bool,
+    ) -> List[Dict[str, object]]:
+        """同一交易日前一次 run 中輸入逐檔完全相同的事件分析項目；以本次 bundle 與 Validator 重驗，驗不過整批不重用。"""
+        source, items = reusable_event_items(self.run_dir, {row["symbol"]: row for row in brief["symbols"]}, agent_symbols)
+        if not items:
+            return []
+        report = seal_event_market_report(bundle, brief["report_envelope"], items)
+        errors = AnalystReportValidator(
+            bundle, "event", symbols=sorted(item["symbol"] for item in items), require_event_direction=event_direction,
+        ).validate(report)
+        if errors:
+            self.log("  [事件重用] 前一次 %s 的結果在本次資料上驗證失敗（%s），全部重新交給 Agent" % (source, "；".join(errors[:2])))
+            return []
+        self.log("  [事件重用] 沿用 %s 的事件分析 %d 檔（輸入逐檔完全相同、已用本次資料重驗），其餘交給 Agent" % (source, len(items)))
+        self.save_artifact("event_reuse", {"source_run": source, "symbols": sorted(item["symbol"] for item in items)})
+        return items
 
     def _analyst_batch_jobs(
         self, bundle: Mapping[str, object], analyst: str, brief: Dict[str, object],

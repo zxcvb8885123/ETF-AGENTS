@@ -211,8 +211,13 @@ AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 # quality_dip 是優質股第三階段的子閘門（decision/quality_dip_swap.py）：purpose 列舉多一個 quality_dip（前提 agent_swap.exposure）。
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
-    "exposure", "quality_dip", "derisk_day_view",
+    "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add",
 }
+# proceeds_to_add（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：換股成立時，換出者的賣款可流向高信心加碼持股。
+# 換入者因額度被高信心加碼持股占走而沒有買單（無任何縮減旗標），且同一份配置有高信心加碼持股真的買進，該對不取消、換出者照賣，
+# 換入者改標 AGENT_SWAP_PROCEEDS_TO_ADD；沒有高信心加碼持股買進時仍照舊取消（不會只賣不買）。前提 agent_swap v2；
+# 省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。
+PROCEEDS_TO_ADD = {"version": "v1"}
 # derisk_day_view（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：減碼日不再由程式整個略過換股提名，
 # 改由風險 Agent 的 exposure_view 決定（keep_defensive 才略過，start_rebuild／rebuild 照常依提名換股）；前提 agent_swap.exposure v2。
 # 省略此欄位的舊 Policy／舊 run 逐位元維持「減碼日整個略過」的原重建行為。
@@ -720,6 +725,11 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
             errors.append('%s.derisk_day_view 必須是 {"version": "v1"}' % prefix)
         if version != AGENT_SWAP_V2 or not isinstance(exposure_gate, Mapping) or exposure_gate.get("version") != "v2":
             errors.append("%s.derisk_day_view 需要 agent_swap v2 與 agent_swap.exposure v2（風險 Agent 的 exposure_view 才綁得進來）" % prefix)
+    if "proceeds_to_add" in gate:
+        if gate["proceeds_to_add"] != PROCEEDS_TO_ADD:
+            errors.append('%s.proceeds_to_add 必須是 {"version": "v1"}' % prefix)
+        if version != AGENT_SWAP_V2:
+            errors.append("%s.proceeds_to_add 需要 agent_swap v2（配置才讀提名）" % prefix)
     if "exposure" in gate:
         from .exposure_swap import validate_exposure_swap_gate
         validate_exposure_swap_gate(sizing, errors)
@@ -822,6 +832,12 @@ def release_order_binding(sizing: object) -> Optional[Tuple[List[str], str]]:
     if symbols is None or not isinstance(ref, Mapping):
         raise DecisionToolError("DecisionPolicy 啟用 drawdown_derisk v5，但尚未綁定釋出順序（release_symbols／release_ref）")
     return [str(symbol) for symbol in symbols], str(ref["status"])
+
+
+def proceeds_to_add_enabled(sizing: object) -> bool:
+    """agent_swap.proceeds_to_add 啟用；沒有欄位回 False（原行為）。"""
+    swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    return isinstance(swap, Mapping) and swap.get("proceeds_to_add") == PROCEEDS_TO_ADD
 
 
 def derisk_day_uses_agent_view(sizing: object) -> bool:

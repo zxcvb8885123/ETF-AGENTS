@@ -903,6 +903,10 @@ def main() -> int:
         help="多頭／空頭研究員批次使用的模型；研究員用 Claude CLI 時預設 %s，傳 inherit 則沿用 --model（研究員與主 CLI 相同時）；其他 CLI 未指定時，與主 CLI 相同者沿用 --model，不同者用該 CLI 的預設設定" % DEFAULT_CLAUDE_RESEARCH_MODEL,
     )
     parser.add_argument(
+        "--event-reuse", action=argparse.BooleanOptionalAction, default=True,
+        help="同一交易日前一次 run 中，事件簡報逐檔完全相同的股票直接沿用已驗證的事件分析（預設開啟；--no-event-reuse 全部重新交給 Agent）",
+    )
+    parser.add_argument(
         "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
         help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
     )
@@ -1197,6 +1201,7 @@ def _main(args) -> int:
                 analyst_runner=analyst_runner,
                 research_runner=research_runner,
                 technical_gate=args.technical_gate,
+                event_reuse=args.event_reuse,
                 max_workers=args.max_workers,
                 # 子 Agent 暫時性失敗（逾時、非零結束、輸出不是 JSON）再試一次，但不拖過目標時段的交件期限。
                 retry_deadline=session_deadline(session),

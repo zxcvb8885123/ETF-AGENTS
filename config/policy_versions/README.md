@@ -8,3 +8,4 @@
 - `2026-11-10-rebound-v1.json`：2026-11-10 切換 `rebound_participation` 到 v2 之前的正式樣板（`policy_id: strategy-2026-11-09-rebound-v1-1`，反彈參與 v1、只開 confirmed，已含 `market_index_facts`）。要回滾反彈參與到 v1 時，以此檔的 `position_sizing.rebound_participation` 區塊為準；舊 run 仍讀各自封存的 `policy.json`。
 - `2026-11-10-before-quality-dip.json`：2026-11-10 開啟 `quality_dip_facts`、`quality_dip_assessment`、`event_direction` 之前的正式樣板。要回滾優質股紀錄閘門，刪掉 `position_sizing` 的這三個欄位（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-11-before-derisk-day-view.json`：2026-11-11 開啟 `agent_swap.derisk_day_view` 之前的正式樣板（`policy_id: strategy-2026-11-10-final-versions-1`）。要回滾，刪掉 `position_sizing.agent_swap.derisk_day_view`（舊 run 仍讀各自封存的 `policy.json`）。
+- `2026-11-11-before-proceeds-to-add.json`：2026-11-11 開啟 `agent_swap.proceeds_to_add` 之前的正式樣板（`policy_id: strategy-2026-11-11-derisk-day-view-1`）。要回滾，刪掉 `position_sizing.agent_swap.proceeds_to_add`（舊 run 仍讀各自封存的 `policy.json`）。
