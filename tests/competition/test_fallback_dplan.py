@@ -339,5 +339,62 @@ class FallbackServiceTests(unittest.TestCase):
         self.assertIn("target_session", result["error"])
 
 
+class FallbackHardRuleConsistencyTest(unittest.TestCase):
+    """備援計畫刻意不讀設定檔，硬規則常數須與 config 的兩個來源一致；日後規則更動時由此提醒兩邊一起改。"""
+
+    CONFIG = Path(__file__).resolve().parents[2] / "config"
+
+    @staticmethod
+    def _bare(symbol):
+        for suffix in (".TWO", ".TW"):
+            if symbol.endswith(suffix):
+                return symbol[: -len(suffix)]
+        return symbol
+
+    def _diffs(self):
+        """回傳 fallback 常數與兩份設定的差異清單；空清單代表一致。"""
+        from etf_agent.competition import fallback
+        rules = json.loads((self.CONFIG / "decision_rules.json").read_text(encoding="utf-8"))
+        competition = json.loads((self.CONFIG / "competition_rules.json").read_text(encoding="utf-8"))
+        diffs = []
+
+        def check(name, actual, expected):
+            if actual != expected:
+                diffs.append("%s: fallback=%r, config=%r" % (name, actual, expected))
+
+        check("min_positions", fallback.MIN_POSITIONS, rules["min_positions"])
+        check("max_positions", fallback.MAX_POSITIONS, rules["max_positions"])
+        check("cash_weight_must_be_below", fallback.CASH_RATIO_LIMIT, Decimal(rules["cash_weight_must_be_below"]))
+        check("max_stock_weight", fallback.DEFAULT_STOCK_WEIGHT_LIMIT, Decimal(rules["max_stock_weight"]))
+        special = {self._bare(key): Decimal(value) for key, value in rules["special_weight_limits"].items()}
+        check("special_weight_limits", dict(fallback.STOCK_WEIGHT_LIMIT), special)
+        # competition_rules.json 以數字（非字串）保存；以 str 轉 Decimal 避免浮點誤差。
+        check("competition.min_positions", fallback.MIN_POSITIONS, competition["min_positions"])
+        check("competition.max_positions", fallback.MAX_POSITIONS, competition["max_positions"])
+        check("competition.cash_weight_must_be_below", fallback.CASH_RATIO_LIMIT,
+              Decimal(str(competition["cash_weight_must_be_below"])))
+        check("competition.default_max_stock_weight", fallback.DEFAULT_STOCK_WEIGHT_LIMIT,
+              Decimal(str(competition["default_max_stock_weight"])))
+        check("competition.tsmc_max_stock_weight", fallback.STOCK_WEIGHT_LIMIT.get("2330"),
+              Decimal(str(competition["tsmc_max_stock_weight"])))
+        return diffs
+
+    def test_constants_match_config(self):
+        self.assertEqual(self._diffs(), [])
+
+    def test_mismatch_is_detected(self):
+        from etf_agent.competition import fallback
+        with patch.object(fallback, "CASH_RATIO_LIMIT", Decimal("0.30")):
+            diffs = self._diffs()
+        self.assertTrue(diffs)
+        self.assertTrue(any("cash_weight_must_be_below" in item for item in diffs))
+
+    def test_special_limit_mismatch_is_detected(self):
+        from etf_agent.competition import fallback
+        with patch.object(fallback, "STOCK_WEIGHT_LIMIT", {"2330": Decimal("0.25"), "2454": Decimal("0.2")}):
+            diffs = self._diffs()
+        self.assertTrue(any("special_weight_limits" in item for item in diffs))
+
+
 if __name__ == "__main__":
     unittest.main()
