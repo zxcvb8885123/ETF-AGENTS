@@ -23,7 +23,7 @@ from etf_agent.decision.quality_dip_ruling import (
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
 from etf_agent.decision.sizing import (
-    CASH_STANCES, POSITION_BREADTHS, allowed_cash_grades, cash_grade_grid, validate_cash_stance,
+    CASH_STANCES, POSITION_BREADTHS, allowed_cash_grades, cash_grade_grid, revision_bounds_gate, validate_cash_stance,
 )
 
 from .agent_runner import AgentTask, DailyPipelineError
@@ -48,6 +48,18 @@ SOFT_FLOOR_PROMPT = (
     "摘要含 high_conviction_cash_floor_by_stance（各姿態的高信心現金下限），把該姿態的實際現金落點寫進 rationale，"
     "見 cash-stance.md 對應節。"
 )
+
+
+def _revision_bounds_text(policy: Mapping[str, object]) -> str:
+    """revision_bounds 啟用時附上修正動作的下限與步距；沒有閘門回空字串（提示文字逐字不變）。"""
+    gate = revision_bounds_gate(policy.get("position_sizing") or {})
+    if gate is None:
+        return ""
+    return (
+        "revise 的 reduce_max_stock_weight 之 value 不得低於 %s、reduce_turnover_limit 之 value 不得低於 %s，且都必須是 %s 的整數倍"
+        "（special_weight_limits 內的股票不受 reduce_max_stock_weight 影響，要降低它請用 remove_candidate 或 increase_cash_buffer）。"
+        % (gate.get("min_max_stock_weight"), gate.get("min_max_turnover_rate"), gate.get("step"))
+    )
 
 
 def _soft_floors(
@@ -570,13 +582,14 @@ class RiskStagesMixin:
             "程式計算的產業實際權重 %s 與每筆委託佔 20 日均量的比例 %s（flagged 表示超過警示比例或缺均量，可考慮 remove_candidate 或降低周轉）；"
             "可引用的 evidence ID 清單在 %s（evidence_ids 只能從它選取）。輸出 approve、revise 或 reject；revision_actions 的欄位格式與限制依 risk-review-output.md，"
             "本次 increase_cash_buffer 的 value 不得高於 %s（競賽現金上限 %s 減邊際 %s）；已是第 %d 次修正、上限 %d 次"
-            "（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。%s"
+            "（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。%s%s"
             % (
                 self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
                 self.root / "tradeagent/risk/portfolio-risk-review/references/risk-review-output.md",
                 names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], names["liquidity_exposure"], citable_path,
                 Decimal(str(policy["cash_weight_ceiling"])) - CASH_BUFFER_CEILING_MARGIN,
-                policy["cash_weight_ceiling"], CASH_BUFFER_CEILING_MARGIN, revision, int(policy["max_revisions"]), _SHARED_RULES,
+                policy["cash_weight_ceiling"], CASH_BUFFER_CEILING_MARGIN, revision, int(policy["max_revisions"]),
+                _revision_bounds_text(policy), _SHARED_RULES,
             ),
             REVIEW_SCHEMA,
         )

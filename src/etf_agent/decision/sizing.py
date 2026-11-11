@@ -1122,6 +1122,54 @@ def anchor_reference_tokens(
 
     anchor.source 記錄 run_id、decision／proposal 的 id 與雜湊；前次 decision_id 不在 anchor 結構內（不改已封存 Policy），
     改由同一份前次決策背景（``prior_context.source.decision_id``，anchor 重建驗證已要求兩者指向同一個 run）補上。"""
+REVISION_BOUNDS_V1 = "v1"
+REVISION_BOUNDS_FIELDS = frozenset({"version", "min_max_stock_weight", "min_max_turnover_rate", "step"})
+
+
+def revision_bounds_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """revision_bounds 啟用時回傳閘門物件；沒有閘門回 None（修正動作的 value 維持原行為，只受 0～1 與不得提高風險上限約束）。"""
+    gate = sizing.get("revision_bounds") if isinstance(sizing, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def validate_revision_bounds_gate(policy: Mapping[str, object], errors: List[str]) -> None:
+    """閘門形狀：{version: v1, min_max_stock_weight, min_max_turnover_rate, step}，三個數字都由人填（字串小數）。
+
+    兩個下限須大於 0 且不高於 Policy 的 max_stock_weight／max_turnover_rate；step 須介於 0（不含）與 1。
+    """
+    gate = (policy.get("position_sizing") or {}).get("revision_bounds")
+    prefix = "position_sizing.revision_bounds"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, REVISION_BOUNDS_FIELDS, prefix, errors)
+    if gate.get("version") != REVISION_BOUNDS_V1:
+        errors.append("%s.version 只允許 %s" % (prefix, REVISION_BOUNDS_V1))
+    for field in ("min_max_stock_weight", "min_max_turnover_rate", "step"):
+        if field not in gate:
+            errors.append("%s 缺少 %s（數值由人填，程式不設預設）" % (prefix, field))
+    for field, limit_field in (("min_max_stock_weight", "max_stock_weight"), ("min_max_turnover_rate", "max_turnover_rate")):
+        if field not in gate:
+            continue
+        try:
+            floor = decimal_value(gate[field], "%s.%s" % (prefix, field))
+            if floor <= 0:
+                errors.append("%s.%s 必須大於 0" % (prefix, field))
+            elif limit_field in policy:
+                limit = decimal_value(policy[limit_field], limit_field)
+                if floor > limit:
+                    errors.append("%s.%s 不得高於 Policy 的 %s（%s）" % (prefix, field, limit_field, limit))
+        except DecisionToolError as error:
+            errors.append(str(error))
+    if "step" in gate:
+        try:
+            step = decimal_value(gate["step"], "%s.step" % prefix)
+            if step <= 0 or step > 1:
+                errors.append("%s.step 必須大於 0 且不高於 1" % prefix)
+        except DecisionToolError as error:
+            errors.append(str(error))
+
+
     anchor = gate.get("anchor")
     source = anchor.get("source") if isinstance(anchor, Mapping) else None
     tokens: List[object] = []

@@ -10,7 +10,7 @@ from etf_agent.core import untrusted_value
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
 from .rebound import lifted_turnover_rate
-from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate
+from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate, revision_bounds_gate
 from .contracts import (
     DECISION_SCHEMA_VERSION,
     DecisionContext,
@@ -760,6 +760,18 @@ class RiskReviewValidator:
                         )
                 if action_type != "increase_cash_buffer" and value > current:
                     errors.append("%s 不得提高風險上限" % prefix)
+                bounds = revision_bounds_gate(self.policy.get("position_sizing") or {})
+                if action_type != "increase_cash_buffer" and bounds is not None:
+                    # revision_bounds（版本閘門）：下限與步距由人填；沒有閘門時以上檢查之外一行都不加。
+                    floor_field = (
+                        "min_max_stock_weight" if action_type == "reduce_max_stock_weight" else "min_max_turnover_rate"
+                    )
+                    floor = decimal_value(bounds.get(floor_field), "position_sizing.revision_bounds.%s" % floor_field)
+                    step = decimal_value(bounds.get("step"), "position_sizing.revision_bounds.step")
+                    if value < floor:
+                        errors.append("%s.value 不得低於 %s（revision_bounds.%s）" % (prefix, floor, floor_field))
+                    if step > 0 and value % step != 0:
+                        errors.append("%s.value 必須是 %s 的整數倍（revision_bounds.step）" % (prefix, step))
             except DecisionToolError as error:
                 errors.append(str(error))
 
