@@ -7,6 +7,7 @@
 - 只縮買單，不碰賣單，不改寫交易 Agent 的意圖；縮減原因寫在旗標 ``LIQUIDITY_LIMIT``。
 - 均量取 ``MomentumEngine`` 的 ``average_volume_20d``（與風險審查的流動性事實同一來源）；缺均量的買單不縮、留旗標
   ``LIQUIDITY_UNAVAILABLE``，由風險審查原本的 flagged 機制處理。
+- v2 把同一條上限提前到預算階段（換入者保留與信心預算先封頂、釋出的預算重新分配），v1 的最後縮減保留當保險。
 - 只有版本與一個人填的數字（字串小數，大於 0 且不高於 1）。沒有此欄位的舊 Policy／舊 run 逐位元維持原行為。
 """
 
@@ -18,15 +19,25 @@ from typing import List, Mapping, Optional
 from .fields import DecisionToolError, decimal_value, reject_unknown_fields
 
 LIQUIDITY_FIT_V1 = "v1"
+# v2：同一條上限（人填 max_participation × 20 日均量）提前到預算階段——換入者保留與信心預算都先以它封頂，縮減釋出的預算會重新分配；
+# v1 的最後一道縮減（``_fit_liquidity``）仍保留當保險。v1 的行為逐位元不變。
+LIQUIDITY_FIT_V2 = "v2"
+LIQUIDITY_FIT_VERSIONS = (LIQUIDITY_FIT_V1, LIQUIDITY_FIT_V2)
 LIQUIDITY_FIT_FIELDS = frozenset({"version", "max_participation"})
 
 
 def liquidity_fit_gate(sizing: object) -> Optional[Mapping[str, object]]:
     """啟用時回傳閘門物件；沒有（或形狀不合，已被驗證拒絕）回 None。"""
     gate = sizing.get("liquidity_fit") if isinstance(sizing, Mapping) else None
-    if isinstance(gate, Mapping) and gate.get("version") == LIQUIDITY_FIT_V1:
+    if isinstance(gate, Mapping) and gate.get("version") in LIQUIDITY_FIT_VERSIONS:
         return gate
     return None
+
+
+def liquidity_fit_upstream(sizing: object) -> bool:
+    """v2 才把流動性上限提前到預算階段；v1 與沒有閘門回 False。"""
+    gate = liquidity_fit_gate(sizing)
+    return gate is not None and gate.get("version") == LIQUIDITY_FIT_V2
 
 
 def liquidity_fit_limit(sizing: object) -> Optional[Decimal]:
@@ -43,8 +54,8 @@ def validate_liquidity_fit_gate(policy: Mapping[str, object], errors: List[str])
         errors.append("%s 必須是物件" % prefix)
         return
     reject_unknown_fields(gate, LIQUIDITY_FIT_FIELDS, prefix, errors)
-    if gate.get("version") != LIQUIDITY_FIT_V1:
-        errors.append("%s.version 只允許 %s" % (prefix, LIQUIDITY_FIT_V1))
+    if gate.get("version") not in LIQUIDITY_FIT_VERSIONS:
+        errors.append("%s.version 只允許 %s" % (prefix, "、".join(LIQUIDITY_FIT_VERSIONS)))
     if "max_participation" not in gate:
         errors.append("%s 缺少 max_participation（數值由人填，程式不設預設）" % prefix)
         return

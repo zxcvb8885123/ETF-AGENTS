@@ -205,11 +205,16 @@ def _segment(days: List[Mapping[str, object]]) -> Dict[str, object]:
     }
 
 
-def intent_landing_report(decisions_root: Path, since: Optional[str] = None) -> Dict[str, object]:
-    """統計決策庫內已封存 run（`since` 為 YYYY-MM-DD，只算該日含以後）。唯讀；任何一份不合格即拒絕整批。"""
+def intent_landing_report(decisions_root: Path, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, object]:
+    """統計決策庫內已封存 run（`since`／`until` 為 YYYY-MM-DD，只算該日含以後／含以前；`until` 供回歸測試固定樣本範圍）。唯讀；任何一份不合格即拒絕整批。"""
     if since is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
         raise CalibrationError("since 格式必須是 YYYY-MM-DD")
-    run_dirs = [run for run in list_run_dirs(Path(decisions_root)) if since is None or run.parent.name >= since]
+    if until is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", until):
+        raise CalibrationError("until 格式必須是 YYYY-MM-DD")
+    run_dirs = [
+        run for run in list_run_dirs(Path(decisions_root))
+        if (since is None or run.parent.name >= since) and (until is None or run.parent.name <= until)
+    ]
     if not run_dirs:
         raise CalibrationError("決策庫沒有符合條件的 run：%s" % decisions_root)
     days = [_summarize_run(_load_run(run_dir)) for run_dir in run_dirs]

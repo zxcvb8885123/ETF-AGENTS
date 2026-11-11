@@ -171,7 +171,8 @@ class ArchivedRunGoldenTests(unittest.TestCase):
         for run in archived_runs():
             with self.subTest(run=run.name):
                 bundle, policy, intent, proposal = read(run, "bundle"), read(run, "policy"), read(run, "intent"), read(run, "proposal")
-                rebuilt = AllocationOrderEngine(bundle, policy).run(intent)
+                rebuilt = AllocationOrderEngine(bundle, policy).run(
+                    intent, set(proposal["excluded_symbols"]), None, proposal["revision_count"], proposal["parent_proposal_id"])
                 self.assertEqual(rebuilt, proposal)
 
 

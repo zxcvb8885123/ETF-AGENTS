@@ -180,7 +180,7 @@ class LiveAlertThresholdTests(unittest.TestCase):
         review = live_like_template("v4")["position_review"]
         self.assertEqual(
             {key: review[key] for key in ("loss_alert", "retrace_alert_20d", "gain_alert")},
-            {"loss_alert": "0.12", "retrace_alert_20d": "0.20", "gain_alert": "0.10"},
+            {"loss_alert": "0.12", "retrace_alert_20d": "0.20", "gain_alert": "0.20"},
         )
 
     def test_a_first_attempt_that_skips_the_alerts_is_corrected_by_the_feedback(self):
@@ -316,12 +316,12 @@ class ProductionTemplateTests(unittest.TestCase):
         live = self.live()
         self.assertEqual(
             live["position_review"],
-            {"version": "v2", "loss_alert": "0.12", "retrace_alert_20d": "0.20", "gain_alert": "0.10",
-             "trail_alert": {"arm_gain": "0.05", "giveback": "0.05"},
+            {"version": "v2", "loss_alert": "0.12", "retrace_alert_20d": "0.20", "gain_alert": "0.20",
+             "trail_alert": {"arm_gain": "0.10", "giveback": "0.08"},
              "relative_loss_alert": {"loss": "0.08", "lag": "0.04"}, "stale_alert": None, "context": "v1"},
         )
         self.assertNotIn("stop_exit", live["position_sizing"])
-        self.assertEqual(live["policy_id"], "strategy-2026-11-11-probe-3-1")
+        self.assertEqual(live["policy_id"], "strategy-2026-11-12-turnover-029-1")
         self.assertIn("exposure_rotation", live["position_sizing"])  # position_review v2 的前提
 
     def test_a_run_on_the_untouched_live_gates_completes_and_rebuilds_clean(self):

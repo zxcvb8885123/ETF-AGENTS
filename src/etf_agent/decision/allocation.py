@@ -41,7 +41,7 @@ from .sizing import (
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
 )
-from .liquidity_fit import liquidity_fit_limit
+from .liquidity_fit import liquidity_fit_limit, liquidity_fit_upstream
 from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 from .offense import capped_size, offense_bound, thesis_size_cap_active
@@ -309,6 +309,7 @@ class AllocationOrderEngine:
             raise DecisionToolError("DecisionPolicy 驗證失敗：" + "；".join(errors))
         self.policy = dict(policy)
         self.prices = self._latest_prices()
+        self._liquidity_caps_cache: Optional[Dict[str, int]] = None  # liquidity_fit v2：每個 _run 重算一次
         self._reserved_shares: Dict[str, int] = {}  # entry_reserve：本次重算中換入者先保留的買進股數（只在 _run 內有值）
         self._proceeds_accepted: Set[str] = set()  # proceeds_to_add：本次重算中接受「賣款流向加碼持股」的換入者（只在 _run_exposure 迴圈內有值）
         self._volatility: Optional[Dict[str, Decimal]] = None
@@ -583,6 +584,7 @@ class AllocationOrderEngine:
         ``agent_cancelled`` 是 agent_swap v2 復原迴圈取消的換入者與原因（只有 v2 才傳）。"""
         excluded = {value.upper() for value in (excluded_symbols or set())}
         self._reserved_shares = {}
+        self._liquidity_caps_cache = None
         effective = self._effective_policy(overrides or {})
         intents = {
             str(item.get("symbol", "")).upper(): str(item.get("intent", ""))
@@ -1538,6 +1540,9 @@ class AllocationOrderEngine:
             limits = {"size": self._shares_for_value(marked_nav * weight, price)}
             limits["single"] = self._shares_for_value(
                 marked_nav * self._weight_limit(buy, effective) * self._headroom(effective, buying=True), price)
+            liquidity_caps = self._liquidity_caps(effective)
+            if liquidity_caps is not None and buy.upper() in liquidity_caps:
+                limits["liquidity"] = liquidity_caps[buy.upper()]  # liquidity_fit v2：換入者保留股數不超過均量上限
             victim_value = Decimal(current[sell]) * self.prices[sell]
             if sector_cap is not None and buy in sectors:
                 room = sector_cap - sector_value.get(sectors[buy], Decimal(0))
@@ -2047,6 +2052,15 @@ class AllocationOrderEngine:
             limits = {
                 symbol: self._weight_limit(symbol, effective) * self._headroom(effective, buying=True) for symbol in weighted
             }
+            liquidity_caps = self._liquidity_caps(effective)
+            if liquidity_caps is not None:
+                # liquidity_fit v2：單檔權重上限再取「現有權重＋均量上限股數的市值」的較小值；封頂後多出的預算由 conviction_weights 重新分配。
+                for symbol in weighted:
+                    cap = liquidity_caps.get(symbol.upper())
+                    if cap is None:
+                        continue
+                    held_weight = Decimal(target_shares.get(symbol, 0)) * self.prices[symbol] / marked_nav if symbol in active_symbols else Decimal("0")
+                    limits[symbol] = min(limits[symbol], held_weight + Decimal(cap) * self.prices[symbol] / marked_nav)
             if alpha is None:
                 weights = conviction_weights(weighted, tiers, multipliers, volatility, floor, limits, budget, exponent)
             else:
@@ -2423,6 +2437,25 @@ class AllocationOrderEngine:
             }
         fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
         return fitted, cash, [flags[symbol] for symbol in sorted(flags)]
+
+    def _liquidity_caps(self, effective: Mapping[str, object]) -> Optional[Dict[str, int]]:
+        """liquidity_fit v2：``{代號大寫: 可買股數上限}``（max_participation × 20 日均量，向下取整張）；缺均量的股票不放進字典。
+        v1 與沒有閘門回 None。算式與 ``_fit_liquidity`` 相同、來源同為 ``MomentumEngine``。"""
+        sizing = self.policy.get("position_sizing")
+        if not liquidity_fit_upstream(sizing):
+            return None
+        if self._liquidity_caps_cache is None:
+            limit = liquidity_fit_limit(sizing)
+            lot = int(effective["lot_size"])
+            caps: Dict[str, int] = {}
+            for item in MomentumEngine(self.context.bundle).run()["items"]:
+                volume = item.get("average_volume_20d")
+                symbol = str(item["symbol"]).upper()
+                if volume is None or decimal_value(volume, "%s.average_volume_20d" % symbol) <= 0:
+                    continue
+                caps[symbol] = int((limit * decimal_value(volume, "%s.average_volume_20d" % symbol) / lot).to_integral_value(rounding=ROUND_FLOOR)) * lot  # type: ignore[operator]
+            self._liquidity_caps_cache = caps
+        return self._liquidity_caps_cache
 
     def _fit_liquidity(
         self,

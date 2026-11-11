@@ -902,7 +902,7 @@ class ProductionTemplateTests(unittest.TestCase):
         self.assertEqual(gate["min_turn_assessment"], "no_turn_evidence")  # 使用者要連跌無轉向跡象時也能抄底（回檔深度由 ladder 把關）
         for field in ("ruling_ref", "rulings", "ladder_state", "turn_assessment"):  # pipeline 綁定欄位，正式樣板人不填
             self.assertNotIn(field, gate)
-        self.assertEqual({key: gate[key] for key in ("max_swaps_per_run", "max_entry_weight")}, {"max_swaps_per_run": 2, "max_entry_weight": "0.04"})
+        self.assertEqual({key: gate[key] for key in ("max_swaps_per_run", "max_entry_weight")}, {"max_swaps_per_run": 2, "max_entry_weight": "0.06"})
         self.assertEqual(gate["oversold"], {"max_swaps_per_run": 1, "max_entry_weight": "0.02"})
         self.assertEqual(errors_for_live(live), [])
 
