@@ -79,7 +79,7 @@ from etf_agent.decision.release_order import (
 from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
 from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_brief
 
-from .agent_runner import LATER_STAGE_GLOBS, AgentTask, DailyPipelineError
+from .agent_runner import LATER_STAGE_GLOBS, RESEARCH_DENY_DIRECTORIES, AgentTask, DailyPipelineError
 from .agent_schemas import (
     EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
@@ -160,7 +160,8 @@ _DIP_ASSESSMENT_RULES = (
 def _peer_deny_reads(role: str) -> Tuple[str, ...]:
     peer = "bear" if role == "bull" else "bull"
     # 續跑時 run 目錄可能已有後段產物（含對方論點的 debate、交易與 team_inputs），一併擋掉；不用 ``decision*``，會擋到共同輸入。
-    return ("%s_*" % peer, "brief_%s_*" % peer) + LATER_STAGE_GLOBS
+    # pipeline.json 只在這裡擋、不進 LATER_STAGE_GLOBS：它在研究階段前就存在，進殘留偵測會讓每次續跑被判殘留。
+    return ("%s_*" % peer, "brief_%s_*" % peer, "pipeline.json") + LATER_STAGE_GLOBS
 
 
 class TeamStagesMixin:
@@ -396,6 +397,7 @@ class TeamStagesMixin:
                 # 多空互相隔離由讀檔權限強制：不得讀另一方的輸出、原始輸出與輸入摘要。
                 deny_reads=_peer_deny_reads(role),
             )
+                deny_read_directories=RESEARCH_DENY_DIRECTORIES,
             return name, lambda: self.agent_step(
                 task, lambda output: seal_stance_packet(brief["packet_envelope"], output["items"]), validator.validate
             )

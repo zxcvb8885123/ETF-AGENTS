@@ -222,6 +222,45 @@ class ResearchStagingTests(unittest.TestCase):
             self.assertNotIsInstance(raised.exception, TransientAgentError)
             self.assertEqual(runner.prompts, [])
 
+    def test_researchers_carry_deny_read_directories_and_others_do_not(self):
+        from etf_agent.automation.agent_runner import RESEARCH_DENY_DIRECTORIES
+
+        class Recording(StagedRunner):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.tasks = {}
+
+            def run(self, task, run_dir):
+                self.tasks[task.name] = task
+                return super().run(task, run_dir)
+
+        outputs = team_outputs()
+        bad = {"items": [{"symbol": "2317.TW", "strength": "none", "claims": [], "invalidation_conditions": []}]}
+        outputs["bull_b0"] = [bad, outputs["bull_b0"][0]]  # 驗證失敗後重試的任務仍須帶這個欄位
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = Recording(outputs, world.run_dir)
+            result = run(world, pipeline_for(world, runner))
+
+        self.assertEqual(result.status, "completed", result.errors)
+        for name in ("bull_b0", "bear_b0"):
+            self.assertEqual(tuple(runner.tasks[name].deny_read_directories), RESEARCH_DENY_DIRECTORIES)
+            self.assertIn("pipeline.json", runner.tasks[name].deny_reads)
+        others = [task for name, task in runner.tasks.items() if name.split("_", 1)[0] not in RESEARCH]
+        self.assertTrue(others)
+        for task in others:
+            self.assertEqual(tuple(task.deny_read_directories), (), task.name)
+
+    def test_directory_only_deny_task_outside_staging_is_refused_for_non_enforcing_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = StagedRunner({}, world.run_dir)
+            pipeline = pipeline_for(world, runner)
+            task = AgentTask("bull_b0", "x", {"type": "object"}, deny_read_directories=("artifacts/reports",))
+            with self.assertRaises(DailyPipelineError):
+                pipeline.agent_step(task, lambda output: output, lambda artifact: [])
+            self.assertEqual(runner.prompts, [])
+
     def test_enforcing_runner_keeps_immediate_raw_files(self):
         """Claude／OpenCode 型（能強制拒讀）：行為不變，原始輸出照常即時落地、不經暫存。"""
 

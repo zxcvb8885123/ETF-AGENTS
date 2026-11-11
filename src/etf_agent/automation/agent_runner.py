@@ -78,18 +78,37 @@ LATER_STAGE_GLOBS = (
     "decline_depth_facts*",  # quality_dip v4 的連跌深度事實只給換股提名與風險 Agent 的裁決，研究員不得讀
     "held_weight_facts*",  # held_weight_budget v2 的持股權重事實只給交易 Agent，研究員不得讀
     "release_order*", "brief_release_order*",  # 回撤減碼的釋出順序（drawdown_derisk v5）的輸出、簡報與嘗試紀錄，研究員不得讀
+    "brief_swap_nomination*",  # 換股提名簡報含雙方 claim 全文，研究員不得讀
+    "brief_selection_ranking*", "ranker_*",  # 入選排序的簡報與嘗試紀錄含交易 Agent 意圖，研究員不得讀
 )
 
+# 專案層級、含多空論點的目錄：研究員不需要讀，整個目錄拒讀。與 LATER_STAGE_GLOBS 分開，
+# 因為這些不是 run 目錄內的檔名，不能進殘留偵測。
+RESEARCH_DENY_DIRECTORIES = (
+    "artifacts/reports", "artifacts/archive", "artifacts/decisions", "artifacts/evaluation",
+    "var/strategy_reflection", "var/logs",
+)
 
-def claude_read_deny_settings(extra: Sequence[str] = ()) -> str:
+CLAUDE_DISALLOWED_TOOLS = "Grep,Glob,Bash,Write,Edit,WebFetch,WebSearch,Task,NotebookEdit"
+
+
+def claude_read_deny_settings(extra: Sequence[str] = (), directories: Sequence[str] = ()) -> str:
     """``claude --settings`` 用的拒讀規則；``**/`` 前綴同時涵蓋專案根目錄與子目錄。
 
-    ``extra`` 是任務專屬的拒讀檔名樣式（例如多頭任務不得讀空頭輸出）。"""
-    rules = ["Read(**/%s)" % pattern for pattern in (*SENSITIVE_READ_GLOBS, *extra)]
+    ``extra`` 是任務專屬的拒讀檔名樣式（例如多頭任務不得讀空頭輸出）；``directories`` 是整個目錄拒讀。"""
+    # Grep／Glob 已由 --disallowedTools 禁用，這兩組規則是第二層保險。
+    patterns = (*SENSITIVE_READ_GLOBS, *extra)
+    rules = [
+        "%s(**/%s)" % (tool, pattern) for tool in ("Read", "Grep", "Glob") for pattern in patterns
+    ]
+    rules += ["%s(**/%s/**)" % (tool, directory.strip("/")) for tool in ("Read", "Grep", "Glob") for directory in directories]
     return json.dumps({"permissions": {"deny": rules}}, ensure_ascii=False)
 
 
-def _opencode_read_permission(extra: Sequence[str] = (), run_dir: Optional[Path] = None) -> Dict[str, str]:
+def _opencode_read_permission(
+    extra: Sequence[str] = (), run_dir: Optional[Path] = None, directories: Sequence[str] = (),
+    sibling_run_names: Sequence[str] = (),
+) -> Dict[str, str]:
     permission = {"*": "allow"}
     permission.update({pattern if pattern.startswith("*") else "*" + pattern: "deny" for pattern in SENSITIVE_READ_GLOBS})
     # 任務專屬樣式（多空互相隔離）：OpenCode 的 ``*`` 會跨越 ``/``，所以不能只靠 "*/bear_*"
@@ -97,7 +116,46 @@ def _opencode_read_permission(extra: Sequence[str] = (), run_dir: Optional[Path]
     # 只擋直接放在任務目錄下的同儕檔案；絕對或相對路徑都能比對到，不會因路徑形式而放行。
     anchor = "*/" + Path(run_dir).resolve().name + "/" if run_dir is not None else "*/"
     permission.update({pattern if pattern.startswith("*") else anchor + pattern: "deny" for pattern in extra})
+    # 其他 run 目錄（跨 run 隔離）：同樣錨定在各 run 目錄名稱之後，不使用未錨定樣式。
+    own_name = Path(run_dir).resolve().name if run_dir is not None else None
+    for name in sibling_run_names:
+        if name and name != own_name:
+            permission.update({"*/%s/%s" % (name, pattern): "deny" for pattern in extra if not pattern.startswith("*")})
+    permission.update({"*/%s/*" % directory.strip("/"): "deny" for directory in directories})
     return permission
+
+
+_MAX_SIBLING_RULES = 500
+_RECENT_DATE_DIRS = 14
+
+
+def _sibling_run_names(run_dir: Path, patterns_count: int) -> list[str]:
+    """列出 ``run_dir.parent.parent`` 之下「日期目錄／run 目錄」的 run 名稱（排除本次 run）。
+
+    目錄不存在或讀不到時回空清單（不拋例外）；規則總數超過上限時只取最近 14 個日期目錄。
+    """
+    try:
+        own = Path(run_dir).resolve()
+        dates = sorted(path for path in own.parent.parent.iterdir() if path.is_dir())
+    except OSError:
+        return []
+
+    def collect(date_dirs: Sequence[Path]) -> list[str]:
+        names: list[str] = []
+        for date_dir in date_dirs:
+            try:
+                children = sorted(path for path in date_dir.iterdir() if path.is_dir())
+            except OSError:
+                continue
+            for child in children:
+                if child.resolve() != own and child.name != own.name and child.name not in names:
+                    names.append(child.name)
+        return names
+
+    names = collect(dates)
+    if len(names) * max(patterns_count, 1) > _MAX_SIBLING_RULES:
+        names = collect(dates[-_RECENT_DATE_DIRS:])
+    return names
 
 
 def _secret_files(project_root: Path) -> list[Path]:
@@ -174,6 +232,8 @@ class AgentTask:
     # 只有 PipelineBase 在研究階段輸出暫存啟用（同儕輸出在階段結束前不落地到磁碟）時才設 True；
     # 帶 deny_reads 卻沒有此旗標的任務，不強制拒讀的執行器（Codex）一律拒絕啟動。
     stage_isolated: bool = False
+    # 整個目錄拒讀（相對專案根目錄，例如 ``artifacts/reports``）；Claude／OpenCode 強制，Codex 與 deny_reads 同樣只能靠研究階段暫存。
+    deny_read_directories: Sequence[str] = ()
 
 
 @dataclass
@@ -224,9 +284,10 @@ class ClaudeAgentRunner:
             "--output-format", "stream-json", "--verbose",
             "--json-schema", json.dumps(task.schema, ensure_ascii=False),
             "--tools", "Read",
+            "--disallowedTools", CLAUDE_DISALLOWED_TOOLS,  # 只留 Read；其餘工具明確禁用（第二層保險，--tools 已限制）
             "--strict-mcp-config",  # 不載入使用者的 MCP 外掛；每次呼叫約少 4 萬 token 的固定開銷
             "--setting-sources", "project",  # 不載入使用者個人設定與外掛；實測每次呼叫約少 1.1 萬 token
-            "--settings", claude_read_deny_settings(task.deny_reads),
+            "--settings", claude_read_deny_settings(task.deny_reads, task.deny_read_directories),
             "--add-dir", str(run_dir),
             "--max-budget-usd", str(self.max_budget_usd),
         ]
@@ -276,9 +337,21 @@ def _trace_summary(event: Mapping[str, object], elapsed: float) -> Dict[str, obj
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
                 file_path = tool_input.get("file_path")
-                tools.append({"name": block.get("name"), "file": file_path if isinstance(file_path, str) else None})
+                path = tool_input.get("path")  # 不記 pattern、command 等模型自寫文字
+                tools.append({
+                    "name": block.get("name"),
+                    "file": file_path if isinstance(file_path, str) else None,
+                    "path": path if isinstance(path, str) else None,
+                })
         if tools:
             row["tools"] = tools
+        if event.get("type") == "user":
+            errors = sum(
+                1 for block in message["content"]
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")
+            )
+            if errors:
+                row["tool_errors"] = errors  # 只記數量，不記內容
     if event.get("type") == "result":
         row["duration_api_ms"] = event.get("duration_api_ms")
         row["is_error"] = event.get("is_error")
@@ -407,9 +480,9 @@ class CodexAgentRunner:
         self.timeout_seconds = timeout_seconds
 
     def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
-        if task.deny_reads and not task.stage_isolated:
+        if (task.deny_reads or task.deny_read_directories) and not task.stage_isolated:
             raise DailyPipelineError("%s Codex Agent 無法強制任務拒讀規則（%s），且未由研究階段輸出暫存保證隔離，已拒絕啟動；請改用 claude 或 opencode" % (
-                task.name, "、".join(task.deny_reads)))
+                task.name, "、".join((*task.deny_reads, *task.deny_read_directories))))
         # 每次呼叫使用獨立暫存目錄，避免續跑或重試讀到前一次的輸出；放在系統暫存區而非 run 目錄，
         # 免得同儕的 Codex 任務在 run 目錄裡讀到這次的輸出。
         with tempfile.TemporaryDirectory(prefix="codex-agent-") as temporary:
@@ -470,13 +543,14 @@ class OpenCodeAgentRunner:
 
     def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
         # 不沿用使用者／專案的寫入工具設定或外部插件；每次任務都是獨立會話。
+        siblings = _sibling_run_names(run_dir, len(task.deny_reads)) if task.deny_reads else []
         config = {
             "agent": {
                 "etf-read-only": {
                     "mode": "primary",
                     "permission": {
                         "*": "deny",
-                        "read": _opencode_read_permission(task.deny_reads, run_dir),
+                        "read": _opencode_read_permission(task.deny_reads, run_dir, task.deny_read_directories, siblings),
                         "external_directory": "deny",
                     },
                 }
