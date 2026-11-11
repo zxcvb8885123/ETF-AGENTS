@@ -46,12 +46,26 @@ class SnapshotRepository:
         return self.database.connect()
 
     @staticmethod
-    def load_universe(connection: sqlite3.Connection):
+    def load_universe(connection: sqlite3.Connection, cutoff_date: Optional[str] = None):
+        """交易池；``cutoff_date``（台北日期 YYYY-MM-DD）有值時排除 source_date 晚於它的股票。
+
+        ``instruments`` 沒有版本史，只能以 source_date 的日期部分近似當時的交易池；
+        source_date 可能含時間與時區，所以只比前 10 碼。
+        """
+        if cutoff_date is None:
+            return connection.execute(
+                """
+                SELECT symbol, source_date FROM instruments
+                WHERE in_competition_universe = 1 ORDER BY symbol
+                """
+            ).fetchall()
         return connection.execute(
             """
             SELECT symbol, source_date FROM instruments
-            WHERE in_competition_universe = 1 ORDER BY symbol
-            """
+            WHERE in_competition_universe = 1 AND substr(source_date, 1, 10) <= ?
+            ORDER BY symbol
+            """,
+            (cutoff_date,),
         ).fetchall()
 
     @staticmethod

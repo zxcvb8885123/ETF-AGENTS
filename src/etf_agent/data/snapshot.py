@@ -457,7 +457,7 @@ class SnapshotBuilder:
         self.repository.initialize()
 
         with self.repository.connect() as connection:
-            instruments = self.repository.load_universe(connection)
+            instruments = self.repository.load_universe(connection, _cutoff_taipei_date(cutoff))
             universe_version = _universe_version(instruments)
             validation = UniverseValidationState.from_row(
                 self.repository.load_validation(connection, cutoff)
@@ -575,6 +575,11 @@ def _normalize_cutoff(value: str) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("decision_cutoff 必須包含時區")
     return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _cutoff_taipei_date(cutoff: str) -> str:
+    """cutoff 換成台北時間後的日期字串，供交易池 source_date 過濾。"""
+    return datetime.fromisoformat(cutoff).astimezone(TAIPEI_TIMEZONE).date().isoformat()
 
 
 def _price_date_limit(cutoff: str) -> str:
