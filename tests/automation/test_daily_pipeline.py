@@ -618,6 +618,56 @@ class DailyPipelineTests(unittest.TestCase):
         self.assertTrue(any(flag.startswith("GUARD_FAILED") for flag in review["risk_flags"]))
 
 
+class RequireNavHistoryTests(unittest.TestCase):
+    """G1：正式入口缺 nav_history 時，在任何子 Agent 被呼叫前拒絕。"""
+
+    def run_pipeline(self, world, runner, **kwargs):
+        pipeline = DailyDecisionPipeline(ROOT, world.run_dir, runner, world.repository, log=lambda _: None)
+        return pipeline.run(
+            world.paths["snapshot"], world.paths["account"], world.paths["trading_status"],
+            world.paths["rules"], world.paths["database"], world.paths["template"], world.paths["sectors"],
+            "decision-fixture", **kwargs,
+        )
+
+    def test_required_but_missing_history_fails_before_any_agent_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            self.assertIn("drawdown_control", json.loads(world.paths["template"].read_text(encoding="utf-8")))
+            runner = FakeRunner({})
+            result = self.run_pipeline(world, runner, require_nav_history=True, nav_history=None)
+            self.assertEqual(result.status, "failed")
+            self.assertTrue(any("nav_history" in error for error in result.errors), result.errors)
+            self.assertEqual(runner.prompts, [])
+
+    def test_required_with_empty_history_is_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = self.run_pipeline(world, runner, require_nav_history=True, nav_history=[])
+            self.assertEqual(result.status, "completed", result.errors)
+            policy = json.loads((DecisionRepository(world.repository).verify("decision-fixture") / "policy.json").read_text(encoding="utf-8"))
+            self.assertEqual(policy["drawdown_control"]["status"], "available")
+            self.assertEqual(policy["drawdown_control"]["history_length"], 0)
+
+    def test_not_required_keeps_unavailable_drawdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = self.run_pipeline(world, runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            policy = json.loads((DecisionRepository(world.repository).verify("decision-fixture") / "policy.json").read_text(encoding="utf-8"))
+            self.assertEqual(policy["drawdown_control"]["status"], "unavailable")
+
+    def test_policy_without_drawdown_control_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            template = gateless_policy_template()
+            template.pop("drawdown_control")
+            world = PipelineWorld(Path(directory), approved_status=True, template=template)
+            runner = FakeRunner(team_outputs())
+            result = self.run_pipeline(world, runner, require_nav_history=True, nav_history=None)
+            self.assertEqual(result.status, "completed", result.errors)
+
+
 class RevisionLimitTests(unittest.TestCase):
     """修正次數用完後的 revise 由程式確定性降級為 reject，整條鏈不因此失敗。"""
 

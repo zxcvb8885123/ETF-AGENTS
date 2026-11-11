@@ -128,8 +128,12 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
         挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。
 
+        require_nav_history: bool = False,
         ``holdings_history`` 是帳本逐狀態的持股（舊到新，與 ``nav_history`` 同一條鏈）：只有 Policy 啟用
-        position_sizing.exposure_rotation 才用，沒有它時閘門啟用即拒絕。"""
+        position_sizing.exposure_rotation 才用，沒有它時閘門啟用即拒絕。
+
+        ``require_nav_history`` 為真（正式入口）時，Policy 有 ``drawdown_control`` 而 ``nav_history`` 為 None
+        即在任何子 Agent 被呼叫之前拒絕，避免漏傳帳本歷史使回撤下限無聲失效；空清單（新帳戶）不拒絕。"""
         result = PipelineResult(status="failed")
         try:
             self._run(
@@ -141,7 +145,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 active_share_holdings_path=active_share_holdings_path,
                 active_share_approvals_path=active_share_approvals_path,
                 overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
-                holdings_history=holdings_history,
+                holdings_history=holdings_history, require_nav_history=require_nav_history,
             )
             result.status = "completed"
         except Exception as error:
@@ -186,8 +190,12 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         service = PortfolioDecisionApplicationService
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
         chain_path = self._path("decision_chain")
+        require_nav_history: bool = False,
         if chain_path.exists():
             if service.read_json(chain_path, " 決策鏈版本") != chain:
+        if require_nav_history and nav_history is None and isinstance(
+                service.read_json(policy_template_path, " 策略樣板").get("drawdown_control"), Mapping):
+            raise DailyPipelineError("正式流程必須提供帳本 NAV 歷史（nav_history），否則回撤下限無法計算；已停止")
                 raise DailyPipelineError("run 的決策鏈版本不符；請建立新 run，不改寫舊輸出")
         elif any(self.run_dir.glob("*_raw_*.json")):
             raise DailyPipelineError("舊版 run 不可直接續跑事件整合新鏈；請建立新 run，舊輸出保留供稽核")
