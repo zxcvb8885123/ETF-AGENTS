@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from etf_agent.calibration import MIN_DECISION_DAYS, CalibrationError, CalibrationRepository, evaluate, execution_gap_report, intent_landing_report, record_all  # noqa: E402
+from etf_agent.calibration import MIN_DECISION_DAYS, CalibrationError, CalibrationRepository, evaluate, execution_gap_report, intent_landing_report, record_all, shadow_swap_report  # noqa: E402
 
 
 def _now() -> str:
@@ -34,12 +34,17 @@ def main(argv=None) -> int:
     landing = sub.add_parser("intent-landing", help="統計 buy／add 意圖的落地率、旗標次數與 hold／add 被賣出的案例（唯讀）")
     landing.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decisions")
     landing.add_argument("--since", default=None, help="只算該日（YYYY-MM-DD）含以後的 run")
+    shadow = sub.add_parser("shadow-swap", help="統計 agent_swap v1 影子提名，並離線估算若開 v2 會成交哪幾對（唯讀；無影子資料時明確回報）")
+    shadow.add_argument("--decisions", type=Path, default=ROOT / "artifacts" / "decisions")
+    shadow.add_argument("--since", default=None, help="只算該日（YYYY-MM-DD）含以後的 run")
     args = parser.parse_args(argv)
     try:
         if args.command == "snapshot":
             result = record_all(args.decisions, CalibrationRepository(args.output))
         elif args.command == "report":
             result = evaluate(CalibrationRepository(args.observations), args.database, args.as_of or _now())
+        elif args.command == "shadow-swap":
+            result = shadow_swap_report(args.decisions, args.since)
         elif args.command == "intent-landing":
             result = intent_landing_report(args.decisions, args.since)
         else:

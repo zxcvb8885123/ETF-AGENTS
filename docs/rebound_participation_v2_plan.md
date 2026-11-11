@@ -30,3 +30,7 @@ v1 的 `turn_state` 用一組固定數字（池報酬 ≥ 3%、站回 MA5 ≥ 30
 ## 證據等級
 
 v2 沒有重放驗證，也不比 v1 更有證據：它只是把判斷移到 Agent。有沒有用只有比賽期間的即時紀錄能回答。
+
+## 後續：曝險讓位配對（2026-11-10，已實作、尚未開啟）
+
+`agent_swap.exposure`（見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md)）讓風險 Agent 的 `exposure_view` 在 `agent_swap` v2 下決定取用幾對曝險配對；本檔的 `turn_assessment` 放寬與它互不取代，是否退場沿用「先觀察滿 10 個決策日」。

@@ -528,11 +528,17 @@ class AnalystReportValidator:
     EVENT_REVIEW = ("counter_evidence", "pending_confirmations")
     # 新聞標 high 時，Agent 指出佐證同一件事的訊息（同股的重大訊息，或另一家媒體的新聞）；舊封存沒有這欄。
     CORROBORATION = "corroborated_by"
+    # 每則事件的方向（position_sizing.event_direction 才由 Agent 輸出）：舊封存沒有這欄，照原樣驗證；有就必須是列舉值。
+    DIRECTION = "direction"
 
     def __init__(
-        self, bundle: Mapping[str, object], analyst: str, symbols: Optional[Sequence[str]] = None
+        self, bundle: Mapping[str, object], analyst: str, symbols: Optional[Sequence[str]] = None,
+        require_event_direction: bool = False,
     ):
-        """``symbols`` 指定時只驗證該批股票的覆蓋（逐批執行時用）；預設為全交易池。"""
+        """``symbols`` 指定時只驗證該批股票的覆蓋（逐批執行時用）；預設為全交易池。
+        ``require_event_direction``（position_sizing.event_direction 啟用，只在每日 pipeline 產出時傳入）為 True 時，
+        事件分析師的每則事件都必填 direction；預設 False，沒有這欄的舊報告驗證不變（有就必須是列舉值）。"""
+        self.require_event_direction = require_event_direction
         if analyst not in LEGACY_ANALYSTS:
             raise DecisionToolError("未知分析師：%s" % analyst)
         self.context = DecisionContext(bundle)
@@ -732,7 +738,11 @@ class AnalystReportValidator:
             if not isinstance(event, Mapping):
                 errors.append("%s 必須是物件" % event_prefix)
                 continue
-            reject_unknown_fields(event, self.EVENT | set(self.EVENT_REVIEW) | {self.CORROBORATION}, event_prefix, errors)
+            reject_unknown_fields(event, self.EVENT | set(self.EVENT_REVIEW) | {self.CORROBORATION, self.DIRECTION}, event_prefix, errors)
+            if self.DIRECTION in event or self.require_event_direction:
+                from .dip_facts import EVENT_DIRECTIONS
+                if event.get(self.DIRECTION) not in EVENT_DIRECTIONS:
+                    errors.append("%s.direction 必須是 %s（該則事件對公司的方向；不是整檔 event_outlook）" % (event_prefix, "／".join(EVENT_DIRECTIONS)))
             for field in (*self.EVENT_REVIEW, self.CORROBORATION):
                 if field in event:
                     try:

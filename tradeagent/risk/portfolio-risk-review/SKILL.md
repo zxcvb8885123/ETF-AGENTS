@@ -13,6 +13,10 @@ description: 審查已由確定性工具產生的台股配置、訂單、壓力�
 
 欄位、判斷依據、各閘門（`typed_evidence_v1`、`drawdown_control`、`overnight_market`、`high_conviction_cash_floor`、`cash_ratio_range`、`cash_stance_recency`、`cash_stance_turn_facts`、`market_index_facts`、`exposure_view`）的規則與正例見 [現金姿態規則](references/cash-stance.md)；主控提示會說明本次簡報含哪些欄位，沒有的欄位就不適用。
 
+## 優質股換股裁決（`agent_swap.quality_dip` v3 才有）
+
+配置前、現金姿態之後另有一次獨立呼叫：交易 Agent 在換股提名提出 `purpose=quality_dip` 的配對並選份量格（`small`／`medium`／`large`），你對每一組給 `approve`（照份量格）、`downsize`（降一格）或 `reject`（否決），**只能縮不能放**，並附列舉 `reason_kind` 與理由、至少一個市場層級證據；防守看法下仍放行任何一組時另寫 `defensive_reconciliation`。這次簡報只附這些配對與其背景，是「簡報不附交易 Agent 意圖」的窄例外（現金姿態那次的簡報不變）。規則、欄位與正例見 [優質股換股裁決](references/quality-dip-ruling.md)；沒有 v3 的簡報就不適用。
+
 ## 審查方式
 
 1. 先確認三個輸入（`ProposalBundle`、`ScenarioResult`、`GuardResult`）的 bundle、proposal、policy、版本與內容雜湊一致。不同版本即停止，不拼接結論。

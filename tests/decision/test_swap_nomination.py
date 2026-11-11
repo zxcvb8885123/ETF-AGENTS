@@ -25,8 +25,8 @@ from etf_agent.decision.position_review import build_position_review
 from etf_agent.decision.selection_ranking import ranking_envelope, seal_selection_ranking
 from etf_agent.decision import swap_nomination as sn
 from etf_agent.decision.swap_nomination import (
-    SwapEstimator, SwapNominationValidator, bind_thesis_hints, nomination_envelope, nomination_facts, nominations_of,
-    needs_nomination, program_nomination, seal_swap_nomination, swap_nomination_brief, validate_thesis_hint_binding,
+    SwapEstimator, SwapNominationValidator, apply_swap_nomination, bind_thesis_hints, nomination_envelope, nomination_facts, nominations_of,
+    needs_nomination, program_nomination, seal_swap_nomination, swap_nomination_brief, validate_team_swap_nomination, validate_thesis_hint_binding,
 )
 
 from test_analysts import event_items, finding, report, technical_items
@@ -675,6 +675,95 @@ class ThesisHintBindingTests(unittest.TestCase):
         del old["position_sizing"]["agent_swap"]
         self.assertEqual(bind_thesis_hints(old, VERDICTS), old)
         self.assertEqual(validate_thesis_hint_binding(old, VERDICTS), [])
+
+
+class AgentSwapV2BindingTests(unittest.TestCase):
+    """v2（正式）：提名配對由 pipeline 綁進 Policy（apply_swap_nomination），Finalizer 以提名封存重算比對；v1 影子原樣不動。"""
+
+    def setUp(self):
+        self.world = World()
+        self.nomination = seal_swap_nomination(self.world.envelope, good_output())
+
+    def v2_policy(self):
+        policy = copy.deepcopy(self.world.policy)
+        policy["position_sizing"]["agent_swap"]["version"] = "v2"
+        return policy
+
+    def team(self):
+        world = self.world
+        return {"swap_nomination": self.nomination, "selection_ranking": world.ranking, "position_review": world.review,
+                "exposure_review": world.exposure}
+
+    def check(self, policy, team=None):
+        errors: list = []
+        validate_team_swap_nomination(self.world.bundle, policy, self.world.trade, self.world.debate, team or self.team(), errors)
+        return errors
+
+    def test_apply_binds_pairs_in_the_agents_order_with_the_sealed_reference(self):
+        bound = apply_swap_nomination(self.v2_policy(), self.nomination)
+        gate = bound["position_sizing"]["agent_swap"]
+        self.assertEqual(gate["nominated_pairs"], [{"buy_symbol": "1101.TW", "sell_symbol": "2330.TW"}])
+        self.assertEqual(gate["nomination_ref"], {
+            "nomination_id": "swap-1", "sha256": self.nomination["content_sha256"], "status": "completed"})
+        self.assertNotIn("content_sha256", bound)  # 呼叫端重算
+        self.assertNotIn("nominated_pairs", self.world.policy["position_sizing"]["agent_swap"])  # 不改原物件
+        self.assertEqual(self.check(bound), [])
+
+    def test_non_completed_statuses_bind_an_empty_list_with_their_status(self):
+        for status in ("not_needed", "exhausted", "unavailable"):
+            program = program_nomination(self.world.envelope, status, ["x"] if status != "not_needed" else [])
+            gate = apply_swap_nomination(self.v2_policy(), program)["position_sizing"]["agent_swap"]
+            self.assertEqual((gate["nominated_pairs"], gate["nomination_ref"]["status"]), ([], status))
+
+    def test_a_prefilled_template_is_overwritten_and_shadow_or_gateless_policies_are_untouched(self):
+        prefilled = self.v2_policy()
+        prefilled["position_sizing"]["agent_swap"].update(
+            nominated_pairs=[{"buy_symbol": "2317.TW", "sell_symbol": "1101.TW"}],
+            nomination_ref={"nomination_id": "old", "sha256": "0" * 64, "status": "completed"})
+        bound = apply_swap_nomination(prefilled, self.nomination)
+        self.assertEqual(bound["position_sizing"]["agent_swap"]["nominated_pairs"], [{"buy_symbol": "1101.TW", "sell_symbol": "2330.TW"}])
+        self.assertEqual(apply_swap_nomination(self.world.policy, self.nomination), self.world.policy)  # v1 影子
+        gateless = copy.deepcopy(self.world.policy)
+        del gateless["position_sizing"]["agent_swap"]
+        self.assertEqual(apply_swap_nomination(gateless, self.nomination), gateless)
+
+    def test_finalizer_rejects_pairs_that_differ_from_the_sealed_nomination(self):
+        bound = apply_swap_nomination(self.v2_policy(), self.nomination)
+        cases = {
+            "配對被改寫": lambda gate: gate.update(nominated_pairs=[{"buy_symbol": "2317.TW", "sell_symbol": "2330.TW"}]),
+            "配對被清空": lambda gate: gate.update(nominated_pairs=[]),
+            "狀態被改寫": lambda gate: gate["nomination_ref"].update(status="exhausted"),
+            "雜湊不符": lambda gate: gate["nomination_ref"].update(sha256="f" * 64),
+            "缺綁定": lambda gate: (gate.pop("nominated_pairs"), gate.pop("nomination_ref")),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label):
+                tampered = copy.deepcopy(bound)
+                mutate(tampered["position_sizing"]["agent_swap"])
+                self.assertTrue(any("agent_swap" in error for error in self.check(tampered)), label)
+
+    def test_v1_shadow_needs_no_binding_and_has_no_version_gate_any_more(self):
+        self.assertEqual(self.check(self.world.policy), [])
+        self.assertFalse(hasattr(sn, "SUPPORTED_GATE_VERSIONS"))
+        self.assertFalse(hasattr(sn, "unsupported_gate_version"))
+
+    def test_the_empty_reason_string_means_not_applicable_when_there_are_nominations_for_codex_strict_schema(self):
+        # Codex strict schema 要求欄位一律輸出：有提名時 no_nomination_reason 為空字串，封存時省略，與沒有輸出等價。
+        sealed = seal_swap_nomination(self.world.envelope, good_output(no_nomination_reason=""))
+        self.assertNotIn("no_nomination_reason", sealed)
+        self.assertEqual(sealed["content_sha256"], self.nomination["content_sha256"])
+        self.assertEqual(self.world.validate(good_output(no_nomination_reason="")), [])
+        # 空清單時空字串仍被退回；有提名卻寫了理由也仍被退回。
+        self.assertTrue(any("no_nomination_reason" in e for e in self.world.validate(
+            {"nominations": [], "thesis_hint_responses": [], "no_nomination_reason": ""})))
+        self.assertTrue(any("no_nomination_reason" in e for e in self.world.validate(good_output(no_nomination_reason="x"))))
+
+    def test_the_agent_schema_requires_every_declared_property_for_codex(self):
+        from etf_agent.automation.agent_schemas import SWAP_NOMINATION_SCHEMA
+
+        self.assertEqual(set(SWAP_NOMINATION_SCHEMA["properties"]), set(SWAP_NOMINATION_SCHEMA["required"]))
+        for node in (SWAP_NOMINATION_SCHEMA["properties"]["nominations"]["items"], SWAP_NOMINATION_SCHEMA["properties"]["thesis_hint_responses"]["items"]):
+            self.assertEqual(set(node["properties"]), set(node["required"]))
 
 
 if __name__ == "__main__":

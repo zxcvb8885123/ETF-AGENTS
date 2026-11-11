@@ -1,6 +1,14 @@
 # 換股改由交易 Agent 提名（階段 3）：詳細設計
 
-狀態（2026-11-10）：**只有計畫，沒有任何程式、設定、契約或 Skill 被修改**。本檔的閘門 `position_sizing.agent_swap`、artifact `swap_nomination`、`team_inputs` 2.9、旗標 `AGENT_SWAP*` 等名稱全部是**提案、名稱暫定、尚未實作**。是否實作與開啟由人決定。上層計畫見 [agent_autonomy_plan.md](agent_autonomy_plan.md) 階段 3；本檔取代該節的粗略設計，與它衝突處以本檔為準。行號為 2026-11-10 工作區（分支 `145-`）。
+狀態（2026-11-10，依程式與 `config/decision_policy.json` 核對）：**5.3 的步驟 1–6 已實作，步驟 7（文件同步）已做**。`position_sizing.agent_swap` **v1 影子期已於 2026-11-10 開啟**（`max_swaps_per_run 2`、`min_holding_days 5`；步驟 1–4：Policy 驗證、提名契約與 Validator、降級版 `agent_step_degradable`、5c 接入與 `team_inputs` 2.9）；**v2（步驟 6：`nominated_pairs`／`nomination_ref` 綁定、`portfolio_slots` 1.1、`AGENT_SWAP*` 與 `EXPOSURE_ROTATION_SKIPPED:agent_swap` 旗標）與影子報告 `cli/calibration.py shadow-swap`（步驟 5）已實作、尚未開啟**（正式設定是 v1，v2 的行為不是現行行為）。是否切 v2 由人在影子期累積 ≥ 10 個決策日後決定（第 6 節）。上層計畫見 [agent_autonomy_plan.md](agent_autonomy_plan.md) 階段 3；本檔取代該節的粗略設計，與它衝突處以本檔為準。下文各節保留當時的設計與推論；行號為 2026-11-10 工作區（分支 `145-`）。
+
+**實作註記**：
+
+- 提名失敗（`exhausted`／`unavailable`）只取消該動作，已依第 6 節的決定實作；硬規則與安全拒絕仍整份拒絕。
+- `team_inputs` 2.9 是 2.8 的超集，所以 `agent_swap` 也要求 `exposure_rotation` v3 與 `rebound_participation` v2 同時存在；同階段的 `release_order`、`held_weight_facts` 因此改用不升版本的選配鍵。
+- v2 的換入者仍沿用冷卻名單排除（候選理由含 `reentry_cooldown`），即使 `reentry_cooldown` 改為 v3 的提示。
+- 影子報告的「若開 v2 會成交幾對」只是上限估計，動態取消（現金、權重、產業、換手）無法離線重現，標 `replay_reference_only`；無影子 run 時回報 `no_shadow_data`。
+- Skill 檔不是逐 run 版本化的，第一輪說明用「若 brief 含某鍵則……」的條件寫法，已更新 `tradeagent/trading/trader/`（新增 `references/swap-nomination.md`）。
 
 已決定（2026-11-10，使用者選擇，見上層計畫第 6 節第 2 項）：**硬規則不過整份拒絕；換股提名失敗只取消該動作並留旗標**，其餘訂單照常。
 
@@ -75,6 +83,8 @@
 - 程式封存時補信封（`schema_version`、`nomination_id`、bundle／snapshot／cutoff、`trade_decision_id`＋雜湊、`selection_ranking_id`＋雜湊、`status`、`errors`、`content_sha256`），做法同 `selection_ranking.seal_selection_ranking`。`status` ∈ `completed`／`not_needed`／`exhausted`。
 
 ### 2.4 每筆提名必須引用的依據（不得新增事實或 claim）
+
+> 已實作、尚未開啟的例外（[曝險計畫](agent_led_exposure_plan.md) 第 4.3 節）：`agent_swap.exposure` 啟用時，`purpose: exposure` 的配對換出依據改為持股自己的曝險事實 `review:<代號>:exposure`，不要求第一輪已採納的空頭論點；`thesis` 配對維持本節規則。
 
 | 欄位 | 可引用的範圍 | 規則 |
 | --- | --- | --- |

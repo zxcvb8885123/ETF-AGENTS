@@ -10,6 +10,11 @@
 這是決策層的出場紀錄（不是帳本實際成交）；主辦方作廢整批時該股仍在冷卻名單內，屬保守方向。
 沒有決策庫或沒有符合的 run 時綁空名單，不是錯誤（已驗證無歷史）；但 run 存在而 decision.json 損壞、時間無效或
 manifest 驗證失敗時一律拒絕（歷史無法驗證不等於沒有出場紀錄，否則冷卻會被悄悄解除）。
+
+v2（``agent_only=True``）：賣單 ``exit``／``forced_exit`` 之外，還要前次 run 的 ``intent.json``（交易 Agent 原意圖）對該股
+也是 ``exit``／``forced_exit``；程式把 hold／trim 賣成 exit（回撤減碼、強制換股、曝險換股、單股上限）不計。
+前次 run 的 intent.json 缺少、損壞或與 decision 不是同一組時拒絕，不當成「沒有出場」。
+v3 的名單口徑同 v2（同樣 ``agent_only=True``），但名單不擋買單、只是交易 Agent 簡報的提示（見 ``sizing.REENTRY_COOLDOWN_VERSION_V3``）。
 """
 
 from __future__ import annotations
@@ -23,12 +28,31 @@ from etf_agent.core.run_layout import list_run_dirs
 
 from .contracts import DecisionToolError, parse_time
 from .prior_decision import _account_id, _read_run_json, _session_start
+from .sizing import REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3, REENTRY_COOLDOWN_VERSIONS
 
 EXIT_INTENTS = ("exit", "forced_exit")
 
 
-def recent_exit_symbols(repository_root: Optional[Path], bundle: Mapping[str, object], days: int) -> Tuple[List[str], List[str]]:
-    """最近 ``days`` 個日曆天內已出場的股票與來源 run_id（都排序去重）。"""
+def _agent_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
+    """前次 run 中交易 Agent 自己給 exit／forced_exit 的股票（v2）；intent.json 不可用一律拒絕。"""
+    intent = _read_run_json(run_dir, "intent")
+    if intent is None:
+        raise DecisionToolError("再進場冷卻 v2 無法讀取決策庫 run 的 intent.json：%s" % run_dir.name)
+    if decision.get("trade_intent_result_id") != intent.get("decision_id"):
+        raise DecisionToolError("再進場冷卻 v2：決策庫 run %s 的 decision 與 intent 不是同一組" % run_dir.name)
+    items = intent.get("items")
+    if not isinstance(items, list):
+        raise DecisionToolError("再進場冷卻 v2：決策庫 run %s 的 intent.items 必須是清單" % run_dir.name)
+    return {
+        str(item.get("symbol", "")).upper() for item in items
+        if isinstance(item, Mapping) and item.get("intent") in EXIT_INTENTS and item.get("symbol")
+    }
+
+
+def recent_exit_symbols(
+    repository_root: Optional[Path], bundle: Mapping[str, object], days: int, agent_only: bool = False,
+) -> Tuple[List[str], List[str]]:
+    """最近 ``days`` 個日曆天內已出場的股票與來源 run_id（都排序去重）；``agent_only`` 為 v2：只計交易 Agent 自己的出場。"""
     if repository_root is None or not Path(repository_root).is_dir():
         return [], []
     cutoff = parse_time(bundle.get("decision_cutoff"), "decision_cutoff")
@@ -73,6 +97,8 @@ def recent_exit_symbols(repository_root: Optional[Path], bundle: Mapping[str, ob
             if isinstance(order, Mapping) and order.get("side") == "sell" and order.get("intent") in EXIT_INTENTS
             and order.get("symbol")
         }
+        if agent_only:
+            exited &= _agent_exit_symbols(run_dir, decision)
         if exited:
             symbols |= exited
             run_ids.add(run_dir.name)
@@ -91,7 +117,10 @@ def bind_reentry_cooldown(
     days = cooldown.get("days")
     if isinstance(days, bool) or not isinstance(days, int) or days < 1:
         raise DecisionToolError("position_sizing.reentry_cooldown.days 必須是正整數")
-    symbols, run_ids = recent_exit_symbols(repository_root, bundle, days)
+    version = cooldown.get("version")
+    if version not in REENTRY_COOLDOWN_VERSIONS:
+        raise DecisionToolError("position_sizing.reentry_cooldown.version 只允許 %s" % "、".join(REENTRY_COOLDOWN_VERSIONS))
+    symbols, run_ids = recent_exit_symbols(repository_root, bundle, days, agent_only=version in (REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3))
     cooldown["blocked_symbols"] = symbols
     cooldown["source_run_ids"] = run_ids
     return bound

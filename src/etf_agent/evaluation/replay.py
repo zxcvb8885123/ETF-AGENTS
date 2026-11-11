@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time
+from etf_agent.decision.dip_facts import quality_dip_assessment_gate
 from etf_agent.decision.exposure import hold_conviction_enabled
 from etf_agent.core.artifact_store import ImmutableRunStore
 from etf_agent.core.run_layout import list_run_dirs
@@ -44,7 +45,9 @@ from etf_agent.decision import (
 from etf_agent.decision.allocation import ALLOCATION_ENGINE_VERSION
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.finalization import DECISION_ENGINE_VERSION
-from etf_agent.decision.sizing import allowed_cash_grades, cash_grade_grid, cash_ratio_gate
+from etf_agent.decision.sizing import (
+    allowed_cash_grades, cash_grade_grid, cash_ratio_gate, drawdown_derisk_v5, reentry_hint_symbols,
+)
 from etf_agent.virtual_account.daily import OfficialCloseMarket
 
 from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, REPLAY_SCHEMA_VERSION, ReplayError
@@ -186,6 +189,8 @@ def load_archived_run(decision_root: Path, run_id: str) -> Dict[str, object]:
             bundle, momentum, files["debate"], prior_context=prior, position_review=team.get("position_review"),
             hold_conviction=hold_conviction_enabled(files["policy"]),
             dip_facts=team.get("dip_facts") if isinstance(team.get("dip_facts"), Mapping) else None,
+            reentry_hint_symbols=reentry_hint_symbols(files["policy"].get("position_sizing")),
+            dip_assessment=quality_dip_assessment_gate(files["policy"].get("position_sizing")) is not None,
         ).validate(files["intent"])
     except DecisionToolError as error:
         errors = [str(error)]
@@ -253,11 +258,36 @@ def bind_replay_policy(
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "exposure_view"}
             base["content_sha256"] = decision_policy_sha256(base)
         bound_stance = {key: value for key, value in bound_stance.items() if key != "exposure_view"}
+        # 優質股的三個紀錄閘門（quality_dip_facts／quality_dip_assessment／event_direction）只約束 Agent 當天的輸出與 team_inputs，
+        # 不影響配置：回放略過並各標一次；沒有這些閘門的舊回放 notes 與 policy 逐位元不變。
+        dip_ignored = [
+            field for field in ("quality_dip_assessment", "event_direction", "quality_dip_facts")
+            if isinstance(base.get("position_sizing"), Mapping) and field in base["position_sizing"]
+        ]
+        if dip_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key not in dip_ignored}
+            base["content_sha256"] = decision_policy_sha256(base)
+        # valuation_facts（估值 V2）只把背景放進 Agent 簡報與 team_inputs，不影響配置：回放略過並標一次；沒有閘門的舊回放逐位元不變。
+        valuation_ignored = isinstance(base.get("position_sizing"), Mapping) and "valuation_facts" in base["position_sizing"]
+        if valuation_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "valuation_facts"}
+            base["content_sha256"] = decision_policy_sha256(base)
         # agent_swap 依賴 exposure_rotation／rebound_participation（回放都略過）與封存 run 沒有的換股提名：必須先於它們移除，
         # 否則前提驗證會失敗；沒有閘門的舊回放 notes 與 policy 逐位元不變。
         swap_ignored = isinstance(base.get("position_sizing"), Mapping) and "agent_swap" in base["position_sizing"]
+        # agent_swap.quality_dip（優質股第三階段）隨 agent_swap 一起略過，另標一次讓讀者知道封存的優質股換股沒有被回放。
+        quality_swap_ignored = swap_ignored and isinstance(base["position_sizing"]["agent_swap"], Mapping) and (
+            "quality_dip" in base["position_sizing"]["agent_swap"])
         if swap_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "agent_swap"}
+            base["content_sha256"] = decision_policy_sha256(base)
+        # drawdown_derisk v5 需要封存 run 沒有的釋出順序（交易 Agent 當天的輸出）：回放把它當 v4（數字規則相同，先賣誰回到 ATR 順序），
+        # 並拿掉綁定欄位；沒有 v5 的舊回放 notes 與 policy 逐位元不變。
+        release_replayed_as_v4 = drawdown_derisk_v5(base.get("position_sizing"))
+        if release_replayed_as_v4:
+            derisk = {key: value for key, value in base["position_sizing"]["drawdown_derisk"].items() if key not in ("release_symbols", "release_ref")}
+            derisk["version"] = "v4"
+            base["position_sizing"] = {**base["position_sizing"], "drawdown_derisk": derisk}
             base["content_sha256"] = decision_policy_sha256(base)
         # exposure_rotation 需要封存 run 沒有的 hold 信心與帳本持有天數：樣板有閘門時回放略過它（不換股），
         # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
@@ -305,8 +335,16 @@ def bind_replay_policy(
         notes["rebound_participation"] = "ignored_in_replay"
     if swap_ignored:
         notes["agent_swap"] = "ignored_in_replay"
+    if quality_swap_ignored:
+        notes["agent_swap.quality_dip"] = "ignored_in_replay"
+    if valuation_ignored:
+        notes["valuation_facts"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
+    for field in dip_ignored:
+        notes[field] = "ignored_in_replay"
+    if release_replayed_as_v4:
+        notes["drawdown_derisk_v5"] = "replayed_as_v4"
     return policy, notes
 
 

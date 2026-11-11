@@ -6,7 +6,7 @@
 - 沒有 agent_swap 的樣板：team_inputs 維持 2.8，不呼叫第三步。
 - 降級：驗證用盡封存 exhausted、暫時性失敗封存 unavailable，其餘決策照常；續跑重現同一份提名、不再呼叫 Agent；
   安全拒絕（秘密外洩）仍整個停止。
-- fail-closed：閘門與 team_inputs 版本不同步（雙向）、缺封存、提名或事實被改寫、v2（配置尚未實作）一律拒絕。
+- fail-closed：閘門與 team_inputs 版本不同步（雙向）、缺封存、提名或事實被改寫、v2 未綁定提名一律拒絕（v2 的配置見 test_agent_swap_v2_pipeline.py）。
 
 夾具：``PipelineWorld`` 只有一檔持股 2330（持有 1000 股）與一檔新股 2317；把規則的 ``max_positions`` 調為 1 才會有名額缺口
 （需要提名）。帳本 NAV 與持股歷史自建兩列（NAV 與帳戶現金配合調整），持有起點 2026-09-01，cutoff 為 2026-09-20，持有天數 19 天。
@@ -161,7 +161,7 @@ class ShadowRunTests(unittest.TestCase):
         self.assertLess(names.index("swap_nominator"), names.index("cash_stance"))
         team = self.shadow_art["team_inputs"]
         self.assertEqual(team["schema_version"], SWAP_TEAM_VERSION)
-        self.assertEqual(set(team), SWAP_TEAM_FIELDS)
+        self.assertEqual(set(team) - {"release_order", "dip_facts", "held_weight_facts"}, SWAP_TEAM_FIELDS)  # 選配鍵（正式樣板已開 v5／quality_dip）不在版本白名單
         nomination = team["swap_nomination"]
         self.assertEqual((nomination["status"], len(nomination["nominations"])), ("completed", 1))
         self.assertEqual(nomination["nominations"][0]["sell_symbol"], "2330.TW")
@@ -258,16 +258,19 @@ class ShadowRunTests(unittest.TestCase):
                 item["intent"] = "no_trade"
         self.assertRejected(self.shadow.rebuild_errors(art, intent=intent), "swap_nomination")
 
-    def test_policy_v2_is_rejected_because_its_allocation_is_not_implemented(self):
+    def test_v2_policy_without_the_bound_pairs_stops_the_rebuild(self):
         art = self.shadow_art
+
         def to_v2(policy):
             sizing = policy["position_sizing"]
             sizing["agent_swap"]["version"] = "v2"
-            sizing["rotation"].pop("forced_swap")  # v2 與舊換股路徑互斥
-            sizing["exposure_rotation"].pop("conviction_gap_swap")
+            sizing["rotation"].pop("forced_swap", None)  # v2 與舊換股路徑互斥
+            sizing["exposure_rotation"].pop("conviction_gap_swap", None)
 
         v2 = sealed(art["policy"], to_v2)
-        self.assertRejected(self.shadow.rebuild_errors(art, policy=v2), "尚未實作")
+        # 與 held_since 未綁定的前例相同：重建配置的驗證器讀到未綁定的 v2 時由引擎拋 DecisionToolError，沒有任何路徑能 approved。
+        with self.assertRaisesRegex(DecisionToolError, "尚未綁定換股提名"):
+            self.shadow.rebuild_errors(art, policy=v2)
 
 
 class NotNeededTests(unittest.TestCase):
@@ -296,19 +299,6 @@ class NotNeededTests(unittest.TestCase):
             self.assertNotIn("swap_nominator", [name for name, _ in runner.prompts])
             self.assertFalse((harness.world.run_dir / "swap_nomination.json").exists())
             self.assertEqual(harness.artifacts()["team_inputs"]["schema_version"], "2.8")
-
-    def test_policy_v2_stops_before_any_agent_call(self):
-        with tempfile.TemporaryDirectory() as directory:
-            harness = Harness(directory, gate=dict(GATE, version="v2"))
-            value = json.loads(harness.world.paths["template"].read_text(encoding="utf-8"))
-            value["position_sizing"]["rotation"].pop("forced_swap")  # v2 與舊換股路徑互斥，樣板才合法
-            value["position_sizing"]["exposure_rotation"].pop("conviction_gap_swap")
-            harness.world.paths["template"].write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-            runner = FakeRunner(outputs())
-            result, _ = harness.run(runner)
-            self.assertEqual(result.status, "failed")
-            self.assertTrue(any("尚未實作" in error for error in result.errors), result.errors)
-            self.assertEqual(runner.prompts, [])
 
 
 class DegradedRunTests(unittest.TestCase):

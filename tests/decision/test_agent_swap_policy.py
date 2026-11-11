@@ -139,6 +139,32 @@ class AgentSwapGateTests(unittest.TestCase):
         for label, changes in cases.items():
             self.assertTrue(agent_swap_errors(sizing_with(**changes)), label)
 
+    def test_nominated_pairs_binding_shape_and_version(self):
+        pairs = [{"buy_symbol": "2317.TW", "sell_symbol": "2330.TW"}]
+        ref = {"nomination_id": "nom-1", "sha256": "a" * 64, "status": "completed"}
+        good = sizing_with("v2", nominated_pairs=pairs, nomination_ref=dict(ref))
+        self.assertEqual(errors_for(good), [])
+        self.assertEqual(errors_for(sizing_with("v2", nominated_pairs=[], nomination_ref=dict(ref, status="not_needed"))), [])
+        cases = {
+            "v1 影子不得綁定": sizing_with("v1", nominated_pairs=pairs, nomination_ref=dict(ref)),
+            "pairs 沒有 ref": sizing_with("v2", nominated_pairs=pairs),
+            "ref 沒有 pairs": sizing_with("v2", nomination_ref=dict(ref)),
+            "ref 缺欄位": sizing_with("v2", nominated_pairs=pairs, nomination_ref={"nomination_id": "nom-1"}),
+            "ref 多欄位": sizing_with("v2", nominated_pairs=pairs, nomination_ref=dict(ref, extra="x")),
+            "status 不在值域": sizing_with("v2", nominated_pairs=pairs, nomination_ref=dict(ref, status="shadow")),
+            "非 completed 卻有配對": sizing_with("v2", nominated_pairs=pairs, nomination_ref=dict(ref, status="exhausted")),
+            "pairs 不是清單": sizing_with("v2", nominated_pairs="2317.TW", nomination_ref=dict(ref)),
+            "配對多出欄位": sizing_with("v2", nominated_pairs=[dict(pairs[0], reason="x")], nomination_ref=dict(ref)),
+            "小寫代號": sizing_with("v2", nominated_pairs=[{"buy_symbol": "2317.tw", "sell_symbol": "2330.TW"}], nomination_ref=dict(ref)),
+            "換入換出相同": sizing_with("v2", nominated_pairs=[{"buy_symbol": "2330.TW", "sell_symbol": "2330.TW"}], nomination_ref=dict(ref)),
+            "換入重複": sizing_with("v2", nominated_pairs=pairs + [{"buy_symbol": "2317.TW", "sell_symbol": "1101.TW"}], nomination_ref=dict(ref)),
+            "換出重複": sizing_with("v2", nominated_pairs=pairs + [{"buy_symbol": "1101.TW", "sell_symbol": "2330.TW"}], nomination_ref=dict(ref)),
+            "超過對數上限": sizing_with("v2", max_swaps_per_run=1, nominated_pairs=pairs + [{"buy_symbol": "1101.TW", "sell_symbol": "2412.TW"}],
+                                  nomination_ref=dict(ref)),
+        }
+        for label, sizing in cases.items():
+            self.assertTrue(agent_swap_errors(sizing), label)
+
     def test_v1_passes_on_the_full_fixture_that_still_has_the_old_swap_paths(self):
         sizing = full_sizing()
         sizing["rebound_participation"] = copy.deepcopy(REBOUND_V2)
@@ -158,7 +184,13 @@ class AgentSwapGateTests(unittest.TestCase):
         policy["position_sizing"] = live
         validate_position_sizing(policy, UNIVERSE[1:], before)
         self.assertEqual(before, [])
-        self.assertEqual(set(AGENT_SWAP_FIELDS), {"version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref"})
+        self.assertEqual(set(AGENT_SWAP_FIELDS), {
+            "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
+            "exposure",  # Agent 主導曝險階段 2、3 的子閘門（decision/exposure_swap.py）
+            "quality_dip",  # 優質股第三階段的子閘門（decision/quality_dip_swap.py）
+            "derisk_day_view",  # 減碼日改由風險 Agent 的 exposure_view 決定是否換股（版本閘門）
+            "proceeds_to_add",  # 換股賣款可流向高信心加碼持股（版本閘門）
+        })
 
 
 if __name__ == "__main__":

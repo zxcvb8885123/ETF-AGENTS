@@ -46,6 +46,21 @@ _DOCUMENT_KINDS = {
 }
 
 
+def untradable_symbols(bundle: Mapping[str, object]) -> Set[str]:
+    """明確交易狀態包中非 allowed 的標的（與 CompetitionGuard 的 TRADABLE 規則同源）；沒有狀態包時回空集合。
+
+    配置（``AllocationOrderEngine``）與換股提名（``swap_nomination``）共用這一個實作。"""
+    status_bundle = bundle.get("trading_status_bundle")
+    assessment = bundle.get("tradability_assessment")
+    if not isinstance(status_bundle, Mapping) or not isinstance(assessment, Mapping):
+        return set()
+    return {
+        str(item.get("symbol", "")).upper()
+        for item in assessment.get("symbols", [])
+        if isinstance(item, Mapping) and item.get("symbol") and str(item.get("state", "unknown")) != "allowed"
+    }
+
+
 def evidence_policy(bundle: Mapping[str, object]) -> Optional[str]:
     """讀取 bundle 的證據種類政策；沒有欄位為舊行為（None），未知值 fail-closed。"""
     policy = bundle.get(EVIDENCE_POLICY_FIELD)

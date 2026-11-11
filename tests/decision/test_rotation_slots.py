@@ -14,7 +14,9 @@ from etf_agent.decision import (
 )
 from etf_agent.decision.fields import DecisionToolError
 from etf_agent.decision.finalization import ROTATION_TEAM_FIELDS, ROTATION_TEAM_VERSION
-from etf_agent.decision.rotation import PORTFOLIO_SLOTS_FIELDS, PORTFOLIO_SLOTS_VERSION
+from etf_agent.decision.rotation import (
+    PORTFOLIO_SLOTS_FIELDS, PORTFOLIO_SLOTS_FIELDS_V11, PORTFOLIO_SLOTS_VERSION, PORTFOLIO_SLOTS_VERSION_V11, SLOTS_NOTE,
+)
 from etf_agent.decision.sizing import HELD_ADD_PRIORITY, ROTATION_VERSION
 
 from test_team_chain import team_world
@@ -92,6 +94,53 @@ class BuildPortfolioSlotsTests(unittest.TestCase):
         broken = dict(self.debate, packets=[self.debate["packets"][0]])
         with self.assertRaises(DecisionToolError):
             build_portfolio_slots(self.bundle, self.policy, broken)
+
+
+class AgentSwapSlotsTests(unittest.TestCase):
+    """position_sizing.agent_swap v2（版本閘門）：schema 1.1、另一段 note 與 swap_nomination_background；1.0 與 v1 影子逐位不變。"""
+
+    def setUp(self):
+        self.bundle, _, self.debate, _, self.base, self.policy, _ = world()
+
+    def with_gate(self, version):
+        policy = copy.deepcopy(self.policy)
+        policy["position_sizing"]["agent_swap"] = {"version": version, "max_swaps_per_run": 3, "min_holding_days": 5}
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        return policy
+
+    def errors_for(self, policy, slots):
+        errors: list = []
+        validate_portfolio_slots(self.bundle, policy, self.debate, slots, errors)
+        return errors
+
+    def test_v2_uses_schema_1_1_with_its_own_note_and_background(self):
+        policy = self.with_gate("v2")
+        slots = build_portfolio_slots(self.bundle, policy, self.debate)
+        self.assertEqual(slots["schema_version"], PORTFOLIO_SLOTS_VERSION_V11)
+        self.assertEqual(set(slots), PORTFOLIO_SLOTS_FIELDS_V11)
+        self.assertNotEqual(slots["note"], SLOTS_NOTE)
+        self.assertIn("第二輪提名", slots["note"])
+        background = slots["swap_nomination_background"]
+        self.assertFalse(background["citable"])
+        self.assertEqual((background["pair_limit"], background["min_holding_days"]), (3, 5))  # min(agent 3, rotation 10)
+        self.assertEqual(self.errors_for(policy, slots), [])
+
+    def test_v1_shadow_and_no_gate_keep_schema_1_0_bit_for_bit(self):
+        plain = build_portfolio_slots(self.bundle, self.policy, self.debate)
+        shadow = build_portfolio_slots(self.bundle, self.with_gate("v1"), self.debate)
+        self.assertEqual(shadow, plain)
+        self.assertEqual((plain["schema_version"], plain["note"]), (PORTFOLIO_SLOTS_VERSION, SLOTS_NOTE))
+        self.assertNotIn("swap_nomination_background", plain)
+
+    def test_the_version_follows_the_policy_so_a_mismatching_artifact_is_rejected(self):
+        v2_policy = self.with_gate("v2")
+        v2_slots = build_portfolio_slots(self.bundle, v2_policy, self.debate)
+        old_slots = build_portfolio_slots(self.bundle, self.policy, self.debate)
+        self.assertTrue(self.errors_for(self.policy, v2_slots))  # 沒有閘門卻帶 1.1 欄位
+        self.assertTrue(self.errors_for(v2_policy, old_slots))  # v2 卻只有 1.0
+        tampered = copy.deepcopy(v2_slots)
+        tampered["swap_nomination_background"]["pair_limit"] = 9
+        self.assertTrue(self.errors_for(v2_policy, tampered))
 
 
 class ValidatePortfolioSlotsTests(unittest.TestCase):

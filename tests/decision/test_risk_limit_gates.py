@@ -113,7 +113,7 @@ class ProductionConfigTests(unittest.TestCase):
     def test_gate_values_fail_closed(self):
         for bad in ({"sector_fit": "v2"}, {"turnover_fit": "v0"},
                     {"reentry_cooldown": {"version": "v1", "days": 0}},
-                    {"reentry_cooldown": {"version": "v2", "days": 3}},
+                    {"reentry_cooldown": {"version": "v4", "days": 3}},
                     {"reentry_cooldown": {"version": "v1", "days": 3, "blocked_symbols": ["2317.TW"]}},
                     {"reentry_cooldown": {"version": "v1", "days": 3, "blocked_symbols": ["b", "a"], "source_run_ids": []}},
                     {"drawdown_derisk": {"version": "v5"}},

@@ -548,9 +548,10 @@ class ReplayTests(unittest.TestCase):
         gated["position_sizing"]["quality_dip_facts"] = dict(GATE)
         plain_policy, plain_notes = helper.replay(plain)
         policy, notes = helper.replay(gated)
-        self.assertEqual({k: v for k, v in notes.items() if k not in ("policy_id", "content_sha256")},
+        self.assertEqual(notes["quality_dip_facts"], "ignored_in_replay")  # 回放略過閘門並標一次
+        self.assertEqual({k: v for k, v in notes.items() if k not in ("policy_id", "content_sha256", "quality_dip_facts")},
                          {k: v for k, v in plain_notes.items() if k not in ("policy_id", "content_sha256")})
-        self.assertEqual(policy["position_sizing"]["quality_dip_facts"], GATE)
+        self.assertNotIn("quality_dip_facts", policy["position_sizing"])
         gated_body = AllocationOrderEngine(helper.bundle, policy).run(helper.intent)
         plain_body = AllocationOrderEngine(helper.bundle, plain_policy).run(helper.intent)
         for key in ("allocation_proposal", "order_proposal", "constraint_flags"):

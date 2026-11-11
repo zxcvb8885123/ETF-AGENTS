@@ -22,10 +22,24 @@ PORTFOLIO_SLOTS_FIELDS = {
     "schema_version", "held_positions", "max_positions", "free_slots", "positions_by_breadth",
     "rotation", "unheld_by_bull_strength", "held_by_bear_strength", "note",
 }
+# agent_swap v2（版本閘門）：schema 1.1，另有 swap_nomination_background 並改用另一段 note（換股改由第二輪提名）。
+# 1.0 的欄位與文字不動，舊 run 與 v1（影子）照舊重建；版本由 Policy 決定，Finalizer 照樣整份重算。
+PORTFOLIO_SLOTS_VERSION_V11 = "1.1"
+PORTFOLIO_SLOTS_FIELDS_V11 = PORTFOLIO_SLOTS_FIELDS | {"swap_nomination_background"}
 SLOTS_NOTE = (
     "free_slots 為 0 時，未持有的新股只能用本次全池出場釋出的名額，且由程式依信心等級配對；"
     "出場必須採納至少一個空頭 claim，不得為了騰出名額而出場，也不得為了填滿名額而買進。"
     "名額、權重、股數與現金一律由程式計算，本區塊只是背景，沒有 evidence_id，不可引用。"
+)
+SLOTS_NOTE_V11 = (
+    "free_slots 為 0 時，未持有的新股可能買不到名額；本次全池出場釋出的名額由程式依信心等級配對。"
+    "第一輪各批只依該股自己的證據給意圖與信心：持股的空頭論點已成立就給減碼或出場，不得為了騰出名額而出場，"
+    "也不得為了填滿名額而買進。名額被卡住的新股要換掉哪檔持股，由全部批次與入選排序完成後的第二輪提名處理（swap_nomination_background）。"
+    "名額、權重、股數與現金一律由程式計算，本區塊只是背景，沒有 evidence_id，不可引用。"
+)
+SWAP_BACKGROUND_NOTE = (
+    "換股提名在第二輪由你一次看到全部可提名的新股與持股後處理；本輪不需要為了換股而調整意圖或信心。"
+    "沒有 evidence_id，不可引用。"
 )
 
 
@@ -69,8 +83,10 @@ def build_portfolio_slots(
     sizing = policy.get("position_sizing") or {}
     breadth = sizing.get("positions_by_breadth")
     rotation = sizing.get("rotation")
-    return {
-        "schema_version": PORTFOLIO_SLOTS_VERSION,
+    swap = sizing.get("agent_swap")
+    nominated = isinstance(swap, Mapping) and swap.get("version") == "v2"
+    slots = {
+        "schema_version": PORTFOLIO_SLOTS_VERSION_V11 if nominated else PORTFOLIO_SLOTS_VERSION,
         "held_positions": len(held),
         "max_positions": max_positions,
         # 真正的空名額；風險 Agent 稍後給的持股廣度可能更小，目標檔數不在交易階段決定。
@@ -83,8 +99,17 @@ def build_portfolio_slots(
         },
         "unheld_by_bull_strength": _strength_counts(_packet(debate, "bull"), universe - held),
         "held_by_bear_strength": _strength_counts(_packet(debate, "bear"), held),
-        "note": SLOTS_NOTE,
+        "note": SLOTS_NOTE_V11 if nominated else SLOTS_NOTE,
     }
+    if nominated and isinstance(rotation, Mapping):
+        slots["swap_nomination_background"] = {
+            "citable": False,
+            "second_round": True,
+            "pair_limit": min(int(swap["max_swaps_per_run"]), int(rotation["max_swaps_per_run"])),
+            "min_holding_days": int(swap["min_holding_days"]),
+            "note": SWAP_BACKGROUND_NOTE,
+        }
+    return slots
 
 
 def validate_portfolio_slots(
@@ -99,7 +124,9 @@ def validate_portfolio_slots(
     if not isinstance(slots, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    reject_unknown_fields(slots, PORTFOLIO_SLOTS_FIELDS, prefix, errors)
+    swap = (policy.get("position_sizing") or {}).get("agent_swap")
+    nominated = isinstance(swap, Mapping) and swap.get("version") == "v2"
+    reject_unknown_fields(slots, PORTFOLIO_SLOTS_FIELDS_V11 if nominated else PORTFOLIO_SLOTS_FIELDS, prefix, errors)
     try:
         expected = build_portfolio_slots(bundle, policy, debate)
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:

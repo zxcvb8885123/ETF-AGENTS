@@ -23,6 +23,10 @@ description: 整合台股財報、財務指標、現金流與月營收，逐檔�
 
 正例：「累計營收年增擴大（月營收證據），營業現金流為正且覆蓋稅前淨利（現金流證據），兩者互相支持」→ 正面，摘要帶 `evidence_policy` 時拆成 `revenue` 與 `financial` 兩項 finding。「只有當期淨利、缺去年同期損益表」→ 可依現有資料判斷，理由寫明「無法確認是否比去年改善」，缺口寫進 `data_gaps`。
 
+## 估值位置
+
+只有 policy 開啟 `valuation_facts` 時才有：摘要頂層多一個 `valuation_background`，列出本批股票的 PER／PBR 在自身歷史區間的位置（近 250、近 750 個資料列與全部可得歷史並列，百分位＝不高於當日值的筆數 ÷ 樣本數）。它是程式算的背景，`citable=false`、沒有 evidence_id，不可放進 `evidence_ids`；不得寫便宜、低估、貴或低於合理價值，要提到時寫明指標與視窗，並說明位置低可能來自盈餘下修、PER 下降可能來自盈餘上修，三個視窗不得只挑一個。`status: unavailable` 或視窗 `insufficient_history` 只代表不知道。殖利率的股利基準尚未確認，所以不提供。
+
 ## 優質股被大盤拖累的事實
 
 只有 policy 開啟 `quality_dip_facts` 時才有：摘要頂層多一個 `dip_facts_background`，每檔多 `fundamental_flags`，由程式從同一份財報、月營收與現金流整理成三個不混用的清單。`new_adverse_facts` 是評估視窗內才新出現的壞事（月營收年增由正轉負、淨利由盈轉虧）；`concerns` 是年減、利益率下降、現金流為負等某一期的既有事實（附期別）；`unknown` 是缺資料或單位衝突。疑慮要寫明是哪一期，不得只因疑慮就判負面，也不得當作沒看到；不知道既不是利空也不是利多。事件面的負面一項要等事件分析師完成，這裡標 `event_check: not_applied`。區塊本身沒有 evidence_id：要寫進 finding 時引用各列附的財報或月營收證據（`financial`／`revenue`）。`no_new_fundamental_data_in_window` 為 true 只能說查無新壞事，不能說營運沒變。

@@ -21,11 +21,14 @@ from .drawdown import stance_meets_floor
 from .exposure import hold_conviction_enabled
 from .position_review import position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
-from .dip_facts import dip_reference_tokens
+from .dip_facts import dip_reference_tokens, validate_dip_assessment
+from .valuation_facts import valuation_reference_tokens
 from .recency import cash_stance_recency_gate
 from .rebound import bind_effective_state, loosened_cash_buffer, rebound_gate
 from .turn_facts import cash_stance_turn_facts_gate
 from .exposure_facts import exposure_view_gate
+from .exposure_swap import bind_exposure_view, exposure_swap_gate
+from .quality_dip_swap import bind_quality_dip_turn, quality_dip_swap_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -88,6 +91,9 @@ class TradeDecisionValidator:
         position_review: Optional[Mapping[str, object]] = None,
         hold_conviction: bool = False,
         dip_facts: Optional[Mapping[str, object]] = None,
+        reentry_hint_symbols: Optional[Sequence[str]] = None,
+        dip_assessment: bool = False,
+        valuation_facts: Optional[Mapping[str, object]] = None,
     ):
         """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
         交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。
@@ -99,8 +105,17 @@ class TradeDecisionValidator:
         預設 False，hold 帶信心即拒絕（現行）。
 
         ``dip_facts`` 是 quality_dip_facts 閘門的事實（team_inputs.dip_facts）：交易 brief 以 ``dip_background`` 附上，
-        不是證據，文字欄位出現其識別碼即拒絕；沒有閘門的舊 run 傳 None，驗證不變。"""
+        不是證據，文字欄位出現其識別碼即拒絕；沒有閘門的舊 run 傳 None，驗證不變。
+
+        ``dip_assessment``（quality_dip_assessment 閘門）為 True 時，buy／add 必填列舉 ``dip_assessment``（需 ``dip_facts``，
+        且決策輸入須是 typed_evidence_v1）；預設 False，出現該欄位即拒絕（舊 run 驗證與舊版相同）。
+
+        ``reentry_hint_symbols``（reentry_cooldown v3）是近期出場的代號：未持有者各有一個 ``cooldown:<代號>`` 提示，買回時放進
+        ``adopted_claim_ids`` 回應；只檢查結構（只屬於該股票、不可否決、不重複），**不強制**回應——沒回應的買單由配置取消並留旗標
+        （RISK_REENTRY_COOLDOWN），不讓一個提示沒回應就耗盡修正循環。沒有 v3 的舊 run 傳 None，驗證不變。"""
         self.hold_conviction = hold_conviction
+        self.dip_assessment = dip_assessment
+        self.dip_facts = dip_facts
         self.context = DecisionContext(bundle)
         self.bundle = dict(bundle)
         self.debate = dict(debate)
@@ -112,8 +127,12 @@ class TradeDecisionValidator:
         self.position_ids = position_ids_by_symbol(position_review)
         for symbol, identifier in self.position_ids.items():
             self.claims.setdefault(symbol, {})[identifier] = "position"
+        for symbol in sorted({str(item).upper() for item in (reentry_hint_symbols or ())} - self.context.held_symbols):
+            self.claims.setdefault(symbol, {})["cooldown:%s" % symbol] = "cooldown"
         self.prior_tokens = prior_reference_tokens(prior_context)
         self.dip_tokens = dip_reference_tokens(dip_facts)
+        # valuation_facts（估值 V2，版本閘門）：交易 brief 以 valuation_background 附上，不是證據；沒有閘門的舊 run 傳 None，驗證不變。
+        self.valuation_tokens = valuation_reference_tokens(valuation_facts)
         self.available = {
             str(item.get("symbol", "")).upper()
             for item in momentum.get("items", [])
@@ -148,7 +167,7 @@ class TradeDecisionValidator:
             if not isinstance(item, Mapping):
                 errors.append("%s 必須是物件" % prefix)
                 continue
-            reject_unknown_fields(item, self.ITEM, prefix, errors)
+            reject_unknown_fields(item, self.ITEM | ({"dip_assessment"} if self.dip_assessment else set()), prefix, errors)
             symbol = str(item.get("symbol", "")).upper()
             seen.append(symbol)
             self._validate_item(item, symbol, prefix, errors)
@@ -188,6 +207,12 @@ class TradeDecisionValidator:
                 "%s 只有 buy／add／hold 可以給 conviction" % prefix if self.hold_conviction
                 else "%s 只有 buy／add 可以給 conviction" % prefix
             )
+        if self.dip_assessment and intent not in SIZED and item.get("dip_assessment") is not None:
+            errors.append("%s 只有 buy／add 可以給 dip_assessment" % prefix)
+        if self.dip_assessment and intent in SIZED:
+            if self.context.evidence_policy is None:
+                errors.append("%s：quality_dip_assessment 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
+            validate_dip_assessment(item, symbol, prefix, self.dip_facts, errors)
         try:
             rationale = required_string(item, "rationale")
             adopted = string_list(item, "adopted_claim_ids")
@@ -211,6 +236,15 @@ class TradeDecisionValidator:
             errors.append(
                 "%s 不得引用 dip_background（%s）；它是程式算的背景、不是本次證據，請引用多空 claim 的依據" % (prefix, ", ".join(dip_cited))
             )
+        valuation_cited = sorted(
+            token for token in self.valuation_tokens
+            if any(token in text for text in (rationale, *questions, *conditions))
+        )
+        if valuation_cited:
+            errors.append(
+                "%s 不得引用 valuation_background（%s）；估值位置是程式算的背景、不是本次證據，請引用多空 claim 的依據"
+                % (prefix, ", ".join(valuation_cited))
+            )
         available = self.claims.get(symbol, {})
         repeated = sorted({claim for claim in (*adopted, *rejected) if (*adopted, *rejected).count(claim) > 1})
         if repeated:
@@ -221,7 +255,7 @@ class TradeDecisionValidator:
         unknown = sorted((set(adopted) | set(rejected)) - set(available))
         if unknown:
             errors.append("%s 引用不屬於該股票的 claim：%s" % (prefix, ", ".join(unknown)))
-        optional = {claim for claim, role in available.items() if role == "position"}
+        optional = {claim for claim, role in available.items() if role in ("position", "cooldown")}
         missing = sorted(set(available) - optional - set(adopted) - set(rejected))
         if missing:
             errors.append("%s 未處理全部 claim：%s" % (prefix, ", ".join(missing)))
@@ -236,6 +270,9 @@ class TradeDecisionValidator:
                 "%s %s 需要至少一個被採納的空頭 claim、持股檢視警示或持股事實；若沒有可採納的依據，請改為 hold（降級）"
                 % (prefix, intent)
             )
+        rejected_hints = sorted(claim for claim in rejected if available.get(claim) == "cooldown")
+        if rejected_hints:
+            errors.append("%s 冷卻提示是程式事實，只能在買回時採納、不可否決：%s" % (prefix, ", ".join(rejected_hints)))
         rejected_reviews = sorted(claim for claim in rejected if available.get(claim) == "review")
         if rejected_reviews:
             errors.append("%s 持股檢視警示是程式事實，只能採納不可否決：%s" % (prefix, ", ".join(rejected_reviews)))
@@ -336,6 +373,13 @@ def apply_trade_decision(
             result["cash_buffer_rate"] = loosened
             bound_gate = {**bound_gate, "cash_loosening": loosening}
         result["position_sizing"]["rebound_participation"] = bound_gate
+    if exposure_swap_gate(sizing) is not None:
+        # agent_swap.exposure v2（版本閘門）：風險 Agent 的 exposure_view 綁進 Policy，配置只讀 Policy；v1（影子）不綁。
+        result["position_sizing"]["agent_swap"] = bind_exposure_view(sizing, cash_stance)
+    if quality_dip_swap_gate(sizing) is not None:
+        # agent_swap.quality_dip v2（版本閘門）：風險 Agent 的 turn_assessment 綁進 Policy，配置只讀 Policy；v1（影子）不綁。
+        swap = result["position_sizing"].get("agent_swap", sizing["agent_swap"])  # type: ignore[index]
+        result["position_sizing"]["agent_swap"] = bind_quality_dip_turn(swap, sizing, cash_stance)
     if "positions_by_breadth" in sizing:
         breadth = cash_stance.get("breadth")
         if breadth not in POSITION_BREADTHS:

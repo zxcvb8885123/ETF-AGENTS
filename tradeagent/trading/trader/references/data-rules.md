@@ -31,7 +31,7 @@ analyst_outlooks 裡的 event 是該公司事件，不是整體台股情緒；�
 - `rotation`：`enabled`、`max_swaps_per_run`（本次最多幾個出場名額可給新股）、`min_new_conviction`（用換股名額的最低信心）。
 - `held_by_bear_strength`／`unheld_by_bull_strength`：全池持股的空頭強度與未持有股票的多頭強度分布計數，是對**共同輸入**的統計，不是其他批的輸出。
 
-`free_slots` 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交；程式依信心等級配對，名額不足者不建立買單並標 `MAX_POSITIONS`，信心低於門檻者標 `ROTATION_CONVICTION`。你看不到其他批的候選，配對是程式的工作。持股的空頭 claim 已成立、多頭理由不再成立時就給 exit 或 trim；出場與買進的依據要求見第 4 節，名額多寡不改變它。這個區塊沒有 evidence ID，rationale、unresolved_questions 與 invalidation_conditions 用不到它。
+`free_slots` 為 0（已滿檔）時，未持有股票的 buy 只有在全池有持股被標為 exit 或 trim 時才可能成交；程式依信心等級配對，名額不足者不建立買單並標 `MAX_POSITIONS`，信心低於門檻者標 `ROTATION_CONVICTION`。你看不到其他批的候選，配對是程式的工作；**但 `portfolio_slots` 含 `swap_nomination_background`（`schema_version` 為 1.1）時**，名額卡住的新股要換掉哪檔持股改由第二輪提名決定（見 [swap-nomination.md](swap-nomination.md)），本輪各批不為換股調整意圖或信心，`note` 與該區塊的文字以 brief 內容為準。持股的空頭 claim 已成立、多頭理由不再成立時就給 exit 或 trim；出場與買進的依據要求見第 4 節，名額多寡不改變它。這個區塊沒有 evidence ID，rationale、unresolved_questions 與 invalidation_conditions 用不到它。
 
 ### 持股檢視（position_review）
 
@@ -73,7 +73,7 @@ prior_decision_background 與各股 prior_decision 來自上一個交易時段�
 只有 policy 開啟 `quality_dip_facts` 時才有：頂層 `dip_background`（視窗、交易池報酬、資料缺口與說明）與各股 `dip`。全部由程式計算，`citable` 永遠是 false、沒有 evidence ID；它**不改名額、權重、現金或排序**，買不買仍只由本次多空 claim 決定。
 
 - `market_attribution`：20 日報酬、相對交易池（`relative_to_pool_20d`）與加權指數的差、評估視窗**之前** 60 日估的 beta、殘差 `residual_20d`（個股 20 日報酬減「beta × 交易池等權日報酬連乘」）與交易池內由弱到強的名次 `residual_rank`／`residual_sample`。`price_position` 是距近期收盤高點的回檔與相對均線，**是價格位置，不是估值**。
-- `fundamental_flags`：`new_adverse_facts`（視窗內新出現的月營收轉負、淨利由盈轉虧、或事件面負面且有 high 事件）、`concerns`（某一期的年減、利益率下降、現金流為負）、`unknown`（缺資料或單位衝突）。疑慮與不知道都不擋進場，也都不算通過。
+- `fundamental_flags`：`new_adverse_facts`（視窗內新出現的月營收轉負、淨利由盈轉虧、或事件面負面且有 high 事件；開啟 `event_direction` 時，事件面是「視窗內新出現、high 且事件分析師標該則方向為 negative」，high 事件缺方向列在 `unknown`）、`concerns`（某一期的年減、利益率下降、現金流為負）、`unknown`（缺資料或單位衝突）。疑慮與不知道都不擋進場，也都不算通過。
 - `price_pattern`：`no_decline`（個股或交易池沒跌）、`market_explained`（殘差不為負，跌幅不超過 beta × 大盤）、`beyond_market`（殘差為負）、`unavailable`。`candidate`：`market_dragged`（被大盤拖累候選）、`oversold`（超跌候選，固定 `cause: unknown`）或 `none`；有新壞事就是 `none`。標示很寬（多數股票都是某一種候選），**只是分類，不是訊號**，請連同殘差數值與名次一起看；殘差接近零時兩種標示沒有實質差別。
 
 怎麼用：
@@ -83,6 +83,27 @@ prior_decision_background 與各股 prior_decision 來自上一個交易時段�
 - 疑慮要寫明是哪一期，並說明價格是否已反映；缺資料只代表不知道。
 - 不得寫便宜、低估或低於合理價值。
 - 程式檢查：rationale、unresolved_questions、invalidation_conditions 出現 `dip_background`、`dip_facts` 或這份事實的識別碼就拒絕整批；`adopted_claim_ids` 只能放多空 claim 與持股檢視編號。
+
+### dip_assessment（紀錄你怎麼看）
+
+只有 policy 開啟 `quality_dip_assessment` 時才有：每個 buy／add 另填列舉 `dip_assessment`，其餘意圖填 `null`。它**只是紀錄**，不改名額、權重、現金、排序，也不與意圖或信心對應；目的是累積「你怎麼判、之後怎麼走」的即時紀錄。
+
+- `not_a_dip`：這檔不是在大盤下跌中被拖累或超跌（例如沒有下跌，或下跌與大盤無關的長期趨勢）。
+- `market_driven`：跌幅主要可由大盤解釋（`price_pattern` 為 `market_explained` 且你認同）。
+- `oversold_cause_unclear`：比大盤多跌、原因不明，你仍判斷值得買；理由裡要如實寫「原因不明」，並逐一處理空頭的事件論點。
+- `stock_specific`：多跌有個股原因（財報、事件、產業）。
+- `undetermined`：無法判斷。該股 `dip.price_pattern` 為 `unavailable`（歷史不足、窗內缺行情、交易池覆蓋不足）時**只能**填這個。
+
+別為了好看而填 `market_driven`：這個欄位不會讓買單更容易成交，也不是買進依據；買不買仍只由本次多空 claim 決定。理由裡不得引用 `dip_background`、`dip_facts`（見上節）。若之後的換股提名簡報有 `quality_dip_swap` 區塊，`purpose=quality_dip` 會核對這個列舉與候選標示是否相符（見 swap-nomination.md）；那條路的限制比 `thesis` 更多，不是捷徑。
+
+### 估值位置（valuation_background）
+
+只有 policy 開啟 `valuation_facts` 時才有：每批輸入多一個 `valuation_background`，列出本批股票的 PER／PBR 在自身歷史區間的位置（近 250、近 750 個資料列與全部可得歷史三個視窗並列；百分位＝不高於當日值的筆數 ÷ 樣本數）。
+
+- 它是**背景**（`citable=false`、沒有 evidence_id），不是依據；不得放進 `adopted_claim_ids`，行動仍須由本次 claim 支持。
+- 不得寫便宜、低估、貴或低於合理價值；要提到時寫明指標與視窗（例如「PER 位於近 250 個資料列的第 12 百分位」），並記得位置低可能來自盈餘下修、PER 下降也可能來自盈餘上修。三個視窗的位置可能完全相反，不得只挑一個。
+- `status: unavailable`（授權範圍未核准、核對不符、上櫃股、資料不足）或視窗 `insufficient_history` 只代表不知道，不是利空也不是利多。
+- 程式檢查：rationale、unresolved_questions、invalidation_conditions 出現 `valuation_background`、`valuation_facts` 或這份事實的識別碼就拒絕整批。
 
 ## 2. 如何處理兩方的每個論點
 

@@ -60,6 +60,13 @@ NOMINATION_NOTE = (
     "不可放進 buy_basis_ids／sell_basis_ids，也不改變提名規則：每一對仍需換入股已採納的多頭論點與換出股已採納的空頭論點或"
     "持股檢視事實，市場參與度低本身不是賣出理由，也不得純粹為了買別檔而賣。"
 )
+# agent_swap.exposure 啟用時的背景說明：組合層級事實仍不可引用；市場參與度低只在 purpose=exposure 的配對可以作為讓位理由。
+NOMINATION_NOTE_EXPOSURE = (
+    "以下是程式算的轉向、加權指數、組合曝險、產業權重、上漲日報酬與新股 beta 事實，全部是背景（citable=false、沒有 evidence_id），"
+    "不可放進 buy_basis_ids／sell_basis_ids。purpose=thesis 的配對規則不變：需要換出股已採納的空頭論點或持股檢視事實，"
+    "不得純粹為了買別檔而賣；purpose=exposure 的配對才可以以市場參與度過低為由讓位，換出依據用持股的曝險事實編號"
+    "（exposure_basis，程式算的該股事實），並寫明為什麼是這檔讓位、放掉它的代價。"
+)
 
 
 def exposure_view_gate(sizing: object) -> Optional[Mapping[str, object]]:
@@ -293,12 +300,16 @@ def nomination_exposure_brief(
     turn: Mapping[str, object],
     index: Mapping[str, object],
     turn_state: Optional[Mapping[str, object]] = None,
+    exposure_swap: bool = False,
 ) -> Dict[str, object]:
-    """換股提名簡報的背景區塊：轉向、加權指數、組合曝險、產業權重、上漲日報酬（含逐檔持股）與新股 beta（只列提名候選）。"""
+    """換股提名簡報的背景區塊：轉向、加權指數、組合曝險、產業權重、上漲日報酬（含逐檔持股）與新股 beta（只列提名候選）。
+
+    ``exposure_swap``（position_sizing.agent_swap.exposure 啟用）時改用 ``NOMINATION_NOTE_EXPOSURE``：purpose=exposure 的配對
+    以曝險事實編號為依據；沒有閘門時與階段 1 逐位元相同。"""
     wanted = {str(symbol).upper() for symbol in candidate_symbols}
     brief: Dict[str, object] = {
         "citable": False,
-        "note": NOMINATION_NOTE,
+        "note": NOMINATION_NOTE_EXPOSURE if exposure_swap else NOMINATION_NOTE,
         "as_of": facts["as_of"],
         "turn_facts": dict(turn),
         "market_index_facts": dict(index),

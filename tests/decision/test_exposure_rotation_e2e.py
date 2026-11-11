@@ -610,7 +610,7 @@ class ReplayTests(unittest.TestCase):
                 gated = copy.deepcopy(plain)
                 gated["position_sizing"].update(
                     rotation=gated["position_sizing"]["rotation"], held_add_priority="v1", selection_ranking="v1",
-                    reentry_cooldown={"version": "v1", "days": 3}, turnover_fit="v1", cash_buffer_floor="v1",
+                    reentry_cooldown=copy.deepcopy(plain["position_sizing"].get("reentry_cooldown", {"version": "v1", "days": 3})), turnover_fit="v1", cash_buffer_floor="v1",
                     exposure_rotation=copy.deepcopy(GATE),
                 )
                 gated.setdefault("position_review", copy.deepcopy(REVIEW_POLICY))
@@ -641,7 +641,8 @@ class ReplayTests(unittest.TestCase):
             set(notes),
             {"policy_id", "content_sha256", "available_at_overridden", "archived_cash_stance", "cash_stance", "stance_floor",
              "stance_raised_to_floor", "selection_ranking_applied", "breadth_unavailable", "cash_buffer_rate", "drawdown",
-             "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation", "rebound_participation", "agent_swap", "exposure_view"},  # 正式樣板已開這些閘門，回放各標一次略過
+             "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation", "rebound_participation", "agent_swap", "exposure_view",
+             "quality_dip_facts", "quality_dip_assessment", "event_direction", "drawdown_derisk_v5", "agent_swap.quality_dip"},  # 正式樣板已開這些閘門，回放各標一次略過
         )
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):

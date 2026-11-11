@@ -134,3 +134,7 @@ v2 欄位：`version`（`v2`）、`beta_window_days`、`beta_target_by_stance`�
 - 不變：欄位白名單（沿用 v2，不加回已刪的欄位）、`max_swaps_per_run`、換入者 beta 嚴格高於組合 beta、`rotation.min_new_conviction`、與 `drawdown_derisk` 互斥（減碼日略過）、不只賣不買、賣單由程式標 `exit` 且不改寫交易 Agent 意圖、`turn_assessment` 等列舉與姿態不設對應。`team_inputs` 結構沒有變，維持 2.7（`exposure_review.policy.version` 只回寫閘門版本字串）；v1／v2 的 Policy 重建路徑逐位元不變。
 - 策略反思：整個 `exposure_rotation` 已在 `FORBIDDEN_PREFIXES`，v3 欄位同樣不可調。
 - 啟用：由人把正式設定的 `exposure_rotation.version` 改成 `v3` 並把 `beta_target_by_stance.defensive` 填成數字；尚未開啟，未用歷史輸入驗證防守目標值（例如 0.35）的實際效果。
+
+## 後續：曝險讓位配對（2026-11-10，已實作、尚未開啟）
+
+`agent_swap` v2 下 `exposure_rotation` 的換股步驟本來就停用；`agent_swap.exposure` 的曝險配對由換股提名走，不經本檔的換股規則。見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md)。

@@ -1,7 +1,9 @@
 """唯讀統計：交易 Agent 的 buy／add 意圖最後有沒有變成買單，以及哪些持股被程式賣出。
 
 逐份讀已封存 Decision run 的 `intent.json` 與 `proposal.json`（先驗證 manifest 與雜湊），
-輸出每日與合計的落地數、未落地原因分佈、旗標次數，以及「Agent 標 hold／add 卻被賣出」的清單與金額。
+輸出每日與合計的落地數、未落地原因分佈、旗標次數，以及「Agent 標 hold／add 卻被賣出」的清單與金額；
+另依 `policy_id` 分段彙總（沒有 policy.json 的 run 歸「未記錄」），落地與未落地各依信心（high／medium／low）分層，
+每段列出 hold／add 被程式賣出的金額。只描述發生了什麼，不設目標、不判斷達標與否。
 只描述當時實際發生了什麼，不是績效，也不是對 LLM 判斷的前瞻驗證（證據等級 replay_reference_only）。
 
 不寫入任何 artifact、不改 Policy，也不被 decision、automation 匯入。任何一份 run 缺檔、
@@ -23,8 +25,9 @@ from etf_agent.core.run_layout import list_run_dirs
 
 from .contracts import REPLAY_EVIDENCE_GRADE, REPLAY_NOTICE, SIGNAL_INTENTS, CalibrationError, require_mapping, require_sequence
 
-REPORT_VERSION = "intent_landing.v1"
+REPORT_VERSION = "intent_landing.v2"
 REQUIRED_ARTIFACTS = ("intent", "proposal")
+UNRECORDED = "未記錄"  # 封存沒有這個欄位（例如沒有 policy.json 或 intent 沒有信心）：不補值
 NO_FLAG = "NO_FLAG"  # 沒有任何旗標、也沒有買單：例如 add 的現有權重已高於信心份額。
 OVERRIDDEN_INTENTS = ("hold", "add")  # Agent 沒打算賣，卻出現賣單。
 SELL_SIDE, BUY_SIDE = "sell", "buy"
@@ -121,8 +124,13 @@ def _load_run(run_dir: Path) -> Dict[str, object]:
         if symbol is not None:
             flags.setdefault(_text(symbol, "%s constraint_flags[].symbol" % label), []).append(code)
 
+    policy_id: object = UNRECORDED
+    if "policy" in listed:
+        policy_id = _read(run_dir / "policy.json").get("policy_id")
+        # 封存的 policy_id 是「策略識別＋交易決策識別」（trader.apply_trade_decision 綁定），分段只看策略識別。
+        policy_id = _text(policy_id, "%s policy.policy_id" % label).split("+trade-decision:")[0] if policy_id is not None else UNRECORDED
     date = run_dir.parent.name
-    return {"run_id": label, "date": date, "items": items, "buys": buys, "sells": sells, "flags": flags, "flag_counts": flag_counts}
+    return {"policy_id": policy_id, "run_id": label, "date": date, "items": items, "buys": buys, "sells": sells, "flags": flags, "flag_counts": flag_counts}
 
 
 def _summarize_run(run: Mapping[str, object]) -> Dict[str, object]:
@@ -137,6 +145,11 @@ def _summarize_run(run: Mapping[str, object]) -> Dict[str, object]:
         codes = sorted(set(flags.get(symbol, []))) or [NO_FLAG]
         reasons["+".join(codes)] += 1
         unlanded.append({"symbol": symbol, "intent": items[symbol]["intent"], "conviction": items[symbol].get("conviction"), "flags": codes})
+    by_conviction: Dict[str, Dict[str, int]] = {}
+    for symbol in signals:
+        conviction = items[symbol].get("conviction")
+        bucket = by_conviction.setdefault(conviction if isinstance(conviction, str) and conviction else UNRECORDED, {"landed": 0, "unlanded": 0})
+        bucket["landed" if symbol in buys else "unlanded"] += 1
     sell_total = sum((_amount(order["gross_amount"], "gross_amount") for order in sells.values()), Decimal(0))
     overrides = []
     override_total = Decimal(0)
@@ -153,15 +166,42 @@ def _summarize_run(run: Mapping[str, object]) -> Dict[str, object]:
             "flags": sorted(set(flags.get(symbol, []))),
         })
     return {
-        "date": run["date"], "run_id": run["run_id"],
+        "date": run["date"], "run_id": run["run_id"], "policy_id": run["policy_id"],
         "buy_add_intents": len(signals), "landed": len(landed), "unlanded": len(unlanded),
         "unlanded_reasons": dict(sorted(reasons.items())),
         "unlanded_items": unlanded,
+        "by_conviction": {key: by_conviction[key] for key in sorted(by_conviction)},
         "flag_counts": dict(sorted(run["flag_counts"].items())),
         "sell_orders": len(sells), "sell_gross_amount": _money(sell_total),
         "overridden_sells": overrides,
         "overridden_sell_gross_amount": _money(override_total),
         "overridden_sell_share_percent": _percent(override_total, sell_total),
+    }
+
+
+def _segment(days: List[Mapping[str, object]]) -> Dict[str, object]:
+    """把一組每日摘要加總成彙總（全期合計與每個 policy_id 分段共用，所以分段加總必等於合計）。"""
+    reasons: Counter = Counter()
+    by_conviction: Dict[str, Counter] = {}
+    sell_total = override_total = Decimal(0)
+    for day in days:
+        reasons.update(day["unlanded_reasons"])
+        for conviction, counts in day["by_conviction"].items():
+            by_conviction.setdefault(conviction, Counter()).update(counts)
+        sell_total += Decimal(day["sell_gross_amount"])
+        override_total += Decimal(day["overridden_sell_gross_amount"])
+    total = sum(day["buy_add_intents"] for day in days)
+    landed = sum(day["landed"] for day in days)
+    return {
+        "run_count": len(days), "first_date": days[0]["date"], "last_date": days[-1]["date"],
+        "buy_add_intents": total, "landed": landed, "unlanded": total - landed,
+        "by_conviction": {
+            key: {"landed": by_conviction[key].get("landed", 0), "unlanded": by_conviction[key].get("unlanded", 0)}
+            for key in sorted(by_conviction)
+        },
+        "unlanded_reasons": dict(sorted(reasons.items())),
+        "sell_gross_amount": _money(sell_total),
+        "overridden_sell_gross_amount": _money(override_total),
     }
 
 
@@ -173,16 +213,13 @@ def intent_landing_report(decisions_root: Path, since: Optional[str] = None) -> 
     if not run_dirs:
         raise CalibrationError("決策庫沒有符合條件的 run：%s" % decisions_root)
     days = [_summarize_run(_load_run(run_dir)) for run_dir in run_dirs]
-    reasons: Counter = Counter()
     flag_counts: Counter = Counter()
-    sell_total = override_total = Decimal(0)
     for day in days:
-        reasons.update(day["unlanded_reasons"])
         flag_counts.update(day["flag_counts"])
-        sell_total += Decimal(day["sell_gross_amount"])
-        override_total += Decimal(day["overridden_sell_gross_amount"])
-    total = sum(day["buy_add_intents"] for day in days)
-    landed = sum(day["landed"] for day in days)
+    overall = _segment(days)
+    segments: List[Dict[str, object]] = []
+    for policy_id in dict.fromkeys(day["policy_id"] for day in days):  # 依首次出現的先後，不排序
+        segments.append({"policy_id": policy_id, **_segment([day for day in days if day["policy_id"] == policy_id])})
     return {
         "report_version": REPORT_VERSION,
         "evidence_grade": REPLAY_EVIDENCE_GRADE,
@@ -191,11 +228,13 @@ def intent_landing_report(decisions_root: Path, since: Optional[str] = None) -> 
         "since": since,
         "run_count": len(days),
         "totals": {
-            "buy_add_intents": total, "landed": landed, "unlanded": total - landed,
-            "unlanded_reasons": dict(sorted(reasons.items())),
+            "buy_add_intents": overall["buy_add_intents"], "landed": overall["landed"], "unlanded": overall["unlanded"],
+            "by_conviction": overall["by_conviction"],
+            "unlanded_reasons": overall["unlanded_reasons"],
             "flag_counts": dict(sorted(flag_counts.items())),
-            "sell_gross_amount": _money(sell_total),
-            "overridden_sell_gross_amount": _money(override_total),
+            "sell_gross_amount": overall["sell_gross_amount"],
+            "overridden_sell_gross_amount": overall["overridden_sell_gross_amount"],
         },
+        "by_policy": segments,
         "days": days,
     }

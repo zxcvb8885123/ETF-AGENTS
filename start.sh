@@ -368,6 +368,21 @@ if [ "$DAILY_RUN" -eq 1 ]; then
     DATA_STATUS=2
   fi
   stage_time "現金流核對"
+  # 估值資料 V1（證交所 BWIBBU_ALL 與 FinMind TaiwanStockPER 逐檔核對）：只收集與稽核、不進決策與簡報；VALUATION_COLLECT=0 關閉。
+  # 官方端點沒有歷史，每天都要收；失敗只記錄，不設 DATA_STATUS、不中斷每日流程。沒有 FINMIND_TOKEN 時 FinMind 端全數拒絕，仍保存官方原始回應。
+  if [ "${VALUATION_COLLECT:-1}" != "0" ]; then
+    echo "[3b+/4] 收集估值資料（PER／PBR／殖利率；只收集與稽核，不進決策）"
+    set +e
+    docker compose run --rm -e FINMIND_TOKEN agent python3 cli/valuation_collect.py collect >/dev/null
+    VALUATION_EXIT=$?
+    set -e
+    if [ "$VALUATION_EXIT" -ne 0 ]; then
+      echo "估值資料未完整（exit ${VALUATION_EXIT}）；不影響正式決策。run 內容在 artifacts/valuation_collection/" >&2
+    fi
+    stage_time "估值資料"
+  else
+    echo "[3b+/4] VALUATION_COLLECT=0；略過估值資料收集。"
+  fi
   # 必須在 cutoff 之前抓，決策才看得到；失敗只讓市場情緒降級，不中止每日流程。
   echo "[3b+/4] 抓取台股恐懼貪婪指標來源（VIX、Put/Call 比、融資）"
   set +e

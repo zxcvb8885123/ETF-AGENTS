@@ -126,7 +126,7 @@ class HeldWeightBudgetTests(unittest.TestCase):
         self.assertTrue(ProposalValidator(bundle, policy, intent).validate(forged))
 
     def test_gate_value_fails_closed_and_is_not_a_reflection_knob(self):
-        for bad in ({"held_weight_budget": "v2"}, {"held_weight_budget": True}, {"held_weight_budget": None}):
+        for bad in ({"held_weight_budget": "v9"}, {"held_weight_budget": True}, {"held_weight_budget": None}):
             with self.subTest(bad=bad):
                 policy = base_policy()
                 policy["position_sizing"] = {**copy.deepcopy(SIZING), **bad}
@@ -218,13 +218,13 @@ class TurnoverAwareDeriskTests(unittest.TestCase):
         self.assertIn(("2330.TW", "RISK_TURNOVER"), flags(body))
         self.assertNotIn(("2317.TW", "RISK_DRAWDOWN"), flags(body))
 
-    def test_v4_is_accepted_by_the_gate_validators_and_v5_is_not(self):
+    def test_v4_is_accepted_by_the_gate_validators_and_an_unknown_version_is_not(self):
         helpers = (drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4)
         self.assertEqual([h({"drawdown_derisk": {"version": "v4"}}) for h in helpers], [True, True, True])
         self.assertEqual([h({"drawdown_derisk": {"version": "v3"}}) for h in helpers], [True, True, False])
         self.assertEqual([h({}) for h in helpers], [False, False, False])
         template = production_policy()["position_sizing"]
-        for version, ok in (("v4", True), ("v5", False)):
+        for version, ok in (("v4", True), ("v6", False)):  # v5 是釋出順序版本（見 test_release_order_*），這裡只測未知版本
             with self.subTest(version=version):
                 policy = base_policy()
                 policy["position_sizing"] = {**copy.deepcopy(template), "drawdown_derisk": {"version": version, "max_derisk_fraction": "0.25"}}

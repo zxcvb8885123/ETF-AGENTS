@@ -121,6 +121,36 @@ class AnalystReportValidatorTests(unittest.TestCase):
         errors = AnalystReportValidator(bundle, "technical").validate(report(bundle, "technical", technical_with_events))
         self.assertTrue(any("未允許欄位" in error for error in errors), errors)
 
+    def test_event_direction_is_optional_unless_required_and_must_be_an_enum_value(self):
+        # position_sizing.event_direction：舊報告沒有 direction 照舊有效；有就必須是列舉值；閘門啟用（require_event_direction）時必填。
+        bundle = bundle_with_event()
+        old, strict = AnalystReportValidator(bundle, "event"), AnalystReportValidator(bundle, "event", require_event_direction=True)
+        self.assertEqual(old.validate(report(bundle, "event", event_items())), [])
+        errors = strict.validate(report(bundle, "event", event_items()))
+        self.assertTrue(any("direction 必須是" in error for error in errors), errors)
+        for value in ("positive", "negative", "neutral", "unknown"):
+            items = event_items()
+            items[1]["events"][0]["direction"] = value
+            self.assertEqual(old.validate(report(bundle, "event", items)), [], value)
+            self.assertEqual(strict.validate(report(bundle, "event", items)), [], value)
+        for bad in ("bearish", None, 1):
+            items = event_items()
+            items[1]["events"][0]["direction"] = bad
+            self.assertTrue(any("direction 必須是" in error for error in old.validate(report(bundle, "event", items))), bad)
+
+    def test_sealed_event_market_report_keeps_direction_and_passes_the_strict_validator(self):
+        from etf_agent.decision import seal_event_market_report
+
+        bundle = bundle_with_event()
+        items = [dict(row, event_outlook=row["outlook"]) for row in event_items()]
+        items[1]["events"][0]["direction"] = "positive"
+        sealed = seal_event_market_report(bundle, report_envelope(bundle, "event", "report-event"), items)
+        self.assertEqual(sealed["items"][1]["events"][0]["direction"], "positive")
+        self.assertEqual(AnalystReportValidator(bundle, "event", require_event_direction=True).validate(sealed), [])
+        del items[1]["events"][0]["direction"]
+        sealed = seal_event_market_report(bundle, report_envelope(bundle, "event", "report-event"), items)
+        self.assertTrue(AnalystReportValidator(bundle, "event", require_event_direction=True).validate(sealed))
+
     def test_event_counter_evidence_and_pending_confirmations(self):
         # 策略文件：事件要看反證與尚待確認事項；舊封存沒有這兩欄仍有效，有就必須是字串陣列。
         bundle = bundle_with_event()

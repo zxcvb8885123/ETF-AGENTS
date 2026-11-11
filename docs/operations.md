@@ -11,6 +11,7 @@
 | 平日 20:00、06:00 | 更新行情、月營收、重大訊息、財報等資料；06:00 先抓好 FinMind 財報，07:00 決策只重抓輕量的事件與新聞資料 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 去年同期補抓：官方最新期別尚無去年同期文件的股票才逐檔呼叫 FinMind，通過核對才寫入；`PRIOR_REPAIR=0` 關閉，`PRIOR_REPAIR_MAX`（預設 60）為每輪檔數上限；摘要與失敗原因在 `artifacts/data/fundamental_prior_repair_latest.json`，失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 產業比較資料 C1：收集 t187ap14（上市、上櫃）、與官方損益表逐檔核對；只收集與稽核、不進決策；`INDUSTRY_PEER=0` 關閉；摘要在 `artifacts/data/industry_peer_latest.json`，部分來源失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
+| 平日 20:00、06:00（同一資料排程內） | 估值資料 V1：證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 逐檔核對、不可變保存；只收集與稽核、不進決策；`VALUATION_COLLECT=0` 關閉；失敗只在日誌留警告，不影響資料狀態與決策；需 `FINMIND_TOKEN`，沒有時只保存官方原始回應；run 在 `artifacts/valuation_collection/` | `com.etf-agents.data` |
 | 平日 20:40 | 抓個股新聞 | `com.etf-agents.finmind-news` |
 | 週一至週四、週日 21:00 | 用當天收盤資料做「下一個交易日」的決策與 D-Plan，當作備案 | `com.etf-agents.daily` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
@@ -47,6 +48,21 @@
    這個指令會檢查同隊同日、賣出沒超過持股、每檔持股都有交代。系統只產生候選檔，**絕不自動上傳**。
 
 4. **如果你先手動跑並上傳了，07:00 又重做成功**，主檔會換成新的一份，請重新上傳，否則帳本記的是新決策、交出去的是舊的，隔天對帳會對不上。
+
+5. **每個決策日：看換股影子與意圖落地率（唯讀、不花 Agent 用量）。** 兩個報告都標 `evidence_grade: replay_reference_only`，只說明「當時發生了什麼」，不是績效，也不設目標：
+
+   ```bash
+   .venv/bin/python cli/calibration.py intent-landing --since 2026-11-11
+   .venv/bin/python cli/calibration.py shadow-swap
+   ```
+
+   看這四個指標（先看「違反 Agent 明確意思」的，再看落地率本身）：
+   1. hold／add 被程式賣出的金額（`overridden_sell_gross_amount`）。舊基準只有 2026-11-04 一次、旗標全是 `RISK_DRAWDOWN`。
+   2. `RISK_CASH_FIT` 的次數（`cash_fit_order` v2 下預期不再出現）。
+   3. `RISK_REENTRY_COOLDOWN`：`reentry_cooldown` v2 下只該擋 Agent 自己出場的股票。
+   4. 減碼日是否留下 `DERISK_ORDER_SKIPPED:order_*`（減碼順序驗證失敗而退回 ATR 順序）。
+
+   `intent-landing` 另有依 `policy_id` 分段的 `by_policy` 與依信心分層的 `by_conviction`；新基準以 2026-11-11 起另立一段，與舊 11 份（256 筆 buy／add、40 筆有買單）分開看。落地率數字目標由人在新基準滿 10 個決策日（`calibration.MIN_DECISION_DAYS`）後再決定，報告不輸出目標或達標與否。`shadow-swap` 沒有影子 run 時回報 `no_shadow_data`。
 
 ## 怎麼看排程結果
 
@@ -243,6 +259,24 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 
 各排程的日誌位置：`daily` 在 `var/logs/launchd.log`；`data`、`finmind-news` 在 `artifacts/daily/`；看門狗、反思與隔夜背景在 `var/logs/`。
 
+## 估值資料收集（V1，已掛進資料排程）
+
+只收集與稽核，不進決策、簡報或報告；僅上市股。每次抓取是一個不可變 run（`artifacts/valuation_collection/<日期>/valuation-<UTC 時間>/`）。
+
+```bash
+.venv/bin/python cli/valuation_collect.py collect                              # 每天一次；預設補資料日前 14 天
+.venv/bin/python cli/valuation_collect.py collect --history-start 2019-01-02   # 第一次建歷史
+.venv/bin/python cli/valuation_collect.py validate <run_id>                    # 以原始回應整份重建比對
+```
+
+退出碼：0 全部相符、2 有股票被拒絕、1 整份失敗。官方端點沒有歷史，所以每天都要收。已掛在 `start.sh` 的資料階段（`com.etf-agents.data`，20:00、06:00 各一次），以盡力而為包住，失敗只記錄、不設資料狀態、不中斷決策或 D-Plan。回滾＝設 `VALUATION_COLLECT=0`（或刪掉 `start.sh` 的該區塊），並可刪除 `artifacts/valuation_collection/`，不影響任何決策。
+
+`audit-summary` 是唯讀子命令，不連外部端點、不寫入任何檔案：先驗證每個 run 的 manifest 與雜湊、核對 `audit.json` 與 `records.json`，再逐資料日列出採用的 run（相符檔數最多、並列取較晚者；全部 run 仍逐一列出）、要求／相符／拒絕檔數、拒絕原因與代號，並算「連續全部相符的資料日數」（只數已收集的資料日，沒有交易日曆可對照）。任何一份 run 不合格即整批拒絕，沒有 run 時回報 `no_valuation_runs`。報告帶 `evidence_grade: replay_reference_only`，只彙總已保存的稽核結果，不進決策、簡報或報告。
+
+```bash
+.venv/bin/python cli/valuation_collect.py audit-summary
+```
+
 ## 每週的人工事項：策略反思放行
 
 週五的反思週報會提出策略調整提案，週六 10:00 自動套用「降低風險方向」的提案。週報標 `needs_human` 的提案（加風險或方向不明）要你看過後手動放行，編號必須是最近一份待套用的反思：
@@ -315,3 +349,7 @@ tail -n 3 var/logs/backup.log
 | 這次用的 Agent CLI 版本 | `pipeline.json` 的 `agent_cli_versions`（預檢通過後記 `claude`／`codex`／`opencode --version` 第一行，取不到為 `null`；只供稽核，舊 run 沒有此欄位） |
 | 回放報告的證據等級 | `evidence_grade: replay_reference_only` |
 | 評測的決策日樣本門檻 | `calibration.MIN_DECISION_DAYS`（10） |
+
+## 事件分析結果重用（省用量）
+
+每天晚上與早上各跑一次完整決策，兩次之間大多數股票的事件資料相同。`scripts/run_daily_pipeline.py` 預設開啟 `--event-reuse`：同一交易日資料夾內，前一次 run 的事件簡報列與本次**逐檔完全相同**（含重大訊息、新聞、財務脈絡、資料可得狀態）的股票，沿用前一次已通過驗證的事件分析，並以本次 bundle 與 Validator 重驗；驗不過就整批不重用。任何一欄不同都照舊交給 Agent。實測 2026-11-11 兩次 run 約 83～90／146 檔相同，約佔事件量 45%。紀錄在 run 目錄的 `event_reuse.json`；`--no-event-reuse` 可關閉。實作見 `src/etf_agent/automation/event_reuse.py`。

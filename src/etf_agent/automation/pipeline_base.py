@@ -179,6 +179,7 @@ class PipelineBase:
         analyst_runner: Optional[AgentRunner] = None,
         research_runner: Optional[AgentRunner] = None,
         technical_gate: bool = False,
+        event_reuse: bool = False,
         max_workers: int = 1,
         transient_retries: int = DEFAULT_TRANSIENT_RETRIES,
         retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
@@ -212,6 +213,7 @@ class PipelineBase:
         self._research_staging = not getattr(self.research_runner, "enforces_deny_reads", False)
         self._staged_raw: Optional[List[Tuple[str, Dict[str, object]]]] = None
         self.technical_gate = technical_gate
+        self.event_reuse = event_reuse  # 同一交易日前一次 run 輸入逐檔相同的事件分析結果直接沿用（見 event_reuse.py）
         # 分析團隊階段算好的基本面指標（沒有財報時 None）；bundle 有 fundamental_period_policy 時封進 team_inputs 2.6。
         self.fundamental_metrics: Optional[Dict[str, object]] = None
         self.decision_repository = decision_repository
