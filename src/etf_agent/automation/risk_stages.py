@@ -13,7 +13,8 @@ from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
 from etf_agent.decision.recency import evidence_recency
 from etf_agent.decision.market_index import market_index_facts
-from etf_agent.decision.exposure_facts import risk_exposure_brief
+from etf_agent.decision.exposure_facts import exposure_view_agent_led, risk_exposure_brief
+from etf_agent.decision.offense import cash_glide_brief, normalize_offense_stance, offense_brief
 from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.quality_dip_ruling import (
     DEGRADED_STATUSES, STATUS_NOT_REQUIRED, STATUS_SKIPPED, QualityDipRulingValidator, expected_program_status, program_ruling,
@@ -28,7 +29,7 @@ from etf_agent.decision.sizing import (
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import (
     CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, QUALITY_DIP_RULING_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
-    cash_stance_turn_facts_schema, exposure_view_schema,
+    cash_stance_turn_facts_schema, exposure_view_schema, offense_stance_schema,
 )
 
 # 閘門段落只說「本次簡報含哪個欄位」並指向 cash-stance.md 的對應節；規則本身只寫在那裡（與 validate_cash_stance 同步）。
@@ -103,6 +104,81 @@ EXPOSURE_VIEW_PROMPT = (
 )
 
 
+OFFENSE_STANCE_ATTEMPTS = 3  # offense 啟用時現金姿態的驗證嘗試上限（第一次加兩次帶回饋的重試）
+# 改等級時殘留欄位是最常見的退回原因；只在 offense 啟用時附在簡報提示與驗證回饋（中性提醒，不引導方向）。
+OFFENSE_FIELD_REMINDER = (
+    "改等級時請清空不適用的欄位：keep_defensive 不得填 defensive_reconciliation、offense_basis、failure_condition；"
+    "start_rebuild／rebuild 不得填 offense_basis、failure_condition（只有 probe 填這兩欄）。"
+)
+
+# 轉向後進攻（只有 position_sizing.offense 啟用才使用，取代 EXPOSURE_VIEW_PROMPT*；沒有 offense 的 Policy 簡報逐位元不變）。
+OFFENSE_VIEW_PROMPT = (
+    "摘要含 exposure_facts（程式算的組合 beta、低 beta 占比、現金權重、持股產業權重與最近一個交易池上漲日的報酬）與 offense_facts"
+    "（程式算的賣壓竭盡、廣度回升、量能、情緒極端、指數站回五類事實與一組對照樣本；全部是背景事實、沒有 evidence_id、不可引用，"
+    "理由也不要寫出 exposure_facts 或 offense_facts 這兩個鍵名；缺資料的類別標 unavailable，不補值），另有 offense levels（各等級對映的人填上限）。"
+    "另輸出 exposure_view（keep_defensive／probe／start_rebuild／rebuild），回答「組合要不要開始回補市場參與度、先試還是等確認」，它會實際決定配置："
+    "keep_defensive 時曝險配對一對都不成交、現金目標照格點；probe 是預測型，轉向還看不出來或尚未確認時小量先試（turn_assessment 可配 no_turn_evidence 或 turn_unconfirmed）；"
+    "start_rebuild 要 turn_assessment 至少 turn_unconfirmed；rebuild 要 turn_confirmed。進攻等級會依提名先後取用至多該級的對數與份量格、組合 beta 預估達停止線即停止，"
+    "防守姿態下現金目標另放寬到該級的人填值（只放寬）；缺資料、回撤下限為 defensive 或回撤過深時，程式會把有效等級壓回 keep_defensive，不會升級。"
+    "非 keep_defensive 時 evidence_ids 至少引用兩個市場層級證據、其中至少一個不是新聞；probe 必須填 offense_basis（至少兩個不同的事實類別，"
+    "各類事實須 available）與 failure_condition（之後看得到、會讓這次試單算失敗的事，含時間條件）；姿態為 defensive 而 exposure_view 不是 keep_defensive 時，"
+    "必須在 defensive_reconciliation 說明防守的現金判斷與進攻為什麼不矛盾；不適用的欄位填空陣列或空字串。你不得輸出任何百分比或數字。"
+    "兩種錯誤都有成本：太早進攻，可能追高、遇到反彈失敗被套；太晚進攻，組合 beta 留在低檔而錯過反彈。請對照事實與市場證據權衡，"
+    "不要把 keep_defensive 當成沒有成本的預設；證據不足而選它時，理由要說明為什麼現在還不是進攻時機。規則見 cash-stance.md「offense_facts」節。"
+    "前次現金目標若是放寬值（前次進攻等級的 defensive_cash_buffer），今日回到 keep_defensive 時現金目標會回到防守格點，"
+    "程式會依交易 Agent 的釋出順序賣股補回現金，換手與費稅都有成本；這與前述兩種錯誤成本並列，請一併權衡，不要因此預設任何一個方向。"
+    + OFFENSE_FIELD_REMINDER
+)
+
+
+# 簡報說真話（只有 position_sizing.exposure_view 為 v2 才使用；v1 與沒有閘門的 Policy 沿用上面各段舊文字，簡報逐位元不變）。
+# 取代 TURN_FACTS_PROMPT／TURN_STATE_PROMPT*／EXPOSURE_VIEW_PROMPT 中與現行行為不一致的句子。
+TURN_FACTS_PROMPT_AGENT_LED = (
+    "摘要含 turn_facts（程式依行情算的交易池轉向事實，是事實不是訊號）：另輸出 turn_assessment"
+    "（no_turn_evidence／turn_unconfirmed／turn_confirmed），回答「市場有沒有轉向」，不要求與現金姿態一致，不改現金格點與回撤下限；"
+    "它在本 Policy 下的實際作用見下一段。規則見 cash-stance.md「turn_facts」節。"
+)
+TURN_STATE_NOTE_AGENT_LED = (
+    "程式狀態機的結果，只是背景（沒有證據編號、不可引用）：它只在資料不可用或回撤下限為 defensive 時把你的 turn_assessment 壓回不放寬；"
+    "turn_assessment 的實際作用見提示文字（現金目標、換手上限與 quality_dip 門檻），不再啟動曝險換股。"
+)
+TURN_ASSESSMENT_PROMPT_AGENT_LED = (
+    "turn_assessment 在本 Policy 下的實際作用（換股由交易 Agent 提名，程式不再依它啟動曝險換股）：一、防守姿態下，"
+    "Policy 有為 turn_unconfirmed（候選）或 turn_confirmed（確認）填 defensive_cash_buffer 時，現金目標會放寬到該值（只放寬、不收緊），"
+    "turn_confirmed 另可放寬換手上限（Policy 有填才有）；二、它是優質股換股（quality_dip）的最低門檻，低於 Policy 的 min_turn_assessment "
+    "時 quality_dip 配對全部取消；三、Policy 有 quality_dip v4 的 ladder 時，no_turn_evidence 也可抄底但須交易池回檔達人設深度門檻，有轉向跡象（turn_unconfirmed 以上）則不受該門檻限制；四、它不決定曝險配對（那是 exposure_view 的事）。程式只在 turn_state 的 data_status 為 unavailable "
+    "或回撤下限為 defensive 時壓回不放寬，regime 不是 bear 不擋。"
+    "兩種錯誤都有成本：太早升級，可能在反彈失敗時放寬現金、買在高點而被套；太晚升級，會在反彈已經發生後仍停在低參與度、錯過上漲。"
+    "請依 turn_facts 與 turn_state 的事實權衡，兩邊都不是預設安全的答案，理由要能說明為什麼現在是或不是轉向。規則見 cash-stance.md「turn_state」節。"
+)
+# offense 啟用時的 turn_assessment 說明（取代 TURN_ASSESSMENT_PROMPT_AGENT_LED／TURN_STATE_NOTE_AGENT_LED；兩者仍供沒有 offense 的 agent_led Policy 使用）。
+# offense 與 rebound_participation.by_state.*.defensive_cash_buffer 互斥，防守姿態的現金放寬只看 exposure_view 的等級，不看 turn_assessment。
+TURN_STATE_NOTE_OFFENSE = (
+    "程式狀態機的結果，只是背景（沒有證據編號、不可引用）：它只在資料不可用或回撤下限為 defensive 時把你的 turn_assessment 壓回不放寬；"
+    "turn_assessment 的實際作用見提示文字，它不決定現金目標或換手上限，也不啟動曝險換股。"
+)
+TURN_ASSESSMENT_PROMPT_OFFENSE = (
+    "turn_assessment 在本 Policy 下的實際作用（換股由交易 Agent 提名，程式不依它啟動曝險換股，也不依它放寬現金或換手）：一、它必須與 exposure_view 一致"
+    "（probe 配 no_turn_evidence 或 turn_unconfirmed、start_rebuild 至少 turn_unconfirmed、rebuild 須 turn_confirmed），不一致會被退回，程式不會替你調整；"
+    "二、它是優質股換股（quality_dip）的最低門檻，低於 Policy 的 min_turn_assessment 時 quality_dip 配對全部取消；"
+    "三、Policy 有 quality_dip v4 的 ladder 時，no_turn_evidence 也可抄底但須交易池回檔達人設深度門檻，有轉向跡象（turn_unconfirmed 以上）則不受該門檻限制；"
+    "四、防守姿態下的現金放寬只由 exposure_view 的等級決定（offense 各級的 defensive_cash_buffer），與 turn_assessment 無關。"
+    "程式只在 turn_state 的 data_status 為 unavailable 或回撤下限為 defensive 時壓回不放寬，regime 不是 bear 不擋。"
+    "兩種錯誤都有成本：太早升級，可能在反彈失敗時買在高點而被套；太晚升級，會在反彈已經發生後仍停在低參與度、錯過上漲。"
+    "請依 turn_facts 與 turn_state 的事實權衡，兩邊都不是預設安全的答案，理由要能說明為什麼現在是或不是轉向。規則見 cash-stance.md「turn_state」節。"
+)
+EXPOSURE_VIEW_PROMPT_AGENT_LED = (
+    "摘要含 exposure_facts（程式算的組合 beta、低 beta 占比、現金權重、持股產業權重與最近一個交易池上漲日的報酬，是背景事實、"
+    "沒有 evidence_id、不可引用，理由也不要寫出 exposure_facts 這個鍵名）：另輸出 exposure_view（keep_defensive／start_rebuild／rebuild），"
+    "回答「組合要不要開始回補市場參與度」，它會實際決定配置：keep_defensive 時交易 Agent 提名的 purpose=exposure 配對一對都不成交、換出者不賣；"
+    "start_rebuild／rebuild 時依提名清單的先後取用，至多取 Policy 對映該等級的對數（人設的硬上限），仍受換手、現金、單股、產業與回撤下限限制；"
+    "它不改現金姿態、現金比例或持股廣度。不是 keep_defensive 時 evidence_ids 至少引用一個市場層級證據。"
+    "兩種錯誤都有成本：太早回補，可能追高、遇到反彈失敗被套；太晚回補，組合 beta 留在低檔而錯過反彈。"
+    "請對照組合曝險事實與市場證據權衡，不要把 keep_defensive 當成沒有成本的預設；證據不足而選它時，理由要說明為什麼現在還不是回補時機。"
+    "規則見 cash-stance.md「exposure_facts」節。"
+)
+
+
 CASH_GRADE_PROMPT = (
     "Policy 啟用 cash_ratio_range：摘要含 cash_grade_grid 與 cash_grade_allowed_by_stance，除了姿態另給 cash_grade"
     "（lower／middle／upper），只能選該姿態今日可選的子等級，你不得輸出百分比，規則見 cash-stance.md「cash_grade_allowed_by_stance」節。"
@@ -162,6 +238,9 @@ class RiskStagesMixin:
         market_index_facts_gate: Optional[Mapping[str, object]] = None,
         exposure_view_gate: Optional[Mapping[str, object]] = None,
         exposure_facts: Optional[Mapping[str, object]] = None,
+        agent_led: bool = False,
+        offense_gate: Optional[Mapping[str, object]] = None,
+        offense_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -206,6 +285,9 @@ class RiskStagesMixin:
             if turn_state is not None:
                 # rebound_participation（版本閘門）：程式狀態機的結果只當背景（沒有 evidence_id，不可引用）。
                 turn_brief["turn_state"] = {"citable": False, **dict(turn_state)}
+                if agent_led:
+                    # 只換簡報副本的 note（team_inputs 內封存的原文會進雜湊、不動）：舊文字寫 turn_confirmed 放寬曝險換股，與現行行為不符。
+                    turn_brief["turn_state"]["note"] = TURN_STATE_NOTE_OFFENSE if offense_gate is not None else TURN_STATE_NOTE_AGENT_LED
         # market_index_facts（版本閘門）：附程式算的加權指數事實（背景、不可引用）；沒有閘門時簡報與舊版逐鍵相同。
         index_brief: Dict[str, object] = (
             {"market_index_facts": market_index_facts(bundle)} if market_index_facts_gate is not None else {}
@@ -217,7 +299,17 @@ class RiskStagesMixin:
                 raise DailyPipelineError("position_sizing.exposure_view 只能用於 evidence_policy=typed_evidence_v1")
             if not isinstance(exposure_facts, Mapping):
                 raise DailyPipelineError("position_sizing.exposure_view 啟用時必須先建立 exposure_facts")
-            exposure_brief = {"exposure_facts": risk_exposure_brief(exposure_facts)}
+            exposure_brief = {"exposure_facts": risk_exposure_brief(exposure_facts, agent_led=agent_led, offense=offense_gate is not None)}
+        # offense（轉向後進攻，版本閘門）：附程式算的進攻事實與各等級對映的人填上限（背景、不可引用）；仍不附交易 Agent 的意圖與信心統計。
+        # 沒有閘門時簡報與舊版逐鍵相同。
+        offense_block: Dict[str, object] = {}
+        if offense_gate is not None:
+            if exposure_view_gate is None or not isinstance(offense_facts, Mapping):
+                raise DailyPipelineError("position_sizing.offense 啟用時必須有 exposure_view 與 offense_facts")
+            offense_block = {"offense_facts": offense_brief(offense_facts, offense_gate)}
+            glide = cash_glide_brief(offense_gate, cash_ratio_range)
+            if glide is not None:
+                offense_block["offense_cash_glide"] = glide  # offense.cash_glide：只在前次放寬過現金時附（背景、不可引用）
         brief_path = self.save_brief(
             "brief_cash_stance",
             {
@@ -226,6 +318,7 @@ class RiskStagesMixin:
                 **turn_brief,
                 **index_brief,
                 **exposure_brief,
+                **offense_block,
                 "analyst_outlooks": {
                     name: counts([item.get("outlook") for item in report.get("items", [])])
                     for name, report in analyst_reports.items()
@@ -268,6 +361,7 @@ class RiskStagesMixin:
                 context, stance, "cash_stance", errors, cash_ratio_range=cash_ratio_range, prior_context=prior_context,
                 recency_gate=cash_stance_recency, turn_facts_gate=cash_stance_turn_facts,
                 exposure_view_gate=exposure_view_gate, exposure_facts=exposure_facts,
+                **({"offense_gate": offense_gate, "offense_facts": offense_facts} if offense_gate is not None else {}),
             )
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
@@ -281,7 +375,9 @@ class RiskStagesMixin:
             else (CASH_GRADE_STANCE_SCHEMA if graded else CASH_STANCE_SCHEMA)
         )
         if exposure_view_gate is not None:
-            schema = exposure_view_schema(schema)
+            schema = exposure_view_schema(schema, probe=offense_gate is not None)
+        if offense_gate is not None:
+            schema = offense_stance_schema(schema)
         task = AgentTask(
             "cash_stance",
             "你是 $portfolio-risk-review 風險 Agent 的市場風險評估。先讀 %s（「配置前現金姿態」一節）及其連結的 %s，"
@@ -296,16 +392,28 @@ class RiskStagesMixin:
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
-            + (TURN_FACTS_PROMPT if cash_stance_turn_facts is not None else "")
             + (
-                (TURN_STATE_PROMPT_V2 if turn_state.get("version") == "v2" else TURN_STATE_PROMPT)
+                (TURN_FACTS_PROMPT_AGENT_LED if agent_led else TURN_FACTS_PROMPT)
+                if cash_stance_turn_facts is not None else ""
+            )
+            + (
+                (TURN_ASSESSMENT_PROMPT_OFFENSE if offense_gate is not None else TURN_ASSESSMENT_PROMPT_AGENT_LED if agent_led else
+                 (TURN_STATE_PROMPT_V2 if turn_state.get("version") == "v2" else TURN_STATE_PROMPT))
                 if turn_state is not None else ""
             )
             + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else "")
-            + (EXPOSURE_VIEW_PROMPT if exposure_view_gate is not None else ""),
+            + (
+                OFFENSE_VIEW_PROMPT if offense_gate is not None else
+                (EXPOSURE_VIEW_PROMPT_AGENT_LED if agent_led else EXPOSURE_VIEW_PROMPT)
+                if exposure_view_gate is not None else ""
+            ),
             schema,
         )
-        stance = self.agent_step(task, lambda output: dict(output), validate)
+        # offense 的 Schema 要求不適用欄位以空陣列／空字串送出，封存時還原成缺席；沒有閘門時與舊版相同（原樣複製）。
+        # offense 的跨欄位規則多，第一次加兩次帶回饋的重試共三次嘗試（與降級版步驟的上限相同）；沒有 offense 時沿用 ``self.max_attempts``，行為不變。
+        stance = self.agent_step(
+            task, (lambda output: normalize_offense_stance(output)) if offense_gate is not None else (lambda output: dict(output)), validate,
+            **({"max_attempts": max(self.max_attempts, OFFENSE_STANCE_ATTEMPTS)} if offense_gate is not None else {}))
         self.save_artifact("cash_stance", stance)
         return stance
 
@@ -324,6 +432,7 @@ class RiskStagesMixin:
         dip_facts: Optional[Mapping[str, object]],
         turn_state: Optional[Mapping[str, object]],
         run_id: str,
+        decline_depth_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 對交易 Agent 提名的 purpose=quality_dip 配對做最後裁決（agent_swap.quality_dip v3，排在現金姿態之後、配置之前）。
 
@@ -333,7 +442,8 @@ class RiskStagesMixin:
         這是現金姿態之外的另一次獨立呼叫：現金姿態的簡報完全不變。"""
         envelope = ruling_envelope(bundle, nomination, stance, "quality-dip-ruling:%s" % run_id)
         validator = QualityDipRulingValidator(
-            bundle, policy, nomination, stance, prior_context=prior_context, exposure_facts=exposure_facts, dip_facts=dip_facts)
+            bundle, policy, nomination, stance, prior_context=prior_context, exposure_facts=exposure_facts, dip_facts=dip_facts,
+            decline_depth_facts=decline_depth_facts)
         try:
             status, reason = expected_program_status(policy, nomination)
         except DecisionToolError as error:
@@ -346,7 +456,8 @@ class RiskStagesMixin:
             try:
                 brief = quality_dip_ruling_brief(
                     bundle, trade_decision, debate, exposure_review, nomination, stance, exposure_facts, dip_facts,
-                    turn_facts(bundle), market_index_facts(bundle), turn_state)
+                    turn_facts(bundle), market_index_facts(bundle), turn_state,
+                    agent_led=exposure_view_agent_led(policy.get("position_sizing")), decline_depth_facts=decline_depth_facts)
             except (DecisionToolError, KeyError, TypeError, ValueError) as error:
                 raise DailyPipelineError("優質股裁決簡報建立失敗：%s" % error) from error
             brief_path = self.save_brief("brief_quality_dip_ruling", brief)

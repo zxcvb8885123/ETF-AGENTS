@@ -327,9 +327,13 @@ class PipelineBase:
         task: AgentTask,
         build: Callable[[Mapping[str, object]], Dict[str, object]],
         validate: Callable[[Mapping[str, object]], List[str]],
+        max_attempts: Optional[int] = None,
     ) -> Dict[str, object]:
-        """執行 Agent → 補 envelope → 驗證；失敗回饋錯誤重試，仍失敗即停止。"""
-        outcome = self._agent_step(task, build, validate, self.max_attempts, degradable=False)
+        """執行 Agent → 補 envelope → 驗證；失敗回饋錯誤重試，仍失敗即停止。
+        ``max_attempts`` 預設沿用 ``self.max_attempts``；呼叫端可為特定步驟指定（整數 1～10）。"""
+        if max_attempts is not None and (isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or not 1 <= max_attempts <= 10):
+            raise ValueError("max_attempts 必須介於 1 與 10")
+        outcome = self._agent_step(task, build, validate, self.max_attempts if max_attempts is None else max_attempts, degradable=False)
         assert outcome.artifact is not None
         return outcome.artifact
 

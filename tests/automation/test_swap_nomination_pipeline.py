@@ -25,7 +25,7 @@ from etf_agent.decision.finalization import SWAP_TEAM_FIELDS, SWAP_TEAM_VERSION,
 from etf_agent.decision import DecisionToolError
 
 from test_daily_pipeline import (
-    BEAR, BULL, EVENT, FUNDAMENTAL, ROOT, STANCE, TECHNICAL, TRADE, FakeRunner, PipelineWorld, live_policy_template, team_outputs,
+    BEAR, BULL, EVENT, FUNDAMENTAL, ROOT, STANCE, TECHNICAL, TRADE, FakeRunner, PipelineWorld, live_without_offense, live_policy_template, team_outputs,
 )
 
 GATE = {"version": "v1", "max_swaps_per_run": 2, "min_holding_days": 5}
@@ -47,7 +47,7 @@ BAD_NOMINATION = {"nominations": [dict(GOOD_PAIR, buy_symbol="9999.TW")], "thesi
 
 def template(gate=GATE):
     """正式樣板（只拿掉 fixture 沒有資料的 cash_stance_recency）；``gate`` 為 None 時不加 agent_swap（對照組）。"""
-    value = live_policy_template()
+    value = live_without_offense()
     value["position_sizing"].pop("cash_stance_recency")
     value["position_sizing"].pop("agent_swap", None)  # 正式樣板已含 agent_swap：先移除，再依 gate 明確加回
     value["position_sizing"].pop("exposure_view", None)  # 正式樣板已含 exposure_view（純紀錄）；整條鏈由 test_exposure_view 覆蓋

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .contracts import (
     DECISION_SCHEMA_VERSION,
@@ -40,9 +40,11 @@ from .sizing import (
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
 )
+from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
+from .offense import capped_size, offense_bound, thesis_size_cap_active
 from .quality_dip_swap import (
-    PURPOSE_QUALITY_DIP, QUALITY_DIP_SWAP_V3, quality_dip_swap_binding, quality_dip_v3_gate, size_after_ruling, size_entry_weight, turn_allows,
+    PURPOSE_QUALITY_DIP, quality_dip_swap_binding, quality_dip_v3_gate, size_after_ruling, size_entry_weight, turn_allows,
 )
 
 
@@ -301,6 +303,7 @@ class AllocationOrderEngine:
             raise DecisionToolError("DecisionPolicy 驗證失敗：" + "；".join(errors))
         self.policy = dict(policy)
         self.prices = self._latest_prices()
+        self._reserved_shares: Dict[str, int] = {}  # entry_reserve：本次重算中換入者先保留的買進股數（只在 _run 內有值）
         self._proceeds_accepted: Set[str] = set()  # proceeds_to_add：本次重算中接受「賣款流向加碼持股」的換入者（只在 _run_exposure 迴圈內有值）
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
@@ -484,6 +487,12 @@ class AllocationOrderEngine:
                 str(pair["buy_symbol"]).upper() for pair in swap_now.get("nominated_pairs") or []
                 if isinstance(pair, Mapping) and pair.get("purpose") == PURPOSE_QUALITY_DIP
             }
+        if agent_gated and entry_reserve_gate(sizing_now) is not None:
+            # agent_swap.entry_reserve：每一組都有 size，全部不適用 proceeds_to_add（換入者沒買到就整組取消）。
+            v3_buys |= {
+                str(pair["buy_symbol"]).upper() for pair in sizing_now["agent_swap"].get("nominated_pairs") or []  # type: ignore[index]
+                if isinstance(pair, Mapping)
+            }
         tiers = (self.policy.get("position_sizing") or {}).get("conviction_by_symbol") or {}
         high_adds = {
             str(item.get("symbol", "")).upper() for item in intent_result.get("items", [])
@@ -551,6 +560,7 @@ class AllocationOrderEngine:
         ``exposure_excluded`` 是 exposure_rotation 復原迴圈排除的換入者（只有閘門啟用時才傳）；
         ``agent_cancelled`` 是 agent_swap v2 復原迴圈取消的換入者與原因（只有 v2 才傳）。"""
         excluded = {value.upper() for value in (excluded_symbols or set())}
+        self._reserved_shares = {}
         effective = self._effective_policy(overrides or {})
         intents = {
             str(item.get("symbol", "")).upper(): str(item.get("intent", ""))
@@ -804,6 +814,9 @@ class AllocationOrderEngine:
                 min(default_weight, limit) if sized_weights is None else sized_weights[symbol]
             )
             desired = self._shares_for_value(marked_nav * target_weight, self.prices[symbol])
+            if symbol in self._reserved_shares:
+                # entry_reserve：換入者的買進股數已先保留（取份量格權重、賣款加格點以上現金、單股與產業餘裕的最小值），不再取自信心預算。
+                desired = self._reserved_shares[symbol]
             if symbol in quality_fills:
                 # agent_swap.quality_dip v2：買進權重不超過 max_entry_weight，且買進金額（含費）不超過該對換出者的賣款淨額；
                 # 只會縮減，縮到不足一張就沒有買單，復原迴圈因此取消該對、換出者不賣（不會只賣不買）。
@@ -1101,7 +1114,7 @@ class AllocationOrderEngine:
         ruling_of: Dict[Tuple[str, str], Optional[str]] = {}
         if exposure_binding is not None:
             purpose_of = dict(zip(pairs, exposure_binding["purposes"]))  # type: ignore[arg-type]
-            if quality_binding is not None and quality_binding["version"] == QUALITY_DIP_SWAP_V3:
+            if quality_binding is not None and quality_binding.get("sized"):
                 # v3：每對的份量格與風險 Agent 的裁決（與提名同序；非 quality_dip 配對為 None）。
                 size_of = dict(zip(pairs, quality_binding["sizes"]))  # type: ignore[arg-type]
                 ruling_of = dict(zip(pairs, quality_binding["rulings"]))  # type: ignore[arg-type]
@@ -1146,9 +1159,12 @@ class AllocationOrderEngine:
                 reason = "quality_dip_stance_floor"
             elif not turn_allows(quality_binding):  # type: ignore[arg-type]
                 reason = "quality_dip_turn"
+            elif quality_binding["version"] == "v4" and quality_binding["ladder_state"]["status"] != "open":  # type: ignore[index]
+                # v4 梯度（人填的上限，程式算的狀態已由 pipeline 綁進 Policy、Finalizer 重算）：關閉時取消全部 quality_dip 配對，換出者不賣。
+                reason = "quality_dip_ladder_%s" % quality_binding["ladder_state"]["reason"]  # type: ignore[index]
             elif not bool(effective["reuse_sell_proceeds"]):
                 reason = "quality_dip_proceeds"
-            if reason is None and quality_binding["version"] == QUALITY_DIP_SWAP_V3 and quality_binding["ruling_status"] != "completed":  # type: ignore[index]
+            if reason is None and quality_binding.get("sized") and quality_binding["ruling_status"] != "completed":  # type: ignore[index]
                 # v3：沒有完成的裁決一律取消全部 quality_dip 配對（不退回 v2 不經裁決直接成交的行為）；
                 # 前置條件不成立時上面的原因優先（與裁決狀態 skipped_by_program 同口徑）。
                 status = quality_binding["ruling_status"]  # type: ignore[index]
@@ -1164,6 +1180,7 @@ class AllocationOrderEngine:
         ordered, weights, skipped, budget, held_frozen = targets
         candidate_set = set(ordered)
         needed: List[Tuple[str, str]] = []
+        reserve_gate_on = entry_reserve_gate(self.policy.get("position_sizing")) is not None
         for buy, sell in pairs:
             if buy in cancelled:
                 cancel(buy, sell, cancelled[buy])
@@ -1171,7 +1188,12 @@ class AllocationOrderEngine:
                 cancel(buy, sell, "active_share")
             elif buy in excluded:
                 cancel(buy, sell, "risk_excluded")
-            elif buy in weights:
+            elif buy in weights and not (
+                # entry_reserve：slot_recycle 以權重 0 留在 weights 的新股（目標不足一張）並沒有真正取得名額，照常走換股與保留預算；
+                # 沒有 entry_reserve 的 Policy 不經過這個條件（逐位元不變）。
+                reserve_gate_on and buy not in active_symbols and buy in self.prices
+                and self._shares_for_value(marked_nav * weights[buy], self.prices[buy]) <= 0
+            ):
                 note("AGENT_SWAP_UNNEEDED", buy, "換入者不換股即取得名額（廣度空名額或其他出場釋出），該對不使用，換出者 %s 不賣" % sell)
             elif buy not in candidate_set or buy in current:
                 cancel(buy, sell, "buy_unavailable")
@@ -1203,7 +1225,13 @@ class AllocationOrderEngine:
             # dip_assessment 必須與候選類別相符（5c Validator 已檢查）；不符一律取消，不猜。
             used, oversold_used, kept_pairs = 0, 0, []
             oversold = quality_binding["oversold"]  # type: ignore[index]
-            sized = quality_binding["version"] == QUALITY_DIP_SWAP_V3  # type: ignore[index]
+            # v4：今天的買進權重上限與已有的新建倉曝險合計不得超過 max_dip_exposure（只看上限、不看實際成交，從清單尾端取消）。
+            ladder_left = (
+                decimal_value(quality_binding["ladder_state"]["exposure_remaining"], "ladder_state.exposure_remaining")  # type: ignore[index]
+                if quality_binding["version"] == "v4" else None  # type: ignore[index]
+            )
+            ladder_full = False
+            sized = bool(quality_binding.get("sized"))  # type: ignore[union-attr]
             for buy, sell in needed:
                 if (buy, sell) in quality_pairs:
                     if sized and ruling_of.get((buy, sell)) == "reject":
@@ -1226,11 +1254,20 @@ class AllocationOrderEngine:
                         effective_size = size_after_ruling(size_of[(buy, sell)], ruling_of[(buy, sell)])
                         sized_pairs[(buy, sell)] = (str(size_of[(buy, sell)]), str(ruling_of[(buy, sell)]), str(effective_size))
                         base_weight = size_entry_weight(base_weight, str(effective_size))
+                    if ladder_left is not None:
+                        if ladder_full or base_weight > ladder_left:
+                            ladder_full = True
+                            used -= 1
+                            oversold_used -= int(is_oversold)
+                            sized_pairs.pop((buy, sell), None)
+                            cancel(buy, sell, "quality_dip_ladder_exposure")
+                            continue
+                        ladder_left -= base_weight
                     entry_weights[(buy, sell)] = base_weight
                 kept_pairs.append((buy, sell))
             needed = kept_pairs
         limit = int((self.policy["position_sizing"]["agent_swap"])["max_swaps_per_run"])
-        if quality_binding is not None and quality_binding["version"] == QUALITY_DIP_SWAP_V3:
+        if quality_binding is not None and quality_binding.get("sized"):
             # v3：quality_dip 組數另計（已受 quality_dip.max_swaps_per_run 限制），不占 agent_swap.max_swaps_per_run；
             # 總上限只約束其餘（thesis／exposure）配對，超過的從清單尾端取消。
             used_plain, kept_pairs = 0, []
@@ -1246,6 +1283,18 @@ class AllocationOrderEngine:
             for buy, sell in needed[limit:]:
                 cancel(buy, sell, "swap_cap")
             needed = needed[:limit]
+        reserve_plan: Dict[str, Tuple[int, Decimal, str]] = {}
+        size_override: Dict[Tuple[str, str], str] = {}
+        offense_obj = self.policy["position_sizing"].get("offense")
+        if offense_bound(offense_obj) and (exposure_pairs or thesis_size_cap_active(offense_obj)) and needed:
+            # position_sizing.offense：曝險配對的份量格縮到該級 max_size、依清單先後試算組合 beta，預估已達該級 beta_stop 即停止取用其後的曝險配對；
+            # thesis_size_cap 開啟且放寬現金時，thesis 配對的份量格也縮到該級 max_size（只縮不取消）。
+            needed, size_override = self._offense_limits(
+                needed, exposure_pairs, quality_pairs, entry_weights, current, marked_nav, offense_obj, cancel, note)  # type: ignore[arg-type]
+        if entry_reserve_gate(self.policy.get("position_sizing")) is not None and needed:
+            # agent_swap.entry_reserve：換入者先保留預算（份量格權重、賣款加格點以上現金、單股與產業餘裕取最小；縮到不足一張或換手超過整組取消）。
+            needed, reserve_plan = self._entry_reserve_plan(
+                needed, entry_weights, quality_pairs, current, target_shares, marked_nav, effective, cancel, size_override)
         baseline_new = set(weights) - active_symbols
         accepted: List[Tuple[str, str]] = []
         result = targets
@@ -1258,6 +1307,7 @@ class AllocationOrderEngine:
             trial = self._conviction_targets(
                 ordered, trial_active, trial_target, marked_nav, max_positions, effective, len(current),
                 allowed_new=set(weights) | {buy for buy, _ in chosen},
+                reserved={buy: reserve_plan[buy][1] for buy, _ in chosen} if reserve_plan else None,
             )
             if all(buy in trial[1] for buy, _ in chosen) and baseline_new <= set(trial[1]):
                 accepted, result = list(chosen), trial
@@ -1265,6 +1315,8 @@ class AllocationOrderEngine:
         for buy, sell in needed[len(accepted):]:
             cancel(buy, sell, "swap_cap")
         for buy, sell in accepted:
+            if buy in reserve_plan:
+                self._reserved_shares[buy] = reserve_plan[buy][0]
             target_shares[sell] = 0
             active_symbols.discard(sell)
             order_intents[sell] = "exit"
@@ -1272,14 +1324,214 @@ class AllocationOrderEngine:
                  + ("；目的：曝險（風險 Agent 的 exposure_view 為 %s）" % exposure_binding["view"] if (buy, sell) in exposure_pairs else "")  # type: ignore[index]
                  + ("；目的：優質股被大盤拖累（買進權重上限 %s、買進金額不超過本筆賣款）" % format(entry_weights[(buy, sell)], ".2%")
                     if (buy, sell) in entry_weights else "")
-                 + ("；交易 Agent 的份量格 %s、風險 Agent 裁決 %s、套用份量格 %s" % sized_pairs[(buy, sell)] if (buy, sell) in sized_pairs else ""))
+                 + ("；交易 Agent 的份量格 %s、風險 Agent 裁決 %s、套用份量格 %s" % sized_pairs[(buy, sell)] if (buy, sell) in sized_pairs else "")
+                 + ("；換入者先保留預算：%s" % reserve_plan[buy][2] if buy in reserve_plan else ""))
             if buy in self._proceeds_accepted:
                 note(AGENT_SWAP_PROCEEDS_CODE, buy, "額度被高信心加碼持股占用、本檔沒有買單；換出 %s 的賣款流向高信心加碼持股，換股照常成立（交易 Agent 的意圖未被改寫）" % sell)
             else:
                 note(AGENT_SWAP_FILL_CODE, buy, "原本被持股名額擋下；交易 Agent 第二輪提名換出 %s 後由程式給名額（交易 Agent 的意圖未被改寫）" % sell)
-            if (buy, sell) in entry_weights and quality_fills is not None:
+            if (buy, sell) in entry_weights and quality_fills is not None and buy not in reserve_plan:
                 quality_fills[buy] = (sell, entry_weights[(buy, sell)])
         return result
+
+    def _offense_limits(
+        self,
+        needed: List[Tuple[str, str]],
+        exposure_pairs: Set[Tuple[str, str]],
+        quality_pairs: Set[Tuple[str, str]],
+        entry_weights: Mapping[Tuple[str, str], Decimal],
+        current: Mapping[str, int],
+        marked_nav: Decimal,
+        offense: Mapping[str, object],
+        cancel: Callable[[str, str, str], None],
+        note: Callable[[str, str, str], None],
+    ) -> Tuple[List[Tuple[str, str]], Dict[Tuple[str, str], str]]:
+        """``position_sizing.offense`` v1：依有效等級的人填上限處理曝險配對（程式不挑股、不排序、不補提名、不改寫交易 Agent 的意圖）。
+
+        - 份量格：交易 Agent 的 ``size`` 高於該級 ``max_size`` 時縮到上限（旗標 ``OFFENSE_SIZE_CAPPED``）；只縮不放。
+        - 組合 beta 停止線：依清單先後試算。起點是目前持股的組合 beta（含現金，任一持股 beta 缺值即不可用）；每組以「換入者的份量格權重上限 × 換入者 beta
+          － 換出者目前權重 × 換出者 beta」估算（買進實際金額另受賣款、現金、單股與產業上限限制，所以估算偏高、偏早停止；只計換股配對，不含現金買進）。
+          估算已達該級 ``beta_stop`` 之後，其後的曝險配對全部取消（``offense_beta_stop``）；起點或該組 beta 缺值一律取消（``offense_beta_unavailable``），
+          缺資料永不放行。停止線是「不再加」的上限，不是目標。
+        - 其他目的（thesis、quality_dip）的配對照常，只把它們的 beta 變化算進估算（beta 缺值時略過、不取消）。"""
+        sizing = self.policy["position_sizing"]
+        view = str(offense["effective_view"])
+        row = offense["by_view"].get(view)  # type: ignore[union-attr]
+        if row is None:
+            return needed, {}
+        stop = decimal_value(row["beta_stop"], "offense.beta_stop")
+        max_size = str(row["max_size"])
+        thesis_cap = thesis_size_cap_active(offense)
+        gate = entry_reserve_gate(sizing)
+        assert gate is not None
+        sizes = pair_sizes(sizing)
+        exposure_gate = exposure_rotation_gate(sizing)
+        assert exposure_gate is not None
+        model = self._exposure_beta_model(exposure_gate)
+        estimate: Optional[Decimal] = Decimal(0)
+        for symbol, shares in current.items():
+            if int(shares) <= 0:
+                continue
+            beta = model.beta(symbol)
+            if beta is None or symbol not in self.prices:
+                estimate = None
+                break
+            estimate += Decimal(int(shares)) * self.prices[symbol] / marked_nav * beta
+        kept: List[Tuple[str, str]] = []
+        overrides: Dict[Tuple[str, str], str] = {}
+        stopped = False
+        for buy, sell in needed:
+            pair = (buy, sell)
+            buy_beta, sell_beta = model.beta(buy), model.beta(sell)
+            sell_weight = Decimal(int(current[sell])) * self.prices[sell] / marked_nav if sell in current and sell in self.prices else None
+            if pair in exposure_pairs:
+                size = sizes[pair]
+                capped = capped_size(size, max_size)
+                if capped != size:
+                    overrides[pair] = capped
+                    note("OFFENSE_SIZE_CAPPED", buy, "風險 Agent 的有效等級 %s 的份量格上限是 %s，交易 Agent 的份量格 %s 由程式縮為 %s（只縮不放）" % (
+                        view, max_size, size, capped))
+                if stopped:
+                    cancel(buy, sell, "offense_beta_stop")
+                    continue
+                if estimate is None or buy_beta is None or sell_beta is None or sell_weight is None:
+                    cancel(buy, sell, "offense_beta_unavailable")
+                    continue
+                if estimate >= stop:
+                    stopped = True
+                    cancel(buy, sell, "offense_beta_stop")
+                    continue
+                estimate += reserve_weight(gate, capped) * buy_beta - sell_weight * sell_beta
+                kept.append(pair)
+                continue
+            size = sizes[pair]
+            if thesis_cap and pair not in quality_pairs:
+                # thesis_size_cap v1：放寬現金時 thesis 配對的份量格取 min(交易 Agent 的 size, 該級 max_size)；只縮不取消、不占 max_exposure_pairs、不受 beta_stop 取消。
+                capped = capped_size(size, max_size)
+                if capped != size:
+                    overrides[pair] = capped
+                    note("OFFENSE_SIZE_CAPPED", buy, "放寬現金期間（有效等級 %s），thesis 配對的份量格上限是 %s，交易 Agent 的份量格 %s 由程式縮為 %s（只縮不放）" % (
+                        view, max_size, size, capped))
+                size = capped
+            if estimate is not None and buy_beta is not None and sell_beta is not None and sell_weight is not None:
+                weight = entry_weights[pair] if pair in quality_pairs and pair in entry_weights else reserve_weight(gate, size)
+                estimate += weight * buy_beta - sell_weight * sell_beta
+            kept.append(pair)
+        return kept, overrides
+
+    def _entry_reserve_plan(
+        self,
+        needed: List[Tuple[str, str]],
+        entry_weights: Mapping[Tuple[str, str], Decimal],
+        quality_pairs: Set[Tuple[str, str]],
+        current: Mapping[str, int],
+        target_shares: Mapping[str, int],
+        marked_nav: Decimal,
+        effective: Mapping[str, object],
+        cancel: Callable[[str, str, str], None],
+        size_override: Optional[Mapping[Tuple[str, str], str]] = None,
+    ) -> Tuple[List[Tuple[str, str]], Dict[str, Tuple[int, Decimal, str]]]:
+        """``agent_swap.entry_reserve`` v1：依清單先後為每組換入者先保留買進股數（只縮不放、以整張為單位）。
+
+        每組股數取下列最小：份量格權重 × NAV（份量格由交易 Agent 填，large＝人填的上限、medium 2/3、small 1/3；quality_dip 配對改用它自己的
+        硬上限與裁決後的份量格）、單股上限餘裕、產業上限餘裕，再縮到買進含費金額不超過「該組換出者賣款淨額＋分到的格點以上現金」
+        （格點以上現金＝已交割現金扣現金緩衝後的餘額，依清單先後各組分用；quality_dip 配對不吃它，維持買進不超過賣款）。
+        縮到不足一張取消該組（``entry_reserve_lot``）；累計換手（含已決定的賣單）超過換手上限時從該組起全部取消
+        （``entry_reserve_turnover``）。取消的組換出者不賣。回傳 (保留成功的組, {換入者: (股數, 權重, 說明)})。"""
+        sizing = self.policy["position_sizing"]
+        gate = entry_reserve_gate(sizing)
+        assert gate is not None
+        sizes = pair_sizes(sizing)
+        lot = int(effective["lot_size"])
+        reuse = bool(effective["reuse_sell_proceeds"])
+        account = self.context.bundle["account_snapshot"]
+        settled = decimal_value(account["settled_cash"], "account_snapshot.settled_cash")
+        surplus = max(Decimal(0), settled - marked_nav * decimal_value(effective["cash_buffer_rate"], "cash_buffer_rate"))
+        turnover_limit = decimal_value(effective["max_turnover_rate"], "max_turnover_rate")
+        sectors = {str(k).upper(): str(v) for k, v in self.policy.get("sector_by_symbol", {}).items()}
+        sector_limit = decimal_value(self.policy["max_sector_weight"], "max_sector_weight")
+        sector_cap = None if sector_limit >= 1 else marked_nav * sector_limit * LIMIT_HEADROOM
+        sector_value: Dict[str, Decimal] = {}
+        for symbol, held in target_shares.items():
+            if held > 0 and symbol in sectors and symbol in self.prices:
+                sector_value[sectors[symbol]] = sector_value.get(sectors[symbol], Decimal(0)) + Decimal(held) * self.prices[symbol]
+        turnover = sum(
+            (decimal_value(self._order(symbol, "sell", int(current[symbol]) - int(held), "exit", effective)["gross_amount"], "gross_amount")
+             for symbol, held in target_shares.items() if symbol in current and held < current[symbol]),
+            Decimal(0),
+        ) / marked_nav
+        # 保守低估防線：後段 _fit_stock_weights／_fit_sector_weights 會把超過上限的續抱持股賣回上限，這些賣單此刻還不在 target_shares。
+        # 先把它們的 gross 計入基底換手（換出者整檔賣出由各組自己計，不重複算；寧可多算、多取消整組，也不讓合併換手撞到 turnover_fit）。
+        victims = {sell for _, sell in needed}
+        forced = Decimal(0)
+        for symbol, held in target_shares.items():
+            if held <= 0 or symbol in victims or symbol not in self.prices:
+                continue
+            cap = self._shares_for_value(marked_nav * self._weight_limit(symbol, effective) * self._headroom(effective, buying=False), self.prices[symbol])
+            if held > cap:
+                forced += decimal_value(self._order(symbol, "sell", held - cap, "trim", effective)["gross_amount"], "gross_amount")
+        if sector_cap is not None:
+            for value in sector_value.values():
+                if value > sector_cap:
+                    forced += value - sector_cap
+        turnover += forced / marked_nav
+        kept: List[Tuple[str, str]] = []
+        plan: Dict[str, Tuple[int, Decimal, str]] = {}
+        stop = False
+        for buy, sell in needed:
+            if stop:
+                cancel(buy, sell, "entry_reserve_turnover")
+                continue
+            quality = (buy, sell) in quality_pairs
+            size = (size_override or {}).get((buy, sell), sizes[(buy, sell)])  # offense：曝險配對的份量格已縮到該級 max_size
+            weight = entry_weights[(buy, sell)] if quality else reserve_weight(gate, size)
+            price = self.prices[buy]
+            limits = {"size": self._shares_for_value(marked_nav * weight, price)}
+            limits["single"] = self._shares_for_value(
+                marked_nav * self._weight_limit(buy, effective) * self._headroom(effective, buying=True), price)
+            victim_value = Decimal(current[sell]) * self.prices[sell]
+            if sector_cap is not None and buy in sectors:
+                room = sector_cap - sector_value.get(sectors[buy], Decimal(0))
+                if sectors.get(sell) == sectors[buy]:
+                    room += victim_value
+                limits["sector"] = self._shares_for_value(max(room, Decimal(0)), price)
+            binding = min(limits, key=lambda key: (limits[key], key))
+            shares = limits[binding]
+            sell_order = self._order(sell, "sell", int(current[sell]), "exit", effective)
+            proceeds = decimal_value(sell_order["net_cash_impact"], "net_cash_impact") if reuse else Decimal(0)
+
+            def cost(count: int) -> Decimal:
+                return -decimal_value(self._order(buy, "buy", count, "buy", effective)["net_cash_impact"], "net_cash_impact")
+
+            available = proceeds
+            if shares > 0 and not quality and cost(shares) > proceeds:
+                available = proceeds + min(surplus, cost(shares) - proceeds)
+            while shares > 0 and cost(shares) > available:
+                shares -= lot
+                binding = "cash"
+            shares = max(shares, 0)
+            if shares <= 0:
+                cancel(buy, sell, "entry_reserve_lot")
+                continue
+            buy_gross = decimal_value(self._order(buy, "buy", shares, "buy", effective)["gross_amount"], "gross_amount")
+            pair_turnover = (decimal_value(sell_order["gross_amount"], "gross_amount") + buy_gross) / marked_nav
+            if turnover + pair_turnover > turnover_limit:
+                stop = True
+                cancel(buy, sell, "entry_reserve_turnover")
+                continue
+            turnover += pair_turnover
+            if not quality:
+                surplus -= max(Decimal(0), cost(shares) - proceeds)
+            if buy in sectors:
+                sector_value[sectors[buy]] = sector_value.get(sectors[buy], Decimal(0)) + Decimal(shares) * price
+            if sell in sectors:
+                sector_value[sectors[sell]] = sector_value.get(sectors[sell], Decimal(0)) - victim_value
+            plan[buy] = (shares, Decimal(shares) * price / marked_nav, (
+                "份量格 %s（買進權重上限 %s%s）、保留買進 %d 股，最小的限制是 %s（份量格權重、單股餘裕、產業餘裕、賣款加格點以上現金）；"
+                "不再參與信心預算；超出份量格所需的賣款回到一般預算（可能流向其他買單）" % (
+                    size, format(weight, ".2%"), "，優質股自己的硬上限與裁決" if quality else "", shares, binding)))
+            kept.append((buy, sell))
+        return kept, plan
 
     def _quality_dip_entry(
         self,
@@ -1366,6 +1618,27 @@ class AllocationOrderEngine:
                     "detail": "反彈參與已確認：總換手上限由 Policy 的 %s 放寬為 %s（放寬風控，由人在 by_state.confirmed.max_turnover_rate 設定）" % (
                         format(decimal_value(self.policy["max_turnover_rate"], "max_turnover_rate"), ".0%"),
                         format(lifted_turnover_rate(self.policy), ".0%")),
+                })
+        offense_obj = sizing.get("offense")
+        if offense_bound(offense_obj):
+            # position_sizing.offense：有效等級與壓回原因（組合層級旗標，減碼日同樣留下，因為它改的是現金目標與曝險配對上限）。
+            reason = offense_obj["suppressed_reason"]  # type: ignore[index]
+            if reason is not None:
+                flags.append({
+                    "symbol": SKIP_PORTFOLIO_SYMBOL, "code": "OFFENSE_SUPPRESSED:%s" % reason,
+                    "detail": "風險 Agent 的 exposure_view 為 %s，程式因 %s 把有效等級壓回 keep_defensive（缺資料或回撤過深時永不升級；現金目標與曝險配對照格點）" % (
+                        offense_obj["view"], reason),  # type: ignore[index]
+                })
+            elif offense_obj["effective_view"] != "keep_defensive":  # type: ignore[index]
+                loosening = offense_obj["cash_loosening"]  # type: ignore[index]
+                flags.append({
+                    "symbol": SKIP_PORTFOLIO_SYMBOL, "code": "OFFENSE:%s" % offense_obj["effective_view"],  # type: ignore[index]
+                    "detail": "有效等級 %s：曝險配對至多取用 %s 組、份量格上限 %s、組合 beta 停止線 %s%s（人填的上限，程式不挑股也不補提名）" % (
+                        offense_obj["effective_view"],  # type: ignore[index]
+                        offense_obj["by_view"][offense_obj["effective_view"]]["max_exposure_pairs"],  # type: ignore[index]
+                        offense_obj["by_view"][offense_obj["effective_view"]]["max_size"],  # type: ignore[index]
+                        offense_obj["by_view"][offense_obj["effective_view"]]["beta_stop"],  # type: ignore[index]
+                        "；防守姿態的現金比例由 %s 放寬為 %s（只放寬）" % (loosening["from"], loosening["to"]) if isinstance(loosening, Mapping) else ""),
                 })
         if derisk_day:
             skip("EXPOSURE_ROTATION", "derisk_day", detail="當日由 drawdown_derisk 減碼，曝險換股與回撤減碼互斥，整個略過")
@@ -1601,6 +1874,7 @@ class AllocationOrderEngine:
         held_count: int,
         allowed_new: Optional[Set[str]] = None,
         recycled: Optional[Set[str]] = None,
+        reserved: Optional[Mapping[str, Decimal]] = None,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """依風控等級排序候選，取到持股廣度目標（舊 policy 為 max_positions），並以等級乘數／ATR 分配扣除現金緩衝後的資金。
 
@@ -1621,6 +1895,9 @@ class AllocationOrderEngine:
         卻已占掉名額；閘門開啟時把它從名額計數中移出、重算一次（``recycled`` 是遞迴累積的移出名單），讓後面的候選補位。
         移出者權重記為 0（`_run` 照舊記 LOT_SIZE），入選總數仍受 ``slots``／``growth_left``／``swap_left``／``new_cap`` 限制，
         不會超過持股上限。省略閘門的舊 Policy 一律不經過，``recycled`` 恆為空。
+
+        ``reserved``（agent_swap.entry_reserve）：換入者先保留的權重 {代號: 權重}。這些股票照常占名額與入選檢查，但不參與信心預算：
+        預算先扣掉它們的保留權重、其餘候選分剩下的，最後它們的目標權重就是保留權重。省略時（含所有舊路徑）行為不變。
         """
         max_positions_in = max_positions
         hard_max = max_positions
@@ -1703,6 +1980,9 @@ class AllocationOrderEngine:
         alpha = limit_scaled_alpha(sizing)
         held_weight_budget = held_weight_budget_enabled(sizing)
         held_frozen: Dict[str, Tuple[Decimal, Decimal]] = {}
+        reserved = {symbol: weight for symbol, weight in (reserved or {}).items() if symbol in eligible}
+        weighted = [symbol for symbol in eligible if symbol not in reserved]
+        reserved_total = sum(reserved.values(), Decimal("0"))
         while True:
             held_outside = sum(
                 (
@@ -1712,32 +1992,36 @@ class AllocationOrderEngine:
                 Decimal("0"),
             )
             budget = Decimal("1") - effective["cash_buffer_rate"] - held_outside  # type: ignore[operator]
+            if reserved:
+                budget -= reserved_total  # entry_reserve：先扣掉換入者保留的權重（沒有保留時不經過這行，舊路徑逐位元不變）
             # eligible 全是本次 buy／add 的股票：stock_limit_headroom 啟用時封頂留 3%（0.97），否則 0.995。
             limits = {
-                symbol: self._weight_limit(symbol, effective) * self._headroom(effective, buying=True) for symbol in eligible
+                symbol: self._weight_limit(symbol, effective) * self._headroom(effective, buying=True) for symbol in weighted
             }
             if alpha is None:
-                weights = conviction_weights(eligible, tiers, multipliers, volatility, floor, limits, budget, exponent)
+                weights = conviction_weights(weighted, tiers, multipliers, volatility, floor, limits, budget, exponent)
             else:
                 # limit_scaled_conviction（版本閘門，α 方案）：high 份額至少為 α × 單股上限（依 effective，修正循環調低
                 # max_stock_weight 只會讓下限變小），並以封頂為限；eligible 已依（信心、名次、代號）排序。
                 floors = {
                     symbol: min(alpha * self._weight_limit(symbol, effective), limits[symbol])
-                    for symbol in eligible if tiers[symbol] == "high"
+                    for symbol in weighted if tiers[symbol] == "high"
                 }
-                weights = alpha_floor_weights(eligible, tiers, multipliers, volatility, floor, limits, budget, exponent, floors)
+                weights = alpha_floor_weights(weighted, tiers, multipliers, volatility, floor, limits, budget, exponent, floors)
+            weights.update(reserved)
             if not held_weight_budget:
                 break
             # held_weight_budget：現有權重已高於等級份額的加碼持股移出 eligible（視同未入選持股以現有權重計入預算）。
             over = {
                 symbol: (Decimal(target_shares[symbol]) * self.prices[symbol] / marked_nav, weights[symbol])
-                for symbol in eligible if symbol in active_symbols
+                for symbol in weighted if symbol in active_symbols
             }
             over = {symbol: pair for symbol, pair in over.items() if pair[0] > pair[1]}
             if not over:
                 break
             held_frozen.update(over)
             eligible = [symbol for symbol in eligible if symbol not in over]
+            weighted = [symbol for symbol in weighted if symbol not in over]
         if slot_recycle_enabled(sizing):
             dead = {
                 symbol for symbol in eligible
@@ -1747,7 +2031,7 @@ class AllocationOrderEngine:
             if dead:
                 return self._conviction_targets(
                     candidates, active_symbols, target_shares, marked_nav, max_positions_in, effective, held_count,
-                    allowed_new, recycled | dead,
+                    allowed_new, recycled | dead, reserved,
                 )
             for symbol in sorted(recycled):
                 weights.setdefault(symbol, Decimal("0"))

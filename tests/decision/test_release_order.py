@@ -560,12 +560,12 @@ class ReplayTests(unittest.TestCase):
     def test_a_v5_template_is_replayed_as_v4(self):
         from etf_agent.evaluation.replay import bind_replay_policy
         from test_cash_ratio_range import STANCE as LEGACY_STANCE, chain_inputs
-        from test_daily_pipeline import live_policy_template
+        from test_daily_pipeline import live_without_offense
 
         bundle, _, debate, intent, archived, _, _, _ = chain_inputs()
 
         def replay(version):
-            template = live_policy_template()
+            template = live_without_offense()
             template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
             for gate in ("agent_swap", "exposure_view"):
                 template["position_sizing"].pop(gate, None)

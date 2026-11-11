@@ -369,12 +369,12 @@ class ReplayTests(unittest.TestCase):
         """回放（replay_reference_only）對 v2 同樣略過 agent_swap：封存 run 沒有提名，回放不換股；其餘 notes 與 v1 相同。"""
         from etf_agent.evaluation.replay import bind_replay_policy
         from test_cash_ratio_range import STANCE as LEGACY_STANCE, chain_inputs
-        from test_daily_pipeline import live_policy_template
+        from test_daily_pipeline import live_without_offense
 
         bundle, _, debate, intent, archived, _, _, _ = chain_inputs()
 
         def replay(version):
-            template = live_policy_template()
+            template = live_without_offense()
             template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
             sizing = template["position_sizing"]
             if version == "v2":
@@ -384,8 +384,12 @@ class ReplayTests(unittest.TestCase):
             if version == "v1":  # 正式樣板的曝險子閘門是 v2（只允許配 agent_swap v2），v1 對照組降回影子
                 sizing["agent_swap"]["exposure"] = {"version": "v1"}
                 sizing["agent_swap"]["quality_dip"]["version"] = "v1"  # 同理：v2 只允許配 agent_swap v2
+                sizing["agent_swap"]["quality_dip"].pop("ladder", None)  # 同理：ladder 只用於 quality_dip v4
+                sizing["agent_swap"]["quality_dip"]["min_turn_assessment"] = "turn_unconfirmed"  # 同理：no_turn_evidence 只有 v4＋ladder 才允許
+                sizing["exposure_view"] = {"version": "v1"}  # 同理：exposure_view v2 需要 agent_swap v2
                 sizing["agent_swap"].pop("derisk_day_view", None)  # 同理：它需要 agent_swap.exposure v2
                 sizing["agent_swap"].pop("proceeds_to_add", None)  # 同理：它需要 agent_swap v2
+                sizing["agent_swap"].pop("entry_reserve", None)  # 同理：它只允許 agent_swap v2
             return bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])
 
         v1_policy, v1_notes = replay("v1")

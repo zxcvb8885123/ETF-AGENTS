@@ -30,6 +30,18 @@ def live_policy_template():
     return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
 
 
+def live_without_offense():
+    """正式樣板拿掉 offense（轉向後進攻）：offense 依賴 agent_swap／exposure_view 等閘門，凡是拿掉那些閘門或降版的對照組樣板都必須先拿掉它，
+    並把 max_pairs_by_view 還原成沒有 probe 的兩鍵（沒有 offense 時只允許 start_rebuild／rebuild）。整條含 offense 的鏈由 test_offense_pipeline 覆蓋。"""
+    value = live_policy_template()
+    sizing = value["position_sizing"]
+    if "offense" in sizing:
+        pairs = sizing["agent_swap"]["exposure"]["max_pairs_by_view"]
+        pairs.pop("probe", None)
+        sizing.pop("offense")
+    return value
+
+
 def fixed_policy_template():
     """固定版本的測試樣板；正式設定變更不能改變舊行為測試世界。"""
     return json.loads((ROOT / "config/policy_versions/2026-11-09-before-review.json").read_text(encoding="utf-8"))
@@ -800,7 +812,7 @@ class LiveTemplatePipelineTests(unittest.TestCase):
     def test_live_template_with_both_gates_finalizes_and_rebuilds(self):
         from etf_agent.decision import DecisionResultValidator
 
-        template = live_policy_template()
+        template = live_without_offense()
         for field in PRODUCTION_SIZING_GATES:
             self.assertIn(field, template["position_sizing"], "正式樣板未開啟 %s；本測試前提已變" % field)
         # cash_stance_recency 需要 typed_evidence_v1 的 bundle 與 recency_reconciliation，這份 fixture 沒有；

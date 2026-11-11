@@ -177,6 +177,35 @@ SWAP_NOMINATION_QUALITY_DIP_SIZED_SCHEMA = _object(
     },
     ("nominations", "lower_conviction_review", "thesis_hint_responses", "quality_dip_decline", "no_nomination_reason"),
 )
+# 只在 Policy 啟用 position_sizing.agent_swap.entry_reserve（換入者先保留預算，階段 3）時使用：每一組都必填列舉 size（small／medium／large，
+# 沒有「不適用」值）。沒有 quality_dip 時以 SWAP_NOMINATION_EXPOSURE_SCHEMA 為底；quality_dip 為 v3／v4 時以 SIZED Schema 為底
+# （保留 quality_dip_decline）。沒有此閘門時沿用上面的 Schema，逐位元不變。
+_SWAP_PAIR_RESERVE = _object(
+    {**_SWAP_PAIR_EXPOSURE["properties"], "size": {"enum": ["small", "medium", "large"]}}, tuple(_SWAP_PAIR_EXPOSURE["required"]) + ("size",),
+)
+SWAP_NOMINATION_RESERVE_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR_RESERVE},
+        "lower_conviction_review": {"type": "array", "items": _LOWER_CONVICTION_ENTRY},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "no_nomination_reason": {"type": "string"},
+    },
+    ("nominations", "lower_conviction_review", "thesis_hint_responses", "no_nomination_reason"),
+)
+_SWAP_PAIR_RESERVE_QUALITY_DIP = _object(
+    {**_SWAP_PAIR_QUALITY_DIP["properties"], "size": {"enum": ["small", "medium", "large"]}},
+    tuple(_SWAP_PAIR_QUALITY_DIP["required"]) + ("size",),
+)
+SWAP_NOMINATION_RESERVE_QUALITY_DIP_SIZED_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR_RESERVE_QUALITY_DIP},
+        "lower_conviction_review": {"type": "array", "items": _LOWER_CONVICTION_ENTRY},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "quality_dip_decline": _QUALITY_DIP_DECLINE,
+        "no_nomination_reason": {"type": "string"},
+    },
+    ("nominations", "lower_conviction_review", "thesis_hint_responses", "quality_dip_decline", "no_nomination_reason"),
+)
 # 風險 Agent 對 quality_dip 配對的裁決（agent_swap.quality_dip v3）：只有代號、列舉、證據識別碼與文字，沒有任何數字欄位；
 # 裁決的列舉裡沒有「升級」。approve 的 reason_kind 填 none、不需要 defensive_reconciliation 時填空字串（封存時還原成缺席）。
 _RULING_ENTRY = _object(
@@ -234,12 +263,30 @@ def cash_stance_turn_facts_schema(graded: bool, recency: bool = False) -> dict:
 
 # 只在 Policy 啟用 position_sizing.exposure_view（版本閘門）時使用：在既有現金姿態 Schema 上另加列舉 exposure_view（不是數字）。
 # 沒有此閘門時沿用上面的 Schema，逐位元不變。
-def exposure_view_schema(base: dict) -> dict:
-    from etf_agent.decision.exposure_facts import EXPOSURE_VIEWS
+def exposure_view_schema(base: dict, probe: bool = False) -> dict:
+    from etf_agent.decision.exposure_facts import EXPOSURE_VIEWS, EXPOSURE_VIEWS_WITH_PROBE
 
     return _object(
-        {**base["properties"], "exposure_view": {"enum": list(EXPOSURE_VIEWS)}},
+        {**base["properties"], "exposure_view": {"enum": list(EXPOSURE_VIEWS_WITH_PROBE if probe else EXPOSURE_VIEWS)}},
         tuple(base["required"]) + ("exposure_view",),
+    )
+
+
+# 只在 Policy 啟用 position_sizing.offense（轉向後進攻，版本閘門）時使用：在含 exposure_view（多 probe）的 Schema 上另加
+# offense_basis（事實類別列舉陣列）、failure_condition 與 defensive_reconciliation（文字）。沒有數字欄位。
+# Codex strict Schema 要求欄位全部列入 required：不適用時以空陣列／空字串送出，封存時由 offense.normalize_offense_stance 還原成缺席。
+# 沒有此閘門時沿用上面的 Schema，逐位元不變。
+def offense_stance_schema(base: dict) -> dict:
+    from etf_agent.decision.offense import OFFENSE_CATEGORIES
+
+    return _object(
+        {
+            **base["properties"],
+            "offense_basis": {"type": "array", "items": {"enum": list(OFFENSE_CATEGORIES)}},
+            "failure_condition": {"type": "string"},
+            "defensive_reconciliation": {"type": "string"},
+        },
+        tuple(base["required"]) + ("offense_basis", "failure_condition", "defensive_reconciliation"),
     )
 
 

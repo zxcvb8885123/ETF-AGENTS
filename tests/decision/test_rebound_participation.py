@@ -611,11 +611,11 @@ class BriefAndReplayTests(unittest.TestCase):
     def test_replay_ignores_the_gate_and_adds_one_note(self):
         from etf_agent.evaluation.replay import bind_replay_policy
         from test_cash_ratio_range import STANCE as LEGACY_STANCE, chain_inputs
-        from test_daily_pipeline import live_policy_template
+        from test_daily_pipeline import live_without_offense
         from test_exposure_rotation import REVIEW_POLICY
 
         bundle, _, debate, intent, archived, _, _, _ = chain_inputs()
-        template = live_policy_template()
+        template = live_without_offense()
         template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
         template["position_sizing"].pop("agent_swap", None)  # 依賴另兩個閘門，要先拿掉
         template["position_sizing"].pop("exposure_view", None)  # 依賴 exposure_rotation，同上
@@ -787,6 +787,7 @@ class LiveConfigTests(unittest.TestCase):
         self.assertIsNone(sizing["exposure_rotation"]["beta_target_by_stance"]["defensive"])
         self.assertEqual(gate["by_state"]["candidate"]["defensive_target"], "0.30")  # 2026-11-10 由 0.01 改 0.30（0.01 恆 beta_at_target）
         self.assertEqual(gate["by_state"]["confirmed"]["defensive_target"], "0.55")
+        # 2026-11-11 開 position_sizing.offense：防守姿態現金放寬改由 offense.by_view 填（兩者互斥），所以不再填 defensive_cash_buffer；換手上限仍不填。
         for row in gate["by_state"].values():
             self.assertNotIn("defensive_cash_buffer", row)
             self.assertNotIn("max_turnover_rate", row)

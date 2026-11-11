@@ -28,7 +28,11 @@ from .rebound import bind_effective_state, loosened_cash_buffer, rebound_gate
 from .turn_facts import cash_stance_turn_facts_gate
 from .exposure_facts import exposure_view_gate
 from .exposure_swap import bind_exposure_view, exposure_swap_gate
-from .quality_dip_swap import bind_quality_dip_turn, quality_dip_swap_gate
+from .offense import (
+    CASH_RAISE_LIMITED_FIELD, bind_offense, build_offense_facts, cash_glide_enabled, cash_raise_limited, offense_cash_target, offense_gate,
+)
+from .decline_depth import build_ladder_state
+from .quality_dip_swap import bind_quality_dip_ladder_state, bind_quality_dip_turn, quality_dip_ladder_gate, quality_dip_swap_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -316,11 +320,15 @@ def apply_trade_decision(
     if gate is not None and "anchor" not in gate:
         raise DecisionToolError("position_sizing.cash_ratio_range 尚未綁定 anchor（前次現金比例）")
     stance_errors: List[str] = []
+    # position_sizing.offense（轉向後進攻，版本閘門）：進攻事實由程式依 bundle 重算（與 team_inputs.offense_facts 同一份），沒有閘門時完全不經過。
+    offense_policy_gate = offense_gate(policy.get("position_sizing") or {})
+    offense_facts = build_offense_facts(bundle, policy) if offense_policy_gate is not None else None
     validate_cash_stance(
         DecisionContext(bundle), cash_stance, "cash_stance", stance_errors, cash_ratio_range=gate, prior_context=prior_context,
         recency_gate=cash_stance_recency_gate(policy.get("position_sizing") or {}),
         turn_facts_gate=cash_stance_turn_facts_gate(policy.get("position_sizing") or {}),
         exposure_view_gate=exposure_view_gate(policy.get("position_sizing") or {}),
+        **({"offense_gate": offense_policy_gate, "offense_facts": offense_facts} if offense_policy_gate is not None else {}),
     )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))
@@ -373,13 +381,37 @@ def apply_trade_decision(
             result["cash_buffer_rate"] = loosened
             bound_gate = {**bound_gate, "cash_loosening": loosening}
         result["position_sizing"]["rebound_participation"] = bound_gate
+    offense_effective = None
+    if offense_policy_gate is not None:
+        # position_sizing.offense：有效等級（缺資料、回撤下限為 defensive、帳本回撤不可用或回撤達停用線時壓回 keep_defensive）綁進閘門；
+        # 防守姿態下現金目標改為 min(格點值, 該級 defensive_cash_buffer)（只放寬）。樣板預填綁定欄位即拒絕；Finalizer 以 team_inputs 重算比對。
+        bound_offense = bind_offense(sizing, cash_stance, control, offense_facts)
+        loosened_cash, cash_loosening = offense_cash_target(bound_offense, level, result["cash_buffer_rate"])
+        if cash_loosening is not None:
+            result["cash_buffer_rate"] = loosened_cash
+            bound_offense = {**bound_offense, "cash_loosening": cash_loosening}
+        if cash_glide_enabled(bound_offense):
+            # offense.cash_glide：放寬之後的防守姿態現金目標，回升不得超過 anchor＋max_daily_raise（只在前次放寬過且回撤條件成立時）；記錄前後值供稽核。
+            limited = cash_raise_limited(sizing, bound_offense, control, level, result["cash_buffer_rate"])
+            bound_offense = {**bound_offense, CASH_RAISE_LIMITED_FIELD: limited}
+            if limited is not None:
+                result["cash_buffer_rate"] = limited["to"]
+        result["position_sizing"]["offense"] = bound_offense
+        offense_effective = str(bound_offense["effective_view"])
     if exposure_swap_gate(sizing) is not None:
-        # agent_swap.exposure v2（版本閘門）：風險 Agent 的 exposure_view 綁進 Policy，配置只讀 Policy；v1（影子）不綁。
-        result["position_sizing"]["agent_swap"] = bind_exposure_view(sizing, cash_stance)
+        # agent_swap.exposure v2（版本閘門）：風險 Agent 的 exposure_view（offense 啟用時為有效等級）綁進 Policy，配置只讀 Policy；v1（影子）不綁。
+        result["position_sizing"]["agent_swap"] = bind_exposure_view(sizing, cash_stance, offense_effective)
     if quality_dip_swap_gate(sizing) is not None:
         # agent_swap.quality_dip v2（版本閘門）：風險 Agent 的 turn_assessment 綁進 Policy，配置只讀 Policy；v1（影子）不綁。
         swap = result["position_sizing"].get("agent_swap", sizing["agent_swap"])  # type: ignore[index]
         result["position_sizing"]["agent_swap"] = bind_quality_dip_turn(swap, sizing, cash_stance)
+        if quality_dip_ladder_gate(sizing) is not None:
+            # agent_swap.quality_dip v4：梯度對今天的判定（程式算、缺資料即關閉）綁進 Policy，配置與風險 Agent 的前置檢查只讀綁定值；
+            # Finalizer 以 team_inputs.decline_depth_facts、帳本綁定的 held_since_by_symbol 與本次 turn_assessment 重算比對。
+            result["position_sizing"]["agent_swap"] = bind_quality_dip_ladder_state(
+                result["position_sizing"]["agent_swap"],
+                build_ladder_state(bundle, policy, str(cash_stance.get("turn_assessment"))),
+            )
     if "positions_by_breadth" in sizing:
         breadth = cash_stance.get("breadth")
         if breadth not in POSITION_BREADTHS:

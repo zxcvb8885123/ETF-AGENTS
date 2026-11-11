@@ -888,16 +888,53 @@ class AllocationTests(unittest.TestCase):
 # ---------------------------------------------------------------- 6. 正式樣板回歸
 
 class ProductionTemplateTests(unittest.TestCase):
-    def test_the_live_template_has_no_v3_fields_and_the_current_v2_settings_are_untouched(self):
+    def test_the_live_template_runs_v4_with_the_human_filled_limits(self):
+        # 2026-11-11：階段 0b 由 v2 切到 v3（組數 2、單檔買進權重 0.04，超跌 1 組、0.02）；同日再切到 v4＋ladder（docs/agent_led_offense_plan.md）。
         live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         sizing = live["position_sizing"]
         gate = quality_dip_swap_gate(sizing)
-        self.assertEqual(gate["version"], "v2")  # 保持關閉：沒有人給第 1 項數值，也沒有切換
-        self.assertIsNone(quality_dip_v3_gate(sizing))
-        for field in ("ruling_ref", "rulings"):
+        self.assertEqual(gate["version"], "v4")
+        self.assertIsNotNone(quality_dip_v3_gate(sizing))  # v4 是 v3 的超集，份量格與裁決同 v3
+        self.assertEqual(gate["ladder"], {
+            "min_pool_drawdown": "0.08", "max_dip_exposure": "0.12", "max_tranches": 8,
+            "min_days_between_tranches": 2, "pause_after_further_drop": "0.05", "exposure_basis": "quality_dip_fills"})  # 2026-11-11 offense-ext-1
+        self.assertEqual(sizing["exposure_view"], {"version": "v2"})
+        self.assertEqual(gate["min_turn_assessment"], "no_turn_evidence")  # 使用者要連跌無轉向跡象時也能抄底（回檔深度由 ladder 把關）
+        for field in ("ruling_ref", "rulings", "ladder_state", "turn_assessment"):  # pipeline 綁定欄位，正式樣板人不填
             self.assertNotIn(field, gate)
-        self.assertEqual({key: gate[key] for key in ("max_swaps_per_run", "max_entry_weight")}, {"max_swaps_per_run": 1, "max_entry_weight": "0.03"})
+        self.assertEqual({key: gate[key] for key in ("max_swaps_per_run", "max_entry_weight")}, {"max_swaps_per_run": 2, "max_entry_weight": "0.04"})
+        self.assertEqual(gate["oversold"], {"max_swaps_per_run": 1, "max_entry_weight": "0.02"})
         self.assertEqual(errors_for_live(live), [])
+
+    def test_the_live_template_pins_entry_reserve_v1_with_the_human_filled_numbers(self):
+        # 2026-11-11：開啟 agent_swap.entry_reserve（policy_id strategy-2026-11-11-entry-reserve-1；回滾樣板 2026-11-11-before-entry-reserve.json）。
+        live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        swap = live["position_sizing"]["agent_swap"]
+        self.assertEqual(swap["entry_reserve"], {"version": "v1", "max_entry_weight": "0.06", "max_nominations": 8})
+        self.assertLessEqual(swap["max_swaps_per_run"], swap["entry_reserve"]["max_nominations"])
+        self.assertEqual([e for e in errors_for(live["position_sizing"]) if "entry_reserve" in e], [])
+        self.assertTrue((ROOT / "config" / "policy_versions" / "2026-11-11-before-entry-reserve.json").exists())
+
+    def test_the_live_template_pins_offense_v1_with_the_human_filled_numbers(self):
+        # 2026-11-11：開啟 position_sizing.offense（policy_id strategy-2026-11-11-offense-1；回滾樣板 2026-11-11-before-offense.json）。
+        live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        sizing = live["position_sizing"]
+        self.assertEqual(sizing["offense"], {
+            "version": "v1",
+            "by_view": {
+                "probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 2, "max_size": "medium", "beta_stop": "0.40"},
+                "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"},
+                "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"},
+            },
+            "offense_off_drawdown": "0.12",
+            "thesis_size_cap": {"version": "v1"},  # 2026-11-11 offense-ext-1（回滾樣板 2026-11-11-before-offense-extensions.json）
+            "cash_glide": {"version": "v1"},
+        })
+        self.assertEqual(sizing["agent_swap"]["exposure"]["max_pairs_by_view"], {"probe": 2, "start_rebuild": 4, "rebuild": 5})
+        for row in sizing["rebound_participation"]["by_state"].values():
+            self.assertNotIn("defensive_cash_buffer", row)  # 與 offense 互斥
+        self.assertEqual([e for e in errors_for(sizing) if ("offense" in e or "max_pairs_by_view" in e) and "drawdown_control" not in e], [])  # 回撤線由完整 Policy 驗證（test_offense）
+        self.assertTrue((ROOT / "config" / "policy_versions" / "2026-11-11-before-offense.json").exists())
 
     def test_the_researchers_may_not_read_the_ruling_outputs_and_the_skill_files_exist(self):
         for pattern in ("quality_dip_ruling*", "brief_quality_dip_ruling*", "quality_dip_ruler*"):

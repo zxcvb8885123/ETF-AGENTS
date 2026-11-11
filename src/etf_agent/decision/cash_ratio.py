@@ -44,7 +44,35 @@ def account_cash_ratio(bundle: Mapping[str, object]) -> str:
     return _ratio_text(min(cash / nav, Decimal("1")))
 
 
-def _prior_anchor(bundle: Mapping[str, object], repository_root: Path, run_id: str, selection: str) -> Dict[str, object]:
+def glide_enabled(policy: Mapping[str, object]) -> bool:
+    """``position_sizing.offense.cash_glide`` 有開（本模組只看欄位存在，不匯入 offense 以免循環匯入）。"""
+    sizing = policy.get("position_sizing")
+    offense = sizing.get("offense") if isinstance(sizing, Mapping) else None
+    return isinstance(offense, Mapping) and "cash_glide" in offense
+
+
+def _prior_offense_loosened(run_dir: Path, run_id: str, proposal: Mapping[str, object]) -> bool:
+    """前次 run 的 Policy（先核對內容雜湊與 proposal.policy_hash）offense 綁定有現金放寬（``cash_loosening``）或現金回升限制（``cash_raise_limited``）。
+
+    前次沒有 offense、或讀不到／雜湊不符的 Policy 一律 fail-closed 拒絕（不猜成 False，避免改變重建結果）。"""
+    try:
+        prior_policy = json.loads((run_dir / "policy.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise DecisionToolError("前次 Decision run %s 缺少或無法讀取 policy：%s" % (run_id, error)) from error
+    if not isinstance(prior_policy, Mapping) or prior_policy.get("content_sha256") != artifact_content_sha256(prior_policy):
+        raise DecisionToolError("前次 Decision run %s 的 policy 內容雜湊不一致" % run_id)
+    if proposal.get("policy_hash") != prior_policy.get("content_sha256"):
+        raise DecisionToolError("前次 Decision run %s 的 proposal 與 policy 不是同一組" % run_id)
+    sizing = prior_policy.get("position_sizing")
+    offense = sizing.get("offense") if isinstance(sizing, Mapping) else None
+    if not isinstance(offense, Mapping):
+        return False
+    return offense.get("cash_loosening") is not None or offense.get("cash_raise_limited") is not None
+
+
+def _prior_anchor(
+    bundle: Mapping[str, object], repository_root: Path, run_id: str, selection: str, with_prior_loosening: bool = False,
+) -> Dict[str, object]:
     prior = read_decision_run(repository_root, run_id)  # manifest 驗證整個 run
     source = _verify_prior(bundle, prior, selection)
     from .finalization import DecisionRepository  # 延後匯入：finalization 也匯入本模組做重建驗證。
@@ -64,7 +92,7 @@ def _prior_anchor(bundle: Mapping[str, object], repository_root: Path, run_id: s
     ratio = decimal_value(effective.get("cash_buffer_rate"), "前次 effective_policy.cash_buffer_rate")
     if ratio < 0 or ratio > 1:
         raise DecisionToolError("前次 Decision run %s 的 cash_buffer_rate 必須介於 0 與 1" % run_id)
-    return {
+    anchor: Dict[str, object] = {
         "status": "prior_decision",
         "ratio": _ratio_text(ratio),
         "source": {
@@ -76,10 +104,15 @@ def _prior_anchor(bundle: Mapping[str, object], repository_root: Path, run_id: s
             "proposal_sha256": str(proposal["content_sha256"]),
         },
     }
+    if with_prior_loosening:
+        # offense.cash_glide 開啟時才多這一鍵（前次是否放寬過現金）；沒開時 anchor 形狀逐位元不變。
+        anchor["prior_offense_loosened"] = _prior_offense_loosened(run_dir, run_id, proposal)
+    return anchor
 
 
 def cash_ratio_anchor(
     bundle: Mapping[str, object], repository_root: Optional[Path], prior_context: Optional[Mapping[str, object]],
+    with_prior_loosening: bool = False,
 ) -> Dict[str, object]:
     """依前次決策背景挑到的 run 計算 anchor；背景 unavailable 或沒有背景時用本次起始現金比例。"""
     available = isinstance(prior_context, Mapping) and prior_context.get("status") == "available"
@@ -90,7 +123,7 @@ def cash_ratio_anchor(
     source = prior_context.get("source")  # type: ignore[union-attr]
     if not isinstance(source, Mapping):
         raise DecisionToolError("前次決策背景缺少 source，無法取得前次現金比例")
-    return _prior_anchor(bundle, Path(repository_root), str(source.get("run_id")), str(source.get("selection")))
+    return _prior_anchor(bundle, Path(repository_root), str(source.get("run_id")), str(source.get("selection")), with_prior_loosening)
 
 
 def bind_cash_ratio_anchor(
@@ -108,7 +141,7 @@ def bind_cash_ratio_anchor(
         return bound
     if "anchor" in gate:
         raise DecisionToolError("策略樣板的 cash_ratio_range 不得預先填 anchor（由 pipeline 綁定）")
-    gate["anchor"] = cash_ratio_anchor(bundle, repository_root, prior_context)  # type: ignore[index]
+    gate["anchor"] = cash_ratio_anchor(bundle, repository_root, prior_context, glide_enabled(bound))  # type: ignore[index]
     return bound
 
 
@@ -152,7 +185,8 @@ def validate_cash_ratio_anchor(
         if not isinstance(source, Mapping):
             return ["%s.source 必須是物件" % prefix]
         try:
-            expected = _prior_anchor(bundle, Path(repository_root), str(source.get("run_id")), str(source.get("selection")))
+            expected = _prior_anchor(
+                bundle, Path(repository_root), str(source.get("run_id")), str(source.get("selection")), glide_enabled(policy))
         except DecisionToolError as error:
             return ["%s 無法由前次 run 重算：%s" % (prefix, error)]
     elif status == "account_cash":

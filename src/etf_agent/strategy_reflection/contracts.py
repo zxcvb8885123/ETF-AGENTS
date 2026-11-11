@@ -177,6 +177,8 @@ FORBIDDEN_PREFIXES = (
     "agent_swap",
     # Agent 主導曝險階段 1：風險 Agent 簡報附組合曝險事實並多填 exposure_view 列舉（紀錄用），切換程式路徑與 team_inputs 欄位，只由人設定。
     "exposure_view",
+    # 轉向後進攻（offense）：風險 Agent 的 probe 等級與每級對映的人填上限（現金目標、曝險配對數、份量格、beta 停止線、回撤停用線），只由人設定。
+    "offense",
     # 估值 V2：PER／PBR 位置事實以背景進基本面分析師與交易 Agent 簡報（紀錄用），切換程式路徑與 team_inputs 欄位，只由人設定。
     "valuation_facts",
 )

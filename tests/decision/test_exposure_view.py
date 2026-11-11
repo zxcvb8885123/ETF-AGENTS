@@ -293,14 +293,15 @@ class GateTests(unittest.TestCase):
 class ReplayTests(unittest.TestCase):
     def test_replay_ignores_the_gate_strips_the_enum_and_allocates_the_same(self):
         import test_exposure_rotation_e2e as e2e
-        from test_daily_pipeline import live_policy_template
+        from test_daily_pipeline import live_without_offense
 
         helper = e2e.ReplayTests()
         helper.setUp()
-        plain = helper.template(live_policy_template)
+        plain = helper.template(live_without_offense)
         plain["position_sizing"].pop("exposure_view", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("quality_dip", None)  # 依賴 exposure 子閘門，要先於它拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("exposure", None)  # 子閘門依賴 exposure_view，要一併拿掉
+        plain["position_sizing"].get("agent_swap", {}).pop("entry_reserve", None)  # 它依賴 agent_swap.exposure，要先於 exposure 拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("derisk_day_view", None)  # 它依賴 agent_swap.exposure v2，同樣要拿掉
         gated = copy.deepcopy(plain)
         gated["position_sizing"]["exposure_view"] = dict(GATE)
