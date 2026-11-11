@@ -196,7 +196,13 @@ class IntentLandingTest(unittest.TestCase):
 
 @unittest.skipUnless((REAL_DECISIONS / "2026-11-10").is_dir(), "沒有封存的 artifacts/decisions，略過重現文件數字")
 class ArchivedRunsReproductionTest(unittest.TestCase):
-    """重現 docs/agent_autonomy_plan.md 第 1.2 節的數字（封存為 2026-10-27～11-10 共 11 份）。"""
+    """重現 docs/agent_autonomy_plan.md 第 1.2 節的數字（封存為 2026-10-27～11-10 共 11 份，另加 2026-11-11 一份）。
+
+    2026-11-11 的期望值由 decision-20261111T001308Z（08:08 台北時間 run，08:31 封存）決定：它取代了先前封存的
+    decision-20261110T230642Z（現在在 artifacts/archive/superseded_decisions/2026-11-11）。把舊 run 換回去重算會得到
+    282／40、MAX_POSITIONS 185、NO_FLAG 26、被推翻賣單 48913350 與 11-04 起 115／6（2026-11-11 驗證）；新 run 貢獻 28 筆買進／加碼意圖、
+    落地 1 筆、被推翻賣單 21657760（舊 run 為 462660），所以差額是 +2 筆意圖、+1 筆落地、MAX_POSITIONS +1、NO_FLAG -1、被推翻賣單 +21195100。
+    封存的 run 再被取代時，這些數字須依同樣方式重新核對。"""
 
     @classmethod
     def setUpClass(cls):
@@ -204,23 +210,23 @@ class ArchivedRunsReproductionTest(unittest.TestCase):
 
     def test_overall_landing(self):
         totals = self.report["totals"]
-        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (282, 40))
-        self.assertEqual(totals["unlanded_reasons"]["MAX_POSITIONS"], 185)
-        self.assertEqual(totals["unlanded_reasons"]["NO_FLAG"], 26)
+        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (284, 41))
+        self.assertEqual(totals["unlanded_reasons"]["MAX_POSITIONS"], 186)
+        self.assertEqual(totals["unlanded_reasons"]["NO_FLAG"], 25)
 
     def test_policy_segments_sum_to_archived_totals(self):
         totals = self.report["totals"]
         segments = self.report["by_policy"]
-        self.assertEqual(sum(segment["buy_add_intents"] for segment in segments), 282)
-        self.assertEqual(sum(segment["landed"] for segment in segments), 40)
-        self.assertEqual(sum(segment["unlanded"] for segment in segments), 242)
-        self.assertEqual(sum(int(segment["overridden_sell_gross_amount"]) for segment in segments), 48913350)
-        self.assertEqual(totals["overridden_sell_gross_amount"], "48913350")
+        self.assertEqual(sum(segment["buy_add_intents"] for segment in segments), 284)
+        self.assertEqual(sum(segment["landed"] for segment in segments), 41)
+        self.assertEqual(sum(segment["unlanded"] for segment in segments), 243)
+        self.assertEqual(sum(int(segment["overridden_sell_gross_amount"]) for segment in segments), 70108450)
+        self.assertEqual(totals["overridden_sell_gross_amount"], "70108450")
         self.assertEqual(sum(segment["run_count"] for segment in segments), self.report["run_count"])
 
     def test_since_1104(self):
         totals = intent_landing_report(REAL_DECISIONS, since="2026-11-04")["totals"]
-        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (115, 6))
+        self.assertEqual((totals["buy_add_intents"], totals["landed"]), (117, 7))
 
     def test_1104_hold_sold(self):
         day = next(item for item in self.report["days"] if item["date"] == "2026-11-04")

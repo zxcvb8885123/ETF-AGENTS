@@ -70,7 +70,7 @@ from etf_agent.evaluation.replay import ReplayError, bind_replay_policy
 
 from test_analysts import event_items, finding, report, technical_items
 from test_cash_ratio_range import STANCE as LEGACY_STANCE, chain_inputs
-from test_daily_pipeline import gateless_policy_template, live_policy_template
+from test_daily_pipeline import gateless_policy_template, live_without_offense
 from test_exposure_rotation import (
     GATE, LIMITS, NARROW, REVIEW_POLICY, decisions, exposure_bundle, exposure_sizing, flag_map, gate_with,
     hold_item,
@@ -598,7 +598,7 @@ class ReplayTests(unittest.TestCase):
         return bind_replay_policy(template, self.bundle, self.archived, self.intent, self.debate, dict(LEGACY_STANCE), [])
 
     def test_replay_ignores_the_gate_and_adds_one_note(self):
-        for factory in (live_policy_template, gateless_policy_template):
+        for factory in (live_without_offense, gateless_policy_template):
             with self.subTest(factory.__name__):
                 plain = self.template(factory)
                 plain["position_sizing"].pop("rebound_participation", None)
@@ -623,8 +623,9 @@ class ReplayTests(unittest.TestCase):
                 self.assertEqual(policy["content_sha256"], plain_policy["content_sha256"])
 
     def test_replayed_allocation_never_rotates(self):
-        gated = self.template(live_policy_template)
+        gated = self.template(live_without_offense)
         gated["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation／rebound_participation，要先拿掉
+        gated["position_sizing"].pop("exposure_view", None)  # exposure_view v2 需要 agent_swap v2，拿掉 agent_swap 時一併拿掉
         gated["position_sizing"].pop("rebound_participation", None)
         gated["position_sizing"]["exposure_rotation"] = copy.deepcopy(GATE)
         policy, _ = self.replay(gated)
@@ -632,11 +633,11 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(ProposalValidator(self.bundle, policy, self.intent).validate(body), [])
         self.assertFalse([c for c in codes(body) if "EXPOSURE" in c or "GAP_SWAP" in c], codes(body))
         # 與沒有閘門的回放配置逐位元相同。
-        plain_policy, _ = self.replay(self.template(live_policy_template))
+        plain_policy, _ = self.replay(self.template(live_without_offense))
         self.assertEqual(AllocationOrderEngine(self.bundle, plain_policy).run(self.intent)["content_sha256"], body["content_sha256"])
 
     def test_replay_of_the_live_template_notes_ignored_gates(self):
-        _, notes = self.replay(self.template(live_policy_template))
+        _, notes = self.replay(self.template(live_without_offense))
         self.assertEqual(
             set(notes),
             {"policy_id", "content_sha256", "available_at_overridden", "archived_cash_stance", "cash_stance", "stance_floor",
@@ -647,7 +648,7 @@ class ReplayTests(unittest.TestCase):
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):
         def attempt(mutate):
-            template = self.template(live_policy_template)
+            template = self.template(live_without_offense)
             template["position_sizing"]["exposure_rotation"] = copy.deepcopy(GATE)
             mutate(template)
             with self.assertRaises(ReplayError):

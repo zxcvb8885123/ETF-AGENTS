@@ -26,7 +26,7 @@ from etf_agent.decision.finalization import RANKING_TEAM_VERSIONS, build_team_in
 from etf_agent.decision import DecisionToolError
 
 from test_daily_pipeline import (
-    BEAR, BULL, EVENT, FUNDAMENTAL, ROOT, STANCE, TECHNICAL, TRADE, FakeRunner, PipelineWorld, live_policy_template, team_outputs,
+    BEAR, BULL, EVENT, FUNDAMENTAL, ROOT, STANCE, TECHNICAL, TRADE, FakeRunner, PipelineWorld, live_without_offense, team_outputs,
 )
 
 NAV = [
@@ -46,7 +46,7 @@ BAD_RELEASE = {"sequence": [dict(RELEASE["sequence"][0], symbol="9999.TW"), RELE
 
 def template(version="v5"):
     """正式樣板（拿掉 fixture 沒有資料的 cash_stance_recency 與已開影子的 agent_swap）；drawdown_derisk 改成 ``version``。"""
-    value = live_policy_template()
+    value = live_without_offense()
     sizing = value["position_sizing"]
     sizing.pop("cash_stance_recency")
     sizing.pop("agent_swap", None)

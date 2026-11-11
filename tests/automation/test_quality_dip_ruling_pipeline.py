@@ -20,7 +20,7 @@ from pathlib import Path
 from etf_agent.decision import decision_policy_sha256
 
 from test_agent_swap_v2_pipeline import V2Harness
-from test_daily_pipeline import STANCE, FakeRunner, PipelineWorld, live_policy_template
+from test_daily_pipeline import STANCE, FakeRunner, PipelineWorld, live_policy_template, live_without_offense
 from test_swap_nomination_pipeline import GOOD_PAIR, NOMINATION, outputs
 
 V3_GATE = {"max_swaps_per_run": 1, "max_entry_weight": "0.2"}
@@ -28,20 +28,30 @@ THESIS_PAIR = dict(GOOD_PAIR, purpose="thesis")
 
 
 def live_like_template(version):
-    value = live_policy_template()
+    value = live_policy_template() if version == "v4" else live_without_offense()  # 降版對照組沒有 offense（它依賴 v4 的 entry_reserve 等）
     sizing = value["position_sizing"]
     sizing.pop("cash_stance_recency")
     sizing["rotation"].pop("forced_swap", None)
     sizing["exposure_rotation"].pop("conviction_gap_swap", None)
     value["max_turnover_rate"] = "1"
+    if version == "v4":  # 正式設定原樣（v4＋ladder＋oversold，exposure_view v2）：只套 fixture 需要的調整
+        return value
+    sizing["agent_swap"].pop("entry_reserve", None)  # 對照組沒有份量格：提名不填 size（entry_reserve 只由 v4 正式設定樣板涵蓋）
+    sizing["agent_swap"]["quality_dip"].pop("ladder", None)  # 正式設定是 v4；v3／v2 對照組要明確降版，ladder 只用於 v4
+    sizing["agent_swap"]["quality_dip"]["min_turn_assessment"] = "turn_unconfirmed"  # no_turn_evidence 只有 v4＋ladder 才允許
+    sizing["exposure_view"] = {"version": "v1"}  # 對照組維持舊簡報（v2 的簡報文字是正式設定的行為，由 v4 測試涵蓋）
     if version == "v3":
         sizing["agent_swap"]["quality_dip"].update(version="v3", **V3_GATE)
+    else:
+        # v2 對照組要明確降回 v2 形狀（v2 沒有 oversold 與 v3 的組數欄位）。
+        sizing["agent_swap"]["quality_dip"].pop("oversold", None)
+        sizing["agent_swap"]["quality_dip"].update(version="v2", max_swaps_per_run=1, max_entry_weight="0.03")
     return value
 
 
 class Harness3(V2Harness):
-    def __init__(self, directory, version="v3"):
-        self.world = PipelineWorld(Path(directory), approved_status=True, template=live_like_template(version))
+    def __init__(self, directory, version="v3", template=None):
+        self.world = PipelineWorld(Path(directory), approved_status=True, template=template or live_like_template(version))
         account = json.loads(self.world.paths["account"].read_text(encoding="utf-8"))
         account.update(cash="1000000", settled_cash="1000000", nav="1164000")
         self.world.paths["account"].write_text(json.dumps(account, ensure_ascii=False), encoding="utf-8")
@@ -56,7 +66,8 @@ def stance():
 
 def team_outputs(version):
     # 曝險提名（agent_swap.exposure）開著時 lower_conviction_review 必填；fixture 沒有可提名的 quality_dip 目標，不得填 decline。
-    nomination = dict(NOMINATION, nominations=[THESIS_PAIR], lower_conviction_review=[])
+    pair = dict(THESIS_PAIR, size="large") if version == "v4" else THESIS_PAIR  # 正式設定有 entry_reserve：每組都要填份量格
+    nomination = dict(NOMINATION, nominations=[pair], lower_conviction_review=[])
     return outputs(nomination, cash_stance=[stance()])
 
 
