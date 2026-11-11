@@ -25,6 +25,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from etf_agent.core.text import untrusted_value
 
 from .contracts import DecisionToolError, artifact_content_sha256, reject_unknown_fields, validate_forbidden_keys
+from .decline_depth import DECLINE_DEPTH_FACTS_KEY, decline_depth_brief, decline_depth_reference_tokens
 from .dip_facts import DIP_FACTS_KEY, dip_reference_tokens
 from .exposure_facts import EXPOSURE_FACTS_KEY, exposure_reference_tokens, risk_exposure_brief
 from .input_context import DecisionContext
@@ -190,6 +191,8 @@ def quality_dip_ruling_brief(
     turn: Mapping[str, object],
     index: Mapping[str, object],
     turn_state: Optional[Mapping[str, object]] = None,
+    agent_led: bool = False,
+    decline_depth_facts: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """給風險 Agent 的裁決簡報（全部由程式算）。只有 quality_dip 配對與其背景：不附其他股票的意圖與信心統計、thesis 與 exposure 配對、任何上限百分比。
 
@@ -233,12 +236,15 @@ def quality_dip_ruling_brief(
         "cash_stance": {key: stance[key] for key in ("level", "cash_grade", "breadth", "turn_assessment", "exposure_view") if key in stance},
         "turn_facts": {"citable": False, **dict(turn)},
         "market_index_facts": {"citable": False, **dict(index)},
-        EXPOSURE_FACTS_KEY: risk_exposure_brief(exposure_facts),
+        EXPOSURE_FACTS_KEY: risk_exposure_brief(exposure_facts, agent_led=agent_led),
         "market_level_evidence_ids": sorted(context.market_evidence_ids),
         "citable_evidence_ids": sorted(set(price_evidence) | context.market_evidence_ids),
     }
     if turn_state is not None:
         brief["turn_state"] = {"citable": False, **dict(turn_state)}
+    if decline_depth_facts is not None:
+        # v4：連跌深度事實（背景、不可引用）；不附梯度的上限與剩餘額度（裁決簡報不附任何上限數字）。
+        brief[DECLINE_DEPTH_FACTS_KEY] = decline_depth_brief(decline_depth_facts)
     return brief
 
 
@@ -273,6 +279,7 @@ class QualityDipRulingValidator:
         prior_context: Optional[Mapping[str, object]] = None,
         exposure_facts: Optional[Mapping[str, object]] = None,
         dip_facts: Optional[Mapping[str, object]] = None,
+        decline_depth_facts: Optional[Mapping[str, object]] = None,
     ):
         self.bundle = dict(bundle)
         self.policy = policy
@@ -280,6 +287,8 @@ class QualityDipRulingValidator:
         self.stance = stance
         self.context = DecisionContext(bundle)
         tokens = list(BACKGROUND_KEYS) + prior_reference_tokens(prior_context) + exposure_reference_tokens(exposure_facts) + dip_reference_tokens(dip_facts)
+        if decline_depth_facts is not None:
+            tokens += decline_depth_reference_tokens(decline_depth_facts)
         self.tokens = sorted(set(tokens))
 
     def validate(self, ruling: Mapping[str, object]) -> List[str]:
@@ -448,6 +457,7 @@ def validate_team_quality_dip_ruling(
         problems = QualityDipRulingValidator(
             bundle, policy, nomination, stance, prior_context=prior if isinstance(prior, Mapping) else None,
             exposure_facts=facts if isinstance(facts, Mapping) else None, dip_facts=dip if isinstance(dip, Mapping) else None,
+            decline_depth_facts=team.get(DECLINE_DEPTH_FACTS_KEY) if isinstance(team.get(DECLINE_DEPTH_FACTS_KEY), Mapping) else None,
         ).validate(ruling)
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:
         problems = ["無法重建驗證：%s" % error]

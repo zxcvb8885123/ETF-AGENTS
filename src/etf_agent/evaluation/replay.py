@@ -251,6 +251,13 @@ def bind_replay_policy(
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "cash_stance_turn_facts"}
             base["content_sha256"] = decision_policy_sha256(base)
         bound_stance = {key: value for key, value in bound_stance.items() if key != "turn_assessment"}
+        # offense（轉向後進攻）依賴 agent_swap／exposure_view（回放略過）與 Agent 當天的 probe 等級：先於它們移除閘門並拿掉封存姿態的
+        # offense 欄位；沒有閘門的舊回放 notes 與 policy 逐位元不變。
+        offense_ignored = isinstance(base.get("position_sizing"), Mapping) and "offense" in base["position_sizing"]
+        if offense_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "offense"}
+            base["content_sha256"] = decision_policy_sha256(base)
+        bound_stance = {key: value for key, value in bound_stance.items() if key not in ("offense_basis", "failure_condition", "defensive_reconciliation")}
         # exposure_view 依賴 exposure_rotation（回放略過），且只是 Agent 當天的紀錄欄位：先於 exposure_rotation 移除閘門，
         # 並拿掉封存姿態的 exposure_view；沒有閘門的舊回放 notes 與 policy 逐位元不變。
         view_ignored = isinstance(base.get("position_sizing"), Mapping) and "exposure_view" in base["position_sizing"]
@@ -341,6 +348,8 @@ def bind_replay_policy(
         notes["valuation_facts"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
+    if offense_ignored:
+        notes["offense"] = "ignored_in_replay"
     for field in dip_ignored:
         notes[field] = "ignored_in_replay"
     if release_replayed_as_v4:

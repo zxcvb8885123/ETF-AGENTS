@@ -191,21 +191,8 @@ def _approvals(rows, cutoff, sources=SOURCES):
     return approvals
 
 
-def evaluate(pack):
-    check_fields(pack, PACK_FIELDS, "恐懼貪婪資料包")
-    if pack["schema_version"] not in PACK_VERSIONS or not isinstance(pack["snapshot_id"], str) or not pack["snapshot_id"]:
-        raise FearGreedError("恐懼貪婪資料包身分無效")
-    if seal(pack) != pack:
-        raise FearGreedError("恐懼貪婪資料包雜湊不符")
-    cutoff = parse_aware_time(pack["decision_cutoff"], "decision_cutoff", error=FearGreedError)
-    cutoff_day = cutoff.astimezone(ZoneInfo("Asia/Taipei")).date().isoformat()
-    v3 = pack["schema_version"] == PACK_VERSION_V12
-    v2 = v3 or pack["schema_version"] == PACK_VERSION_V11
-    score_version = SCORE_VERSION_V3 if v3 else SCORE_VERSION_V2 if v2 else SCORE_VERSION
-    sources = sources_for(pack["schema_version"])
-    approvals = _approvals(pack["source_approvals"], cutoff, sources)
-    if not isinstance(pack["captures"], list):
-        raise FearGreedError("原始回應必須是陣列")
+def _load_series(pack, cutoff, cutoff_day, sources):
+    """逐筆驗證原始回應並解析成（來源 → 日期 → 數值）；``evaluate`` 與 ``score_as_of`` 共用，行為與原內嵌迴圈相同。"""
     series = {source: {} for source in sources}
     raws = {source: [] for source in sources}
     gaps, seen = [], set()
@@ -237,6 +224,61 @@ def evaluate(pack):
                 raise FearGreedError("%s 同日數值不一致：%s" % (sources[source]["name"], day))
             series[source][day] = value
         raws[source].append(capture["raw_sha256"])
+    return series, raws, gaps
+
+
+def score_as_of(pack, day):
+    """用同一份資料包的原始回應，重算內容日 <= ``day`` 的正式分數（已核准且可用的成分平均，至少 MIN_COMPONENTS 項）。
+
+    只用內容日不晚於 ``day`` 的列；原始回應的取得時間仍須不晚於資料包截止時間。成分不足、資料過舊或來源未核准一律回 None，不補值。
+    只能用來算「截止時間之前」的歷史分數，``day`` 晚於資料包截止日即拒絕。
+    """
+    check_fields(pack, PACK_FIELDS, "恐懼貪婪資料包")
+    if pack["schema_version"] not in PACK_VERSIONS or seal(pack) != pack:
+        raise FearGreedError("恐懼貪婪資料包身分或雜湊無效")
+    cutoff = parse_aware_time(pack["decision_cutoff"], "decision_cutoff", error=FearGreedError)
+    cutoff_day = cutoff.astimezone(ZoneInfo("Asia/Taipei")).date().isoformat()
+    if day > cutoff_day:
+        raise FearGreedError("歷史分數日期晚於資料包截止日")
+    v2 = pack["schema_version"] in (PACK_VERSION_V11, PACK_VERSION_V12)
+    sources = sources_for(pack["schema_version"])
+    approvals = _approvals(pack["source_approvals"], cutoff, sources)
+    if not isinstance(pack["captures"], list):
+        raise FearGreedError("原始回應必須是陣列")
+    series, raws, _gaps = _load_series(pack, cutoff, cutoff_day, sources)
+    scores = []
+    for source in [s for s in sources if s in SOURCES] + ([LEVEL_SOURCE] if v2 else []):
+        if source == LEVEL_SOURCE:
+            if not (all(approvals.get(item, False) for item in LEVEL_INPUTS) and all(raws[item] for item in LEVEL_INPUTS)):
+                continue
+            computed, _reason = _level_score(series["FINMIND_MARGIN"], series["TWSE_TAIEX"], day)
+        else:
+            if not (approvals.get(source, False) and raws[source]):
+                continue
+            computed, _reason = _score(source, series[source], day)
+        if computed is not None:
+            scores.append(Decimal(computed["score"]))
+    if len(scores) < MIN_COMPONENTS:
+        return None
+    return decimal_string((sum(scores) / len(scores)).quantize(Decimal("0.1")))
+
+
+def evaluate(pack):
+    check_fields(pack, PACK_FIELDS, "恐懼貪婪資料包")
+    if pack["schema_version"] not in PACK_VERSIONS or not isinstance(pack["snapshot_id"], str) or not pack["snapshot_id"]:
+        raise FearGreedError("恐懼貪婪資料包身分無效")
+    if seal(pack) != pack:
+        raise FearGreedError("恐懼貪婪資料包雜湊不符")
+    cutoff = parse_aware_time(pack["decision_cutoff"], "decision_cutoff", error=FearGreedError)
+    cutoff_day = cutoff.astimezone(ZoneInfo("Asia/Taipei")).date().isoformat()
+    v3 = pack["schema_version"] == PACK_VERSION_V12
+    v2 = v3 or pack["schema_version"] == PACK_VERSION_V11
+    score_version = SCORE_VERSION_V3 if v3 else SCORE_VERSION_V2 if v2 else SCORE_VERSION
+    sources = sources_for(pack["schema_version"])
+    approvals = _approvals(pack["source_approvals"], cutoff, sources)
+    if not isinstance(pack["captures"], list):
+        raise FearGreedError("原始回應必須是陣列")
+    series, raws, gaps = _load_series(pack, cutoff, cutoff_day, sources)
     components = []
     scored = [(source, SOURCES[source]["name"], approvals.get(source, False)) for source in sources if source in SOURCES]
     if v2:

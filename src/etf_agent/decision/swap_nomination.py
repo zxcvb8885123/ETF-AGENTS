@@ -45,9 +45,12 @@ from .exposure_swap import (
     exposure_basis_id, exposure_swap_gate, is_exposure_basis_id, validate_lower_conviction_review,
 )
 from .quality_dip_swap import (
-    PURPOSE_QUALITY_DIP, QUALITY_DIP_SWAP_NOTE, QUALITY_DIP_SWAP_NOTE_V3, SIZE_GRADES, buy_reasons as quality_dip_buy_reasons, claim_kinds,
-    nomination_purposes, quality_dip_swap_gate, quality_dip_v3_gate, sell_reasons as quality_dip_sell_reasons, validate_quality_dip_pair,
+    PURPOSE_QUALITY_DIP, QUALITY_DIP_SWAP_NOTE, QUALITY_DIP_SWAP_NOTE_V3, QUALITY_DIP_SWAP_NOTE_V4, SIZE_GRADES, buy_reasons as quality_dip_buy_reasons, claim_kinds,
+    nomination_purposes, quality_dip_ladder_gate, quality_dip_swap_gate, quality_dip_v3_gate, sell_reasons as quality_dip_sell_reasons, validate_quality_dip_pair,
 )
+from .decline_depth import DECLINE_DEPTH_FACTS_KEY, decline_depth_reference_tokens
+from .entry_reserve import ENTRY_RESERVE_NOTE, THESIS_SIZE_CAP_NOTE, entry_reserve_gate
+from .offense import offense_gate, thesis_size_cap_enabled
 from .dip_facts import DIP_FACTS_KEY, dip_reference_tokens
 from .selection_ranking import rank_by_symbol
 from .sizing import (
@@ -132,7 +135,7 @@ def _seal(body: Dict[str, object]) -> Dict[str, object]:
 
 
 def seal_swap_nomination(
-    envelope: Mapping[str, object], raw: object, exposure: bool = False, sized: bool = False,
+    envelope: Mapping[str, object], raw: object, exposure: bool = False, sized: bool = False, reserve: bool = False,
 ) -> Dict[str, object]:
     """把 Agent 的原始輸出補上信封並封存為 ``completed``。
 
@@ -143,7 +146,10 @@ def seal_swap_nomination(
 
     ``sized``（agent_swap.quality_dip v3）時另保留 ``quality_dip_decline``，並把 Codex strict schema 的「不適用」值還原成缺席：
     配對的 ``size`` 為空字串、``quality_dip_decline`` 的 ``reason_kind`` 為 ``not_applicable`` 且 ``reason`` 為空字串。
-    其他任何值原樣保留，交給 Validator 判斷（所以「不該填而填」指的是填了非空值）。"""
+    其他任何值原樣保留，交給 Validator 判斷（所以「不該填而填」指的是填了非空值）。
+
+    ``reserve``（agent_swap.entry_reserve）時每組都必須有 ``size``：空字串（strict schema 的「不適用」值）同樣還原成缺席，
+    由 Validator 以「缺少份量格」退回，不會被當成合法的值。"""
     output = raw if isinstance(raw, Mapping) else {}
     agent_fields = (
         AGENT_OUTPUT_FIELDS | (EXPOSURE_AGENT_OUTPUT_FIELDS if exposure else set()) | (SIZED_AGENT_OUTPUT_FIELDS if sized else set()))
@@ -156,11 +162,12 @@ def seal_swap_nomination(
     }
     if exposure:
         body["lower_conviction_review"] = copy.deepcopy(output.get("lower_conviction_review"))
-    if sized:
+    if sized or reserve:
         if isinstance(body["nominations"], list):
             for entry in body["nominations"]:
                 if isinstance(entry, dict) and entry.get("size") == "":
                     del entry["size"]
+    if sized:
         decline = copy.deepcopy(output.get("quality_dip_decline"))
         if not (decline is None or (isinstance(decline, Mapping) and decline.get("reason_kind") == "not_applicable"
                                     and decline.get("reason") == "")):
@@ -390,6 +397,12 @@ def nomination_facts(
     target = max(min(narrowest, max_positions), min_positions)
     free_slots = max(0, target - len(held))
     pair_cap = min(int(gate["max_swaps_per_run"]), max(0, int(rotation["max_swaps_per_run"]) - len(exits)))
+    reserve_extra: Dict[str, object] = {}
+    reserve_gate = entry_reserve_gate(sizing)
+    if reserve_gate is not None:
+        # agent_swap.entry_reserve：提名清單上限改為 max_nominations（可大於成交上限，尾端先取消）；成交上限另列 fill_cap。
+        reserve_extra = {"fill_cap": pair_cap}
+        pair_cap = int(reserve_gate["max_nominations"])  # type: ignore[arg-type]
     hint_symbols = [str(symbol) for symbol in gate.get("thesis_hint_symbols") or []]
     required_hints = sorted(
         symbol for symbol in hint_symbols if symbol in held and items.get(symbol, {}).get("intent") == "hold"
@@ -419,6 +432,7 @@ def nomination_facts(
     return {
         **exposure_extra,
         **sized_extra,
+        **reserve_extra,
         "candidates": candidates,
         "victims": victims,
         "first_round_exits": exits,
@@ -680,12 +694,20 @@ def swap_nomination_brief(
         if quality_dip_v3_gate(policy.get("position_sizing")) is not None:
             # v3：份量格的名稱與意思、「最多可提名幾組 quality_dip」（待人決定第 8 項 A）；不給任何權重百分比。v1／v2 的簡報逐鍵不變。
             exposure_block["quality_dip_swap"] = {
-                **exposure_block["quality_dip_swap"], "note": QUALITY_DIP_SWAP_NOTE_V3,
+                **exposure_block["quality_dip_swap"],
+                "note": QUALITY_DIP_SWAP_NOTE_V4 if quality_dip_ladder_gate(policy.get("position_sizing")) is not None else QUALITY_DIP_SWAP_NOTE_V3,
                 "max_quality_dip_pairs": facts["quality_dip_pair_cap"],
                 "size_grades": {
                     "small": "試單：論點成立但你想先小額進場", "medium": "中等份量", "large": "把握最高：你願意用程式允許的最大份量",
                 },
             }
+    if entry_reserve_gate(policy.get("position_sizing")) is not None:
+        # entry_reserve：份量格對每一組都適用（不只 quality_dip）；清單長度上限與實際成交上限分開列。不給任何權重百分比。
+        exposure_block["entry_reserve"] = {
+            "note": ENTRY_RESERVE_NOTE + (THESIS_SIZE_CAP_NOTE if thesis_size_cap_enabled(offense_gate(policy.get("position_sizing"))) else ""),
+            "max_nominations": facts["pair_cap"], "fill_limit": facts["fill_cap"],
+            "size_grades": {"small": "試單：論點成立但你想先小額進場", "medium": "中等份量", "large": "把握最高：你願意用程式允許的最大份量"},
+        }
     return {
         **exposure_block,
         "note": BRIEF_NOTE,
@@ -746,6 +768,7 @@ class SwapNominationValidator:
         prior_context: Optional[Mapping[str, object]] = None,
         exposure_facts: Optional[Mapping[str, object]] = None,
         dip_facts: Optional[Mapping[str, object]] = None,
+        decline_depth_facts: Optional[Mapping[str, object]] = None,
     ):
         self.bundle = dict(bundle)
         self.policy = policy
@@ -764,9 +787,14 @@ class SwapNominationValidator:
         self.quality_gate = quality_dip_swap_gate(policy.get("position_sizing")) if isinstance(policy, Mapping) else None
         self.dip_facts = dip_facts
         self.sized = quality_dip_v3_gate(policy.get("position_sizing")) is not None if isinstance(policy, Mapping) else False
+        # agent_swap.entry_reserve：每組必填份量格 size；沒有閘門時完全不讀。
+        self.reserve = entry_reserve_gate(policy.get("position_sizing")) is not None if isinstance(policy, Mapping) else False
         if self.quality_gate is not None:
             self.prior_tokens = set(self.prior_tokens) | set(dip_reference_tokens(dip_facts))
             self.kinds = claim_kinds(debate)
+            if quality_dip_ladder_gate(policy.get("position_sizing")) is not None:
+                # v4：連跌深度事實是背景（沒有 evidence_id），它的鍵名與識別碼不得出現在理由。
+                self.prior_tokens = set(self.prior_tokens) | set(decline_depth_reference_tokens(decline_depth_facts))
 
     def validate(self, nomination: Mapping[str, object]) -> List[str]:
         errors: List[str] = []
@@ -863,7 +891,7 @@ class SwapNominationValidator:
                 continue
             reject_unknown_fields(
                 entry, NOMINATION_FIELDS | (EXPOSURE_NOMINATION_FIELDS if exposure else set())
-                | (SIZED_NOMINATION_FIELDS if self.sized else set()), prefix, errors)
+                | (SIZED_NOMINATION_FIELDS if self.sized or self.reserve else set()), prefix, errors)
             purpose = PURPOSE_THESIS
             if exposure:
                 allowed = nomination_purposes(self.policy.get("position_sizing"))
@@ -894,7 +922,11 @@ class SwapNominationValidator:
             if purpose == PURPOSE_QUALITY_DIP:
                 # 優質股第三階段：thesis 的全部規則之外另驗結構條件（候選標示、dip_assessment、非價格多頭論點、換出者 hold／low）。
                 validate_quality_dip_pair(prefix, buy_ids, candidates.get(buy), victims.get(sell), self.kinds, errors)
-            if self.sized:
+            if self.reserve:
+                # entry_reserve：每一組（不只 quality_dip）都必須有份量格列舉 size（缺席與空字串等價，封存時已還原成缺席，所以缺 size 會在這裡退回）。
+                if entry.get("size") not in SIZE_GRADES:
+                    errors.append("%s.size 必須是 %s（entry_reserve 啟用時每一組都要填份量格）" % (prefix, "／".join(SIZE_GRADES)))
+            elif self.sized:
                 # v3：quality_dip 配對必須有份量格列舉 size，其他 purpose 不得有（缺席與空字串等價，封存時已還原成缺席）。
                 if purpose == PURPOSE_QUALITY_DIP and entry.get("size") not in SIZE_GRADES:
                     errors.append("%s.size 在 purpose=quality_dip 必須是 %s" % (prefix, "／".join(SIZE_GRADES)))
@@ -924,7 +956,21 @@ class SwapNominationValidator:
                 errors.append("%s 不得引用前次決策背景（%s）；它不是本次證據" % (label, ", ".join(cited)))
         if pairs and not errors:
             try:
-                errors.extend(SwapEstimator(self.bundle, self.policy, self.trade).check_pairs(pairs))
+                checked = pairs
+                if self.reserve:
+                    # 超過成交上限的尾端組在配置時本來就會取消：現金與換手的保守估計只看會成交的前段（plain 取 fill_cap、quality_dip 取自己的名額）。
+                    checked, plain_used, quality_used = [], 0, 0
+                    quality_cap = int(facts.get("quality_dip_pair_cap", 0))  # type: ignore[arg-type]
+                    for (buy, sell), (_, _, purpose) in zip(pairs, purposed):
+                        if purpose == PURPOSE_QUALITY_DIP:
+                            quality_used += 1
+                            if quality_used <= quality_cap:
+                                checked.append((buy, sell))
+                        else:
+                            plain_used += 1
+                            if plain_used <= int(facts["fill_cap"]):  # type: ignore[arg-type]
+                                checked.append((buy, sell))
+                errors.extend(SwapEstimator(self.bundle, self.policy, self.trade).check_pairs(checked))
             except (DecisionToolError, KeyError, TypeError, ValueError) as error:
                 errors.append("無法估計提名的保守現金與換手：%s" % error)
 
@@ -1139,16 +1185,18 @@ def agent_swap_gate(sizing: object) -> Optional[Mapping[str, object]]:
     return gate if isinstance(gate, Mapping) else None
 
 
-def _expected_pair_binding(nomination: Mapping[str, object], with_purpose: bool = False, with_size: bool = False) -> Dict[str, object]:
+def _expected_pair_binding(
+    nomination: Mapping[str, object], with_purpose: bool = False, with_size: bool = False, with_size_all: bool = False,
+) -> Dict[str, object]:
     """v2 在 Policy 綁定的提名內容：依 Agent 先後的配對與封存識別（只有 completed 才有配對）。
 
     ``with_purpose``（agent_swap.exposure 啟用）時每對另綁 ``purpose``；沒有閘門時與舊版逐位元相同。
-    ``with_size``（agent_swap.quality_dip v3）時 quality_dip 配對另綁份量格 ``size``。"""
+    ``with_size``（agent_swap.quality_dip v3）時 quality_dip 配對另綁份量格 ``size``；``with_size_all``（agent_swap.entry_reserve）時每一組都綁。"""
     return {
         "nominated_pairs": [
             {"buy_symbol": str(item["buy_symbol"]).upper(), "sell_symbol": str(item["sell_symbol"]).upper(),
              **({"purpose": str(item["purpose"])} if with_purpose else {}),
-             **({"size": str(item["size"])} if with_size and item.get("purpose") == PURPOSE_QUALITY_DIP else {})}
+             **({"size": str(item["size"])} if with_size_all or (with_size and item.get("purpose") == PURPOSE_QUALITY_DIP) else {})}
             for item in nominations_of(nomination)
         ],
         "nomination_ref": {
@@ -1170,11 +1218,13 @@ def apply_swap_nomination(policy: Mapping[str, object], nomination: Mapping[str,
     bound.pop("nomination_ref", None)
     bound.update(_expected_pair_binding(
         nomination, exposure_swap_gate(policy.get("position_sizing")) is not None,
-        quality_dip_v3_gate(policy.get("position_sizing")) is not None))
+        quality_dip_v3_gate(policy.get("position_sizing")) is not None,
+        entry_reserve_gate(policy.get("position_sizing")) is not None))
     if isinstance(bound.get("quality_dip"), dict):
         # v3 的裁決綁定要到風險 Agent 之後才由 pipeline 綁（apply_quality_dip_ruling）；樣板不得預填，這裡先清掉。
         bound["quality_dip"].pop("ruling_ref", None)
         bound["quality_dip"].pop("rulings", None)
+        bound["quality_dip"].pop("ladder_state", None)
     result.pop("content_sha256", None)
     return result
 
@@ -1207,6 +1257,7 @@ def validate_team_swap_nomination(
             prior_context=prior if isinstance(prior, Mapping) else None,
             exposure_facts=facts if isinstance(facts, Mapping) else None,
             dip_facts=dip if isinstance(dip, Mapping) else None,
+            decline_depth_facts=team.get(DECLINE_DEPTH_FACTS_KEY) if isinstance(team.get(DECLINE_DEPTH_FACTS_KEY), Mapping) else None,
         ).validate(nomination)
     except (DecisionToolError, KeyError, TypeError, ValueError) as error:
         problems = ["無法重建驗證：%s" % error]
@@ -1217,7 +1268,8 @@ def validate_team_swap_nomination(
         try:
             expected = _expected_pair_binding(
                 nomination, exposure_swap_gate(policy.get("position_sizing")) is not None,
-                quality_dip_v3_gate(policy.get("position_sizing")) is not None)
+                quality_dip_v3_gate(policy.get("position_sizing")) is not None,
+                entry_reserve_gate(policy.get("position_sizing")) is not None)
         except (KeyError, TypeError, ValueError) as error:
             errors.append("team_inputs.swap_nomination 無法比對 Policy 綁定：%s" % error)
             return

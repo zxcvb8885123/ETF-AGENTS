@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
-from .exposure_facts import EXPOSURE_VIEWS
+from .exposure_facts import EXPOSURE_VIEWS, EXPOSURE_VIEWS_WITH_PROBE
 from .fields import DecisionToolError, reject_unknown_fields
 from .quality_dip_swap import nomination_purposes
 
@@ -30,6 +30,7 @@ EXPOSURE_SWAP_V2 = "v2"  # 階段 3：正式（配置依 exposure_view 取用 ex
 EXPOSURE_SWAP_VERSIONS = (EXPOSURE_SWAP_V1, EXPOSURE_SWAP_V2)
 EXPOSURE_SWAP_FIELDS = {"version", "max_pairs_by_view", "view"}
 REBUILD_VIEWS = ("start_rebuild", "rebuild")
+OFFENSE_CAP_VIEWS = ("probe",) + REBUILD_VIEWS  # position_sizing.offense 啟用時 max_pairs_by_view 的鍵（多一級 probe）
 KEEP_DEFENSIVE = "keep_defensive"
 PURPOSE_THESIS = "thesis"
 PURPOSE_EXPOSURE = "exposure"
@@ -97,11 +98,14 @@ def validate_exposure_swap_gate(sizing: Mapping[str, object], errors: List[str])
         errors.append("%s.version=v2 只允許用於 agent_swap.version=v2（配置才讀提名）" % prefix)
     caps = gate.get("max_pairs_by_view")
     limit = swap.get("max_swaps_per_run")
-    if not isinstance(caps, Mapping) or set(caps) != set(REBUILD_VIEWS):
-        errors.append("%s.max_pairs_by_view 必須剛好有 %s" % (prefix, "、".join(REBUILD_VIEWS)))
+    # position_sizing.offense 啟用時 max_pairs_by_view 多一級 probe（probe 不得高於 start_rebuild）；沒有 offense 時鍵集與舊版完全相同。
+    offense = isinstance(sizing.get("offense"), Mapping)
+    cap_views = OFFENSE_CAP_VIEWS if offense else REBUILD_VIEWS
+    if not isinstance(caps, Mapping) or set(caps) != set(cap_views):
+        errors.append("%s.max_pairs_by_view 必須剛好有 %s" % (prefix, "、".join(cap_views)))
     else:
         valid = True
-        for view in REBUILD_VIEWS:
+        for view in cap_views:
             value = caps[view]
             if isinstance(value, bool) or not isinstance(value, int) or value < 0 or (
                 isinstance(limit, int) and not isinstance(limit, bool) and value > limit
@@ -110,8 +114,11 @@ def validate_exposure_swap_gate(sizing: Mapping[str, object], errors: List[str])
                 valid = False
         if valid and caps["start_rebuild"] > caps["rebuild"]:
             errors.append("%s.max_pairs_by_view.start_rebuild 不得高於 rebuild" % prefix)
-    if "view" in gate and gate["view"] not in EXPOSURE_VIEWS:
-        errors.append("%s.view 只允許 %s（只能由 pipeline 綁定風險 Agent 的 exposure_view）" % (prefix, "／".join(EXPOSURE_VIEWS)))
+        if valid and offense and caps["probe"] > caps["start_rebuild"]:
+            errors.append("%s.max_pairs_by_view.probe 不得高於 start_rebuild" % prefix)
+    domain = EXPOSURE_VIEWS_WITH_PROBE if offense else EXPOSURE_VIEWS
+    if "view" in gate and gate["view"] not in domain:
+        errors.append("%s.view 只允許 %s（只能由 pipeline 綁定風險 Agent 的 exposure_view；probe 只在 Policy 有 offense 時允許）" % (prefix, "／".join(domain)))
 
 
 def exposure_swap_binding(sizing: object) -> Optional[Dict[str, object]]:
@@ -133,23 +140,27 @@ def exposure_swap_binding(sizing: object) -> Optional[Dict[str, object]]:
     if gate.get("version") == EXPOSURE_SWAP_V1:
         return {"version": EXPOSURE_SWAP_V1, "purposes": purposes, "view": None, "caps": None}
     view = gate.get("view")
-    if view not in EXPOSURE_VIEWS:
+    if view not in EXPOSURE_VIEWS_WITH_PROBE:
         raise DecisionToolError("DecisionPolicy 啟用 agent_swap.exposure v2，但尚未綁定風險 Agent 的 exposure_view")
     caps = {name: int(value) for name, value in dict(gate["max_pairs_by_view"]).items()}  # type: ignore[arg-type]
     return {"version": EXPOSURE_SWAP_V2, "purposes": purposes, "view": str(view), "caps": caps}
 
 
-def bind_exposure_view(sizing: Mapping[str, object], cash_stance: Mapping[str, object]) -> Dict[str, object]:
+def bind_exposure_view(
+    sizing: Mapping[str, object], cash_stance: Mapping[str, object], effective_view: Optional[str] = None,
+) -> Dict[str, object]:
     """``apply_trade_decision`` 用：v2 把風險 Agent 的 ``exposure_view`` 綁進 ``agent_swap.exposure.view``；回傳新的 agent_swap 物件。
 
-    v1（影子）與沒有閘門回傳原物件的拷貝，不綁定。"""
+    v1（影子）與沒有閘門回傳原物件的拷貝，不綁定。``effective_view``（position_sizing.offense 啟用）是程式壓回後的有效等級（可為 probe），
+    綁進 view 取代風險 Agent 的原始列舉；沒有 offense 時為 None，行為與舊版相同。"""
     swap = dict(sizing["agent_swap"])  # type: ignore[arg-type]
     gate = exposure_swap_gate(sizing)
     if gate is None or gate.get("version") != EXPOSURE_SWAP_V2:
         return swap
-    view = cash_stance.get("exposure_view")
-    if view not in EXPOSURE_VIEWS:
-        raise DecisionToolError("Policy 啟用 agent_swap.exposure v2，現金姿態必須給 exposure_view（%s）" % "／".join(EXPOSURE_VIEWS))
+    view = cash_stance.get("exposure_view") if effective_view is None else effective_view
+    domain = EXPOSURE_VIEWS if effective_view is None else EXPOSURE_VIEWS_WITH_PROBE
+    if view not in domain:
+        raise DecisionToolError("Policy 啟用 agent_swap.exposure v2，現金姿態必須給 exposure_view（%s）" % "／".join(domain))
     swap["exposure"] = {**dict(gate), "view": view}
     return swap
 

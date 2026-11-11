@@ -32,8 +32,15 @@ from .exposure import LOW_BETA_THRESHOLD, beta_model, build_exposure_review, exp
 from .fields import DecisionToolError, reject_unknown_fields
 
 EXPOSURE_VIEW_GATE = "v1"
+# v2（簡報說真話）：與 v1 的配置、Schema、team_inputs 欄位完全相同，只有風險 Agent 簡報與提示文字改為與現行行為一致
+# （exposure_view 會決定曝險配對是否取用、turn_assessment 影響現金目標與 quality_dip 門檻），並列追高與錯過兩種錯誤成本。
+# 前提：agent_swap v2 與 agent_swap.exposure v2（exposure_view 才真的影響配置）。回滾＝版本改回 v1。
+EXPOSURE_VIEW_GATE_V2 = "v2"
+EXPOSURE_VIEW_VERSIONS = (EXPOSURE_VIEW_GATE, EXPOSURE_VIEW_GATE_V2)
 EXPOSURE_VIEW_GATE_FIELDS = {"version"}
 EXPOSURE_VIEWS = ("keep_defensive", "start_rebuild", "rebuild")
+# position_sizing.offense（轉向後進攻，版本閘門）才允許的值域：多一級預測型 probe（小量先試）。沒有 offense 的 Policy 出現 probe 一律拒絕。
+EXPOSURE_VIEWS_WITH_PROBE = ("keep_defensive", "probe", "start_rebuild", "rebuild")
 EXPOSURE_FACTS_KEY = "exposure_facts"  # team_inputs 的選配鍵與簡報區塊鍵：與 Policy 閘門雙向同時存在
 EXPOSURE_FACTS_SCHEMA_VERSION = "1.0"
 UP_DAY_LOOKBACK = 20
@@ -55,6 +62,22 @@ RISK_NOTE = (
     "組合有多防守、反彈日跟上了多少。exposure_view 只是紀錄你認為組合該不該開始回補市場參與度，"
     "不改現金姿態、現金比例、持股廣度、換股或任何配置；反彈可能失敗，證據不足就填 keep_defensive。"
 )
+# 簡報說真話：只用於 position_sizing.exposure_view v2（前提 agent_swap v2 與 agent_swap.exposure v2）。
+# 這段文字只進風險 Agent 簡報，不進 team_inputs.exposure_facts（那份的 note 是 FACTS_NOTE），所以不影響任何重建雜湊。
+RISK_NOTE_AGENT_LED = (
+    "組合曝險與產業權重是程式算的背景事實（citable=false、沒有 evidence_id、不可引用），用來判斷 exposure_view："
+    "組合有多防守、反彈日跟上了多少。exposure_view 會實際決定配置：keep_defensive 時 purpose=exposure 的換股配對一對都不成交、換出者不賣；"
+    "start_rebuild／rebuild 時依提名先後取用至多 Policy 對映的對數，仍受換手、現金、單股、產業與回撤下限限制；"
+    "它不改現金姿態、現金比例或持股廣度。太早回補可能追高被套，太晚回補會錯過反彈，兩種錯誤都有成本，請對照事實權衡。"
+)
+# position_sizing.offense 啟用時的簡報說明（只進風險 Agent 簡報、不進 team_inputs）：exposure_view 除了決定曝險配對，也決定防守姿態的現金目標。
+RISK_NOTE_OFFENSE = (
+    "組合曝險與產業權重是程式算的背景事實（citable=false、沒有 evidence_id、不可引用），用來判斷 exposure_view："
+    "組合有多防守、反彈日跟上了多少。exposure_view 會實際決定配置：keep_defensive 時 purpose=exposure 的換股配對一對都不成交、換出者不賣、現金目標照格點；"
+    "probe／start_rebuild／rebuild 時依提名先後取用至多 Policy 對映該級的對數與份量格，組合 beta 預估達停止線即停止取用，"
+    "防守姿態下現金目標另放寬到該級的人填值（只放寬、不收緊）；全部仍受換手、現金、單股、產業與回撤下限限制，"
+    "缺資料或回撤過深時程式會把有效等級壓回 keep_defensive。太早進攻可能追高被套，太晚進攻會錯過反彈，兩種錯誤都有成本。"
+)
 NOMINATION_NOTE = (
     "以下是程式算的轉向、加權指數、組合曝險、產業權重、上漲日報酬與新股 beta 事實，全部是背景（citable=false、沒有 evidence_id），"
     "不可放進 buy_basis_ids／sell_basis_ids，也不改變提名規則：每一對仍需換入股已採納的多頭論點與換出股已採納的空頭論點或"
@@ -75,6 +98,12 @@ def exposure_view_gate(sizing: object) -> Optional[Mapping[str, object]]:
     return gate if isinstance(gate, Mapping) else None
 
 
+def exposure_view_agent_led(sizing: object) -> bool:
+    """position_sizing.exposure_view 為 v2（簡報說真話版）時回 True；沒有閘門或 v1 回 False（簡報逐位元沿用舊文字）。"""
+    gate = exposure_view_gate(sizing)
+    return gate is not None and gate.get("version") == EXPOSURE_VIEW_GATE_V2
+
+
 def validate_exposure_view_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
     """閘門形狀：{version: v1}；前提（exposure_rotation、cash_stance_turn_facts、market_index_facts）由 GATE_PREREQUISITES 檢查，
     typed_evidence_v1 在驗證現金姿態時檢查。"""
@@ -84,8 +113,13 @@ def validate_exposure_view_gate(sizing: Mapping[str, object], errors: List[str])
         errors.append("%s 必須是物件" % prefix)
         return
     reject_unknown_fields(gate, EXPOSURE_VIEW_GATE_FIELDS, prefix, errors)
-    if gate.get("version") != EXPOSURE_VIEW_GATE:
-        errors.append("%s.version 只允許 %s" % (prefix, EXPOSURE_VIEW_GATE))
+    if gate.get("version") not in EXPOSURE_VIEW_VERSIONS:
+        errors.append("%s.version 只允許 %s" % (prefix, "／".join(EXPOSURE_VIEW_VERSIONS)))
+    elif gate["version"] == EXPOSURE_VIEW_GATE_V2:
+        swap = sizing.get("agent_swap")
+        exposure = swap.get("exposure") if isinstance(swap, Mapping) else None
+        if not (isinstance(swap, Mapping) and swap.get("version") == "v2" and isinstance(exposure, Mapping) and exposure.get("version") == "v2"):
+            errors.append("%s.version=v2（簡報說真話）需要 agent_swap v2 與 agent_swap.exposure v2（exposure_view 才真的影響配置）" % prefix)
 
 
 def _q(value: Decimal) -> str:
@@ -281,11 +315,14 @@ def validate_exposure_facts(
 
 # ---------------------------------------------------------------- 簡報
 
-def risk_exposure_brief(facts: Mapping[str, object]) -> Dict[str, object]:
-    """風險 Agent 的背景：組合曝險、產業權重與上漲日摘要；沒有 facts_id、沒有逐檔的非持股 beta，``citable=false``。"""
+def risk_exposure_brief(facts: Mapping[str, object], agent_led: bool = False, offense: bool = False) -> Dict[str, object]:
+    """風險 Agent 的背景：組合曝險、產業權重與上漲日摘要；沒有 facts_id、沒有逐檔的非持股 beta，``citable=false``。
+
+    ``agent_led``（exposure_view v2）時改用 ``RISK_NOTE_AGENT_LED``；``offense``（position_sizing.offense 啟用）時改用 ``RISK_NOTE_OFFENSE``
+    （exposure_view 另會放寬防守姿態的現金目標）；預設與舊版逐位元相同。"""
     return {
         "citable": False,
-        "note": RISK_NOTE,
+        "note": RISK_NOTE_OFFENSE if offense else RISK_NOTE_AGENT_LED if agent_led else RISK_NOTE,
         "as_of": facts["as_of"],
         "portfolio": facts["portfolio"],
         "sectors": facts["sectors"],
@@ -343,13 +380,17 @@ def exposure_reference_tokens(facts: Optional[Mapping[str, object]]) -> List[str
 
 def validate_exposure_view(
     stance: Mapping[str, object], evidence: Sequence[str], market_evidence_ids: object,
-    facts: Optional[Mapping[str, object]], prefix: str, errors: List[str],
+    facts: Optional[Mapping[str, object]], prefix: str, errors: List[str], allow_probe: bool = False,
 ) -> None:
     """列舉必填且在值域內；非 keep_defensive 時必須引用至少一個市場層級證據；理由不得寫出背景識別碼。
-    不驗列舉與現金姿態、turn_assessment 的對應（純紀錄，不接進配置）。"""
+    不驗列舉與現金姿態、turn_assessment 的對應（純紀錄，不接進配置）。
+
+    ``allow_probe``（Policy 有 position_sizing.offense）時值域多 probe；沒有 offense 時 probe 一律拒絕。
+    offense 啟用時的一致性與證據規則另由 ``offense.validate_offense_stance`` 檢查。"""
     value = stance.get("exposure_view")
-    if not isinstance(value, str) or value not in EXPOSURE_VIEWS:
-        errors.append("%s.exposure_view 必須是 %s" % (prefix, "／".join(EXPOSURE_VIEWS)))
+    domain = EXPOSURE_VIEWS_WITH_PROBE if allow_probe else EXPOSURE_VIEWS
+    if not isinstance(value, str) or value not in domain:
+        errors.append("%s.exposure_view 必須是 %s" % (prefix, "／".join(domain)))
     elif value != "keep_defensive" and not set(evidence) & set(market_evidence_ids or ()):  # type: ignore[arg-type]
         errors.append(
             "%s.exposure_view=%s（不是 keep_defensive）時 evidence_ids 至少要引用一個市場層級證據；"
@@ -362,7 +403,7 @@ def validate_exposure_view(
 
 
 __all__ = [
-    "EXPOSURE_FACTS_KEY", "EXPOSURE_VIEWS", "EXPOSURE_VIEW_GATE", "build_exposure_facts", "exposure_reference_tokens",
-    "exposure_view_gate", "nomination_exposure_brief", "risk_exposure_brief", "validate_exposure_facts",
+    "EXPOSURE_FACTS_KEY", "EXPOSURE_VIEWS", "EXPOSURE_VIEWS_WITH_PROBE", "RISK_NOTE_OFFENSE", "EXPOSURE_VIEW_GATE", "EXPOSURE_VIEW_GATE_V2", "exposure_view_agent_led", "build_exposure_facts", "exposure_reference_tokens",
+    "exposure_view_gate", "nomination_exposure_brief", "risk_exposure_brief", "RISK_NOTE_AGENT_LED", "validate_exposure_facts",
     "validate_exposure_view", "validate_exposure_view_gate",
 ]

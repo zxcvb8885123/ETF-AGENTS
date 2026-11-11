@@ -201,6 +201,7 @@ CASH_ANCHOR_SOURCE_FIELDS = {
 # v2 為正式（配置依提名換股，且與 rotation.forced_swap、exposure_rotation.conviction_gap_swap 互斥）。
 # thesis_hint_symbols／verdicts_ref 由 pipeline 綁定（thesis_verdicts 的 broken 名單），樣板不得預填，重建只讀 Policy。
 # 省略此欄位的舊 Policy／舊 Decision run 逐位元維持原重建行為。
+BOUND_OFFENSE_FIELDS = frozenset({"view", "effective_view", "suppressed_reason", "cash_loosening"})  # 同 offense.BOUND_FIELDS（offense 模組晚載入，不能在此匯入）
 AGENT_SWAP_V1 = "v1"
 AGENT_SWAP_V2 = "v2"
 AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
@@ -211,7 +212,7 @@ AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 # quality_dip 是優質股第三階段的子閘門（decision/quality_dip_swap.py）：purpose 列舉多一個 quality_dip（前提 agent_swap.exposure）。
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
-    "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add",
+    "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add", "entry_reserve",
 }
 # proceeds_to_add（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：換股成立時，換出者的賣款可流向高信心加碼持股。
 # 換入者因額度被高信心加碼持股占走而沒有買單（無任何縮減旗標），且同一份配置有高信心加碼持股真的買進，該對不取消、換出者照賣，
@@ -369,6 +370,15 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "view 由 apply_trade_decision 綁定、Finalizer 以現金姿態重算；形狀與值域由 exposure_swap.validate_exposure_swap_gate 檢查；team_inputs 仍是 2.9、不升版",
     ),
     GateRule(
+        "agent_swap.entry_reserve",
+        requires=("agent_swap", "agent_swap.exposure"),
+        note="換入者先保留預算（階段 3，v1）：全部配對必填列舉 size（small／medium／large，沿用 quality_dip v3 的 1／2/3／1/3 常數）、"
+             "買進取份量格權重與賣款加格點以上現金、單股與產業餘裕的最小值、先保留再跑信心預算、有 size 的組不適用 proceeds_to_add、"
+             "max_nominations 大於成交上限時尾端先取消；須 agent_swap v2 與 agent_swap.exposure，quality_dip 若有只能是 v3／v4；"
+             "team_inputs 不升版、沒有新鍵（size 放 swap_nomination，Policy 的 nominated_pairs 綁 size）；"
+             "形狀與值域由 entry_reserve.validate_entry_reserve_gate 檢查，見 docs/agent_led_offense_plan.md 4.6",
+    ),
+    GateRule(
         "agent_swap.quality_dip",
         requires=("agent_swap", "agent_swap.exposure", "quality_dip_facts", "quality_dip_assessment", "cash_stance_turn_facts"),
         note="優質股第三階段（改走換股提名）：purpose 列舉多 quality_dip（與曝險階段 2 合用、宿主 agent_swap.exposure）；"
@@ -377,7 +387,18 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "Finalizer 以現金姿態重算；形狀與值域由 quality_dip_swap.validate_quality_dip_swap_gate 檢查；"
              "5c 需 team_inputs.dip_facts 與 typed_evidence_v1 的 claim_kind；v1／v2 的 team_inputs 仍是 2.9、不升版。"
              "v3（組數與份量由交易 Agent 提出、風險 Agent 裁決；須 agent_swap=v2；組數另計不占 agent_swap.max_swaps_per_run，"
-             "ruling_ref／rulings 由 pipeline 綁定，team_inputs 升為 2.10）見 docs/quality_dip_agent_sizing_plan.md",
+             "ruling_ref／rulings 由 pipeline 綁定，team_inputs 升為 2.10；v4 為 v3 的超集，另有人填的 ladder 與 pipeline 綁定的 ladder_state、"
+             "min_turn_assessment 才可填 no_turn_evidence，team_inputs 多選配鍵 decline_depth_facts，見 docs/agent_led_offense_plan.md 4.13）見 docs/quality_dip_agent_sizing_plan.md",
+    ),
+    GateRule(
+        "offense",
+        requires=("agent_swap", "agent_swap.exposure", "agent_swap.entry_reserve", "exposure_view", "cash_ratio_range"),
+        note="轉向後進攻（階段 2，v1）：風險 Agent 的 exposure_view 多一級 probe（預測型，小量先試），每一級對映人填的上限（防守姿態的現金目標、"
+             "曝險配對數、份量格上限、組合 beta 停止線）與 offense_off_drawdown（回撤停用線）；probe 另填 offense_basis／failure_condition，"
+             "防守姿態下非 keep_defensive 另填 defensive_reconciliation；事實 offense_facts 由程式算並存為 team_inputs 選配鍵（須 2.9 以上，與閘門雙向同時存在）；"
+             "有效等級由 apply_trade_decision 綁定、Finalizer 重算；須 agent_swap v2、agent_swap.exposure v2（max_pairs_by_view 含 probe 且與 by_view 相等）、"
+             "exposure_view v2、與 rebound_participation.by_state.*.defensive_cash_buffer 互斥；形狀與值域由 offense.validate_offense_gate 檢查，"
+             "見 docs/agent_led_offense_plan.md",
     ),
     GateRule(
         "cash_stance_recency",
@@ -428,7 +449,8 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="Agent 主導曝險階段 1（事實與紀錄）：風險 Agent 簡報附組合曝險與產業權重事實（背景、不可引用）並多填 exposure_view 列舉"
              "（keep_defensive／start_rebuild／rebuild，純紀錄、不接進配置）；agent_swap 也開啟時換股提名簡報另附轉向、加權指數、"
              "組合曝險、上漲日報酬與新股 beta 事實（不改提名驗證）；需 typed_evidence_v1（驗證現金姿態時檢查）；"
-             "team_inputs 另存 exposure_facts（選配鍵，與本閘門雙向同時存在、須 2.7 以上），Finalizer 整份重算",
+             "team_inputs 另存 exposure_facts（選配鍵，與本閘門雙向同時存在、須 2.7 以上），Finalizer 整份重算；v2 只改簡報與提示文字使其與現行行為一致"
+             "（前提 agent_swap v2 與 agent_swap.exposure v2，配置與 team_inputs 不變）",
     ),
 )
 GATE_FIELDS = frozenset(rule.field for rule in GATE_PREREQUISITES)
@@ -485,6 +507,8 @@ def validate_cash_stance(
     turn_facts_gate: Optional[Mapping[str, object]] = None,
     exposure_view_gate: Optional[Mapping[str, object]] = None,
     exposure_facts: Optional[Mapping[str, object]] = None,
+    offense_gate: Optional[Mapping[str, object]] = None,
+    offense_facts: Optional[Mapping[str, object]] = None,
 ) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
 
@@ -495,6 +519,10 @@ def validate_cash_stance(
     舊 bundle（無 ``evidence_policy``）維持「市場層級可引用任一股票」的原行為；``typed_evidence_v1`` 下
     至少一個證據必須是市場層級（全市場情緒／恐懼貪婪／隔夜／市場狀態編號），個股行情不得單獨成立，
     且全市場情緒為 negative 時不得回 aggressive（一致性護欄；回撤下限另由 stance_floor 強制）。
+
+    ``offense_gate`` 是 position_sizing.offense 閘門物件（前提 exposure_view）；為 None 時 exposure_view 值域不含 probe、欄位白名單與舊版完全相同
+    （出現 probe、offense_basis、failure_condition、defensive_reconciliation 即拒絕）。有閘門時另依 ``offense.validate_offense_stance`` 驗證
+    （``offense_facts`` 是本次的進攻事實）。
 
     ``cash_ratio_range`` 是已綁定 anchor 的版本閘門物件；為 None 時欄位白名單與舊版完全相同（出現 cash_grade 即拒絕）。
     有閘門時 ``cash_grade`` 必填，且必須在該姿態今日可選的格點內；超出即拒絕、不夾到邊界。
@@ -513,6 +541,8 @@ def validate_cash_stance(
         fields = fields | {"turn_assessment"}
     if exposure_view_gate is not None:
         fields = fields | {"exposure_view"}
+    if offense_gate is not None:
+        fields = fields | {"offense_basis", "failure_condition", "defensive_reconciliation"}
     if cash_ratio_range is not None:
         fields = fields | {"cash_grade"}
         _validate_cash_grade(cash_ratio_range, stance, prefix, errors, prior_context)
@@ -539,6 +569,8 @@ def validate_cash_stance(
             errors.append("%s：cash_stance_turn_facts 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
         if exposure_view_gate is not None:
             errors.append("%s：exposure_view 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
+        if offense_gate is not None:
+            errors.append("%s：offense 只能用於 evidence_policy=typed_evidence_v1 的決策輸入" % prefix)
         return
     if recency_gate is not None:
         from .recency import evidence_recency, validate_recency_reconciliation
@@ -557,7 +589,17 @@ def validate_cash_stance(
         validate_turn_assessment(stance, prefix, errors)
     if exposure_view_gate is not None:
         from .exposure_facts import validate_exposure_view
-        validate_exposure_view(stance, evidence, context.market_evidence_ids, exposure_facts, prefix, errors)
+        validate_exposure_view(
+            stance, evidence, context.market_evidence_ids, exposure_facts, prefix, errors, allow_probe=offense_gate is not None)
+    if offense_gate is not None:
+        from .exposure_facts import exposure_reference_tokens
+        from .offense import non_news_market_ids, offense_reference_tokens, validate_offense_stance
+        tokens = [*offense_reference_tokens(offense_facts), *exposure_reference_tokens(exposure_facts)]
+        if cash_ratio_range is not None:
+            tokens.extend(anchor_reference_tokens(cash_ratio_range, prior_context))
+        validate_offense_stance(
+            stance, evidence, context.market_evidence_ids, non_news_market_ids(context.bundle, context.overnight_evidence_ids),
+            offense_facts, tokens, prefix, errors)
     if evidence and not set(evidence) & context.market_evidence_ids:
         errors.append(
             "%s 至少要引用一個市場層級證據（market_level_evidence_ids：全市場情緒、恐懼貪婪成分、隔夜市場或市場狀態編號）；"
@@ -686,6 +728,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
         validate_rebound_gate(sizing, errors)
     if "agent_swap" in sizing:
         _validate_agent_swap(sizing, errors)
+    if "offense" in sizing:
+        from .offense import validate_offense_gate
+        validate_offense_gate(sizing, errors)
 
 
 def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> None:
@@ -738,6 +783,9 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
     if "quality_dip" in gate:
         from .quality_dip_swap import validate_quality_dip_swap_gate
         validate_quality_dip_swap_gate(sizing, errors)
+    if "entry_reserve" in gate:
+        from .entry_reserve import validate_entry_reserve_gate
+        validate_entry_reserve_gate(sizing, errors)
     exposure = sizing.get("exposure_rotation")
     if isinstance(exposure, Mapping) and exposure.get("version") != "v3":
         errors.append("%s 只允許用於 exposure_rotation.version=v3（提供 hold 信心、持有天數與 exposure_review）" % prefix)
@@ -776,13 +824,15 @@ def _validate_agent_swap_binding(gate: Mapping[str, object], prefix: str, errors
     purposes = ("thesis", "exposure") + (("quality_dip",) if "quality_dip" in gate else ())
     # agent_swap.quality_dip v3：quality_dip 配對另有份量格 size（small／medium／large），其他 purpose 不得有；組數另計（不占 max_swaps_per_run）。
     quality = gate.get("quality_dip")
-    sized = isinstance(quality, Mapping) and quality.get("version") == "v3"
+    sized = isinstance(quality, Mapping) and quality.get("version") in ("v3", "v4")
+    # agent_swap.entry_reserve：每一組（不只 quality_dip）都綁份量格 size；沒有閘門時與舊版完全相同。
+    reserve = isinstance(gate.get("entry_reserve"), Mapping)
     pair_fields = {"buy_symbol", "sell_symbol"} | ({"purpose"} if with_purpose else set())
 
     def shape_ok(pair: object) -> bool:
         if not isinstance(pair, Mapping):
             return False
-        wants_size = sized and pair.get("purpose") == "quality_dip"
+        wants_size = reserve or (sized and pair.get("purpose") == "quality_dip")
         expected = pair_fields | ({"size"} if wants_size else set())
         if set(pair) != expected:
             return False
@@ -796,12 +846,22 @@ def _validate_agent_swap_binding(gate: Mapping[str, object], prefix: str, errors
     if not isinstance(pairs, list) or not all(shape_ok(pair) for pair in pairs):
         errors.append("%s.nominated_pairs 必須是 {%s}（代號大寫、不得相同%s%s）的清單" % (
             prefix, ", ".join(sorted(pair_fields)), "、purpose 為 %s" % "／".join(purposes) if with_purpose else "",
-            "；v3 的 quality_dip 配對另有 size（small／medium／large）、其他 purpose 不得有 size" if sized else ""))
+            "；v3／v4 的 quality_dip 配對另有 size（small／medium／large）、其他 purpose 不得有 size" if sized and not reserve else (
+                "；entry_reserve 啟用時每一組都有 size（small／medium／large）" if reserve else "")))
         return
     if len({pair["buy_symbol"] for pair in pairs}) != len(pairs) or len({pair["sell_symbol"] for pair in pairs}) != len(pairs):
         errors.append("%s.nominated_pairs 的 buy_symbol、sell_symbol 各最多出現一次" % prefix)
     limit = gate.get("max_swaps_per_run")
-    if sized:
+    if reserve:
+        # entry_reserve：清單長度上限是 max_nominations（可大於成交上限 max_swaps_per_run，尾端先取消）；quality_dip 配對仍另計自己的名額。
+        nominations = gate["entry_reserve"].get("max_nominations")
+        plain = [pair for pair in pairs if pair.get("purpose") != "quality_dip"] if sized else list(pairs)
+        if isinstance(nominations, int) and not isinstance(nominations, bool) and len(plain) > nominations:
+            errors.append("%s.nominated_pairs（扣除 quality_dip 配對）不得超過 entry_reserve.max_nominations" % prefix)
+        cap = quality.get("max_swaps_per_run") if sized and isinstance(quality, Mapping) else None
+        if sized and isinstance(cap, int) and not isinstance(cap, bool) and len(pairs) - len(plain) > cap:
+            errors.append("%s.nominated_pairs 的 quality_dip 配對不得超過 agent_swap.quality_dip.max_swaps_per_run" % prefix)
+    elif sized:
         plain = [pair for pair in pairs if pair.get("purpose") != "quality_dip"]
         if isinstance(limit, int) and not isinstance(limit, bool) and len(plain) > limit:
             errors.append("%s.nominated_pairs 扣除 quality_dip 配對後不得超過 max_swaps_per_run（quality_dip 組數另計）" % prefix)
@@ -938,6 +998,11 @@ def high_conviction_floor_ratio(sizing: Mapping[str, object]) -> Optional[Decima
     return decimal_value(gate["floor_ratio"], "position_sizing.high_conviction_cash_floor.floor_ratio")
 
 
+def _offense_bound_fields(gate: Mapping[str, object]) -> frozenset:
+    """offense 閘門由 pipeline 綁定的欄位集合：基本四個（``BOUND_OFFENSE_FIELDS``），``cash_glide`` 開啟時多 ``cash_raise_limited``。"""
+    return BOUND_OFFENSE_FIELDS | ({"cash_raise_limited"} if "cash_glide" in gate else frozenset())
+
+
 def limit_scaled_alpha(sizing: Mapping[str, object]) -> Optional[Decimal]:
     """limit_scaled_conviction 啟用時的 alpha；沒有閘門回 None（走原式）。"""
     gate = sizing.get("limit_scaled_conviction")
@@ -961,18 +1026,23 @@ def sizing_grid_raw(gate: Mapping[str, object], level: str, grade: str) -> str:
 
 def _rebound_expected_cash(sizing: Mapping[str, object], stance: object, base: object, errors: List[str]) -> object:
     """反彈參與的條件式現金放寬：回傳預期現金比例（沒放寬回原值），並核對閘門綁定的 ``cash_loosening``。"""
+    expected = base
     gate = sizing.get("rebound_participation")
-    if not isinstance(gate, Mapping):
-        return base
-    from .rebound import loosened_cash_buffer
+    if isinstance(gate, Mapping):
+        from .rebound import loosened_cash_buffer
 
-    try:
-        expected, loosening = loosened_cash_buffer(gate, stance, base)
-    except DecisionToolError as error:
-        errors.append(str(error))
-        return base
-    if gate.get("cash_loosening") != loosening and not (gate.get("cash_loosening") is None and loosening is None):
-        errors.append("rebound_participation.cash_loosening 必須與重算結果一致（%s）" % (loosening,))
+        try:
+            expected, loosening = loosened_cash_buffer(gate, stance, base)
+        except DecisionToolError as error:
+            errors.append(str(error))
+            return base
+        if gate.get("cash_loosening") != loosening and not (gate.get("cash_loosening") is None and loosening is None):
+            errors.append("rebound_participation.cash_loosening 必須與重算結果一致（%s）" % (loosening,))
+    if "offense" in sizing:
+        # offense（轉向後進攻）的條件式現金放寬與 rebound_participation 的 defensive_cash_buffer 互斥（Policy 驗證已拒絕並存），這裡接在後面。
+        from .offense import expected_cash_buffer
+
+        expected = expected_cash_buffer(sizing, stance, expected, errors)
     return expected
 
 
@@ -1171,7 +1241,7 @@ def _validate_cash_ratio_range(policy: Mapping[str, object], sizing: Mapping[str
                 errors.append("%s.grid 姿態之間不得重疊：%s.lower 不得低於前一姿態的 upper" % (prefix, level))
             previous_upper = points[2]
     if "anchor" in gate:
-        _validate_cash_anchor_shape(gate, prefix, errors)
+        _validate_cash_anchor_shape(gate, prefix, errors, isinstance(sizing.get("offense"), Mapping) and "cash_glide" in sizing["offense"])
     bound = "conviction_by_symbol" in sizing
     if bound and "anchor" not in gate:
         errors.append("%s 綁定交易決策時必須有 pipeline 綁定的 anchor（前次現金比例）" % prefix)
@@ -1181,15 +1251,19 @@ def _validate_cash_ratio_range(policy: Mapping[str, object], sizing: Mapping[str
         errors.append("position_sizing.cash_grade 只能與交易決策一起綁定")
 
 
-def _validate_cash_anchor_shape(gate: Mapping[str, object], prefix: str, errors: List[str]) -> None:
+def _validate_cash_anchor_shape(gate: Mapping[str, object], prefix: str, errors: List[str], glide: bool = False) -> None:
     anchor = gate["anchor"]
     label = "%s.anchor" % prefix
     if not isinstance(anchor, Mapping):
         errors.append("%s 必須是物件" % label)
         return
-    if set(anchor) != CASH_ANCHOR_FIELDS:
-        errors.append("%s 欄位必須剛好是 %s" % (label, "、".join(sorted(CASH_ANCHOR_FIELDS))))
+    # offense.cash_glide 開啟時，prior_decision 的 anchor 多一個布林 prior_offense_loosened（前次是否放寬過現金）；沒開時欄位集合不變。
+    fields = CASH_ANCHOR_FIELDS | ({"prior_offense_loosened"} if glide and anchor.get("status") == "prior_decision" else set())
+    if set(anchor) != fields:
+        errors.append("%s 欄位必須剛好是 %s" % (label, "、".join(sorted(fields))))
         return
+    if "prior_offense_loosened" in anchor and not isinstance(anchor["prior_offense_loosened"], bool):
+        errors.append("%s.prior_offense_loosened 必須是布林" % label)
     status = anchor.get("status")
     if status not in CASH_ANCHOR_STATUSES:
         errors.append("%s.status 必須是 %s" % (label, "／".join(CASH_ANCHOR_STATUSES)))
@@ -1383,6 +1457,12 @@ def validate_position_sizing(
     validate_gate_prerequisites(sizing, errors)
     _validate_volatility_exponent(sizing, errors)
     _validate_execution_gates(sizing, errors)
+    if isinstance(sizing.get("agent_swap"), Mapping) and "entry_reserve" in sizing["agent_swap"]:
+        from .entry_reserve import validate_entry_reserve_limits
+        validate_entry_reserve_limits(policy, errors)
+    if "offense" in sizing:
+        from .offense import validate_offense_limits
+        validate_offense_limits(policy, errors)
     if "agent_swap" in sizing and "position_review" not in policy:
         errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
     if "cash_ratio_range" in sizing:
@@ -1439,9 +1519,13 @@ def validate_position_sizing(
             errors.append("position_sizing 有交易決策綁定卻缺少 conviction_by_symbol")
         if "hold_conviction_by_symbol" in sizing:
             errors.append("position_sizing.hold_conviction_by_symbol 只能與交易決策一起綁定")
+        if isinstance(sizing.get("offense"), Mapping) and _offense_bound_fields(sizing["offense"]) & set(sizing["offense"]):
+            errors.append("position_sizing.offense 的 view／effective_view／suppressed_reason／cash_loosening（cash_glide 開啟時含 cash_raise_limited）只能與交易決策一起綁定")
         return
     if len(bound) != 3:
         errors.append("position_sizing.conviction_by_symbol 必須綁定 sizing_plan_id、sizing_plan_sha256 與 cash_stance")
+    if isinstance(sizing.get("offense"), Mapping) and _offense_bound_fields(sizing["offense"]) - set(sizing["offense"]):
+        errors.append("position_sizing.offense 必須綁定本次的有效等級（view、effective_view、suppressed_reason、cash_loosening；cash_glide 開啟時另有 cash_raise_limited）")
     stance = sizing.get("cash_stance")
     if stance not in CASH_STANCES:
         errors.append("position_sizing.cash_stance 必須是 %s" % "／".join(CASH_STANCES))
