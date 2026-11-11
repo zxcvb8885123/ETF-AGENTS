@@ -10,3 +10,4 @@
 - `2026-11-11-before-derisk-day-view.json`：2026-11-11 開啟 `agent_swap.derisk_day_view` 之前的正式樣板（`policy_id: strategy-2026-11-10-final-versions-1`）。要回滾，刪掉 `position_sizing.agent_swap.derisk_day_view`（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-11-before-proceeds-to-add.json`：2026-11-11 開啟 `agent_swap.proceeds_to_add` 之前的正式樣板（`policy_id: strategy-2026-11-11-derisk-day-view-1`）。要回滾，刪掉 `position_sizing.agent_swap.proceeds_to_add`（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-11-before-revision-bounds.json`：2026-11-11 開啟 `position_sizing.revision_bounds` 之前的正式樣板（`policy_id: strategy-2026-11-11-alerts-v2-1`）。要回滾，刪掉 `position_sizing.revision_bounds`（舊 run 仍讀各自封存的 `policy.json`）。
+- `2026-11-11-before-swap-priority.json`：2026-11-11 開啟 `agent_swap.entry_reserve.swap_priority` 之前的正式樣板（`policy_id: strategy-2026-11-11-revision-bounds-1`）。要回滾，刪掉 `position_sizing.agent_swap.entry_reserve.swap_priority`（舊 run 仍讀各自封存的 `policy.json`）。

@@ -41,7 +41,7 @@ from .sizing import (
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
 )
-from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight
+from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 from .offense import capped_size, offense_bound, thesis_size_cap_active
 from .quality_dip_swap import (
@@ -1339,6 +1339,9 @@ class AllocationOrderEngine:
             needed, reserve_plan = self._entry_reserve_plan(
                 needed, entry_weights, quality_pairs, current, target_shares, marked_nav, effective, cancel, size_override)
         baseline_new = set(weights) - active_symbols
+        if swap_priority_enabled(self.policy.get("position_sizing")):
+            # swap_priority：slot_recycle 以權重 0 保留的買不到一張的新股不是「不換股時有名額」的新股，不該擋換股。
+            baseline_new = {symbol for symbol in baseline_new if weights[symbol] > 0}
         accepted: List[Tuple[str, str]] = []
         result = targets
         for count in range(len(needed), 0, -1):
@@ -2370,6 +2373,8 @@ class AllocationOrderEngine:
         atr = self._atr_pct()
         min_fill_ratio = cash_fit_min_fill_ratio(sizing)
         lot = int(effective["lot_size"])
+        swap_first = swap_priority_enabled(sizing)
+        protected = set(self._reserved_shares) if swap_first else set()
         fitted = list(orders)
         requested = {str(o["symbol"]): int(o["shares"]) for o in orders if o["side"] == "buy"}
         flags: Dict[str, Dict[str, object]] = {}
@@ -2384,6 +2389,7 @@ class AllocationOrderEngine:
             weakest = min(
                 buys,
                 key=lambda o: (
+                    1 if str(o["symbol"]) in protected else 0,
                     -(CONVICTION_LEVELS.index(tiers[str(o["symbol"])]) if str(o["symbol"]) in tiers else len(CONVICTION_LEVELS)),
                     -atr.get(str(o["symbol"]), Decimal("Infinity")),
                     str(o["symbol"]),

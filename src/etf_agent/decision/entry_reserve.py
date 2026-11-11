@@ -27,6 +27,9 @@ from .quality_dip_swap import SIZE_GRADES, size_entry_weight
 
 ENTRY_RESERVE_V1 = "v1"
 ENTRY_RESERVE_FIELDS = {"version", "max_entry_weight", "max_nominations"}
+# 選配子欄位 ``swap_priority``（只有 {"version": "v1"}、沒有人填數字）：沒有它的舊 Policy／舊 run 逐位元維持原行為。
+SWAP_PRIORITY_V1 = "v1"
+ENTRY_RESERVE_OPTIONAL_FIELDS = {"swap_priority"}
 ENTRY_RESERVE_MAX_NOMINATIONS = 20
 ENTRY_RESERVE_NOTE = (
     "每一組換股都要填份量格 size（small 試單、medium 一般、large 把握最高；只有列舉、不輸出任何百分比）。程式把份量格對成買進權重上限，"
@@ -50,6 +53,14 @@ def entry_reserve_gate(sizing: object) -> Optional[Mapping[str, object]]:
     return gate
 
 
+def swap_priority_enabled(sizing: object) -> bool:
+    """``agent_swap.entry_reserve.swap_priority`` v1：（1）換股試算的名額保護只計「分到至少一張」的新股（零權重回收名額者不擋換股）；
+    （2）``turnover_fit`` 縮買單時，已保留預算的換股換入者排在其他買單之後才縮。只改程式內的優先順序，不改寫交易 Agent 的意圖。"""
+    gate = entry_reserve_gate(sizing)
+    value = gate.get("swap_priority") if gate is not None else None
+    return isinstance(value, Mapping) and value.get("version") == SWAP_PRIORITY_V1
+
+
 def validate_entry_reserve_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
     """形狀、值域與前提：agent_swap v2、agent_swap.exposure（purpose 的宿主）、quality_dip 若有只能是 v3／v4（份量格語意一致）。"""
     swap = sizing.get("agent_swap")
@@ -60,12 +71,20 @@ def validate_entry_reserve_gate(sizing: Mapping[str, object], errors: List[str])
     if not isinstance(gate, Mapping):
         errors.append("%s 必須是物件" % prefix)
         return
-    reject_unknown_fields(gate, ENTRY_RESERVE_FIELDS, prefix, errors)
+    reject_unknown_fields(gate, ENTRY_RESERVE_FIELDS | ENTRY_RESERVE_OPTIONAL_FIELDS, prefix, errors)
     missing = sorted(ENTRY_RESERVE_FIELDS - set(gate))
     if missing:
         errors.append("%s 缺少必要欄位（由人設定，程式不提供預設值）：%s" % (prefix, "、".join(missing)))
     if gate.get("version") != ENTRY_RESERVE_V1:
         errors.append("%s.version 只允許 %s" % (prefix, ENTRY_RESERVE_V1))
+    if "swap_priority" in gate:
+        priority = gate["swap_priority"]
+        if not isinstance(priority, Mapping):
+            errors.append("%s.swap_priority 必須是物件" % prefix)
+        else:
+            reject_unknown_fields(priority, {"version"}, prefix + ".swap_priority", errors)
+            if priority.get("version") != SWAP_PRIORITY_V1:
+                errors.append("%s.swap_priority.version 只允許 %s" % (prefix, SWAP_PRIORITY_V1))
     if swap.get("version") != "v2":
         errors.append("%s 只允許用於 agent_swap.version=v2（配置才讀提名）" % prefix)
     if not isinstance(swap.get("exposure"), Mapping):
