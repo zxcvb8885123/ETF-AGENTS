@@ -41,7 +41,9 @@ from .sizing import (
     reentry_cooldown_hint_only, reentry_hint_id,
 )
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
-from .quality_dip_swap import PURPOSE_QUALITY_DIP, quality_dip_swap_binding, turn_allows
+from .quality_dip_swap import (
+    PURPOSE_QUALITY_DIP, QUALITY_DIP_SWAP_V3, quality_dip_swap_binding, quality_dip_v3_gate, size_after_ruling, size_entry_weight, turn_allows,
+)
 
 
 ALLOCATION_ENGINE_VERSION = "1.0.0"
@@ -472,6 +474,16 @@ class AllocationOrderEngine:
         agent_cancelled: Dict[str, str] = {}
         proceeds_gate = agent_gated and proceeds_to_add_enabled(self.policy.get("position_sizing"))
         self._proceeds_accepted = set()
+        # agent_swap.quality_dip v3：quality_dip 配對的換入者不適用 proceeds_to_add（沒有買單就取消該對、換出者不賣；
+        # 賣款只用於同一對的買進，不流向別檔）。沒有 v3 時這個集合為空，行為與舊版相同。
+        sizing_now = self.policy.get("position_sizing")
+        v3_buys: Set[str] = set()
+        if agent_gated and quality_dip_v3_gate(sizing_now) is not None:
+            swap_now = sizing_now["agent_swap"]  # type: ignore[index]
+            v3_buys = {
+                str(pair["buy_symbol"]).upper() for pair in swap_now.get("nominated_pairs") or []
+                if isinstance(pair, Mapping) and pair.get("purpose") == PURPOSE_QUALITY_DIP
+            }
         tiers = (self.policy.get("position_sizing") or {}).get("conviction_by_symbol") or {}
         high_adds = {
             str(item.get("symbol", "")).upper() for item in intent_result.get("items", [])
@@ -494,7 +506,9 @@ class AllocationOrderEngine:
                 # 沒有（或下一輪不再成立）就照舊取消。接受名單與取消名單都只增減一次方向，所以必定收斂。
                 holdings = {str(p["symbol"]).upper() for p in self.context.bundle["account_snapshot"]["positions"]}
                 funded = (high_adds & holdings) & bought
-                accepted = {symbol for symbol in agent_unfilled if self._unfilled_reason(body, symbol) == "no_buy_order"} if funded else set()
+                accepted = {
+                    symbol for symbol in agent_unfilled if symbol not in v3_buys and self._unfilled_reason(body, symbol) == "no_buy_order"
+                } if funded else set()
                 lost = {symbol for symbol in self._proceeds_accepted if not funded}
                 if lost:
                     self._proceeds_accepted -= lost
@@ -1083,8 +1097,14 @@ class AllocationOrderEngine:
         # v1（影子）整個略過 quality_dip 配對、不留旗標（不會被當成 thesis 配對成交）；v2 標記後另套本閘門的條件與上限。
         quality_binding = quality_dip_swap_binding(self.policy.get("position_sizing"))
         quality_pairs: Set[Tuple[str, str]] = set()
+        size_of: Dict[Tuple[str, str], Optional[str]] = {}
+        ruling_of: Dict[Tuple[str, str], Optional[str]] = {}
         if exposure_binding is not None:
             purpose_of = dict(zip(pairs, exposure_binding["purposes"]))  # type: ignore[arg-type]
+            if quality_binding is not None and quality_binding["version"] == QUALITY_DIP_SWAP_V3:
+                # v3：每對的份量格與風險 Agent 的裁決（與提名同序；非 quality_dip 配對為 None）。
+                size_of = dict(zip(pairs, quality_binding["sizes"]))  # type: ignore[arg-type]
+                ruling_of = dict(zip(pairs, quality_binding["rulings"]))  # type: ignore[arg-type]
             if quality_binding is not None:
                 quality_all = {pair for pair in pairs if purpose_of.get(pair) == PURPOSE_QUALITY_DIP}
                 if quality_binding["version"] == "v1":
@@ -1128,6 +1148,11 @@ class AllocationOrderEngine:
                 reason = "quality_dip_turn"
             elif not bool(effective["reuse_sell_proceeds"]):
                 reason = "quality_dip_proceeds"
+            if reason is None and quality_binding["version"] == QUALITY_DIP_SWAP_V3 and quality_binding["ruling_status"] != "completed":  # type: ignore[index]
+                # v3：沒有完成的裁決一律取消全部 quality_dip 配對（不退回 v2 不經裁決直接成交的行為）；
+                # 前置條件不成立時上面的原因優先（與裁決狀態 skipped_by_program 同口徑）。
+                status = quality_binding["ruling_status"]  # type: ignore[index]
+                reason = "quality_dip_ruling_%s" % ("skipped" if status == "skipped_by_program" else status)
             if reason is not None:
                 for buy, sell in pairs:
                     if (buy, sell) in quality_pairs:
@@ -1172,13 +1197,18 @@ class AllocationOrderEngine:
                 kept_pairs.append((buy, sell))
             needed = kept_pairs
         entry_weights: Dict[Tuple[str, str], Decimal] = {}
+        sized_pairs: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
         if quality_pairs:
             # quality_dip 的對數上限（人設的硬上限，超跌另有自己的上限且合計仍受本閘門封頂）；超過的從清單尾端取消。
             # dip_assessment 必須與候選類別相符（5c Validator 已檢查）；不符一律取消，不猜。
             used, oversold_used, kept_pairs = 0, 0, []
             oversold = quality_binding["oversold"]  # type: ignore[index]
+            sized = quality_binding["version"] == QUALITY_DIP_SWAP_V3  # type: ignore[index]
             for buy, sell in needed:
                 if (buy, sell) in quality_pairs:
+                    if sized and ruling_of.get((buy, sell)) == "reject":
+                        cancel(buy, sell, "quality_dip_ruling")  # 風險 Agent 否決這一組：換出者不賣，不佔本閘門的組數
+                        continue
                     assessment = (assessments or {}).get(buy)
                     is_oversold = assessment == OVERSOLD_ASSESSMENT
                     if assessment not in (MARKET_DRIVEN_ASSESSMENT, OVERSOLD_ASSESSMENT) or (is_oversold and oversold is None):
@@ -1189,13 +1219,33 @@ class AllocationOrderEngine:
                         continue
                     used += 1
                     oversold_used += int(is_oversold)
-                    entry_weights[(buy, sell)] = oversold["entry_weight"] if is_oversold else quality_binding["entry_weight"]  # type: ignore[index]
+                    base_weight = oversold["entry_weight"] if is_oversold else quality_binding["entry_weight"]  # type: ignore[index]
+                    if sized:
+                        # v3：份量格（交易 Agent）經裁決（風險 Agent，只能縮不能放）後對成權重上限＝硬上限 × 固定比例；
+                        # 之後仍受「買進不超過換出賣款」與全部後段上限，所以任何裁決組合的成交量都不高於全部 approve。
+                        effective_size = size_after_ruling(size_of[(buy, sell)], ruling_of[(buy, sell)])
+                        sized_pairs[(buy, sell)] = (str(size_of[(buy, sell)]), str(ruling_of[(buy, sell)]), str(effective_size))
+                        base_weight = size_entry_weight(base_weight, str(effective_size))
+                    entry_weights[(buy, sell)] = base_weight
                 kept_pairs.append((buy, sell))
             needed = kept_pairs
         limit = int((self.policy["position_sizing"]["agent_swap"])["max_swaps_per_run"])
-        for buy, sell in needed[limit:]:
-            cancel(buy, sell, "swap_cap")
-        needed = needed[:limit]
+        if quality_binding is not None and quality_binding["version"] == QUALITY_DIP_SWAP_V3:
+            # v3：quality_dip 組數另計（已受 quality_dip.max_swaps_per_run 限制），不占 agent_swap.max_swaps_per_run；
+            # 總上限只約束其餘（thesis／exposure）配對，超過的從清單尾端取消。
+            used_plain, kept_pairs = 0, []
+            for buy, sell in needed:
+                if (buy, sell) not in quality_pairs:
+                    if used_plain >= limit:
+                        cancel(buy, sell, "swap_cap")
+                        continue
+                    used_plain += 1
+                kept_pairs.append((buy, sell))
+            needed = kept_pairs
+        else:
+            for buy, sell in needed[limit:]:
+                cancel(buy, sell, "swap_cap")
+            needed = needed[:limit]
         baseline_new = set(weights) - active_symbols
         accepted: List[Tuple[str, str]] = []
         result = targets
@@ -1221,7 +1271,8 @@ class AllocationOrderEngine:
             note(AGENT_SWAP_VICTIM_CODE, sell, "交易 Agent 第二輪提名換出，換入 %s（程式只檢查可行性；交易 Agent 的意圖未被改寫，訂單意圖標為 exit）" % buy
                  + ("；目的：曝險（風險 Agent 的 exposure_view 為 %s）" % exposure_binding["view"] if (buy, sell) in exposure_pairs else "")  # type: ignore[index]
                  + ("；目的：優質股被大盤拖累（買進權重上限 %s、買進金額不超過本筆賣款）" % format(entry_weights[(buy, sell)], ".2%")
-                    if (buy, sell) in entry_weights else ""))
+                    if (buy, sell) in entry_weights else "")
+                 + ("；交易 Agent 的份量格 %s、風險 Agent 裁決 %s、套用份量格 %s" % sized_pairs[(buy, sell)] if (buy, sell) in sized_pairs else ""))
             if buy in self._proceeds_accepted:
                 note(AGENT_SWAP_PROCEEDS_CODE, buy, "額度被高信心加碼持股占用、本檔沒有買單；換出 %s 的賣款流向高信心加碼持股，換股照常成立（交易 Agent 的意圖未被改寫）" % sell)
             else:

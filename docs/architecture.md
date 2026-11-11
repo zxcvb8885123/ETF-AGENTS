@@ -196,6 +196,7 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 版本 | 內容 |
 | --- | --- |
 | 2.9（目前正式，`agent_swap` 已開啟） | 2.8 再加交易 Agent 第二輪的換股提名 `swap_nomination`（v1 影子與 v2 欄位相同）；與 `position_sizing.agent_swap` 雙向檢查，Finalizer 以 `SwapNominationValidator` 整份重建驗證；須與 2.8 的前提（`rebound_participation`、`exposure_rotation` v3）同時存在 |
+| 2.10（已實作、尚未開啟，`agent_swap.quality_dip` v3） | 2.9 再加 `quality_dip_ruling`（風險 Agent 對 quality_dip 配對的裁決，或程式封存的 `not_required`／`skipped_by_program`／`exhausted`／`unavailable`）；與 v3 閘門雙向檢查，綁定提名與現金姿態雜湊，Finalizer 以 `QualityDipRulingValidator` 整份重建；v1／v2 的 run 維持 2.9。見 [`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)。 |
 | 2.8 | 2.7 再加程式算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（已實作、尚未開啟），與閘門雙向檢查，整份重算比對 |
 | 2.7 | 2.6 再加程式算的曝險檢視 `exposure_review`（beta、capture）；只在 `position_sizing.exposure_rotation` 啟用時存在，與閘門雙向檢查，整份重算比對 |
 | 2.6（基準） | 2.5 再加程式算的基本面指標；有逐檔期別設定時必為 2.6，整份重算比對，改寫或降級都拒絕 |

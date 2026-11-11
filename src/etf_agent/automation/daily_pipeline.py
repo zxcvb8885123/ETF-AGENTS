@@ -42,7 +42,8 @@ from etf_agent.decision.dip_facts import build_dip_facts, event_direction_gate, 
 from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, apply_swap_nomination, bind_thesis_hints
-from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate
+from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate, quality_dip_v3_gate
+from etf_agent.decision.quality_dip_ruling import apply_quality_dip_ruling
 from etf_agent.decision.valuation_facts import build_valuation_facts, valuation_facts_gate, valuation_root_for
 from etf_agent.decision.release_order import apply_release_order
 from etf_agent.decision.sizing import drawdown_derisk_v5, held_weight_facts_gate, reentry_hint_symbols
@@ -462,6 +463,19 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
+        # agent_swap.quality_dip v3（組數與份量由交易 Agent 提出）：風險 Agent 在現金姿態之後另做一次獨立呼叫，對每一組 quality_dip 配對裁決
+        # （approve／downsize／reject，只能縮不能放）；裁決綁進 Policy，配置只讀 Policy，team_inputs 升為 2.10。沒有 v3 時完全不經過這一步。
+        quality_dip_ruling = None
+        if quality_dip_v3_gate(policy.get("position_sizing")) is not None:
+            if swap_nomination is None or exposure_review is None or exposure_facts is None or dip_facts is None:
+                raise DailyPipelineError(
+                    "policy 啟用 agent_swap.quality_dip v3 時也必須有換股提名、曝險檢視、exposure_facts 與 dip_facts（team_inputs 2.10 是 2.9 的超集）")
+            self.log("[decision 6b] 風險 Agent 裁決優質股換股配對（approve／downsize／reject）")
+            with self._timed("quality_dip_ruling"):
+                quality_dip_ruling = self.run_quality_dip_ruling(
+                    bundle, policy, trade, debate, exposure_review, swap_nomination, stance, prior_context, exposure_facts, dip_facts,
+                    turn_state, decision_run_id)
+            policy = apply_quality_dip_ruling(policy, quality_dip_ruling)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy, nav_history)
         if policy_errors:
@@ -513,6 +527,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"exposure_review": exposure_review} if exposure_review is not None else {}),
             **({"turn_state": turn_state} if turn_state is not None else {}),
             **({"swap_nomination": swap_nomination} if swap_nomination is not None else {}),
+            **({"quality_dip_ruling": quality_dip_ruling} if quality_dip_ruling is not None else {}),
             **({"dip_facts": dip_facts} if dip_facts is not None else {}),
             **({"exposure_facts": exposure_facts} if exposure_facts is not None else {}),
             **({"release_order": release_order} if release_order is not None else {}),

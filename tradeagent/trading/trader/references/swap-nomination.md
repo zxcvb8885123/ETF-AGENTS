@@ -70,6 +70,13 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 - 條件不符時改用 `thesis`（照上面原本的規則）或刪除該對；缺資料只是不知道，不是否決，也不算通過。
 - 這個目的在配置時另有程式的硬性界線（每次對數、每檔買進權重、買進金額不超過換出賣款、需要轉向跡象、回撤強制防守與減碼日不換）；你不需要也不得輸出任何數字，只要提名你真的認為值得的配對。
 
+### v3：份量格與組數（簡報的 `quality_dip_swap` 有 `size_grades` 與 `max_quality_dip_pairs` 時才適用）
+
+- 每個 `purpose=quality_dip` 的配對另填列舉 `size`：`small`（試單：論點成立但想先小額進場）、`medium`、`large`（把握最高：願意用程式允許的最大份量）。其他 `purpose` 的 `size` 填空字串。**你不輸出任何百分比或數字**，份量格怎麼對成權重由程式決定，且有人設的硬上限。
+- **組數就是你列出的 quality_dip 配對數**，不超過簡報的 `max_quality_dip_pairs`；這個名額與其他配對（`pair_limit`）分開計，不互相占用。要幾組、先後順序由你判斷，高把握的排前面。
+- 提名之後風險 Agent 會對每一組裁決（同意、降一格或否決，只能縮不能放），所以不需要替風險先打折。
+- 簡報顯示有可提名的 quality_dip 換入者與換出者、而你沒有提名任何 quality_dip 配對時，**必須**填頂層 `quality_dip_decline`：`reason_kind` 從 `no_suitable_victim`（沒有合適的換出者）、`prefer_thesis_pairs`（改用 thesis 配對）、`market_not_ready`（市場尚未準備好）、`candidates_not_convincing`（候選不夠有說服力）選一個，並寫一句 `reason`。這只是紀錄，程式不依它做任何事；有 quality_dip 配對或不屬上述情況時，`reason_kind` 填 `not_applicable`、`reason` 填空字串。
+
 ## 輸出
 
 只輸出 JSON：
@@ -93,3 +100,5 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 理由用簡短繁體中文，不寫英文等級或識別碼以外的程式用語。
 
 簡報有 `exposure_swap` 時，每對另有 `"purpose": "thesis"` 或 `"exposure"`，頂層另有 `"lower_conviction_review": []`（或逐檔交代，見上節）。簡報另有 `quality_dip_swap` 時，`purpose` 也可以是 `"quality_dip"`（見上節）。
+
+簡報的 `quality_dip_swap` 有 `size_grades` 時（quality_dip v3），每對另有 `"size"`（quality_dip 配對填 `"small"`／`"medium"`／`"large"`，其他填 `""`），頂層另有 `"quality_dip_decline": {"reason_kind": "not_applicable", "reason": ""}`（需要交代時依上面填列舉與一句理由）。

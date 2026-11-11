@@ -160,7 +160,7 @@ class GateTests(unittest.TestCase):
         }.items():
             self.assertTrue(self.problems(quality_sizing("v1", "v2", **changes)), label)
         self.assertTrue(self.problems(quality_sizing("v2", "v2", turn_assessment="maybe")))
-        self.assertTrue(self.problems(quality_sizing("v3", "v2")))
+        self.assertTrue(self.problems(quality_sizing("v4", "v2")))  # v3 已是合法版本（見 test_quality_dip_sizing.py）
         self.assertTrue(any("agent_swap.version=v2" in e for e in self.problems(quality_sizing("v2", "v1"))))
 
     def test_oversold_block_cannot_be_looser_than_the_market_dragged_limits(self):

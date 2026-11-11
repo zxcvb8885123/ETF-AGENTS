@@ -42,7 +42,7 @@ from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.exposure_facts import EXPOSURE_FACTS_KEY, nomination_exposure_brief
 from etf_agent.decision.exposure_swap import exposure_swap_gate
-from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate
+from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate, quality_dip_v3_gate
 from etf_agent.decision.valuation_facts import valuation_background_brief
 from etf_agent.decision.held_weight_facts import held_weight_brief
 from etf_agent.decision.sizing import reentry_hint_id
@@ -84,6 +84,7 @@ from .agent_schemas import (
     RELEASE_ORDER_SCHEMA,
     SWAP_NOMINATION_EXPOSURE_SCHEMA,
     SWAP_NOMINATION_QUALITY_DIP_SCHEMA,
+    SWAP_NOMINATION_QUALITY_DIP_SIZED_SCHEMA,
     SWAP_NOMINATION_SCHEMA,
     TRADE_SCHEMA,
     trade_schema_with_dip_assessment,
@@ -662,6 +663,9 @@ class TeamStagesMixin:
         if quality_swap and dip_facts is None:
             raise DailyPipelineError("policy 啟用 agent_swap.quality_dip 時必須有 dip_facts（position_sizing.quality_dip_facts）")
         quality_dip = dip_facts if quality_swap else None
+        # agent_swap.quality_dip v3（組數與份量由 Agent 提出）：每個 quality_dip 配對另填份量格 size、頂層另有 quality_dip_decline；
+        # 沒有 v3 時 Schema、簡報與封存逐位元不變。
+        quality_sized = quality_dip_v3_gate(policy.get("position_sizing")) is not None
         try:
             facts = nomination_facts(
                 bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, exposure_facts, quality_dip)
@@ -700,13 +704,15 @@ class TeamStagesMixin:
                 % (self.root / "tradeagent/trading/trader/references/swap-nomination.md", brief_path, _SHARED_RULES)
                 + (NOMINATION_EXPOSURE_PROMPT if exposure_facts is not None else "")
                 + (NOMINATION_PURPOSE_PROMPT if exposure_swap else "")
-                + (NOMINATION_QUALITY_DIP_PROMPT if quality_swap else ""),
-                SWAP_NOMINATION_QUALITY_DIP_SCHEMA if quality_swap else (
-                    SWAP_NOMINATION_EXPOSURE_SCHEMA if exposure_swap else SWAP_NOMINATION_SCHEMA),
+                + (NOMINATION_QUALITY_DIP_PROMPT if quality_swap else "")
+                + (NOMINATION_QUALITY_DIP_SIZED_PROMPT if quality_sized else ""),
+                SWAP_NOMINATION_QUALITY_DIP_SIZED_SCHEMA if quality_sized else (
+                    SWAP_NOMINATION_QUALITY_DIP_SCHEMA if quality_swap else (
+                        SWAP_NOMINATION_EXPOSURE_SCHEMA if exposure_swap else SWAP_NOMINATION_SCHEMA)),
             )
             fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
             outcome = self.agent_step_degradable(
-                task, lambda output: seal_swap_nomination(envelope, output, exposure_swap), validator.validate, fingerprint,
+                task, lambda output: seal_swap_nomination(envelope, output, exposure_swap, quality_sized), validator.validate, fingerprint,
             )
             if outcome.artifact is not None:
                 nomination = outcome.artifact
@@ -793,6 +799,15 @@ NOMINATION_QUALITY_DIP_PROMPT = (
     "為 true 時才可），buy_basis_ids 至少一個是 claim_kind 不是 price 的已採納多頭論點，換出者必須是 quality_dip_nominable=true 的持股，"
     "換出依據規則與 thesis 相同。候選標示與 dip_assessment 只是背景、不是依據；不符合時改用 thesis 或刪除該對。"
     "用法見 swap-nomination.md「purpose=quality_dip」節。"
+)
+
+
+NOMINATION_QUALITY_DIP_SIZED_PROMPT = (
+    "本次 quality_dip 為 v3：每個 purpose=quality_dip 的配對另填份量格 size（small／medium／large），其他 purpose 的 size 填空字串；"
+    "quality_dip 的組數就是你列出的 quality_dip 配對數，不超過簡報 quality_dip_swap.max_quality_dip_pairs，且與其他配對的上限分開計；"
+    "風險 Agent 稍後對每一組裁決（同意、降一格或否決，只能縮不能放）。簡報顯示有可提名的 quality_dip 換入者與換出者、而你沒有提名任何 "
+    "quality_dip 配對時，必須在 quality_dip_decline 以列舉加一句文字交代原因；其他情況 reason_kind 填 not_applicable、reason 填空字串。"
+    "你不得輸出任何百分比或數字，用法見 swap-nomination.md「purpose=quality_dip」節的 v3 段落。"
 )
 
 

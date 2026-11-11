@@ -375,7 +375,9 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "v1 影子（5c 結構檢查與封存，配置不讀 quality_dip 配對）、v2 正式（須 agent_swap=v2；每次對數、每檔買進權重、"
              "買進不超過換出賣款、turn_assessment 下限、stance_floor 防守略過）；turn_assessment 由 apply_trade_decision 綁定、"
              "Finalizer 以現金姿態重算；形狀與值域由 quality_dip_swap.validate_quality_dip_swap_gate 檢查；"
-             "5c 需 team_inputs.dip_facts 與 typed_evidence_v1 的 claim_kind；team_inputs 仍是 2.9、不升版",
+             "5c 需 team_inputs.dip_facts 與 typed_evidence_v1 的 claim_kind；v1／v2 的 team_inputs 仍是 2.9、不升版。"
+             "v3（組數與份量由交易 Agent 提出、風險 Agent 裁決；須 agent_swap=v2；組數另計不占 agent_swap.max_swaps_per_run，"
+             "ruling_ref／rulings 由 pipeline 綁定，team_inputs 升為 2.10）見 docs/quality_dip_agent_sizing_plan.md",
     ),
     GateRule(
         "cash_stance_recency",
@@ -772,20 +774,41 @@ def _validate_agent_swap_binding(gate: Mapping[str, object], prefix: str, errors
     # agent_swap.quality_dip 啟用時 purpose 另允許 quality_dip（沒有時允許值與舊版完全相同）。
     with_purpose = "exposure" in gate
     purposes = ("thesis", "exposure") + (("quality_dip",) if "quality_dip" in gate else ())
+    # agent_swap.quality_dip v3：quality_dip 配對另有份量格 size（small／medium／large），其他 purpose 不得有；組數另計（不占 max_swaps_per_run）。
+    quality = gate.get("quality_dip")
+    sized = isinstance(quality, Mapping) and quality.get("version") == "v3"
     pair_fields = {"buy_symbol", "sell_symbol"} | ({"purpose"} if with_purpose else set())
-    if not isinstance(pairs, list) or not all(
-        isinstance(pair, Mapping) and set(pair) == pair_fields
-        and all(isinstance(v, str) and v and (v == v.upper() or key == "purpose") for key, v in pair.items())
-        and pair["buy_symbol"] != pair["sell_symbol"] and (not with_purpose or pair["purpose"] in purposes)
-        for pair in pairs
-    ):
-        errors.append("%s.nominated_pairs 必須是 {%s}（代號大寫、不得相同%s）的清單" % (
-            prefix, ", ".join(sorted(pair_fields)), "、purpose 為 %s" % "／".join(purposes) if with_purpose else ""))
+
+    def shape_ok(pair: object) -> bool:
+        if not isinstance(pair, Mapping):
+            return False
+        wants_size = sized and pair.get("purpose") == "quality_dip"
+        expected = pair_fields | ({"size"} if wants_size else set())
+        if set(pair) != expected:
+            return False
+        if wants_size and pair["size"] not in ("small", "medium", "large"):
+            return False
+        return (
+            all(isinstance(v, str) and v and (v == v.upper() or key in ("purpose", "size")) for key, v in pair.items())
+            and pair["buy_symbol"] != pair["sell_symbol"] and (not with_purpose or pair["purpose"] in purposes)
+        )
+
+    if not isinstance(pairs, list) or not all(shape_ok(pair) for pair in pairs):
+        errors.append("%s.nominated_pairs 必須是 {%s}（代號大寫、不得相同%s%s）的清單" % (
+            prefix, ", ".join(sorted(pair_fields)), "、purpose 為 %s" % "／".join(purposes) if with_purpose else "",
+            "；v3 的 quality_dip 配對另有 size（small／medium／large）、其他 purpose 不得有 size" if sized else ""))
         return
     if len({pair["buy_symbol"] for pair in pairs}) != len(pairs) or len({pair["sell_symbol"] for pair in pairs}) != len(pairs):
         errors.append("%s.nominated_pairs 的 buy_symbol、sell_symbol 各最多出現一次" % prefix)
     limit = gate.get("max_swaps_per_run")
-    if isinstance(limit, int) and not isinstance(limit, bool) and len(pairs) > limit:
+    if sized:
+        plain = [pair for pair in pairs if pair.get("purpose") != "quality_dip"]
+        if isinstance(limit, int) and not isinstance(limit, bool) and len(plain) > limit:
+            errors.append("%s.nominated_pairs 扣除 quality_dip 配對後不得超過 max_swaps_per_run（quality_dip 組數另計）" % prefix)
+        cap = quality.get("max_swaps_per_run") if isinstance(quality, Mapping) else None
+        if isinstance(cap, int) and not isinstance(cap, bool) and len(pairs) - len(plain) > cap:
+            errors.append("%s.nominated_pairs 的 quality_dip 配對不得超過 agent_swap.quality_dip.max_swaps_per_run" % prefix)
+    elif isinstance(limit, int) and not isinstance(limit, bool) and len(pairs) > limit:
         errors.append("%s.nominated_pairs 不得超過 max_swaps_per_run" % prefix)
     if status is not None and status != "completed" and pairs:
         errors.append("%s.nomination_ref.status 不是 completed 時 nominated_pairs 必須為空" % prefix)

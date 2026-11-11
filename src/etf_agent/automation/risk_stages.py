@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Mapping, Optional, Sequence
 
 from etf_agent.decision import (
-    MARKET_REGIME_EVIDENCE_ID, DecisionToolError, MomentumEngine, RiskReviewValidator, artifact_content_sha256,
+    MARKET_REGIME_EVIDENCE_ID, DecisionToolError, MomentumEngine, RiskReviewValidator, artifact_content_sha256, canonical_sha256,
     liquidity_exposure, sector_exposure,
 )
 from etf_agent.decision.contracts import DecisionContext
@@ -15,6 +15,10 @@ from etf_agent.decision.recency import evidence_recency
 from etf_agent.decision.market_index import market_index_facts
 from etf_agent.decision.exposure_facts import risk_exposure_brief
 from etf_agent.decision.turn_facts import turn_facts
+from etf_agent.decision.quality_dip_ruling import (
+    DEGRADED_STATUSES, STATUS_NOT_REQUIRED, STATUS_SKIPPED, QualityDipRulingValidator, expected_program_status, program_ruling,
+    quality_dip_ruling_brief, ruling_envelope, seal_quality_dip_ruling,
+)
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
 from etf_agent.decision.sizing import (
@@ -23,7 +27,7 @@ from etf_agent.decision.sizing import (
 
 from .agent_runner import AgentTask, DailyPipelineError
 from .agent_schemas import (
-    CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
+    CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, QUALITY_DIP_RULING_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
     cash_stance_turn_facts_schema, exposure_view_schema,
 )
 
@@ -304,6 +308,73 @@ class RiskStagesMixin:
         stance = self.agent_step(task, lambda output: dict(output), validate)
         self.save_artifact("cash_stance", stance)
         return stance
+
+    # ------------------------------------------------------------------ quality_dip 裁決
+    def run_quality_dip_ruling(
+        self,
+        bundle: Mapping[str, object],
+        policy: Mapping[str, object],
+        trade_decision: Mapping[str, object],
+        debate: Mapping[str, object],
+        exposure_review: Mapping[str, object],
+        nomination: Mapping[str, object],
+        stance: Mapping[str, object],
+        prior_context: Optional[Mapping[str, object]],
+        exposure_facts: Mapping[str, object],
+        dip_facts: Optional[Mapping[str, object]],
+        turn_state: Optional[Mapping[str, object]],
+        run_id: str,
+    ) -> Dict[str, object]:
+        """風險 Agent 對交易 Agent 提名的 purpose=quality_dip 配對做最後裁決（agent_swap.quality_dip v3，排在現金姿態之後、配置之前）。
+
+        ``policy`` 是已綁定本次現金姿態（turn_assessment）與回撤下限的 Policy。提名沒有 quality_dip 配對時封存 ``not_required``、前置條件不成立時封存
+        ``skipped_by_program``（都不呼叫 Agent）；其餘呼叫 Agent，驗證最多三次嘗試，用盡封存 ``exhausted``、暫時性失敗重試後仍失敗封存
+        ``unavailable``（空清單，全部 quality_dip 配對取消、其餘決策照常）；安全拒絕仍整個停止（比照換股提名）。
+        這是現金姿態之外的另一次獨立呼叫：現金姿態的簡報完全不變。"""
+        envelope = ruling_envelope(bundle, nomination, stance, "quality-dip-ruling:%s" % run_id)
+        validator = QualityDipRulingValidator(
+            bundle, policy, nomination, stance, prior_context=prior_context, exposure_facts=exposure_facts, dip_facts=dip_facts)
+        try:
+            status, reason = expected_program_status(policy, nomination)
+        except DecisionToolError as error:
+            raise DailyPipelineError("優質股裁決無法重算前置檢查：%s" % error) from error
+        if status == STATUS_NOT_REQUIRED:
+            ruling = program_ruling(envelope, STATUS_NOT_REQUIRED)
+        elif status == STATUS_SKIPPED:
+            ruling = program_ruling(envelope, STATUS_SKIPPED, [str(reason)])
+        else:
+            try:
+                brief = quality_dip_ruling_brief(
+                    bundle, trade_decision, debate, exposure_review, nomination, stance, exposure_facts, dip_facts,
+                    turn_facts(bundle), market_index_facts(bundle), turn_state)
+            except (DecisionToolError, KeyError, TypeError, ValueError) as error:
+                raise DailyPipelineError("優質股裁決簡報建立失敗：%s" % error) from error
+            brief_path = self.save_brief("brief_quality_dip_ruling", brief)
+            task = AgentTask(
+                "quality_dip_ruler",
+                "你是 $portfolio-risk-review 風險 Agent 的優質股換股裁決。先讀 %s（「優質股換股裁決」一節）及其連結的 %s，再讀簡報 %s。"
+                "交易 Agent 在換股提名提出了 purpose=quality_dip 的配對與份量格；你對每一組依序給 approve、downsize 或 reject"
+                "（只能縮不能放，不得新增或更換配對），downsize／reject 要附 reason_kind 與理由，evidence_ids 至少引用一個市場層級證據。"
+                "本次現金姿態為防守看法（defensive 或 keep_defensive）而仍放行任何一組時，必須在 defensive_reconciliation 說明為什麼；"
+                "否則該欄位填空字串。你不得輸出任何百分比或數字。%s"
+                % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
+                   self.root / "tradeagent/risk/portfolio-risk-review/references/quality-dip-ruling.md", brief_path, _SHARED_RULES),
+                QUALITY_DIP_RULING_SCHEMA,
+            )
+            fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
+            outcome = self.agent_step_degradable(
+                task, lambda output: seal_quality_dip_ruling(envelope, output), validator.validate, fingerprint)
+            if outcome.artifact is not None:
+                ruling = outcome.artifact
+            elif outcome.status in DEGRADED_STATUSES:
+                ruling = program_ruling(envelope, outcome.status, outcome.errors)
+            else:
+                raise DailyPipelineError("優質股裁決未預期的步驟狀態：%s" % outcome.status)
+        errors = validator.validate(ruling)
+        if errors:
+            raise DailyPipelineError("QualityDipRuling 驗證失敗：" + "；".join(errors[:10]))
+        self.save_artifact("quality_dip_ruling", ruling)
+        return ruling
 
     # ------------------------------------------------------------------ review
     def _review(

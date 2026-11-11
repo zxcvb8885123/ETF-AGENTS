@@ -10,6 +10,12 @@
   買進金額不超過該對換出者的賣款、``turn_assessment`` 不低於 ``min_turn_assessment``、回撤下限 ``stance_floor`` 為 defensive 時整個略過；
   減碼日由 ``_agent_swap`` 整個略過。現金下限、換手上限、檔數、單股與產業上限照舊是後段上限，一律不放寬。
 
+- **v3（組數與份量由 Agent 提出、風險 Agent 裁決；設計見 ``docs/quality_dip_agent_sizing_plan.md``）**：需 ``agent_swap`` v2；``max_swaps_per_run``
+  與 ``max_entry_weight`` 改為人設的**絕對硬上限**（quality_dip 組數另計，不占用 ``agent_swap.max_swaps_per_run``）；交易 Agent 在每個
+  quality_dip 配對填份量格列舉 ``size``（small／medium／large），風險 Agent 另做一次裁決（approve／downsize／reject，只能縮不能放），
+  程式把有效份量格對成買進權重上限（large＝硬上限，medium 為其 2/3，small 為其 1/3）。裁決沒有完成（用盡、暫時性失敗、程式前置檢查不過）
+  一律取消全部 quality_dip 配對，不退回 v2 行為。v1、v2 的程式分支原樣保留，供舊 Policy 與舊 run 重建。
+
 5c 的結構檢查（Validator，只驗結構、不判斷理由好壞；全部失敗走修正循環）：
 
 - 換入者：thesis 配對的全部資格之外，第一輪信心不低於 ``min_new_conviction``；``dip_facts`` 整份可用、該股 ``price_pattern`` 為下跌
@@ -31,10 +37,21 @@ from .turn_facts import TURN_ASSESSMENTS
 
 QUALITY_DIP_SWAP_V1 = "v1"  # 影子：配置不讀 quality_dip 配對
 QUALITY_DIP_SWAP_V2 = "v2"  # 正式：配置依序取用 quality_dip 配對（加本閘門的硬上限）
-QUALITY_DIP_SWAP_VERSIONS = (QUALITY_DIP_SWAP_V1, QUALITY_DIP_SWAP_V2)
+QUALITY_DIP_SWAP_V3 = "v3"  # 正式：硬上限＋交易 Agent 的份量格＋風險 Agent 的裁決；組數另計
+QUALITY_DIP_SWAP_VERSIONS = (QUALITY_DIP_SWAP_V1, QUALITY_DIP_SWAP_V2, QUALITY_DIP_SWAP_V3)
+# v3：份量格與裁決（Agent 只給列舉，不輸出數字）。份量格對成權重上限的比例是版本內的程式常數（待人決定第 5 項已選 A）：
+# large＝max_entry_weight、medium＝2/3、small＝1/3；以 Decimal 計算，不用浮點。
+SIZE_GRADES = ("small", "medium", "large")
+SIZE_FRACTIONS = {"large": (1, 1), "medium": (2, 3), "small": (1, 3)}
+RULING_APPROVE, RULING_DOWNSIZE, RULING_REJECT = "approve", "downsize", "reject"
+RULINGS = (RULING_APPROVE, RULING_DOWNSIZE, RULING_REJECT)
+RULING_STATUSES = ("completed", "not_required", "skipped_by_program", "exhausted", "unavailable")
+RULING_REF_FIELDS = {"ruling_id", "sha256", "status"}
+# v3 的 quality_dip 組數另計（不占 agent_swap.max_swaps_per_run），所以不能以 agent_swap 的上限當範圍；這裡只是結構性的合理範圍（人填的數字必須落在其中）。
+QUALITY_DIP_V3_MAX_SWAPS = 10
 PURPOSE_QUALITY_DIP = "quality_dip"
 QUALITY_DIP_SWAP_REQUIRED = {"version", "max_swaps_per_run", "max_entry_weight", "min_new_conviction", "min_holding_days", "min_turn_assessment"}
-QUALITY_DIP_SWAP_FIELDS = QUALITY_DIP_SWAP_REQUIRED | {"oversold", "turn_assessment"}
+QUALITY_DIP_SWAP_FIELDS = QUALITY_DIP_SWAP_REQUIRED | {"oversold", "turn_assessment", "ruling_ref", "rulings"}
 OVERSOLD_FIELDS = {"max_swaps_per_run", "max_entry_weight"}
 # 已決定（第 4.2 節、第 7.2 節第 8 項）：必須有轉向跡象，所以只允許 turn_unconfirmed 或 turn_confirmed。
 MIN_TURN_ASSESSMENTS = ("turn_unconfirmed", "turn_confirmed")
@@ -57,6 +74,13 @@ QUALITY_DIP_SWAP_NOTE = (
     "不是依據；不符合時改用 purpose=thesis（照原本規則）或刪除該對。程式另會限制每次對數、每檔買進權重、買進金額不超過換出賣款，"
     "並在沒有轉向跡象或回撤強制防守時不取用；這些都在配置時由程式決定，你不需要也不得輸出任何數字。"
 )
+QUALITY_DIP_SWAP_NOTE_V3 = (
+    QUALITY_DIP_SWAP_NOTE
+    + " v3：每個 purpose=quality_dip 的配對另填份量格 size（small＝試單、medium、large＝把握最高）；組數就是你列出的 quality_dip 配對數，"
+    "不超過簡報的 max_quality_dip_pairs（與其他配對的上限分開計）。風險 Agent 稍後會對每一組裁決（同意、降一格或否決，只能縮不能放），"
+    "程式再把份量格對成買進權重上限；你不得輸出任何百分比或數字。若簡報顯示有可提名的 quality_dip 換入者與換出者、而你沒有提名任何 quality_dip 配對，"
+    "必須用 quality_dip_decline 交代原因（列舉加一句文字）；其他情況不得填。"
+)
 
 
 def quality_dip_swap_gate(sizing: object) -> Optional[Mapping[str, object]]:
@@ -70,6 +94,60 @@ def nomination_purposes(sizing: object) -> tuple:
     """提名 ``purpose`` 的合法值：沒有 quality_dip 閘門時與曝險階段 2 相同（thesis／exposure），有時多 quality_dip。"""
     base = ("thesis", "exposure")
     return base + (PURPOSE_QUALITY_DIP,) if quality_dip_swap_gate(sizing) is not None else base
+
+
+def quality_dip_v3_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """``agent_swap.quality_dip`` 且 ``version == v3`` 時回閘門，否則 None（沒有閘門、v1、v2 的程式路徑都不經過 v3 分支）。"""
+    gate = quality_dip_swap_gate(sizing)
+    return gate if gate is not None and gate.get("version") == QUALITY_DIP_SWAP_V3 else None
+
+
+def size_after_ruling(size: object, ruling: object) -> Optional[str]:
+    """交易 Agent 的份量格經風險 Agent 裁決後的有效份量格：approve 不變、downsize 降一格、reject 回 None（取消該對）。
+
+    風險 Agent 只能縮不能放：這裡沒有任何升級的路徑；small 不能再降（Validator 已拒絕，這裡再擋一次，不靜默當成 reject）。"""
+    if size not in SIZE_GRADES or ruling not in RULINGS:
+        raise DecisionToolError("份量格或裁決不是合法列舉：size=%s、ruling=%s" % (size, ruling))
+    if ruling == RULING_REJECT:
+        return None
+    if ruling == RULING_APPROVE:
+        return str(size)
+    index = SIZE_GRADES.index(str(size))
+    if index == 0:
+        raise DecisionToolError("份量格 small 不能再降一格（只能 approve 或 reject）")
+    return SIZE_GRADES[index - 1]
+
+
+def size_entry_weight(base: Decimal, size: str) -> Decimal:
+    """份量格對成的買進權重上限：硬上限 × 固定比例（Decimal，確定性；不高於 base）。"""
+    numerator, denominator = SIZE_FRACTIONS[size]
+    return base * Decimal(numerator) / Decimal(denominator)
+
+
+def program_skip_reason(policy: Mapping[str, object]) -> Optional[str]:
+    """quality_dip 的程式前置條件（人設的界線，不是 Agent 的判斷）；不成立回原因代碼，成立回 None。
+
+    與配置（allocation._agent_swap）的整體條件同一口徑：回撤下限 stance_floor 為 defensive 或帳本歷史不可用、風險 Agent 的
+    turn_assessment 低於 min_turn_assessment。v2 的配置另有「賣款可再用」一項，這裡不重複（它由配置自行取消，且不影響裁決是否呼叫）。
+    pipeline 以它決定要不要呼叫裁決步驟，Finalizer 以它重算裁決狀態應該是 skipped_by_program 還是其他。需已綁定本次的
+    drawdown_control 與 turn_assessment，缺少時拋錯（fail-closed），不靜默當成通過。"""
+    sizing = policy.get("position_sizing")
+    gate = quality_dip_swap_gate(sizing)
+    if gate is None:
+        raise DecisionToolError("DecisionPolicy 沒有 agent_swap.quality_dip，不應檢查前置條件")
+    control = policy.get("drawdown_control")
+    if not isinstance(control, Mapping) or control.get("status") not in ("available", "unavailable"):
+        raise DecisionToolError("agent_swap.quality_dip 需要已綁定本次回撤的 drawdown_control（stance_floor）")
+    turn = gate.get("turn_assessment")
+    if turn not in TURN_ASSESSMENTS:
+        raise DecisionToolError("DecisionPolicy 啟用 agent_swap.quality_dip，但尚未綁定風險 Agent 的 turn_assessment")
+    if control.get("status") != "available":
+        return "quality_dip_drawdown_unavailable"
+    if control.get("stance_floor") == "defensive":
+        return "quality_dip_stance_floor"
+    if not turn_allows({"turn_assessment": turn, "min_turn": gate["min_turn_assessment"]}):
+        return "quality_dip_turn"
+    return None
 
 
 # ---------------------------------------------------------------- 閘門
@@ -109,11 +187,16 @@ def validate_quality_dip_swap_gate(sizing: Mapping[str, object], errors: List[st
     version = gate.get("version")
     if version not in QUALITY_DIP_SWAP_VERSIONS:
         errors.append("%s.version 只允許 %s" % (prefix, "／".join(QUALITY_DIP_SWAP_VERSIONS)))
-    if version == QUALITY_DIP_SWAP_V2 and isinstance(swap, Mapping) and swap.get("version") != "v2":
-        errors.append("%s.version=v2 只允許用於 agent_swap.version=v2（配置才讀提名）" % prefix)
+    if version in (QUALITY_DIP_SWAP_V2, QUALITY_DIP_SWAP_V3) and isinstance(swap, Mapping) and swap.get("version") != "v2":
+        errors.append("%s.version=%s 只允許用於 agent_swap.version=v2（配置才讀提名）" % (prefix, version))
     limit = swap.get("max_swaps_per_run") if isinstance(swap, Mapping) else None
     limit = limit if _int_in(limit, 0, None) else None
-    if "max_swaps_per_run" in gate and not _int_in(gate["max_swaps_per_run"], 0, limit):
+    if version == QUALITY_DIP_SWAP_V3:
+        # v3 的組數另計（待人決定第 7 項已選 B）：不以 agent_swap.max_swaps_per_run 為上限，只要求落在結構性的合理範圍內。
+        if "max_swaps_per_run" in gate and not _int_in(gate["max_swaps_per_run"], 0, QUALITY_DIP_V3_MAX_SWAPS):
+            errors.append("%s.max_swaps_per_run 必須是 0～%d 的整數（v3 的組數另計，不占 agent_swap.max_swaps_per_run）" % (
+                prefix, QUALITY_DIP_V3_MAX_SWAPS))
+    elif "max_swaps_per_run" in gate and not _int_in(gate["max_swaps_per_run"], 0, limit):
         errors.append("%s.max_swaps_per_run 必須是 0～agent_swap.max_swaps_per_run 的整數（不放寬現行上限）" % prefix)
     entry = _ratio(gate["max_entry_weight"], "%s.max_entry_weight" % prefix, errors) if "max_entry_weight" in gate else None
     if "min_new_conviction" in gate and gate["min_new_conviction"] not in QUALITY_DIP_CONVICTIONS:
@@ -123,10 +206,11 @@ def validate_quality_dip_swap_gate(sizing: Mapping[str, object], errors: List[st
     if "min_turn_assessment" in gate and gate["min_turn_assessment"] not in MIN_TURN_ASSESSMENTS:
         errors.append("%s.min_turn_assessment 只允許 %s（必須有轉向跡象）" % (prefix, "／".join(MIN_TURN_ASSESSMENTS)))
     if "turn_assessment" in gate:
-        if version != QUALITY_DIP_SWAP_V2:
-            errors.append("%s.turn_assessment 只用於 version=v2（由 pipeline 綁定風險 Agent 的 turn_assessment）" % prefix)
+        if version not in (QUALITY_DIP_SWAP_V2, QUALITY_DIP_SWAP_V3):
+            errors.append("%s.turn_assessment 只用於 version=v2／v3（由 pipeline 綁定風險 Agent 的 turn_assessment）" % prefix)
         elif gate["turn_assessment"] not in TURN_ASSESSMENTS:
             errors.append("%s.turn_assessment 只允許 %s" % (prefix, "／".join(TURN_ASSESSMENTS)))
+    _validate_ruling_binding(gate, version, prefix, errors)
     if "oversold" in gate:
         oversold = gate["oversold"]
         label = "%s.oversold" % prefix
@@ -146,17 +230,41 @@ def validate_quality_dip_swap_gate(sizing: Mapping[str, object], errors: List[st
                 errors.append("%s.max_entry_weight 不得高於 quality_dip.max_entry_weight" % label)
 
 
+def _validate_ruling_binding(gate: Mapping[str, object], version: object, prefix: str, errors: List[str]) -> None:
+    """v3 的 ``ruling_ref``／``rulings``（只能由 pipeline 綁定）：兩者一起出現、只用於 v3、形狀固定；狀態不是 completed 時 rulings 必須為空。"""
+    ref, rulings = gate.get("ruling_ref"), gate.get("rulings")
+    if ref is None and rulings is None:
+        return
+    if version != QUALITY_DIP_SWAP_V3:
+        errors.append("%s.ruling_ref／rulings 只用於 version=v3（只能由 pipeline 綁定）" % prefix)
+        return
+    if ref is None or rulings is None:
+        errors.append("%s.ruling_ref 與 rulings 必須一起出現（只能由 pipeline 綁定）" % prefix)
+        return
+    status = None
+    if not isinstance(ref, Mapping) or set(ref) != RULING_REF_FIELDS or not all(isinstance(v, str) and v for v in ref.values()):
+        errors.append("%s.ruling_ref 欄位必須是 ruling_id、sha256、status 的非空字串" % prefix)
+    elif ref["status"] not in RULING_STATUSES:
+        errors.append("%s.ruling_ref.status 只允許 %s" % (prefix, "／".join(RULING_STATUSES)))
+    else:
+        status = ref["status"]
+    if not isinstance(rulings, list) or not all(item in RULINGS for item in rulings):
+        errors.append("%s.rulings 必須是 %s 的清單（與提名中 quality_dip 配對同序）" % (prefix, "／".join(RULINGS)))
+    elif status is not None and status != "completed" and rulings:
+        errors.append("%s.ruling_ref.status 不是 completed 時 rulings 必須為空" % prefix)
+
+
 def bind_quality_dip_turn(swap: Mapping[str, object], sizing: Mapping[str, object], cash_stance: Mapping[str, object]) -> Dict[str, object]:
-    """``apply_trade_decision`` 用：v2 把風險 Agent 的 ``turn_assessment`` 綁進 ``agent_swap.quality_dip.turn_assessment``。
+    """``apply_trade_decision`` 用：v2／v3 把風險 Agent 的 ``turn_assessment`` 綁進 ``agent_swap.quality_dip.turn_assessment``。
 
     ``swap`` 是目前的 agent_swap 物件（可能已綁 exposure view）；v1（影子）與沒有閘門回傳拷貝、不綁定。"""
     result = dict(swap)
     gate = quality_dip_swap_gate(sizing)
-    if gate is None or gate.get("version") != QUALITY_DIP_SWAP_V2:
+    if gate is None or gate.get("version") not in (QUALITY_DIP_SWAP_V2, QUALITY_DIP_SWAP_V3):
         return result
     turn = cash_stance.get("turn_assessment")
     if turn not in TURN_ASSESSMENTS:
-        raise DecisionToolError("Policy 啟用 agent_swap.quality_dip v2，現金姿態必須給 turn_assessment（%s）" % "／".join(TURN_ASSESSMENTS))
+        raise DecisionToolError("Policy 啟用 agent_swap.quality_dip v2／v3，現金姿態必須給 turn_assessment（%s）" % "／".join(TURN_ASSESSMENTS))
     result["quality_dip"] = {**dict(gate), "turn_assessment": turn}
     return result
 
@@ -164,7 +272,7 @@ def bind_quality_dip_turn(swap: Mapping[str, object], sizing: Mapping[str, objec
 def quality_dip_swap_binding(sizing: object) -> Optional[Dict[str, object]]:
     """配置用的綁定。沒有閘門或 agent_swap 不是 v2（配置不讀提名）回 None。
 
-    回傳 ``{"version", "purposes"}``（``purposes`` 與 ``nominated_pairs`` 同序）；v2 另有 ``turn_assessment``、``min_turn``、``cap``、
+    回傳 ``{"version", "purposes"}``（``purposes`` 與 ``nominated_pairs`` 同序）；v2／v3 另有 ``turn_assessment``、``min_turn``、``cap``、
     ``entry_weight``、``oversold``（None 或 ``{"cap", "entry_weight"}``）。v2 未綁 turn_assessment 時拋錯，不靜默當成沒有轉向跡象。"""
     gate = quality_dip_swap_gate(sizing)
     swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
@@ -181,10 +289,10 @@ def quality_dip_swap_binding(sizing: object) -> Optional[Dict[str, object]]:
         return {"version": QUALITY_DIP_SWAP_V1, "purposes": purposes}
     turn = gate.get("turn_assessment")
     if turn not in TURN_ASSESSMENTS:
-        raise DecisionToolError("DecisionPolicy 啟用 agent_swap.quality_dip v2，但尚未綁定風險 Agent 的 turn_assessment")
+        raise DecisionToolError("DecisionPolicy 啟用 agent_swap.quality_dip v2／v3，但尚未綁定風險 Agent 的 turn_assessment")
     oversold = gate.get("oversold")
-    return {
-        "version": QUALITY_DIP_SWAP_V2, "purposes": purposes, "turn_assessment": str(turn),
+    binding: Dict[str, object] = {
+        "version": str(gate.get("version")), "purposes": purposes, "turn_assessment": str(turn),
         "min_turn": str(gate["min_turn_assessment"]), "cap": int(gate["max_swaps_per_run"]),  # type: ignore[arg-type]
         "entry_weight": decimal_value(gate["max_entry_weight"], "max_entry_weight"),
         "oversold": None if not isinstance(oversold, Mapping) else {
@@ -192,6 +300,36 @@ def quality_dip_swap_binding(sizing: object) -> Optional[Dict[str, object]]:
             "entry_weight": decimal_value(oversold["max_entry_weight"], "oversold.max_entry_weight"),
         },
     }
+    if gate.get("version") == QUALITY_DIP_SWAP_V3:
+        binding.update(_v3_binding(gate, pairs, purposes))
+    return binding
+
+
+def _v3_binding(gate: Mapping[str, object], pairs: Sequence[Mapping[str, object]], purposes: Sequence[str]) -> Dict[str, object]:
+    """v3 另有：每對的份量格 ``sizes``（非 quality_dip 為 None）、裁決狀態 ``ruling_status`` 與每對的裁決 ``rulings``（與 pairs 同序，
+    只有 quality_dip 配對且狀態為 completed 才有值）。沒有綁定裁決或內容與提名不一致一律拋錯，不靜默當成通過。"""
+    ref, rulings = gate.get("ruling_ref"), gate.get("rulings")
+    if not isinstance(ref, Mapping) or not isinstance(rulings, list):
+        raise DecisionToolError("DecisionPolicy 啟用 agent_swap.quality_dip v3，但尚未綁定風險 Agent 的裁決（ruling_ref／rulings）")
+    status = str(ref.get("status"))
+    quality_index = [index for index, purpose in enumerate(purposes) if purpose == PURPOSE_QUALITY_DIP]
+    sizes: List[Optional[str]] = []
+    for pair, purpose in zip(pairs, purposes):
+        size = pair.get("size")
+        if purpose == PURPOSE_QUALITY_DIP and size not in SIZE_GRADES:
+            raise DecisionToolError("agent_swap.quality_dip v3 的 quality_dip 配對必須有份量格 size（%s）" % "／".join(SIZE_GRADES))
+        sizes.append(str(size) if purpose == PURPOSE_QUALITY_DIP else None)
+    if status == "not_required" and quality_index:
+        raise DecisionToolError("裁決狀態為 not_required，但提名含 quality_dip 配對")
+    by_pair: List[Optional[str]] = [None] * len(pairs)
+    if status == "completed":
+        if len(rulings) != len(quality_index):
+            raise DecisionToolError("裁決筆數與提名中的 quality_dip 配對數不一致")
+        for index, ruling in zip(quality_index, rulings):
+            by_pair[index] = str(ruling)
+    elif rulings:
+        raise DecisionToolError("裁決狀態不是 completed 時 rulings 必須為空")
+    return {"sizes": sizes, "ruling_status": status, "rulings": by_pair}
 
 
 def turn_allows(binding: Mapping[str, object]) -> bool:
@@ -306,7 +444,8 @@ def oversold_symbols(dip_facts: Optional[Mapping[str, object]]) -> Set[str]:
 
 
 __all__ = [
-    "PURPOSE_QUALITY_DIP", "QUALITY_DIP_BUY_REASONS", "QUALITY_DIP_SELL_REASONS", "QUALITY_DIP_SWAP_NOTE", "QUALITY_DIP_SWAP_V1",
+    "PURPOSE_QUALITY_DIP", "QUALITY_DIP_BUY_REASONS", "QUALITY_DIP_SWAP_V3", "RULINGS", "RULING_STATUSES", "SIZE_GRADES",
+    "program_skip_reason", "quality_dip_v3_gate", "size_after_ruling", "size_entry_weight", "QUALITY_DIP_SELL_REASONS", "QUALITY_DIP_SWAP_NOTE", "QUALITY_DIP_SWAP_V1",
     "QUALITY_DIP_SWAP_V2", "bind_quality_dip_turn", "buy_reasons", "claim_kinds", "nomination_purposes", "non_price_bull_ids",
     "oversold_symbols", "quality_dip_swap_binding", "quality_dip_swap_gate", "sell_reasons", "turn_allows",
     "validate_quality_dip_pair", "validate_quality_dip_swap_gate",

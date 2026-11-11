@@ -566,6 +566,8 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 4. **已知限制（重建）**：事實為 unavailable 且沒有選到 run（例如 `NO_VALUATION_RUN`）時，Finalizer 不釘住 run、重新挑選；若事後才存進一個時間不晚於 cutoff 的 run，之後重新驗證這份決策會被拒絕。另外，決策重建從此依賴估值資料夾：刪掉或搬走舊 run，引用它的決策重建會被拒絕。驗證端（`competition/dplan.py`、`decision_delivery/provider.py` 等）沒有傳決策庫路徑時推不出估值資料夾，閘門開啟後會一律拒絕；正式流程 `scripts/run_daily_pipeline.py` 傳的是 `artifacts/decisions`，推得的位置就是 `cli/valuation_collect.py` 寫入的 `artifacts/valuation_collection`。
 5. **分析師文字沒有加識別碼檢查**：分析報告的驗證（含辯論驗證）看不到 Policy，加閘門依賴的檢查會牽動舊報告驗證；因為背景沒有任何可引用的編號，這裡維持不加，靠 Skill 規則。
 
+> **第四版後續（2026-11-11）**：組數與份量改由交易 Agent 提、風險 Agent 裁決的設計與實作紀錄見 [`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)（`agent_swap.quality_dip` v3，已實作、尚未開啟）。
+
 ### 10.6 V3 需要人決定的事（2026-11-10，第七版；本次未實作）
 
 第 2.6 節 (5) 與第 7 節把 V3 標為「未定、V2 開啟後有即時紀錄再由人決定」，而且它會改證據政策（`typed_evidence_v1` 的種類對映）的既有行為，所以本次**沒有寫程式**。開工前需要人逐項決定：

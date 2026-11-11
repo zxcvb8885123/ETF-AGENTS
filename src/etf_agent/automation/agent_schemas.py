@@ -152,6 +152,48 @@ SWAP_NOMINATION_QUALITY_DIP_SCHEMA = _object(
     },
     ("nominations", "lower_conviction_review", "thesis_hint_responses", "no_nomination_reason"),
 )
+# 只在 Policy 的 agent_swap.quality_dip 為 v3（組數與份量由 Agent 提出）時使用：每對另加列舉 size（small／medium／large；非 quality_dip 配對
+# 與 Codex strict schema 要求「欄位一律輸出」，填空字串表示不適用，封存時還原成缺席，見 swap_nomination.seal_swap_nomination），
+# 頂層另加 quality_dip_decline（沒有需要交代時 reason_kind 填 not_applicable、reason 填空字串）。沒有 v3 時沿用上面的 Schema，逐位元不變。
+_SWAP_PAIR_QUALITY_DIP_SIZED = _object(
+    {**_SWAP_PAIR_QUALITY_DIP["properties"], "size": {"enum": ["small", "medium", "large", ""]}},
+    tuple(_SWAP_PAIR_QUALITY_DIP["required"]) + ("size",),
+)
+_QUALITY_DIP_DECLINE = _object(
+    {
+        "reason_kind": {"enum": [
+            "no_suitable_victim", "prefer_thesis_pairs", "market_not_ready", "candidates_not_convincing", "not_applicable"]},
+        "reason": {"type": "string"},
+    },
+    ("reason_kind", "reason"),
+)
+SWAP_NOMINATION_QUALITY_DIP_SIZED_SCHEMA = _object(
+    {
+        "nominations": {"type": "array", "items": _SWAP_PAIR_QUALITY_DIP_SIZED},
+        "lower_conviction_review": {"type": "array", "items": _LOWER_CONVICTION_ENTRY},
+        "thesis_hint_responses": {"type": "array", "items": _THESIS_HINT_RESPONSE},
+        "quality_dip_decline": _QUALITY_DIP_DECLINE,
+        "no_nomination_reason": {"type": "string"},
+    },
+    ("nominations", "lower_conviction_review", "thesis_hint_responses", "quality_dip_decline", "no_nomination_reason"),
+)
+# 風險 Agent 對 quality_dip 配對的裁決（agent_swap.quality_dip v3）：只有代號、列舉、證據識別碼與文字，沒有任何數字欄位；
+# 裁決的列舉裡沒有「升級」。approve 的 reason_kind 填 none、不需要 defensive_reconciliation 時填空字串（封存時還原成缺席）。
+_RULING_ENTRY = _object(
+    {
+        "buy_symbol": _TEXT, "sell_symbol": _TEXT, "ruling": {"enum": ["approve", "downsize", "reject"]},
+        "reason_kind": {"enum": ["market_risk", "portfolio_concentration", "timing", "none"]}, "reason": _TEXT,
+    },
+    ("buy_symbol", "sell_symbol", "ruling", "reason_kind", "reason"),
+)
+QUALITY_DIP_RULING_SCHEMA = _object(
+    {
+        "rulings": {"type": "array", "items": _RULING_ENTRY},
+        "evidence_ids": _strings(1),
+        "defensive_reconciliation": {"type": "string"},
+    },
+    ("rulings", "evidence_ids", "defensive_reconciliation"),
+)
 # 回撤減碼的釋出順序（position_sizing.drawdown_derisk v5）：只有代號、依據識別碼與文字，沒有任何數字欄位；順序就是陣列順序。
 _RELEASE_ENTRY = _object(
     {"symbol": _TEXT, "basis_ids": _strings(1), "reason": _TEXT}, ("symbol", "basis_ids", "reason"),
