@@ -39,10 +39,14 @@ from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
 from etf_agent.decision.dip_facts import build_dip_facts, event_direction_gate, quality_dip_assessment_gate, quality_dip_facts_gate
-from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_gate
+from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_agent_led, exposure_view_gate
 from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, apply_swap_nomination, bind_thesis_hints
-from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate, quality_dip_v3_gate
+from etf_agent.decision.decline_depth import build_decline_depth_facts, scan_quality_dip_entries
+from etf_agent.decision.offense import build_offense_facts, offense_gate
+from etf_agent.decision.quality_dip_swap import (
+    bind_quality_dip_ladder_entries, ladder_counts_quality_dip_fills_only, quality_dip_ladder_gate, quality_dip_swap_gate, quality_dip_v3_gate,
+)
 from etf_agent.decision.quality_dip_ruling import apply_quality_dip_ruling
 from etf_agent.decision.valuation_facts import build_valuation_facts, valuation_facts_gate, valuation_root_for
 from etf_agent.decision.release_order import apply_release_order
@@ -327,6 +331,11 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             base_policy = bind_thesis_hints(base_policy, load_thesis_verdicts(self.root, str(bundle["decision_cutoff"])))
         # 出場冷卻名單由決策庫確定性取得並綁進 policy；重建驗證只讀 policy，不重掃決策庫。
         base_policy = bind_reentry_cooldown(base_policy, self.decision_repository, bundle)
+        # 抄底梯度 exposure_basis=quality_dip_fills（版本閘門，選配）：已套用的前次 run 中 quality_dip 的成交清單由決策庫確定性取得並綁進 policy；
+        # 讀不到綁 null（梯度以 entries_unavailable 關閉）；沒有此模式原樣不動，重建驗證只讀 policy。
+        if ladder_counts_quality_dip_fills_only(base_policy.get("position_sizing")):
+            base_policy = bind_quality_dip_ladder_entries(
+                base_policy, scan_quality_dip_entries(self.decision_repository, bundle, base_policy, applied_decision_run_ids))
         # 前次決策背景先載入（只給交易 Agent）：cash_ratio_range 的前次現金比例必須取自同一個前次 run。
         prior_context = self.load_prior_decision_context(bundle, applied_decision_run_ids)
         # 姿態內現金子等級（版本閘門）：前次現金比例 anchor 由程式綁進 policy，只給風險 Agent 當背景；沒有閘門原樣不變。
@@ -375,6 +384,18 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             exposure_facts = build_exposure_facts(bundle, base_policy)
             self.save_artifact("exposure_facts", exposure_facts)
 
+        # offense（版本閘門，轉向後進攻）：程式算的賣壓竭盡、廣度回升、量能、情緒極端、指數站回五類事實與對照樣本，只給風險 Agent 當背景；
+        # 另存進 team_inputs.offense_facts（選配鍵，須 2.9 以上）供 Finalizer 整份重算。沒有閘門時不建立，team_inputs 逐鍵不變。
+        offense_facts = None
+        if offense_gate(base_policy.get("position_sizing")) is not None:
+            if exposure_facts is None:
+                raise DailyPipelineError("policy 啟用 offense 時也必須啟用 exposure_view（簡報與 team_inputs 2.7 以上）")
+            try:
+                offense_facts = build_offense_facts(bundle, base_policy)
+            except DecisionToolError as error:
+                raise DailyPipelineError("offense_facts 無法建立：%s" % error) from error
+            self.save_artifact("offense_facts", offense_facts)
+
         # quality_dip_facts：完整事實（含事件面一項、price_pattern 與 candidate）在多空研究完成後才建立與存檔，研究員看不到；
         # 只給交易 Agent 當背景，另存進 team_inputs.dip_facts 供 Finalizer 整份重算。沒有閘門時不建立，team_inputs 逐鍵不變。
         dip_facts = None
@@ -383,6 +404,13 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 raise DailyPipelineError("policy 啟用 quality_dip_facts 時 bundle 必須有 fundamental_period_policy（team_inputs 2.6 以上）")
             dip_facts = build_dip_facts(bundle, dip_gate, self.fundamental_metrics, analysts["event"], direction)
             self.save_artifact("dip_facts", dip_facts)
+
+        # agent_swap.quality_dip v4（連跌後逢低布局）：程式算交易池的連跌深度事實與對照樣本，只給換股提名當背景（風險 Agent 的裁決簡報也附事實、
+        # 不附上限）；另存進 team_inputs.decline_depth_facts 供 Finalizer 整份重算。沒有 v4 時不建立，team_inputs 逐鍵不變。
+        decline_depth_facts = None
+        if quality_dip_ladder_gate(base_policy.get("position_sizing")) is not None:
+            decline_depth_facts = build_decline_depth_facts(bundle, base_policy)
+            self.save_artifact("decline_depth_facts", decline_depth_facts)
 
         # held_weight_budget v2：持股權重事實（現有權重、單股上限、high 份額下限）只給交易 Agent 當背景，另存進
         # team_inputs.held_weight_facts 供 Finalizer 整份重算；沒有閘門時不建立，team_inputs 逐鍵不變。
@@ -427,7 +455,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                     bundle, base_policy, trade, ranking, debate, position_review, exposure_review, prior_context, decision_run_id,
                     **({"exposure_facts": exposure_facts, "turn_state": turn_state} if exposure_facts is not None else {}),
                     # agent_swap.quality_dip（優質股第三階段）：提名另讀 dip_facts；沒有閘門時不傳，呼叫與舊版相同。
-                    **({"dip_facts": dip_facts} if quality_dip_swap_gate(base_policy.get("position_sizing")) is not None else {}))
+                    **({"dip_facts": dip_facts} if quality_dip_swap_gate(base_policy.get("position_sizing")) is not None else {}),
+                    **({"decline_depth_facts": decline_depth_facts} if decline_depth_facts is not None else {}))
             base_policy = apply_swap_nomination(base_policy, swap_nomination)
             base_policy["content_sha256"] = decision_policy_sha256(base_policy)
 
@@ -459,7 +488,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                           turn_state,
                                           (base_policy.get("position_sizing") or {}).get("market_index_facts"),
                                           **({"exposure_view_gate": exposure_view_gate(base_policy.get("position_sizing")),
-                                              "exposure_facts": exposure_facts} if exposure_facts is not None else {}))
+                                              "exposure_facts": exposure_facts} if exposure_facts is not None else {}),
+                                          agent_led=exposure_view_agent_led(base_policy.get("position_sizing")),
+                                          **({"offense_gate": offense_gate(base_policy.get("position_sizing")),
+                                              "offense_facts": offense_facts} if offense_facts is not None else {}))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)
@@ -467,14 +499,16 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         # （approve／downsize／reject，只能縮不能放）；裁決綁進 Policy，配置只讀 Policy，team_inputs 升為 2.10。沒有 v3 時完全不經過這一步。
         quality_dip_ruling = None
         if quality_dip_v3_gate(policy.get("position_sizing")) is not None:
-            if swap_nomination is None or exposure_review is None or exposure_facts is None or dip_facts is None:
+            if swap_nomination is None or exposure_review is None or exposure_facts is None or dip_facts is None or (
+                    quality_dip_ladder_gate(policy.get("position_sizing")) is not None and decline_depth_facts is None):
                 raise DailyPipelineError(
                     "policy 啟用 agent_swap.quality_dip v3 時也必須有換股提名、曝險檢視、exposure_facts 與 dip_facts（team_inputs 2.10 是 2.9 的超集）")
             self.log("[decision 6b] 風險 Agent 裁決優質股換股配對（approve／downsize／reject）")
             with self._timed("quality_dip_ruling"):
                 quality_dip_ruling = self.run_quality_dip_ruling(
                     bundle, policy, trade, debate, exposure_review, swap_nomination, stance, prior_context, exposure_facts, dip_facts,
-                    turn_state, decision_run_id)
+                    turn_state, decision_run_id,
+                    **({"decline_depth_facts": decline_depth_facts} if decline_depth_facts is not None else {}))
             policy = apply_quality_dip_ruling(policy, quality_dip_ruling)
         policy["content_sha256"] = decision_policy_sha256(policy)
         policy_errors = DecisionPolicyValidator(bundle).validate(policy, nav_history)
@@ -533,6 +567,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"release_order": release_order} if release_order is not None else {}),
             **({"held_weight_facts": held_weight_facts} if held_weight_facts is not None else {}),
             **({"valuation_facts": valuation_facts} if valuation_facts is not None else {}),
+            **({"decline_depth_facts": decline_depth_facts} if decline_depth_facts is not None else {}),
+            **({"offense_facts": offense_facts} if offense_facts is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history

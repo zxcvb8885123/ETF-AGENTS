@@ -72,10 +72,17 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 
 ### v3：份量格與組數（簡報的 `quality_dip_swap` 有 `size_grades` 與 `max_quality_dip_pairs` 時才適用）
 
-- 每個 `purpose=quality_dip` 的配對另填列舉 `size`：`small`（試單：論點成立但想先小額進場）、`medium`、`large`（把握最高：願意用程式允許的最大份量）。其他 `purpose` 的 `size` 填空字串。**你不輸出任何百分比或數字**，份量格怎麼對成權重由程式決定，且有人設的硬上限。
+- 每個 `purpose=quality_dip` 的配對另填列舉 `size`：`small`（試單：論點成立但想先小額進場）、`medium`、`large`（把握最高：願意用程式允許的最大份量）。其他 `purpose` 的 `size` 填空字串（**僅限簡報沒有 `entry_reserve` 時**；有 `entry_reserve` 時每一組都要填 `size`、不可為空，見下方 entry_reserve 段）。**你不輸出任何百分比或數字**，份量格怎麼對成權重由程式決定，且有人設的硬上限。
 - **組數就是你列出的 quality_dip 配對數**，不超過簡報的 `max_quality_dip_pairs`；這個名額與其他配對（`pair_limit`）分開計，不互相占用。要幾組、先後順序由你判斷，高把握的排前面。
 - 提名之後風險 Agent 會對每一組裁決（同意、降一格或否決，只能縮不能放），所以不需要替風險先打折。
 - 簡報顯示有可提名的 quality_dip 換入者與換出者、而你沒有提名任何 quality_dip 配對時，**必須**填頂層 `quality_dip_decline`：`reason_kind` 從 `no_suitable_victim`（沒有合適的換出者）、`prefer_thesis_pairs`（改用 thesis 配對）、`market_not_ready`（市場尚未準備好）、`candidates_not_convincing`（候選不夠有說服力）選一個，並寫一句 `reason`。這只是紀錄，程式不依它做任何事；有 quality_dip 配對或不屬上述情況時，`reason_kind` 填 `not_applicable`、`reason` 填空字串。
+
+### v4：連跌後逢低布局（簡報另有 `decline_depth_facts` 與 `ladder` 時才適用）
+
+- `decline_depth_facts` 是程式算的交易池連跌深度事實與本視窗內的對照樣本（`citable=false`、沒有 `evidence_id`，**不可引用**，理由也不要寫出這個鍵名）：說明交易池連跌多深、本視窗過去類似情形之後發生什麼；樣本很少（`small_sample`）、彼此重疊、`replay_reference_only`，**不是預測**，也不要補入簡報沒有的歷史案例。
+- **跌得深不是買進理由**：換入者仍須有自己的非價格多頭論點、相符的 `dip_assessment` 與換出者的換出依據，沒有就不要提名。
+- `ladder` 是人填的抄底梯度今天開不開（程式算）：`status` 為 `closed`（原因在 `reason`）時 quality_dip 配對不會成交，不要白費力氣提名；`open` 時只給你剩餘額度作背景，你不輸出任何數字。提名時風險 Agent 尚未判斷轉向，`ladder` 以有轉向跡象的假設計算（不含回檔深度門檻）；簡報的 `depth_needs_turn` 為 true 表示交易池回檔還沒達人設的深度門檻，這時配對只有風險 Agent 判斷有轉向跡象才成交，不是一定關閉。
+- 其餘（份量格、`quality_dip_decline`）同 v3。
 
 ## 輸出
 
@@ -101,4 +108,10 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 
 簡報有 `exposure_swap` 時，每對另有 `"purpose": "thesis"` 或 `"exposure"`，頂層另有 `"lower_conviction_review": []`（或逐檔交代，見上節）。簡報另有 `quality_dip_swap` 時，`purpose` 也可以是 `"quality_dip"`（見上節）。
 
-簡報的 `quality_dip_swap` 有 `size_grades` 時（quality_dip v3），每對另有 `"size"`（quality_dip 配對填 `"small"`／`"medium"`／`"large"`，其他填 `""`），頂層另有 `"quality_dip_decline": {"reason_kind": "not_applicable", "reason": ""}`（需要交代時依上面填列舉與一句理由）。
+簡報的 `quality_dip_swap` 有 `size_grades` 時（quality_dip v3），每對另有 `"size"`（quality_dip 配對填 `"small"`／`"medium"`／`"large"`，其他填 `""`；**簡報有 `entry_reserve` 時每一組都填列舉、不可填 `""`**），頂層另有 `"quality_dip_decline": {"reason_kind": "not_applicable", "reason": ""}`（需要交代時依上面填列舉與一句理由）。
+
+簡報有 `exposure_swap.entry_reserve` 時（`agent_swap.entry_reserve`），**每一組**都要填 `"size"`（`"small"` 試單、`"medium"` 一般、`"large"` 把握最高；不可留空字串、不輸出任何百分比）。程式把份量格對成買進上限，換入者的買進先保留預算，縮到不足一張就整組取消、換出者不賣；超出份量格所需的賣款回到一般預算（可能流向其他買單）。清單上限是 `max_nominations`，比實際成交組數（`fill_limit`）長，超過成交上限的組從清單尾端取消，所以把最想換的放前面。
+
+`entry_reserve.note` 另有「thesis 份量格上限」一句時（`position_sizing.offense.thesis_size_cap` 開啟）：風險 Agent 的有效等級放寬防守姿態的現金目標那天，`purpose=thesis` 的配對份量格會被程式縮到該級 `max_size`（只縮不取消、不占曝險配對名額、不被組合 beta 停止線取消）；這只限制份量格，不限制動用放寬的現金。你仍照把握程度填 `size`，不必自己壓低。簡報沒有這句時不適用。
+
+- Policy 啟用 `offense` 時，風險 Agent 的 `exposure_view` 可為 `probe`：曝險配對的份量格會被程式縮到該級 `max_size`，且預估組合 beta 達停止線後其後的曝險配對不成交；你仍只給代號配對、`size` 與文字，不輸出數字。

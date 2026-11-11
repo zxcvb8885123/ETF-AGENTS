@@ -42,6 +42,9 @@ from etf_agent.decision.analysts import LLM_ANALYSTS, no_event_item, seal_event_
 from etf_agent.decision.prior_decision import NO_SESSION_REASON
 from etf_agent.decision.exposure_facts import EXPOSURE_FACTS_KEY, nomination_exposure_brief
 from etf_agent.decision.exposure_swap import exposure_swap_gate
+from etf_agent.decision.decline_depth import DECLINE_DEPTH_FACTS_KEY, build_ladder_state, decline_depth_brief
+from etf_agent.decision.entry_reserve import entry_reserve_gate
+from etf_agent.decision.offense import offense_gate, thesis_size_cap_enabled
 from etf_agent.decision.quality_dip_swap import quality_dip_swap_gate, quality_dip_v3_gate
 from etf_agent.decision.valuation_facts import valuation_background_brief
 from etf_agent.decision.held_weight_facts import held_weight_brief
@@ -85,6 +88,8 @@ from .agent_schemas import (
     SWAP_NOMINATION_EXPOSURE_SCHEMA,
     SWAP_NOMINATION_QUALITY_DIP_SCHEMA,
     SWAP_NOMINATION_QUALITY_DIP_SIZED_SCHEMA,
+    SWAP_NOMINATION_RESERVE_QUALITY_DIP_SIZED_SCHEMA,
+    SWAP_NOMINATION_RESERVE_SCHEMA,
     SWAP_NOMINATION_SCHEMA,
     TRADE_SCHEMA,
     trade_schema_with_dip_assessment,
@@ -646,6 +651,7 @@ class TeamStagesMixin:
         exposure_facts: Optional[Mapping[str, object]] = None,
         turn_state: Optional[Mapping[str, object]] = None,
         dip_facts: Optional[Mapping[str, object]] = None,
+        decline_depth_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """5c 換股提名（agent_swap 閘門）：交易 Agent 在入選排序之後，提名「用哪檔新股換掉哪檔持股」的有序清單。
 
@@ -666,6 +672,10 @@ class TeamStagesMixin:
         # agent_swap.quality_dip v3（組數與份量由 Agent 提出）：每個 quality_dip 配對另填份量格 size、頂層另有 quality_dip_decline；
         # 沒有 v3 時 Schema、簡報與封存逐位元不變。
         quality_sized = quality_dip_v3_gate(policy.get("position_sizing")) is not None
+        # agent_swap.entry_reserve（換入者先保留預算）：每組必填份量格 size；沒有閘門時 Schema、簡報與封存逐位元不變。
+        entry_reserve = entry_reserve_gate(policy.get("position_sizing")) is not None
+        # offense.thesis_size_cap：放寬現金期間 thesis 配對的份量格也套該級 max_size；沒開時提示與簡報逐位元不變。
+        thesis_cap = thesis_size_cap_enabled(offense_gate(policy.get("position_sizing")))
         try:
             facts = nomination_facts(
                 bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, exposure_facts, quality_dip)
@@ -673,7 +683,7 @@ class TeamStagesMixin:
             raise DailyPipelineError("換股提名無法由共同輸入建立事實：%s" % error) from error
         validator = SwapNominationValidator(
             bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, prior_context=prior_context,
-            exposure_facts=exposure_facts, dip_facts=quality_dip,
+            exposure_facts=exposure_facts, dip_facts=quality_dip, decline_depth_facts=decline_depth_facts,
         )
         if not needs_nomination(facts):
             nomination = program_nomination(envelope, STATUS_NOT_NEEDED, exposure=exposure_swap)
@@ -692,6 +702,12 @@ class TeamStagesMixin:
                         exposure_facts, [str(row["symbol"]) for row in brief["candidates"]],
                         turn_facts(bundle), market_index_facts(bundle), turn_state, exposure_swap,
                     )
+                if decline_depth_facts is not None:
+                    # quality_dip v4：連跌深度事實與梯度今天的判定（背景、不可引用；風險 Agent 尚未判斷轉向，以「有轉向跡象」假設計算、另標回檔深度是否仍需轉向跡象）。
+                    brief = dict(brief)
+                    brief[DECLINE_DEPTH_FACTS_KEY] = decline_depth_brief(
+                        decline_depth_facts, build_ladder_state(bundle, policy, "turn_unconfirmed", decline_depth_facts),
+                        build_ladder_state(bundle, policy, "no_turn_evidence", decline_depth_facts))
             except (DecisionToolError, KeyError, TypeError, ValueError) as error:
                 raise DailyPipelineError("換股提名簡報建立失敗：%s" % error) from error
             brief_path = self.save_brief("brief_swap_nomination", brief)
@@ -705,14 +721,18 @@ class TeamStagesMixin:
                 + (NOMINATION_EXPOSURE_PROMPT if exposure_facts is not None else "")
                 + (NOMINATION_PURPOSE_PROMPT if exposure_swap else "")
                 + (NOMINATION_QUALITY_DIP_PROMPT if quality_swap else "")
-                + (NOMINATION_QUALITY_DIP_SIZED_PROMPT if quality_sized else ""),
+                + (NOMINATION_QUALITY_DIP_SIZED_PROMPT if quality_sized else "")
+                + (NOMINATION_QUALITY_DIP_LADDER_PROMPT if decline_depth_facts is not None else "")
+                + (NOMINATION_ENTRY_RESERVE_PROMPT if entry_reserve else "")
+                + (NOMINATION_THESIS_SIZE_CAP_PROMPT if thesis_cap else ""),
+                (SWAP_NOMINATION_RESERVE_QUALITY_DIP_SIZED_SCHEMA if quality_sized else SWAP_NOMINATION_RESERVE_SCHEMA) if entry_reserve else
                 SWAP_NOMINATION_QUALITY_DIP_SIZED_SCHEMA if quality_sized else (
                     SWAP_NOMINATION_QUALITY_DIP_SCHEMA if quality_swap else (
                         SWAP_NOMINATION_EXPOSURE_SCHEMA if exposure_swap else SWAP_NOMINATION_SCHEMA)),
             )
             fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
             outcome = self.agent_step_degradable(
-                task, lambda output: seal_swap_nomination(envelope, output, exposure_swap, quality_sized), validator.validate, fingerprint,
+                task, lambda output: seal_swap_nomination(envelope, output, exposure_swap, quality_sized, entry_reserve), validator.validate, fingerprint,
             )
             if outcome.artifact is not None:
                 nomination = outcome.artifact
@@ -799,6 +819,23 @@ NOMINATION_QUALITY_DIP_PROMPT = (
     "為 true 時才可），buy_basis_ids 至少一個是 claim_kind 不是 price 的已採納多頭論點，換出者必須是 quality_dip_nominable=true 的持股，"
     "換出依據規則與 thesis 相同。候選標示與 dip_assessment 只是背景、不是依據；不符合時改用 thesis 或刪除該對。"
     "用法見 swap-nomination.md「purpose=quality_dip」節。"
+)
+
+
+NOMINATION_ENTRY_RESERVE_PROMPT = (
+    "簡報有 entry_reserve（換入者先保留預算）：**每一組**（不只優質股）都必須填份量格 size（small／medium／large，不可留空字串；此時以本段為準，優質股段落「其他 purpose 填空字串」不適用；只有列舉、不輸出任何百分比）；"
+    "程式把份量格對成買進權重上限，買進再受該組換出者賣款、單股與產業上限餘裕限制，換入者的買進先保留預算、不會再被信心預算先用掉，"
+    "縮到不足一張時整組取消、換出者不賣；超出份量格所需的賣款回到一般預算（可能流向其他買單）。清單可以比實際成交組數長（見簡報的 fill_limit），超過的從清單尾端取消，"
+    "所以把最想換的放前面。份量格是你對把握程度的表達，不是下單數字。"
+)
+NOMINATION_THESIS_SIZE_CAP_PROMPT = (
+    "簡報的 entry_reserve 另說明 thesis 份量格上限：風險 Agent 的有效等級放寬防守姿態的現金目標時，purpose=thesis 的配對份量格也受該級 max_size 限制，"
+    "你填的 size 較大時由程式縮到上限（只縮不取消、不限制動用放寬的現金）；你仍照把握程度填 size，不必自己壓低。"
+)
+NOMINATION_QUALITY_DIP_LADDER_PROMPT = (
+    "本次 quality_dip 為 v4（連跌後逢低布局）：簡報另含 decline_depth_facts（交易池連跌深度事實與本視窗內的對照樣本，背景、不可引用，"
+    "理由也不要寫出這個鍵名；樣本很少、不是預測）與 ladder（人填的抄底梯度今天開不開，status 為 closed 時 quality_dip 配對不會成交；depth_needs_turn 為 true 時須風險 Agent 判斷有轉向跡象才成交）。"
+    "跌得深不是買進理由：換入者仍須有自己的非價格多頭論點與相符的 dip_assessment；你不得輸出任何百分比或數字。"
 )
 
 
