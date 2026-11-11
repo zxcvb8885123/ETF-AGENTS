@@ -469,6 +469,8 @@ class TeamStagesMixin:
         當背景事實附在 brief（不可引用），並讓 hold 也必填 conviction；換股由程式依帳本與 beta 決定，Agent 不輸出任何數字。
         ``dip_assessment``（position_sizing.quality_dip_assessment 閘門，需 ``dip_facts``）為 True 時，buy／add 另填列舉 dip_assessment
         （紀錄用）；False 時 Schema 與驗證逐位元不變。
+        ``trader_background``（position_sizing.trader_background_record）有時，簡報的 ``strategy_lessons`` 與 ``thesis_review_background``
+        改由這份封存紀錄產生（不再當場讀來源檔），簡報形狀不變；None 時照舊讀檔，簡報與驗證逐位元不變。
         ``valuation_facts``（position_sizing.valuation_facts，估值 V2）有時每批簡報多附本批股票的 ``valuation_background``（citable=false），
         文字欄位出現其識別碼即拒絕；沒有時簡報與驗證逐鍵不變。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
@@ -496,8 +498,17 @@ class TeamStagesMixin:
         # reentry_cooldown v3：未持有且近期出場的股票各附一個 hint_id 提示（買回須回應）；沒有 v3 時簡報逐鍵不變。
         hint_symbols = sorted({str(s).upper() for s in (reentry_hint_symbols or ())} - set(held))
         hold_conviction = exposure_review is not None
-        lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
-        thesis_verdicts = load_thesis_verdicts(self.root, bundle["decision_cutoff"])  # 每週論點檢視；只是背景，沒有可引用的 ID
+        if trader_background is not None:
+            # 交易背景封存：簡報用 run 開始時封存的來源檔內容，續跑時來源檔被改也不影響。
+            lessons_background = lessons_brief(lessons_from_record(trader_background))
+            thesis_verdicts = verdicts_from_record(trader_background)
+        else:
+            lessons_background = lessons_brief(load_strategy_lessons(self.root, bundle["decision_cutoff"]))  # 反思整理的做法建議；只是背景，沒有可引用的 ID
+            thesis_verdicts = load_thesis_verdicts(self.root, bundle["decision_cutoff"])  # 每週論點檢視；只是背景，沒有可引用的 ID
+        # 背景照抄檢查（只在這裡即時驗證，Finalizer 不傳）：簡報附的教訓文字與持股論點檢視摘要，理由與條件不得整句照抄。
+        background_texts = [*(lessons_background["lessons"] if lessons_background is not None else []),
+                            *(item["summary"] for item in (thesis_verdicts["items"] if thesis_verdicts is not None else [])
+                              if str(item["symbol"]).upper() in held)]
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]
@@ -554,7 +565,7 @@ class TeamStagesMixin:
                     ],
                 },
             )
-            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols, dip_assessment=dip_assessment, valuation_facts=valuation_facts)
+            validator = TradeDecisionValidator(bundle, momentum, debate, symbols=batch["symbols"], prior_context=prior_context, position_review=position_review, hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols, dip_assessment=dip_assessment, valuation_facts=valuation_facts, background_texts=background_texts)
             task = AgentTask(
                 name,
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
@@ -588,7 +599,7 @@ class TeamStagesMixin:
         errors = TradeDecisionValidator(
             bundle, momentum, debate, prior_context=prior_context, position_review=position_review,
             hold_conviction=hold_conviction, dip_facts=dip_facts, reentry_hint_symbols=reentry_hint_symbols,
-            dip_assessment=dip_assessment, valuation_facts=valuation_facts,
+            dip_assessment=dip_assessment, valuation_facts=valuation_facts, background_texts=background_texts,
         ).validate(decision)
         if errors:
             raise DailyPipelineError("TradeDecision 合併後驗證失敗：" + "；".join(errors[:10]))
