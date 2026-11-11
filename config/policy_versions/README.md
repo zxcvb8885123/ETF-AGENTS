@@ -15,3 +15,4 @@
 - `2026-11-11-before-probe-3.json`：2026-11-11 把 probe 曝險配對由 2 改 3 之前的正式樣板（`policy_id: strategy-2026-11-11-liquidity-fit-1`）。要回滾，把 `offense.by_view.probe.max_exposure_pairs` 與 `agent_swap.exposure.max_pairs_by_view.probe` 改回 2。
 - `2026-11-12-before-liquidity-v2-alerts.json`：2026-11-12 把 `liquidity_fit` 升 v2、放寬 `position_review` 的 `gain_alert`／`trail_alert`、`quality_dip.max_entry_weight` 改 0.06 之前的正式樣板（`policy_id: strategy-2026-11-11-probe-3-1`）。要回滾，以此檔對應區塊為準（`liquidity_fit` 改回 v1、警示改回 0.10／0.05／0.05、`max_entry_weight` 改回 0.04）。
 - `2026-11-12-before-turnover-029.json`：2026-11-12 把 `max_turnover_rate` 由 0.3 改 0.29 之前的正式樣板（`policy_id: strategy-2026-11-12-liquidity-v2-1`）。要回滾，把 `max_turnover_rate` 改回 `"0.3"`。
+- `2026-11-12-before-probe-beta-045.json`：2026-11-12 把 `offense.by_view.probe.beta_stop` 由 0.40 改 0.45 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-029-1`）。要回滾，把該值改回 `"0.40"`。

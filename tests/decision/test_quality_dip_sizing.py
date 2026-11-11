@@ -922,7 +922,7 @@ class ProductionTemplateTests(unittest.TestCase):
         self.assertEqual(sizing["offense"], {
             "version": "v1",
             "by_view": {
-                "probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.40"},
+                "probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.45"},
                 "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"},
                 "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"},
             },
