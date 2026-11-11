@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-11-offense-ext-1",
-  "available_at": "2026-11-11T15:56:00+08:00",
+  "policy_id": "strategy-2026-11-11-alerts-v2-1",
+  "available_at": "2026-11-11T18:09:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -19,10 +19,19 @@
     "release_defensive_below": "0.11"
   },
   "position_review": {
-    "version": "v1",
-    "loss_alert": "0.15",
-    "retrace_alert_20d": null,
-    "gain_alert": null,
+    "version": "v2",
+    "loss_alert": "0.12",
+    "retrace_alert_20d": "0.20",
+    "gain_alert": "0.10",
+    "trail_alert": {
+      "arm_gain": "0.05",
+      "giveback": "0.05"
+    },
+    "relative_loss_alert": {
+      "loss": "0.08",
+      "lag": "0.04"
+    },
+    "stale_alert": null,
     "context": "v1"
   },
   "position_sizing": {

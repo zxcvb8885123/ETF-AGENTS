@@ -101,6 +101,7 @@
 | 名稱 | 白話意思 | 設定或程式位置 | 旗標 |
 | --- | --- | --- | --- |
 | `position_review`（`version`、`loss_alert`、`retrace_alert_20d`、`gain_alert`、`context`） | 持股檢視：程式算帳面報酬與近 20 日高點回落並依門檻標警示；`context` 另附相對交易池報酬與基本面可得時間 | policy；`decision/position_review.py`（`build_position_review`、`validate_position_review`） | 警示 `review:<代號>:<旗標>`、持股事實 `review:<代號>:position` |
+| `stop_exit`（`version`、`loss`、`lag_to_pool`、`min_holding_days`、`max_exits_per_run`） | 程式兜底硬停損（已實作、尚未開啟）：自進場虧損、輸交易池、持有天數三者同時成立才強制出場；旗標 `RISK_STOP_EXIT`／`RISK_STOP_EXIT_CANCELLED`／`STOP_EXIT_UNAVAILABLE` | policy；`decision/stop_exit.py` |
 | `prior_decision_context` | 前次決策背景：同帳戶、更早時段、通過驗證的封存 run 的持股意圖與重估條件；`citable=false` | `decision/prior_decision.py`（`find_prior_decision_run`、`PriorDecisionContextValidator`） | — |
 | `thesis_review_background` | 每週論點檢視的結論，只給交易 Agent 當持股背景，不是證據 | `decision/thesis_verdicts.py`；來源 `var/strategy_reflection/thesis_verdicts.json`；放入簡報 `automation/team_stages.py` | — |
 | `strategy_lessons` | 反思旁觀者整理的經驗教訓，只是背景、不可引用 | `decision/strategy_lessons.py`；`config/strategy_lessons.json` | — |

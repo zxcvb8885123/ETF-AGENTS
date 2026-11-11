@@ -77,6 +77,8 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 門檻（`loss_alert`、`retrace_alert_20d`、`gain_alert`）為 `null` ＝ 不設死數字：停損停利由交易 Agent 依檢視事實（報酬、近 5／20 日高點回落、選用的持股事實編號 `review:<代號>:position`）自行判斷，減碼／出場可引用該編號當依據；人另設門檻時才出現必須處理的警示。策略反思旁觀者只能在試用觀察期保護下小幅調整門檻（`version` 只由人設定，門檻為 `null` 時不可調）。
 - `position_review.context: "v1"`（版本閘門）：每檔多附相對交易池的 5／20 日報酬（`relative_to_pool_*`，交易池為同 Snapshot 全部有足夠行情的股票等權平均）與最新月營收／財報的可得時間，供交易 Agent 判斷重估條件觸發是個股走弱還是大盤一起走弱；Finalizer 照樣重算比對。
 - 成本在比賽開帳或重建日是當日結算收盤價，不是真實買價。
+- `position_review` v2（版本閘門，2026-11-11 已開啟：`trail_alert` 0.05／0.05、`relative_loss_alert` 0.08／0.04、`stale_alert null`）：新增三個只警示的門檻 `trail_alert{arm_gain,giveback}`（自進場移動停利回吐）、`relative_loss_alert{loss,lag}`（自進場虧損且輸交易池）、`stale_alert{days}`（持有滿日數且仍虧損），全部由人填；每檔多附自進場事實（進場日、持有交易日數、自進場報酬、進場後高點報酬與回落、同期交易池報酬與相對差、`entry_gap`）。基準是進場日收盤（不是成交價、不用 `average_cost`）；持有起點取自 `exposure_rotation.held_since_by_symbol`（Finalizer 以帳本重算），算不出來時事實為 null 並留 `entry_gap`、不出警示。警示仍須剛好處理一次、不可否決，簡報另列 `alerts_to_handle`，驗證回饋列出尚未處理的警示識別碼；`team_inputs` 不升版、沒有新鍵。前提 `exposure_rotation`。
+- `position_sizing.stop_exit` v1（版本閘門，已實作、尚未開啟；使用者決定硬停損不開、由交易 Agent 依警示判斷，正式設定沒有此欄位；只由人設定、列入反思禁區）：程式兜底的硬停損。自進場虧損 ≥ `loss`、同期輸交易池 ≥ `lag_to_pool`、持有 ≥ `min_holding_days` 個交易日三者同時成立才強制出場，單日至多 `max_exits_per_run` 檔（依虧損由大到小、同值依代號）。強制出場的目標股數為 0、賣單意圖標 `exit`、旗標 `RISK_STOP_EXIT`，交易 Agent 的意圖不改寫；停損賣款先計入回撤減碼的補現金需求；已被停損賣出的股票不再參與買進，也算換股換出者已出場（停損釋出的名額先照一般排序分配，提名的換入者沒搶到時該對以 `swap_cap` 取消、換出者仍因停損賣出）。不可交易、超過單日上限、被最少檔數或現金上限留住時留 `RISK_STOP_EXIT_CANCELLED`；事實算不出來時不強制並留 `STOP_EXIT_UNAVAILABLE`。停損出場的股票進再進場冷卻名單（讀前次 run 的 `proposal.json` 旗標；讀不到或不符即拒絕）。前提 `position_review` v2、`exposure_rotation`、`reentry_cooldown`；回放略過（`ignored_in_replay`）。
 - policy 沒有 `position_review` 時維持 2.3 行為。
 
 ### 入選排序（`selection_ranking: "v1"`）

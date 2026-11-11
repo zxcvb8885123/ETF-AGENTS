@@ -49,7 +49,7 @@
 
 | 閘門 | 目前值 |
 | --- | --- |
-| `position_review` | `version v1`、`loss_alert 0.15`、`retrace_alert_20d null`、`gain_alert null`、`context v1` |
+| `position_review` | `version v2`、`loss_alert 0.12`、`retrace_alert_20d 0.20`、`gain_alert 0.10`、`trail_alert` arm_gain 0.05／giveback 0.05、`relative_loss_alert` loss 0.08／lag 0.04、`stale_alert null`、`context v1`（2026-11-11 `strategy-2026-11-11-alerts-v2-1`；使用者決定硬停損不開、只保留警示讓交易 Agent 判斷；`position_sizing.stop_exit` 已實作、尚未開啟，正式設定沒有此欄位） |
 | `position_sizing.method` | `conviction_volatility_v2`，`volatility_exponent 0`，乘數 high 1.5／medium 0.6／low 0.3，`volatility_floor 0.01` |
 | `selection_ranking` | `v1`（`selection_tiebreak` 未設定，被名次取代） |
 | `limit_scaled_conviction` | `{version v1, alpha 0.6}` |

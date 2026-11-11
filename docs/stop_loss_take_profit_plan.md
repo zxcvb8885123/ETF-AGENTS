@@ -23,7 +23,7 @@
 目標：
 
 - 回答「什麼時候會賣、會停利嗎、會停損嗎」，並讓進攻買進的高 beta 股有明確的退場機制。
-- 比賽 2026-11-24 結束，剩約 9 個交易日；使用者看短期報酬、要更多操作、願意承擔較大回撤。
+- 比賽 2026-11-27 結束（使用者 11-11 更正，原記 11-24），剩約 12 個交易日；使用者看短期報酬、要更多操作、願意承擔較大回撤。
 
 非目標：
 
@@ -303,3 +303,11 @@
 - **賣在大盤低點**：`retrace_alert_20d` 與 `loss_alert` 在連跌時會同時標到很多檔，交易 Agent 可能因為「到處都是警示」而偏向賣出。11-09 的三次續抱事後是對的，但那是三次，不是保證。
 - **樣本太小**：所有門檻建議都來自同一段行情。剩下 9 個交易日如果是單邊下跌，寬停損會比窄停損虧得多；如果是震盪，任何停損都只是成本。
 - **成本基準**：帳本重建會讓 `average_cost` 歸零，階段 0 的三個警示在重建後幾天會失靈；階段 1 才解決。
+
+## 12. 實作紀錄（2026-11-11）
+
+- **階段 0（已開啟）**：使用者把 `position_review` 改為 `loss_alert 0.12`、`retrace_alert_20d 0.20`、`gain_alert 0.10`（`strategy-2026-11-11-review-alerts-1`）。全套 pipeline 測試的 fixture 補上處理警示的輸出（`fill_review_alerts`）；真實 trader 路徑已驗證：第一次漏處理被驗證拒絕、回饋點名 `review:<代號>:<旗標>`、第二次通過（`max_attempts` 預設 2）。已知限制：v1 的 `loss_alert`／`gain_alert` 依 `average_cost`，帳本重建日成本是當日收盤，這兩個警示在重建後幾天會失靈；`retrace_alert_20d` 用 20 日高點不受影響；成本不大於 0 時 `build_position_review` 直接拒絕。
+- **階段 1（已開啟，2026-11-11 18:09）**：`position_review` v2（`trail_alert`、`relative_loss_alert`、`stale_alert`，自進場事實，基準為進場日收盤）。只警示；`team_inputs` 不升版、沒有新鍵；前提 `exposure_rotation`；v2 簡報多 `alerts_to_handle`、驗證回饋列出未處理的警示。v1 沒有 `alerts_to_handle`（v1 的回饋已列出缺少的識別碼）。
+- **階段 2（已實作、尚未開啟；使用者決定硬停損不開，由交易 Agent 依警示判斷）**：`position_sizing.stop_exit` v1（`src/etf_agent/decision/stop_exit.py`，執行在 `allocation.py`）。與 6.3 的差異：(1) `agent_swap` 互動——停損先釋出名額，提名的換入者若本來就拿得到名額會是 `AGENT_SWAP_UNNEEDED`、訂單與照提名換股相同；若別的候選先搶到名額則該對以 `swap_cap` 取消，換出者仍因停損賣出；(2) 再進場冷卻改讀前次 run 的 `proposal.json` 旗標（只有閘門存在時才讀）；(3) 前提另含 `reentry_cooldown`、`position_review` v2。回放略過停損並把 v2 當 v1 重放。
+- **建議填法**：`stop_exit` `{"version":"v1","loss":"0.15","lag_to_pool":"0.08","min_holding_days":3,"max_exits_per_run":2}`；`position_review` v2 的 `trail_alert`、`relative_loss_alert`、`stale_alert` 各數字由人決定，2330 的 15% 份額下限問題未處理。
+- **開啟決定（2026-11-11 18:09，使用者）**：`position_review` v2 開啟，數值為 `loss_alert 0.12`、`retrace_alert_20d 0.20`、`gain_alert 0.10`、`trail_alert` 0.05／0.05、`relative_loss_alert` 0.08／0.04、`stale_alert null`；`stop_exit` 不開（程式碼與測試保留、正式設定沒有此欄位），`policy_id strategy-2026-11-11-alerts-v2-1`，回滾樣板 `config/policy_versions/2026-11-11-before-stop-exit-off.json`。上一條「建議填法」中的 `stop_exit` 數字僅為若日後開啟的參考。

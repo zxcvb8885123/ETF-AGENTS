@@ -40,7 +40,8 @@ policy 啟用 `position_review` 時，持股帶有：帳面報酬 `unrealized_re
 **停損與停利由你判斷，程式不設死門檻**（`flags` 預設是空的，人另設門檻才有警示）。每檔持股都依這些數字與當初的買進理由回答：這檔還值得抱嗎？賺了多少、回吐了多少、離當初的重估條件多近？判斷標準是「買進理由還成立嗎」，而不是賺到或虧到某個數字。
 
 - 想減碼或出場，採納 `position_id` 就是合法依據；理由寫清楚你看的是哪個數字、為什麼現在該賣（例如已回吐近 5 日與近 20 日高點的大半、理由已兌現、重估條件臨近）。`position_id` 對 hold、add、no_trade 是選用的：不處理、或放進 `rejected_claim_ids`，都通得過。
-- `flags` 內的 `review_id`（`loss_alert`＝帳面虧損達門檻、`retrace_alert`＝從近期高點回落達門檻）是程式事實：每個都放進 `adopted_claim_ids` 剛好一次，與 claim 一樣只能採納。`retrace_alert` 可作停利依據；`loss_alert` 的持股要 hold、add 或 no_trade 時同時採納至少一個多頭 claim，否則就是 trim 或 exit。警示決定「何時必須正視」，賣不賣、減碼或出場仍由你判斷。
+- `flags` 內的 `review_id`（`loss_alert`＝帳面虧損達門檻、`retrace_alert`＝從近期高點回落達門檻、`gain_alert`＝帳面獲利達門檻）是程式事實：每個都放進 `adopted_claim_ids` 剛好一次，與 claim 一樣只能採納；警示多時先對照 brief 的 `position_review_background.alerts_to_handle`（有的話）逐檔核對，交件前確認每個 `review_id` 都出現一次。`retrace_alert` 與 `gain_alert` 可作停利依據；`loss_alert` 的持股要 hold、add 或 no_trade 時同時採納至少一個多頭 claim，否則就是 trim 或 exit。警示決定「何時必須正視」，賣不賣、減碼或出場仍由你判斷；採納警示不等於要賣。
+- **自進場起算的警示（policy `position_review` 為 v2 時才有）**：持股另帶 `entry_date`、`holding_trading_days`（進場日之後已有收盤的交易日數）、`return_since_entry`、`peak_return_since_entry`、`retrace_from_entry_high`、`pool_return_since_entry`、`relative_to_pool_since_entry`，以進場日收盤為基準、不依賴帳戶成本，帳本重建日也有效；`entry_gap` 不是 null 時這組事實為 null、不會有下列警示（維持不知道，不要自行推算）。三個新警示的 `review_id` 處理方式與上面相同：`trail_alert`＝進場後曾賺到門檻、之後自進場後最高收盤回落達門檻（移動停利的依據）；`relative_loss_alert`＝自進場虧損達門檻、且同期輸給交易池達門檻（個股自己轉弱，不是大盤一起跌）；`stale_alert`＝持有滿門檻個交易日仍為虧損（只是提醒檢視，不是賣出理由）。這三個警示都不強制你採哪個行動，也不會讓 hold 需要多頭 claim。
 - 理由用白話描述虧損或回落；`review:` 識別碼留在 JSON 陣列。
 
 **重估條件看起來觸發時怎麼重判**（有相對交易池欄位時）：
