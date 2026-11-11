@@ -243,6 +243,31 @@ class ApplyTests(Fixture):
         self.assertFalse(self.gate(replay_body(status="failed"))["passed"])
         self.assertFalse(self.gate(replay_body(days=0))["passed"])
 
+    def test_replay_gate_discloses_in_sample_and_overridden_days(self):
+        candidate = replay_body("101")
+        candidate["days"] = [{"decision_status": "approved", "policy": {"available_at_overridden": True}},
+                             {"decision_status": "approved", "policy": {"available_at_overridden": False}}]
+        gate = self.gate(candidate)
+        self.assertIs(gate["in_sample"], True)
+        self.assertEqual(gate["available_at_overridden_days"], 1)
+        plain = self.gate(replay_body("101"))  # 舊回放資料沒有 policy 註記
+        self.assertEqual(plain["available_at_overridden_days"], 0)
+        self.assertEqual((plain["passed"], plain["reasons"], plain["segments"]), (gate["passed"], gate["reasons"], gate["segments"]))
+
+    def test_replay_gate_discloses_even_when_replay_not_completed(self):
+        gate = self.gate(replay_body(status="failed"))
+        self.assertFalse(gate["passed"])
+        self.assertIs(gate["in_sample"], True)
+        self.assertEqual(gate["available_at_overridden_days"], 0)
+
+    def test_weekly_report_states_replay_is_in_sample(self):
+        from etf_agent.strategy_reflection import render_weekly_report
+
+        reflection = self.reflection(proposed="1.6")
+        text = render_weekly_report(NOW, self.brief, reflection, {"applied": False, "reason": "x", "replay_gate": {"in_sample": True, "available_at_overridden_days": 2}})
+        self.assertIn("不是樣本外驗證；其中 2 天的策略樣板建立時間晚於當日截止時間", text)
+        self.assertIn("不是樣本外驗證", render_weekly_report(NOW, self.brief, reflection, None))
+
     def test_replay_gate_compares_excess_over_equal_weight_not_absolute_nav(self):
         """候選絕對 NAV 上漲但輸給等權基準（市場 beta）：不通過；基準下跌時候選持平也可能通過（超額為正）。"""
         dates = [row["trade_date"] for row in replay_body()["nav_series"]]

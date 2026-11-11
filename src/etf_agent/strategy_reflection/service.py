@@ -312,7 +312,10 @@ def replay_gate(base: Mapping[str, object], candidate: Mapping[str, object], ben
     - 切成 ``REPLAY_MIN_SEGMENTS`` 段不重疊子區間，候選在每一段都不劣於等權基準（超額 ≥ 0）、也不劣於目前策略；
       成交日切不出這麼多段、或基準缺任一回放日期的估值，一律不通過（不以單段或絕對 NAV 放行）。
 
-    回放只固定已封存的 Agent 意圖重算配置（``REPLAY_EVIDENCE_GRADE``），是必要條件，不是獲利證明。"""
+    回放只固定已封存的 Agent 意圖重算配置（``REPLAY_EVIDENCE_GRADE``），是必要條件，不是獲利證明。
+
+    揭露鍵（不影響 ``passed``／``reasons``／``segments``）：``in_sample`` 固定為 True（回放與提案用同一段已看過的歷史，
+    不是樣本外驗證）；``available_at_overridden_days`` 為候選回放中策略樣板 ``available_at`` 被改寫成當日 cutoff 的天數。"""
     reasons: List[str] = []
     segments: List[Dict[str, object]] = []
     for label, body in (("目前策略", base), ("候選策略", candidate)):
@@ -349,7 +352,16 @@ def replay_gate(base: Mapping[str, object], candidate: Mapping[str, object], ben
                 if candidate_excess < base_excess:
                     reasons.append("第 %d 段（%s～%s）候選策略劣於目前策略（超額 %s < %s）" % (index, start, end, _rate(candidate_excess), _rate(base_excess)))
     return {"passed": not reasons, "reasons": reasons, "benchmark_id": REPLAY_BENCHMARK_ID, "segments": segments,
-            "evidence_grade": REPLAY_EVIDENCE_GRADE, "notice": REPLAY_NOTICE}
+            "evidence_grade": REPLAY_EVIDENCE_GRADE, "notice": REPLAY_NOTICE,
+            "in_sample": True, "available_at_overridden_days": _overridden_days(candidate)}
+
+
+def _overridden_days(replay: Mapping[str, object]) -> int:
+    """回放中策略樣板建立時間被改寫成當日 cutoff 的天數；沒有 ``policy`` 註記的舊回放資料算 0，不拋例外。"""
+    days = replay.get("days")
+    if not isinstance(days, (list, tuple)):
+        return 0
+    return sum(1 for day in days if isinstance(day, Mapping) and isinstance(day.get("policy"), Mapping) and day["policy"].get("available_at_overridden") is True)
 
 
 def default_replayer(root: Path, database: Path, decisions: Path, as_of: str) -> Replayer:
@@ -492,7 +504,8 @@ def apply_reflection(
                 "trial": {"verification": trial_verification([item["knob"] for item in reflection["proposals"]])},  # type: ignore[union-attr]
                 # 含加風險方向而由人明確放行時留下稽核痕跡；全部降風險的自動套用沒有這個欄位。
                 **({"risk_increase_allowed_by_human": dict(blocked)} if blocked else {}),
-                "replay_gate": {"benchmark_id": gate["benchmark_id"], "segments": gate["segments"], "evidence_grade": gate["evidence_grade"]},
+                "replay_gate": {"benchmark_id": gate["benchmark_id"], "segments": gate["segments"], "evidence_grade": gate["evidence_grade"],
+                                "in_sample": gate["in_sample"], "available_at_overridden_days": gate["available_at_overridden_days"]},
             })
             try:
                 atomic_write_json(root / POLICY_PATH, live)
@@ -503,6 +516,7 @@ def apply_reflection(
     except BlockingIOError:
         return {"applied": False, "reason": "每日決策進行中（artifacts/daily/.lock 被佔用），反思已封存，之後可用 apply 再套用"}
     return {"applied": True, "policy_id": live["policy_id"], "knobs": [item["knob"] for item in reflection["proposals"]],  # type: ignore[union-attr]
+            "replay_gate": {"in_sample": gate["in_sample"], "available_at_overridden_days": gate["available_at_overridden_days"]},
             **({"risk_increase_allowed_by_human": dict(blocked)} if blocked else {})}
 
 
