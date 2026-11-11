@@ -22,6 +22,7 @@ from .contracts import (
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review_policy
+from .stop_exit import EMPTY_PLAN, STOP_EXIT_CANCELLED_CODE, STOP_EXIT_CODE, StopExitPlan, build_stop_exit_plan, stop_exit_gate
 from .rebound import apply_rebound, lifted_turnover_rate
 from .exposure import (
     SKIP_PORTFOLIO_SYMBOL, BetaModel, Fill, Victim, beta_model,
@@ -312,6 +313,16 @@ class AllocationOrderEngine:
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
         self._beta_model: Optional[BetaModel] = None
+        self._stop_plan: Optional[StopExitPlan] = None  # stop_exit：觸發判定只由 bundle 與 Policy 決定，整個引擎生命週期只算一次
+        self._stop_applied: Set[str] = set()  # stop_exit：本次重算中實際被程式強制出場的持股（只在 _run 內有值）
+
+    def _stop_exits(self) -> StopExitPlan:
+        """stop_exit（版本閘門）的觸發判定；沒有閘門回空計畫、完全不呼叫持股檢視計算（舊 Policy 逐位元維持舊行為）。"""
+        if stop_exit_gate(self.policy.get("position_sizing")) is None:
+            return EMPTY_PLAN
+        if self._stop_plan is None:
+            self._stop_plan = build_stop_exit_plan(self.context.bundle, self.policy, self._untradable())
+        return self._stop_plan
 
     def run(
         self,
@@ -438,7 +449,13 @@ class AllocationOrderEngine:
             exits |= {
                 str(flag["symbol"]).upper() for flag in body.get("constraint_flags", []) if flag.get("code") == "RISK_FORCED_SWAP"
             }
+        stops = set(self._stop_exits().triggered)
+        exits |= stops
         remaining = sorted(exits, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol))
+        if stops:
+            # stop_exit：程式強制出場的持股優先放回（程式自己的決定先讓位給硬規則，才輪到留住交易 Agent 的 exit）。
+            remaining = sorted(stops, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol)) + [
+                symbol for symbol in remaining if symbol not in stops]
         if body is not None and exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
             # exposure_rotation：程式自己換出的持股優先放回（優先序：交易 Agent 的 exit／trim ＞ forced_swap ＞ 曝險換股），
             # 才輪到留住交易 Agent 的 exit；曝險換股可以被取消，交易 Agent 的賣出意圖不應為它讓路。
@@ -598,6 +615,11 @@ class AllocationOrderEngine:
         max_positions = int(effective["max_positions"])
         constraint_flags: List[Dict[str, object]] = []
         untradable = self._untradable()
+        # stop_exit（版本閘門）：程式兜底的條件式硬停損，觸發名單只由 bundle 與 Policy 決定；沒有閘門時下面全部不經過。
+        stop_plan = self._stop_exits()
+        stops = set(stop_plan.triggered)
+        self._stop_applied = set()
+        constraint_flags.extend(dict(note) for note in stop_plan.notes)
 
         # Exits and trims run before capital is assigned to buys.
         for symbol in sorted(current):
@@ -613,7 +635,15 @@ class AllocationOrderEngine:
             if symbol in kept_exits and (
                 intent == "exit"
                 or (intent == "hold" and (self._forced_swap_confirmed() or exposure_rotation_gate(self.policy.get("position_sizing")) is not None))
+                or (symbol in stops and intent != "trim")  # trim 本來就不減少持股檔數，照原減碼處理
             ):
+                if symbol in stops and intent not in {"exit", "forced_exit"}:
+                    # 硬規則（最少檔數、現金上限、換手上限）優先於停損：留住續抱並明說停損被取消（原因旗標在下面）。
+                    constraint_flags.append({
+                        "symbol": symbol, "code": STOP_EXIT_CANCELLED_CODE,
+                        "detail": "停損條件成立（%s），但硬規則優先（%s）：由程式留住續抱，停損取消（交易 Agent 的意圖未被改寫）"
+                        % (stop_plan.details[symbol].split("：")[0], kept_exits[symbol]),
+                    })
                 if kept_exits[symbol] == "RISK_CASH_CEILING":
                     constraint_flags.append({
                         "symbol": symbol, "code": "RISK_CASH_CEILING",
@@ -633,7 +663,12 @@ class AllocationOrderEngine:
                     "detail": "出場後持股將低於 %d 檔，由程式依 ATR14 由低到高留住續抱（交易 Agent 的意圖未被改寫）" % int(self.policy["min_positions"]),
                 })
                 continue
-            if intent in {"exit", "forced_exit"}:
+            if symbol in stops and symbol not in kept_exits and intent not in {"exit", "forced_exit"}:
+                # 程式兜底的硬停損：交易 Agent 原本標 hold／add／buy／trim 也整檔賣出（賣單意圖下面標 exit，不改寫交易 Agent 的意圖）。
+                target_shares[symbol] = 0
+                self._stop_applied.add(symbol)
+                constraint_flags.append({"symbol": symbol, "code": STOP_EXIT_CODE, "detail": stop_plan.details[symbol]})
+            elif intent in {"exit", "forced_exit"}:
                 target_shares[symbol] = 0
             elif intent == "trim":
                 trim_shares = int(
@@ -655,6 +690,8 @@ class AllocationOrderEngine:
 
         active_symbols = {symbol for symbol, shares in target_shares.items() if shares > 0}
         order_intents = dict(intents)
+        for symbol in self._stop_applied:
+            order_intents[symbol] = "exit"
         derisk_gate = drawdown_derisk_fraction(self.policy.get("position_sizing") or {}) is not None
         # drawdown_derisk（版本閘門）：防守姿態時由程式把持股減碼到姿態現金緩衝；不改寫交易 Agent 的意圖。
         derisk_notes: List[Dict[str, object]] = []  # v5 退回 ATR 順序的旗標：PORTFOLIO 層級、不算減碼日（不進 derisk_flags）
@@ -667,7 +704,7 @@ class AllocationOrderEngine:
         candidates = [
             symbol
             for symbol in sorted(intents)
-            if intents[symbol] in {"buy", "add"} and symbol not in excluded
+            if intents[symbol] in {"buy", "add"} and symbol not in excluded and symbol not in self._stop_applied
         ]
         # drawdown_derisk v3：被減碼的持股不再是本次加碼候選，減碼後的股數就是上限；否則下面的
         # `desired = max(current, desired)` 會把交易 Agent 標 add 的同一檔加回原持股，留下減碼旗標卻沒有賣單。
@@ -1204,8 +1241,10 @@ class AllocationOrderEngine:
             elif sell in kept_exits:
                 cancel(buy, sell, "victim_kept")
             elif not (
-                sell in current and intents.get(sell, "hold") == "hold" and sell in active_symbols
-                and target_shares.get(sell, 0) > 0 and sell in self.prices and sell not in untradable
+                sell in current and intents.get(sell, "hold") == "hold"
+                # stop_exit：同日被程式強制出場的持股（目標已是 0）仍可當換出者，換股照成交、賣單只有一張（不重複賣）。
+                and ((sell in active_symbols and target_shares.get(sell, 0) > 0) or sell in self._stop_applied)
+                and sell in self.prices and sell not in untradable
             ):
                 cancel(buy, sell, "victim_unavailable")
             else:

@@ -330,6 +330,13 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "exposure_rotation 須為 v3、cash_stance_turn_facts v1、drawdown_derisk v4（自訂檢查在 rebound.validate_rebound_gate）；"
              "bundle 須為 typed_evidence_v1（建 turn_state 時檢查）；effective_state 由 apply_trade_decision 綁定；team_inputs 須為 2.8",
     ),
+    GateRule(
+        "stop_exit", requires=("exposure_rotation", "reentry_cooldown"),
+        note="程式兜底的條件式硬停損（v1）：自進場虧損、輸交易池與持有交易日數三個人填門檻全成立才強制出場（賣單意圖標 exit、旗標 RISK_STOP_EXIT，"
+             "交易 Agent 的意圖不改寫），單日最多 max_exits_per_run 檔；事實取自頂層 position_review v2（由 stop_exit.validate_stop_exit_gate 檢查），"
+             "持有起點取自 exposure_rotation 綁定的 held_since_by_symbol；缺資料不強制出場；出場股票進入 reentry_cooldown 名單；"
+             "team_inputs 不升版、沒有新鍵（配置引擎由 bundle 與 Policy 重算，Finalizer 以配置重建比對）；見 docs/stop_loss_take_profit_plan.md",
+    ),
     GateRule("slot_recycle", allowed=(SLOT_RECYCLE,), note="物件 {\"version\": \"v1\"}；LOT_SIZE 候選釋出占用的新增名額"),
     GateRule(
         "high_conviction_cash_floor", requires=("cash_buffer_floor", "cash_fit_order"),
@@ -1463,6 +1470,11 @@ def validate_position_sizing(
     if "offense" in sizing:
         from .offense import validate_offense_limits
         validate_offense_limits(policy, errors)
+    if "stop_exit" in sizing:
+        from .stop_exit import validate_stop_exit_gate
+        validate_stop_exit_gate(policy, errors)
+    if "revision_bounds" in sizing:
+        validate_revision_bounds_gate(policy, errors)
     if "agent_swap" in sizing and "position_review" not in policy:
         errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
     if "cash_ratio_range" in sizing:
