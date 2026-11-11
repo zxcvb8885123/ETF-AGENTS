@@ -279,6 +279,11 @@ def bind_replay_policy(
         if valuation_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "valuation_facts"}
             base["content_sha256"] = decision_policy_sha256(base)
+        # trader_background_record（交易背景封存）只把背景封存進 team_inputs，不影響配置：回放略過並標一次；沒有閘門的舊回放逐位元不變。
+        background_ignored = isinstance(base.get("position_sizing"), Mapping) and "trader_background_record" in base["position_sizing"]
+        if background_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "trader_background_record"}
+            base["content_sha256"] = decision_policy_sha256(base)
         # agent_swap 依賴 exposure_rotation／rebound_participation（回放都略過）與封存 run 沒有的換股提名：必須先於它們移除，
         # 否則前提驗證會失敗；沒有閘門的舊回放 notes 與 policy 逐位元不變。
         swap_ignored = isinstance(base.get("position_sizing"), Mapping) and "agent_swap" in base["position_sizing"]
@@ -362,6 +367,8 @@ def bind_replay_policy(
         notes["agent_swap.quality_dip"] = "ignored_in_replay"
     if valuation_ignored:
         notes["valuation_facts"] = "ignored_in_replay"
+    if background_ignored:
+        notes["trader_background_record"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
     if offense_ignored:

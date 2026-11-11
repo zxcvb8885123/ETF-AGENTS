@@ -184,6 +184,8 @@ FORBIDDEN_PREFIXES = (
     "offense",
     # 估值 V2：PER／PBR 位置事實以背景進基本面分析師與交易 Agent 簡報（紀錄用），切換程式路徑與 team_inputs 欄位，只由人設定。
     "valuation_facts",
+    # 交易背景封存：策略教訓與論點檢視背景改由 run 內封存的來源檔內容產生並進 team_inputs（紀錄用），只由人設定。
+    "trader_background_record",
     # 風險修正動作的數值下限與步距：放寬或收緊都是改變風控界線，只由人設定。
     "revision_bounds",
 )

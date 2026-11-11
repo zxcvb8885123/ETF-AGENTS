@@ -13,6 +13,7 @@ from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from etf_agent.core import untrusted_value
 
+from .trader_background import TRADER_BACKGROUND_GATE
 from .contracts import (
     DecisionContext,
     DecisionToolError,
@@ -451,6 +452,19 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "Finalizer 以同一個估值資料夾整份重算",
     ),
     GateRule(
+        TRADER_BACKGROUND_GATE,
+        note="交易背景封存（v1，紀錄用）：交易 Agent 簡報的策略教訓與論點檢視背景，改由 run 開始時封存的完整來源檔內容產生（trader_background.json），"
+             "team_inputs 另存 trader_background（選配鍵，與本閘門雙向同時存在、不升 team_inputs 版本），Finalizer 驗證封存自洽、時間合法與"
+             "agent_swap.verdicts_ref 一致（無法證明來源檔當時沒有別的版本）；簡報形狀、驗證與配置不變；回放略過",
+    ),
+    GateRule(
+        "revision_bounds",
+        note="風險修正動作的數值界線（v1）：reduce_max_stock_weight／reduce_turnover_limit 的 value 不得低於人填的下限、須為 step 的整數倍"
+             "（自訂檢查在 validate_revision_bounds_gate，驗證在 RiskReviewValidator._validate_action）；這是「Agent 不輸出數字」的已知例外，"
+             "只能往降風險方向、有上下界、由 Validator 檢查；下限與步距全部由人填、程式不設預設；沒有此欄位的舊 Policy 逐位元維持原行為；"
+             "不影響配置引擎、team_inputs 不變；special_weight_limits 內的股票不受 reduce_max_stock_weight 影響",
+    ),
+    GateRule(
         "exposure_view",
         requires=("exposure_rotation", "cash_stance_turn_facts", "market_index_facts"),
         note="Agent 主導曝險階段 1（事實與紀錄）：風險 Agent 簡報附組合曝險與產業權重事實（背景、不可引用）並多填 exposure_view 列舉"
@@ -727,6 +741,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "valuation_facts" in sizing:
         from .valuation_facts import validate_valuation_facts_gate
         validate_valuation_facts_gate(sizing, errors)
+    if TRADER_BACKGROUND_GATE in sizing:
+        from .trader_background import validate_trader_background_gate
+        validate_trader_background_gate(sizing, errors)
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)
@@ -1105,23 +1122,6 @@ def cash_ratio_gate(sizing: Mapping[str, object]) -> Optional[Mapping[str, objec
     return gate if isinstance(gate, Mapping) else None
 
 
-def cash_ratio_selection_check(sizing: Mapping[str, object]) -> bool:
-    """cash_ratio_range.selection_check 開啟時為 True：重建時以決策庫重跑前次 run 的挑選；沒有閘門回 False（原行為）。"""
-    gate = cash_ratio_gate(sizing)
-    return gate is not None and gate.get("selection_check") == CASH_RATIO_SELECTION_CHECK
-
-
-def _percent(value: Decimal) -> str:
-    return format(value, ".0%")
-
-
-def anchor_reference_tokens(
-    gate: Mapping[str, object], prior_context: Optional[Mapping[str, object]] = None,
-) -> List[str]:
-    """理由文字不得出現的前次決策識別碼：前次比例只是背景，不是證據。
-
-    anchor.source 記錄 run_id、decision／proposal 的 id 與雜湊；前次 decision_id 不在 anchor 結構內（不改已封存 Policy），
-    改由同一份前次決策背景（``prior_context.source.decision_id``，anchor 重建驗證已要求兩者指向同一個 run）補上。"""
 REVISION_BOUNDS_V1 = "v1"
 REVISION_BOUNDS_FIELDS = frozenset({"version", "min_max_stock_weight", "min_max_turnover_rate", "step"})
 
@@ -1170,6 +1170,23 @@ def validate_revision_bounds_gate(policy: Mapping[str, object], errors: List[str
             errors.append(str(error))
 
 
+def cash_ratio_selection_check(sizing: Mapping[str, object]) -> bool:
+    """cash_ratio_range.selection_check 開啟時為 True：重建時以決策庫重跑前次 run 的挑選；沒有閘門回 False（原行為）。"""
+    gate = cash_ratio_gate(sizing)
+    return gate is not None and gate.get("selection_check") == CASH_RATIO_SELECTION_CHECK
+
+
+def _percent(value: Decimal) -> str:
+    return format(value, ".0%")
+
+
+def anchor_reference_tokens(
+    gate: Mapping[str, object], prior_context: Optional[Mapping[str, object]] = None,
+) -> List[str]:
+    """理由文字不得出現的前次決策識別碼：前次比例只是背景，不是證據。
+
+    anchor.source 記錄 run_id、decision／proposal 的 id 與雜湊；前次 decision_id 不在 anchor 結構內（不改已封存 Policy），
+    改由同一份前次決策背景（``prior_context.source.decision_id``，anchor 重建驗證已要求兩者指向同一個 run）補上。"""
     anchor = gate.get("anchor")
     source = anchor.get("source") if isinstance(anchor, Mapping) else None
     tokens: List[object] = []

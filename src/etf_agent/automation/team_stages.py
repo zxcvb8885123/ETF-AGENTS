@@ -78,6 +78,7 @@ from etf_agent.decision.release_order import (
 )
 from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_lessons
 from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_brief
+from etf_agent.decision.trader_background import lessons_from_record, verdicts_from_record
 
 from .agent_runner import LATER_STAGE_GLOBS, RESEARCH_DENY_DIRECTORIES, AgentTask, DailyPipelineError
 from .agent_schemas import (
@@ -396,8 +397,8 @@ class TeamStagesMixin:
                 stance_schema(typed),
                 # 多空互相隔離由讀檔權限強制：不得讀另一方的輸出、原始輸出與輸入摘要。
                 deny_reads=_peer_deny_reads(role),
-            )
                 deny_read_directories=RESEARCH_DENY_DIRECTORIES,
+            )
             return name, lambda: self.agent_step(
                 task, lambda output: seal_stance_packet(brief["packet_envelope"], output["items"]), validator.validate
             )
@@ -455,6 +456,7 @@ class TeamStagesMixin:
         reentry_hint_symbols: Optional[Sequence[str]] = None,
         dip_assessment: bool = False,
         valuation_facts: Optional[Mapping[str, object]] = None,
+        trader_background: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 

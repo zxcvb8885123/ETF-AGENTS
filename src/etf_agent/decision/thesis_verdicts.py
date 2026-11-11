@@ -69,8 +69,8 @@ def validate_verdicts_file(data: object) -> List[str]:
     return errors
 
 
-def load_thesis_verdicts(root: Path, decision_cutoff: str) -> Optional[Dict[str, object]]:
-    """{"verdicts_id", "as_of", "items", "sha256"}；沒有、不合格、太舊或晚於截止時間回 None。"""
+def load_thesis_verdicts_file(root: Path, decision_cutoff: str) -> Optional[Dict[str, object]]:
+    """通過驗證、未晚於截止時間且未過期的結論檔完整內容；沒有、不合格、太舊或晚於截止時間回 None。"""
     try:
         data = json.loads((Path(root) / VERDICTS_PATH).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -83,7 +83,17 @@ def load_thesis_verdicts(root: Path, decision_cutoff: str) -> Optional[Dict[str,
         return None
     if created > cutoff or cutoff - created > timedelta(days=MAX_AGE_DAYS):
         return None
-    return {"verdicts_id": data["verdicts_id"], "as_of": data["created_at"], "items": list(data["items"]), "sha256": data["content_sha256"]}
+    return dict(data)
+
+
+def verdicts_from_file(data: Mapping[str, object]) -> Dict[str, object]:
+    return {"verdicts_id": data["verdicts_id"], "as_of": data["created_at"], "items": list(data["items"]), "sha256": data["content_sha256"]}  # type: ignore[call-overload]
+
+
+def load_thesis_verdicts(root: Path, decision_cutoff: str) -> Optional[Dict[str, object]]:
+    """{"verdicts_id", "as_of", "items", "sha256"}；沒有、不合格、太舊或晚於截止時間回 None。"""
+    data = load_thesis_verdicts_file(root, decision_cutoff)
+    return None if data is None else verdicts_from_file(data)
 
 
 def verdicts_brief(verdicts: Optional[Mapping[str, object]], held_symbols: Collection[str]) -> Optional[Dict[str, object]]:

@@ -77,10 +77,8 @@ def validate_lessons_file(data: object) -> List[str]:
     return errors
 
 
-def load_strategy_lessons(root: Path, decision_cutoff: Optional[str] = None) -> Optional[Dict[str, object]]:
-    """交易 Agent 的背景教訓：{"lessons_id", "texts", "sha256"}；沒有或不合格回 None（不影響決策）。
-
-    給了 ``decision_cutoff`` 時，建立時間晚於截止時間（或無法判讀）的教訓視同沒有，避免重跑舊 Snapshot 讀到後來才產生的經驗。"""
+def load_strategy_lessons_file(root: Path, decision_cutoff: Optional[str] = None) -> Optional[Dict[str, object]]:
+    """通過驗證（且未晚於截止時間）的教訓檔完整內容；沒有或不合格回 None。``load_strategy_lessons`` 與交易背景封存共用同一個判斷。"""
     path = Path(root) / LESSONS_PATH
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -94,7 +92,19 @@ def load_strategy_lessons(root: Path, decision_cutoff: Optional[str] = None) -> 
                 return None
         except ValueError:
             return None
-    return {"lessons_id": data["lessons_id"], "texts": [str(item["text"]) for item in data["lessons"]], "sha256": data["content_sha256"]}
+    return dict(data)
+
+
+def lessons_from_file(data: Mapping[str, object]) -> Dict[str, object]:
+    return {"lessons_id": data["lessons_id"], "texts": [str(item["text"]) for item in data["lessons"]], "sha256": data["content_sha256"]}  # type: ignore[union-attr]
+
+
+def load_strategy_lessons(root: Path, decision_cutoff: Optional[str] = None) -> Optional[Dict[str, object]]:
+    """交易 Agent 的背景教訓：{"lessons_id", "texts", "sha256"}；沒有或不合格回 None（不影響決策）。
+
+    給了 ``decision_cutoff`` 時，建立時間晚於截止時間（或無法判讀）的教訓視同沒有，避免重跑舊 Snapshot 讀到後來才產生的經驗。"""
+    data = load_strategy_lessons_file(root, decision_cutoff)
+    return None if data is None else lessons_from_file(data)
 
 
 def lessons_brief(lessons: Optional[Mapping[str, object]]) -> Optional[Dict[str, object]]:
