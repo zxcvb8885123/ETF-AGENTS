@@ -43,7 +43,7 @@
 
 持股已滿時，**未持有的新股只能用本次出場空出的名額**；已持有的加碼不受影響。名額由程式全域配對，交易 Agent 只收到名額背景，不指定誰換誰。另有人設定的「強制換股」：滿檔又沒人出場時，信心達「高」的新股可換掉「交易 Agent 標為續抱、且每週論點檢視判定被推翻、本次又有採納的空頭論點」的持股，每次最多 2 檔。
 
-啟用 `forced_swap.confirmation` 時，換股的現金可行性檢查與實際配置共用信心、名次及原有次排序規則；代號較前的換出持股賣款不足時，繼續檢查其他符合條件的持股，不因此取消後續可負擔的替換。未啟用 confirmation 的舊路徑不套用這項修正。
+（`rotation.forced_swap` 已於 2026-11-10 隨 `agent_swap` v2 移除，以下是舊 Policy 重建時的行為。）啟用 `forced_swap.confirmation` 時，換股的現金可行性檢查與實際配置共用信心、名次及原有次排序規則；代號較前的換出持股賣款不足時，繼續檢查其他符合條件的持股，不因此取消後續可負擔的替換。未啟用 confirmation 的舊路徑不套用這項修正。
 
 ### 入選排序
 
@@ -54,9 +54,9 @@
 名額卡住（空名額少於想買的新股）時，交易 Agent 在入選排序之後多一次第二輪，提名「用哪檔新股換哪檔持股」並附依據，只有代號配對與文字、沒有數字；不需要提名時由程式直接封存 `not_needed`、不呼叫 Agent。提名失敗（驗證用盡 `exhausted`、暫時性錯誤 `unavailable`）只取消這個動作，其餘決策照常，硬性規則失敗仍整份拒絕。
 
 - 目前（2026-11-10 起）是 **v1 影子期**：提名被封存並由 Finalizer 重建驗證，配置完全不讀提名；唯讀統計用 `cli/calibration.py shadow-swap`。
-- v2（已實作、尚未開啟）才讓程式依提名換股：換出者標 `exit`、旗標 `AGENT_SWAP`／`AGENT_SWAP_FILL`，不可行的對由程式取消（`AGENT_SWAP_CANCELLED:<原因>`），換出者不賣。
+- v2（2026-11-10 20:10 已開啟）才讓程式依提名換股：換出者標 `exit`、旗標 `AGENT_SWAP`／`AGENT_SWAP_FILL`，不可行的對由程式取消（`AGENT_SWAP_CANCELLED:<原因>`），換出者不賣。
 
-`agent_swap.exposure`（已實作、尚未開啟）讓提名每對多 `purpose`，v2 依風險 Agent 的 `exposure_view` 取用曝險配對（見[曝險計畫](agent_led_exposure_plan.md)）。`agent_swap.quality_dip`（優質股第三階段，已實作、尚未開啟）讓 `purpose` 多一個 `quality_dip`，5c 另讀 `dip_facts` 驗結構，v2 配置時另加對數、買進權重、買進不超過賣款與轉向跡象的上限（見[優質股計畫](quality_dip_plan.md#104-第三階段實作紀錄2026-11-10第七版)）。
+`agent_swap.exposure`（v2 已開啟）讓提名每對多 `purpose`，v2 依風險 Agent 的 `exposure_view` 取用曝險配對（見[曝險計畫](agent_led_exposure_plan.md)）。`agent_swap.quality_dip`（優質股第三階段，現行 v4 已開啟）讓 `purpose` 多一個 `quality_dip`，5c 另讀 `dip_facts` 驗結構，v2 配置時另加對數、買進權重、買進不超過賣款與轉向跡象的上限（見[優質股計畫](quality_dip_plan.md#104-第三階段實作紀錄2026-11-10第七版)）。
 
 設計見[換股提名計畫](agent_nominated_rotation_plan.md)，契約見[決策鏈契約](decision-contracts.md#換股提名agent_swap)。
 
@@ -114,8 +114,8 @@
 
 ### 回撤控制
 
-- 程式沿帳本歷史算 NAV 峰值與目前回撤。回撤達 5% 時現金姿態至少「中性」，達 10% 至少「防守」。
-- 為避免在門檻附近天天切換：防守要回撤降到 7% 以下才回中性，中性要降到 3% 以下才解除。程式沿帳本歷史逐筆重放這個狀態。
+- 程式沿帳本歷史算 NAV 峰值與目前回撤。回撤達 5% 時現金姿態至少「中性」，達 15% 至少「防守」（2026-11-11 12:36 由 10% 放寬到 15%；目前數值以 [status.md](status.md#版本閘門啟用狀態) 為準）。
+- 為避免在門檻附近天天切換：防守要回撤降到 11% 以下才回中性（原 7%，同日放寬，數值以 status.md 為準），中性要降到 3% 以下才解除。程式沿帳本歷史逐筆重放這個狀態。
 - 風險 Agent 給的姿態比下限積極時，程式退回重答；Agent 不算回撤也不能放寬。
 - 綁定時另存歷史的參照與雜湊，事後重建（CLI、D-Plan、交付、虛擬帳戶結算）都從帳本重算並比對；帳本讀不到或歷史不符一律拒絕。沒有參照的舊決策照原樣重建。
 
@@ -196,8 +196,8 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 | 版本 | 內容 |
 | --- | --- |
 | 2.9（目前正式，`agent_swap` 已開啟） | 2.8 再加交易 Agent 第二輪的換股提名 `swap_nomination`（v1 影子與 v2 欄位相同）；與 `position_sizing.agent_swap` 雙向檢查，Finalizer 以 `SwapNominationValidator` 整份重建驗證；須與 2.8 的前提（`rebound_participation`、`exposure_rotation` v3）同時存在 |
-| 2.10（已實作、尚未開啟，`agent_swap.quality_dip` v3） | 2.9 再加 `quality_dip_ruling`（風險 Agent 對 quality_dip 配對的裁決，或程式封存的 `not_required`／`skipped_by_program`／`exhausted`／`unavailable`）；與 v3 閘門雙向檢查，綁定提名與現金姿態雜湊，Finalizer 以 `QualityDipRulingValidator` 整份重建；v1／v2 的 run 維持 2.9。見 [`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)。 |
-| 2.8 | 2.7 再加程式算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（已實作、尚未開啟），與閘門雙向檢查，整份重算比對 |
+| 2.10（`agent_swap.quality_dip` v3／v4 已開啟） | 2.9 再加 `quality_dip_ruling`（風險 Agent 對 quality_dip 配對的裁決，或程式封存的 `not_required`／`skipped_by_program`／`exhausted`／`unavailable`）；與 v3 閘門雙向檢查，綁定提名與現金姿態雜湊，Finalizer 以 `QualityDipRulingValidator` 整份重建；v1／v2 的 run 維持 2.9。見 [`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)。 |
+| 2.8 | 2.7 再加程式算的反彈參與狀態 `turn_state`；只在 `position_sizing.rebound_participation` 啟用時存在（已開啟），與閘門雙向檢查，整份重算比對 |
 | 2.7 | 2.6 再加程式算的曝險檢視 `exposure_review`（beta、capture）；只在 `position_sizing.exposure_rotation` 啟用時存在，與閘門雙向檢查，整份重算比對 |
 | 2.6（基準） | 2.5 再加程式算的基本面指標；有逐檔期別設定時必為 2.6，整份重算比對，改寫或降級都拒絕 |
 | 2.5 | 2.4 再加第二輪入選排序 |
@@ -209,11 +209,13 @@ Finalizer 與下游驗證遇到缺少必要輸入、引用不存在、版本不�
 
 2.0 至 2.5 皆為舊封存，維持原重建行為。2.1／2.2 的事件報告為 2.2 或 2.3，由資料包是否含已核准個股新聞決定。
 
-選配鍵 `release_order`（`position_sizing.drawdown_derisk` v5，已實作、尚未開啟）與 `held_weight_facts`（`position_sizing.held_weight_budget` v2，已實作、尚未開啟）：做法同 `dip_facts`，**不升版本**（2.9 已被換股提名占用），只要求 2.5 以上（需入選排序）；各與閘門雙向檢查，Finalizer 整份重建（`release_order` 並比對 Policy 綁定的 `release_symbols`／`release_ref`）。`release_order` 是交易 Agent 給的回撤減碼釋出順序，`held_weight_facts` 是程式算的持股權重事實（背景、不可引用）。沒有這些閘門的舊 run 欄位白名單與重建不變。
+選配鍵 `release_order`（`position_sizing.drawdown_derisk` v5，已開啟）與 `held_weight_facts`（`position_sizing.held_weight_budget` v2，已開啟）：做法同 `dip_facts`，**不升版本**（2.9 已被換股提名占用），只要求 2.5 以上（需入選排序）；各與閘門雙向檢查，Finalizer 整份重建（`release_order` 並比對 Policy 綁定的 `release_symbols`／`release_ref`）。`release_order` 是交易 Agent 給的回撤減碼釋出順序，`held_weight_facts` 是程式算的持股權重事實（背景、不可引用）。沒有這些閘門的舊 run 欄位白名單與重建不變。
 
-選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已實作、尚未開啟）：程式算的優質股被大盤拖累事實，**不升版本、不排進上表的線性鏈**，只要求 2.6 以上（讀基本面指標）；與閘門雙向檢查，Finalizer 以 bundle、`fundamental_metrics` 與事件報告整份重算。沒有閘門的舊 run 欄位白名單與重建行為不變。之所以不做成「2.9 ＝ 2.8 加 dip_facts」，是線性鏈會讓這個紀錄用閘門依賴 `rebound_participation`，關掉反彈參與就得一起關它。見[計畫](quality_dip_plan.md)。
+選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已開啟）：程式算的優質股被大盤拖累事實，**不升版本、不排進上表的線性鏈**，只要求 2.6 以上（讀基本面指標）；與閘門雙向檢查，Finalizer 以 bundle、`fundamental_metrics` 與事件報告整份重算。沒有閘門的舊 run 欄位白名單與重建行為不變。之所以不做成「2.9 ＝ 2.8 加 dip_facts」，是線性鏈會讓這個紀錄用閘門依賴 `rebound_participation`，關掉反彈參與就得一起關它。見[計畫](quality_dip_plan.md)。
 
-優質股第二階段（`quality_dip_assessment`、`event_direction`，已實作、尚未開啟）**不改 `team_inputs` 版本與欄位白名單**：`dip_assessment` 在交易決策的每個 buy／add 內（不進 Policy 綁定），事件 `direction` 在事件分析報告內（報告不新增 `schema_version`）；Finalizer 依 Policy 閘門重建驗證。
+優質股第二階段（`quality_dip_assessment`、`event_direction`，已開啟）**不改 `team_inputs` 版本與欄位白名單**：`dip_assessment` 在交易決策的每個 buy／add 內（不進 Policy 綁定），事件 `direction` 在事件分析報告內（報告不新增 `schema_version`）；Finalizer 依 Policy 閘門重建驗證。
+
+選配鍵 `trader_background`（`position_sizing.trader_background_record` v1，交易背景封存，已實作、尚未開啟）：交易階段前把策略教訓與論點檢視兩份來源檔的完整內容封存（run 目錄 `trader_background.json`），簡報改由封存產生；做法同 `valuation_facts`——不升版本、不要求特定版本，與閘門雙向檢查，Finalizer 驗證封存自洽、時間合法與 `verdicts_ref` 一致（無法證明來源檔當時沒有別的版本）。
 
 選配鍵 `valuation_facts`（`position_sizing.valuation_facts` v1，估值 V2，已實作、尚未開啟）：分析師階段前由程式讀估值 V1 已保存的 run 算 PER／PBR 位置，以背景給基本面分析師與交易 Agent；做法同 `dip_facts`——不升版本、不要求特定版本，與閘門雙向檢查，Finalizer 以決策庫旁的 `valuation_collection` 資料夾與封存的 `source.run_id` 整份重算。
 
