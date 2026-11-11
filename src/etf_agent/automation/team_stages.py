@@ -510,8 +510,12 @@ class TeamStagesMixin:
                     },
                     "rules": {key: bundle["rules"].get(key) for key in ("min_positions", "max_positions", "max_stock_weight", "cash_weight_must_be_below")},
                     **({"portfolio_slots": portfolio_slots} if portfolio_slots is not None else {}),
-                    **({"position_review_background": {key: review_brief[key] for key in ("policy", "note")}}
-                       if position_review is not None else {}),
+                    **({"position_review_background": {
+                        **{key: review_brief[key] for key in ("policy", "note")},
+                        # position_review v2：本批必須逐一處理的警示集中列出（與各股 position_review.flags 相同、沒有新資訊）。
+                        **({"alerts_to_handle": {symbol: ids for symbol, ids in review_brief["alerts_to_handle"].items() if symbol in batch["symbols"]}}
+                           if "alerts_to_handle" in review_brief else {}),
+                    }} if position_review is not None else {}),
                     **({"exposure_background": exposure_brief["background"]} if exposure_review is not None else {}),
                     **({"dip_background": dip_brief["background"]} if dip_facts is not None else {}),
                     **({"held_weight_background": weight_brief["background"]} if held_weight_facts is not None else {}),

@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .drawdown import stance_meets_floor
 from .exposure import hold_conviction_enabled
-from .position_review import position_ids_by_symbol, review_ids_by_symbol
+from .position_review import POLICY_VERSION_V2, position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
 from .dip_facts import dip_reference_tokens, validate_dip_assessment
 from .valuation_facts import valuation_reference_tokens
@@ -129,6 +129,9 @@ class TradeDecisionValidator:
             self.claims.setdefault(symbol, {}).update({review: "review" for review in flags})
         # 選用的「持股事實」編號：減碼／出場可引用它當依據（交易 Agent 對報酬與回落的自主判斷），但不強制處理、可不採納。
         self.position_ids = position_ids_by_symbol(position_review)
+        # position_review v2：未處理警示的回饋另列一行，明確列出缺少的警示 id 與處理方式（只改錯誤文字，不改任何判定）。
+        policy = position_review.get("policy") if isinstance(position_review, Mapping) else None
+        self.review_v2 = isinstance(policy, Mapping) and policy.get("version") == POLICY_VERSION_V2
         for symbol, identifier in self.position_ids.items():
             self.claims.setdefault(symbol, {})[identifier] = "position"
         for symbol in sorted({str(item).upper() for item in (reentry_hint_symbols or ())} - self.context.held_symbols):
@@ -263,6 +266,12 @@ class TradeDecisionValidator:
         missing = sorted(set(available) - optional - set(adopted) - set(rejected))
         if missing:
             errors.append("%s 未處理全部 claim：%s" % (prefix, ", ".join(missing)))
+            missing_reviews = [claim for claim in missing if available.get(claim) == "review"]
+            if self.review_v2 and missing_reviews:
+                errors.append(
+                    "%s 尚未處理的持股檢視警示（程式算的事實，每個都必須放進 adopted_claim_ids 剛好一次、不可否決；"
+                    "採納警示不代表要賣，賣不賣仍由你判斷）：%s" % (prefix, ", ".join(missing_reviews))
+                )
         adopted_roles: Set[str] = {available[claim] for claim in adopted if claim in available}
         if intent in SIZED and "bull" not in adopted_roles:
             errors.append(

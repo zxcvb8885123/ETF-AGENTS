@@ -253,6 +253,10 @@ class DecisionPolicyValidator:
             validate_drawdown_control(policy, self.context.bundle, errors, nav_history)
         if "position_review" in policy:
             validate_position_review_policy(policy["position_review"], errors)
+            # v2 的自進場事實讀 exposure_rotation 綁定的持有起點；沒有閘門就永遠沒有起點，拒絕而不是靜默失效。
+            if isinstance(policy["position_review"], Mapping) and policy["position_review"].get("version") == "v2" \
+                    and not (isinstance(policy.get("position_sizing"), Mapping) and "exposure_rotation" in policy["position_sizing"]):
+                errors.append("position_review v2 必須與 position_sizing.exposure_rotation 同時存在（自進場事實讀帳本綁定的持有起點）")
         if isinstance(policy.get("position_sizing"), Mapping) and "exposure_rotation" in policy["position_sizing"] \
                 and "position_review" not in policy:
             errors.append("position_sizing.exposure_rotation 必須與 position_review 同時存在（曝險檢視與 hold 信心建立在持股檢視之上）")
