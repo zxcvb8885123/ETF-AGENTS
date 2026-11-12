@@ -1,4 +1,4 @@
-"""優質股第三階段（position_sizing.agent_swap.quality_dip）：docs/quality_dip_plan.md 第 4.2、10.3、10.4 節。
+"""優質股第三階段（position_sizing.agent_swap.quality_dip）：docs/plans/quality_dip_plan.md 第 4.2、10.3、10.4 節。
 
 第三階段改走換股提名：``purpose`` 與曝險階段 2 合用同一個列舉，多一個值 ``quality_dip``，不另開程式配對路徑。覆蓋：
 

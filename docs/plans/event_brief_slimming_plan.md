@@ -13,7 +13,7 @@
 
 - `analysts.py` 的 `_EVENT_BODY_LIMIT = 1500`：每則 `body` 最多 1500 字。
 - 同檔已有節錄函式（`_EVENT_EXCERPT_HEAD = 500`、`_EVENT_EXCERPT_TAIL = 160`，節錄時標 `brief_excerpt_truncated`），但只有評估腳本 `scripts/evaluate_event_brief.py` 呼叫，每日流程沒接入。
-- **選項 A 已試過、已被否決**：[`token_reduction_plan.md`](token_reduction_plan.md)「試過但未接入」記載，事件內文只留首尾只降約 17%，且 21 則重大性改變（含 10 則 high／medium 互換），結論「不接入」。
+- **選項 A 已試過、已被否決**：[`token_reduction_plan.md`](../token_reduction_plan.md)「試過但未接入」記載，事件內文只留首尾只降約 17%，且 21 則重大性改變（含 10 則 high／medium 互換），結論「不接入」。
 
 ## 選項
 

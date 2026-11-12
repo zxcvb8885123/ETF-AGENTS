@@ -1,4 +1,4 @@
-"""position_sizing.offense 的兩個選配子欄位（已實作、尚未開啟）：docs/agent_led_offense_plan.md。
+"""position_sizing.offense 的兩個選配子欄位（已實作、尚未開啟）：docs/plans/agent_led_offense_plan.md。
 
 - ``thesis_size_cap``（A4）：放寬現金期間，purpose=thesis 的配對份量格也縮到該級 max_size（只縮不取消、不占曝險對數、不被 beta_stop 取消）。
 - ``cash_glide``（A2）：offense 放寬現金之後，防守姿態的現金回升受 ``cash_ratio_range.max_daily_raise`` 約束，只限前次放寬過且回撤條件成立時；

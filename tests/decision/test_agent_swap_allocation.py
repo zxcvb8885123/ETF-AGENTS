@@ -1,4 +1,4 @@
-"""換股改由交易 Agent 提名（position_sizing.agent_swap v2）的配置測試：docs/agent_nominated_rotation_plan.md 2.6 B 段與 5.1。
+"""換股改由交易 Agent 提名（position_sizing.agent_swap v2）的配置測試：docs/plans/agent_nominated_rotation_plan.md 2.6 B 段與 5.1。
 
 覆蓋：
 

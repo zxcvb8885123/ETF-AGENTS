@@ -197,7 +197,7 @@ class IntentLandingTest(unittest.TestCase):
 
 @unittest.skipUnless((REAL_DECISIONS / "2026-11-10").is_dir(), "沒有封存的 artifacts/decisions，略過重現文件數字")
 class ArchivedRunsReproductionTest(unittest.TestCase):
-    """重現 docs/agent_autonomy_plan.md 第 1.2 節的數字（封存為 2026-10-27～11-10 共 11 份，另加 2026-11-11 一份）。
+    """重現 docs/plans/agent_autonomy_plan.md 第 1.2 節的數字（封存為 2026-10-27～11-10 共 11 份，另加 2026-11-11 一份）。
 
     2026-11-11 的期望值由 decision-20261111T001308Z（08:08 台北時間 run，08:31 封存）決定：它取代了先前封存的
     decision-20261110T230642Z（現在在 artifacts/archive/superseded_decisions/2026-11-11）。把舊 run 換回去重算會得到

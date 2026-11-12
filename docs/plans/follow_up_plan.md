@@ -19,7 +19,7 @@
 > - 估值 V3：**未實作**；計畫標為未定且會動證據政策，需要人決定的事列在 [第 10.6 節](quality_dip_plan.md#106-v3-需要人決定的事2026-11-10第七版本次未實作)。
 > - 下文第 1.4 節、第 2.8／2.9 節、第 3 節與 P11、P12 的「未寫」以本段為準。
 
-閘門啟用狀態的唯一出處仍是 [status.md](status.md#版本閘門啟用狀態) 與 `config/decision_policy.json`；本檔與它們衝突時以它們為準。
+閘門啟用狀態的唯一出處仍是 [status.md](../status.md#版本閘門啟用狀態) 與 `config/decision_policy.json`；本檔與它們衝突時以它們為準。
 
 ## 1. 目前狀態
 
@@ -115,8 +115,8 @@
 - `docs/status.md` 的「版本閘門啟用狀態」開頭仍寫 2026-11-09 核對、`policy_id: strategy-2026-11-09-exposure-v2-1`；「已開啟」表仍列 `reentry_cooldown {version v1}` 與 `drawdown_derisk {version v4}`，同頁下方才寫它們已切到 v2／v5。
 - `docs/status.md` 營運表寫 `shadow-swap`「尚未累積影子資料」——這句目前仍然正確。
 - `docs/README.md` 索引寫 `reentry_cooldown` v2／v3、`drawdown_derisk` v5、階段 4 的 v2「已實作、尚未開啟」，且同一行對曝險階段 2、3 同時寫「已實作」與「尚未實作」。
-- `docs/agent_autonomy_plan.md` 的三份計畫總表寫本計畫「只有 `agent_swap` v1 影子已開」、優質股「已實作未開」，與同檔上方的階段表及正式設定不符。
-- `docs/agent_led_exposure_plan.md` 開頭狀態寫「階段 2、3 尚未實作」，與第 11 節不符。
+- `docs/plans/agent_autonomy_plan.md` 的三份計畫總表寫本計畫「只有 `agent_swap` v1 影子已開」、優質股「已實作未開」，與同檔上方的階段表及正式設定不符。
+- `docs/plans/agent_led_exposure_plan.md` 開頭狀態寫「階段 2、3 尚未實作」，與第 11 節不符。
 
 這些由工作包 P1 處理。
 
@@ -275,7 +275,7 @@ git diff --check
 ### P1 文件狀態同步（現在可做；只改文件）
 
 - **輸入**：`config/decision_policy.json`（只讀）、本檔第 1.1、1.5 節。
-- **要改的檔案**：`docs/status.md`（閘門表開頭的核對日期與 `policy_id`／`available_at`、`reentry_cooldown` 與 `drawdown_derisk` 兩列的目前值、「未開啟」表中已開啟的列）、`docs/README.md`（索引裡 agent_autonomy_plan、agent_led_exposure_plan 兩行的過期敘述，並在更新紀錄補一行）、`docs/agent_autonomy_plan.md`（三份計畫總表的進度欄）、`docs/agent_led_exposure_plan.md`（開頭狀態句）。
+- **要改的檔案**：`docs/status.md`（閘門表開頭的核對日期與 `policy_id`／`available_at`、`reentry_cooldown` 與 `drawdown_derisk` 兩列的目前值、「未開啟」表中已開啟的列）、`docs/README.md`（索引裡 agent_autonomy_plan、agent_led_exposure_plan 兩行的過期敘述，並在更新紀錄補一行）、`docs/plans/agent_autonomy_plan.md`（三份計畫總表的進度欄）、`docs/plans/agent_led_exposure_plan.md`（開頭狀態句）。
 - **驗收條件**：每一個改過的閘門值都能在 `config/decision_policy.json` 找到相同的值；沒有把「已實作未開啟」寫成已開啟；三個測試指令通過。
 - **禁止事項**：共用規定；不改任何 `.py`、`.json`、Skill；不改寫各計畫文件的設計與推論段落。
 
@@ -314,7 +314,7 @@ git diff --check
 ### P6 開 `agent_swap.exposure` v1 影子（進入條件：第 3 節該列成立且使用者明確下令）
 
 - **輸入**：使用者的下令、當時的 `config/decision_policy.json`。
-- **要改的檔案**：`config/policy_versions/`（新樣板與 README 一行）、`config/decision_policy.json`（加 `agent_swap.exposure: {"version": "v1"}`、新 `policy_id`、真實 `available_at`）、`docs/status.md`、`AGENTS.md` 閘門摘要、`README.md`、`docs/agent_led_exposure_plan.md`。
+- **要改的檔案**：`config/policy_versions/`（新樣板與 README 一行）、`config/decision_policy.json`（加 `agent_swap.exposure: {"version": "v1"}`、新 `policy_id`、真實 `available_at`）、`docs/status.md`、`AGENTS.md` 閘門摘要、`README.md`、`docs/plans/agent_led_exposure_plan.md`。
 - **驗收條件**：Policy 驗證測試通過；讀正式樣板的整合測試通過；舊封存重建測試不變；三個測試指令通過。
 - **禁止事項**：共用規定；不得寫成 `v2`；不得加 `max_pairs_by_view`。
 
@@ -334,7 +334,7 @@ git diff --check
 
 ### P9 開 `reentry_cooldown` v3（進入條件：第 3 節該列成立且使用者明確下令）
 
-- **要改的檔案**：`config/policy_versions/`、`config/decision_policy.json`（`reentry_cooldown.version: v3`、新 `policy_id`、真實 `available_at`）、`docs/status.md`、`AGENTS.md`、`README.md`、`docs/agent_autonomy_plan.md`。
+- **要改的檔案**：`config/policy_versions/`、`config/decision_policy.json`（`reentry_cooldown.version: v3`、新 `policy_id`、真實 `available_at`）、`docs/status.md`、`AGENTS.md`、`README.md`、`docs/plans/agent_autonomy_plan.md`。
 - **驗收條件**：冷卻相關測試與舊封存重建測試通過；三個測試指令通過。
 - **禁止事項**：共用規定；不改 `days`。
 

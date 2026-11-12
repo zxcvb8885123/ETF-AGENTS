@@ -13,7 +13,7 @@
       "source": "TWSE_STOCK_DAY",
       "license_status": "approved",
       "terms_url": "https://www.twse.com.tw/zh/about/company/copyright.html",
-      "basis": "與正式帳本價量相同的證交所個股日成交資訊端點（config/data_sources.json historical_daily.twse_url），授權沿用 docs/data_sources_inventory.md「正式帳本價量」的核准；只作績效比較，不作交易標的。",
+      "basis": "與正式帳本價量相同的證交所個股日成交資訊端點（config/data_sources.json historical_daily.twse_url），授權沿用 docs/data_sources_inventory.md「正式帳本價量」的核准；用途：績效比較；2026-11-12 起使用者核准擴大為風險 Agent 的背景事實（position_sizing.benchmark_facts，紀錄用、不可引用、不作交易標的），來源與端點不變。",
       "reviewed_at": "2026-10-23T23:50:00+08:00",
       "evidence": "docs/data_sources_inventory.md#基準標的"
     },

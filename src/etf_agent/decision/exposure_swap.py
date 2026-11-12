@@ -1,6 +1,6 @@
 """Agent 主導曝險階段 2、3：換股提名的 ``purpose: exposure`` 配對（``position_sizing.agent_swap.exposure`` 版本閘門）。
 
-設計見 ``docs/agent_led_exposure_plan.md`` 第 3.2～3.4、4.1、6 節。閘門只由人設定、策略反思不得改（``agent_swap`` 前綴已在
+設計見 ``docs/plans/agent_led_exposure_plan.md`` 第 3.2～3.4、4.1、6 節。閘門只由人設定、策略反思不得改（``agent_swap`` 前綴已在
 ``FORBIDDEN_PREFIXES``）；沒有 ``exposure`` 欄位的舊 Policy／舊提名封存／舊 run 逐位元維持原行為。
 
 - **v1（階段 2，影子）**：提名每對多一個列舉 ``purpose``（``thesis``／``exposure``），輸出多一份 ``lower_conviction_review``；

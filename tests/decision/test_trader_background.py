@@ -1,4 +1,4 @@
-"""交易背景封存（position_sizing.trader_background_record）：docs/audit_fix_plan.md 項目 C。
+"""交易背景封存（position_sizing.trader_background_record）：docs/plans/audit_fix_plan.md 項目 C。
 
 1. 閘門形狀與登記：只允許 {version: v1}、人專屬、策略反思禁區。
 2. 建立：兩個來源檔的完整內容封存；由紀錄產生的簡報與現行讀檔路徑逐位元相同；兩者皆無時紀錄為 None 並仍通過驗證。

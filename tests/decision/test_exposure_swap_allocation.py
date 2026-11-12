@@ -1,4 +1,4 @@
-"""Agent 主導曝險階段 2、3 的配置測試（position_sizing.agent_swap.exposure）：docs/agent_led_exposure_plan.md 第 3.2、3.6、6 節。
+"""Agent 主導曝險階段 2、3 的配置測試（position_sizing.agent_swap.exposure）：docs/plans/agent_led_exposure_plan.md 第 3.2、3.6、6 節。
 
 覆蓋：
 

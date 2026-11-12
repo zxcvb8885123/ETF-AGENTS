@@ -1,6 +1,6 @@
 """轉向後進攻：``position_sizing.offense`` v1（版本閘門，只由人設定；策略反思不得改，``offense`` 前綴列在禁區）。
 
-設計見 ``docs/agent_led_offense_plan.md`` 4.1～4.10、第 6 節階段 2、7.1 節。起因：2026-11-11 的 run，風險 Agent 只有「維持防守」與「回補」兩個選擇，
+設計見 ``docs/plans/agent_led_offense_plan.md`` 4.1～4.10、第 6 節階段 2、7.1 節。起因：2026-11-11 的 run，風險 Agent 只有「維持防守」與「回補」兩個選擇，
 防守姿態的現金目標把買單砍成 0，轉向確認前組合 beta 停在 0.13。本閘門新增一級 ``probe``（預測型、小量先試），並讓風險 Agent 的
 ``exposure_view`` 對映一列人填的上限：
 
@@ -600,9 +600,10 @@ def offense_levels(gate: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
     return {view: dict(gate["by_view"][view]) for view in OFFENSE_VIEWS}  # type: ignore[index]
 
 
-def offense_brief(facts: Mapping[str, object], gate: Mapping[str, object]) -> Dict[str, object]:
-    """風險 Agent 的背景區塊（citable=false、沒有 evidence_id）；附各等級對映的人填上限，但不附交易 Agent 的任何意圖或信心統計。"""
-    return {
+def offense_brief(facts: Mapping[str, object], gate: Mapping[str, object], include_reference: bool = True) -> Dict[str, object]:
+    """風險 Agent 的背景區塊（citable=false、沒有 evidence_id）；附各等級對映的人填上限，但不附交易 Agent 的任何意圖或信心統計。
+    ``include_reference=False``（cash_stance_brief.offense_reference=omit）時不附 ``reference`` 對照樣本；預設行為不變。"""
+    brief = {
         "citable": False,
         "note": OFFENSE_NOTE,
         "as_of": facts["as_of"],
@@ -613,6 +614,9 @@ def offense_brief(facts: Mapping[str, object], gate: Mapping[str, object]) -> Di
         "offense_off_drawdown": gate["offense_off_drawdown"],
         "data_gaps": facts["data_gaps"],
     }
+    if not include_reference:
+        brief.pop("reference")
+    return brief
 
 
 # ---------------------------------------------------------------- 風險 Agent 的列舉驗證

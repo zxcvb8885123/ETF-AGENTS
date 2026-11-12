@@ -318,7 +318,7 @@ Agent 輸出 Schema 各出新版（提名一份、裁決一份），舊 Schema �
 
 - `AGENTS.md`（風險 Agent 邊界、`team_inputs` 版本、閘門清單）、`README.md`。
 - `docs/status.md`、`docs/decision-contracts.md`、`docs/architecture.md`、`docs/glossary.md`、`docs/README.md`、`docs/runtime-artifacts.md`、`docs/operations.md`（多一次 Agent 呼叫的時間）。
-- `docs/quality_dip_plan.md`（第 10.4 節後補一節指向本文件）、`docs/agent_nominated_rotation_plan.md`、`docs/agent_led_exposure_plan.md`（說明 `exposure_view` 不管 quality_dip）。
+- `docs/plans/quality_dip_plan.md`（第 10.4 節後補一節指向本文件）、`docs/plans/agent_nominated_rotation_plan.md`、`docs/plans/agent_led_exposure_plan.md`（說明 `exposure_view` 不管 quality_dip）。
 - Skill：`tradeagent/trading/trader/references/swap-nomination.md`（`size` 與 `quality_dip_decline`）、`tradeagent/risk/portfolio-risk-review/`（新增裁決的 reference，並確認 `agents/openai.yaml` 描述與邊界一致）。
 
 ### 6.4 回滾

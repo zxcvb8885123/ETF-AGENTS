@@ -47,4 +47,4 @@
 ## 已知限制
 
 - `FMTQIK` 是收盤後資料；收盤前（例如 07:00 的 run）最新列是前一個交易日，屬正常。
-- 證交所來源已於 2026-11-04 由使用者核准（見 [market_fear_greed.md](market_fear_greed.md)），本計畫不新增來源。
+- 證交所來源已於 2026-11-04 由使用者核准（見 [market_fear_greed.md](../market_fear_greed.md)），本計畫不新增來源。

@@ -1,6 +1,6 @@
 """優質股 v3（position_sizing.agent_swap.quality_dip version=v3）：組數與份量由交易 Agent 提出、風險 Agent 裁決。
 
-設計見 docs/quality_dip_agent_sizing_plan.md。覆蓋：
+設計見 docs/plans/quality_dip_agent_sizing_plan.md。覆蓋：
 
 1. 閘門（Policy 驗證）：v3 形狀、組數另計（不受 agent_swap.max_swaps_per_run 限制）、需 agent_swap v2、ruling_ref／rulings 只能由 pipeline 綁定、
    nominated_pairs 的 size 與對數檢查；v1／v2 逐位元維持原行為。
@@ -889,7 +889,7 @@ class AllocationTests(unittest.TestCase):
 
 class ProductionTemplateTests(unittest.TestCase):
     def test_the_live_template_runs_v4_with_the_human_filled_limits(self):
-        # 2026-11-11：階段 0b 由 v2 切到 v3（組數 2、單檔買進權重 0.04，超跌 1 組、0.02）；同日再切到 v4＋ladder（docs/agent_led_offense_plan.md）。
+        # 2026-11-11：階段 0b 由 v2 切到 v3（組數 2、單檔買進權重 0.04，超跌 1 組、0.02）；同日再切到 v4＋ladder（docs/plans/agent_led_offense_plan.md）。
         live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         sizing = live["position_sizing"]
         gate = quality_dip_swap_gate(sizing)

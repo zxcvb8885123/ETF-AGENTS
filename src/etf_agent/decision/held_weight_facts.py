@@ -1,4 +1,4 @@
-"""持股權重事實（``position_sizing.held_weight_budget`` v2，docs/agent_autonomy_plan.md 階段 4，只由人設定）。
+"""持股權重事實（``position_sizing.held_weight_budget`` v2，docs/plans/agent_autonomy_plan.md 階段 4，只由人設定）。
 
 ``held_weight_budget`` 的預算算法不變：已持有的加碼候選若現有權重已高於信心份額，目標權重就是現有權重、不建買單（RISK_HELD_WEIGHT）。
 問題是交易 Agent 不知道這件事。本模組讓交易 Agent 的簡報附上每檔持股的事實，**只提示、不改預算**：

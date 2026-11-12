@@ -1,4 +1,4 @@
-"""換股提名 v2（正式）接入每日決策鏈的端到端測試：docs/agent_nominated_rotation_plan.md 第 3 節、5.1「Policy 與重建」。
+"""換股提名 v2（正式）接入每日決策鏈的端到端測試：docs/plans/agent_nominated_rotation_plan.md 第 3 節、5.1「Policy 與重建」。
 
 整條鏈用正式樣板（只拿掉 fixture 沒有資料的 cash_stance_recency，並依 v2 的互斥拿掉 forced_swap 與 conviction_gap_swap）跑真實
 pipeline 與真實 Finalizer：

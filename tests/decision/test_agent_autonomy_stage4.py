@@ -1,4 +1,4 @@
-"""docs/agent_autonomy_plan.md 階段 4（現金分配的小規則與冷卻改成提示）的版本閘門測試。
+"""docs/plans/agent_autonomy_plan.md 階段 4（現金分配的小規則與冷卻改成提示）的版本閘門測試。
 
 - ``cash_fit_order`` v2：新股買不到半份不再整筆取消（沒有 RISK_CASH_FIT），v2 不允許 ``cash_fit_min_fill_ratio``；v1 逐位元不變。
 - ``high_conviction_cash_priority`` v2：保留「現金先給 high」，移除「high 被縮減後擋掉後面未持有的中低信心新股」；v1 不變。

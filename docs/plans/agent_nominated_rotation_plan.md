@@ -275,8 +275,8 @@ Policy 與重建：
 | `docs/architecture.md` | 「一天怎麼跑」加 5c、`team_inputs` 版本表 |
 | `docs/decision-details.md`、`docs/glossary.md` | 白話說明與 `AGENT_SWAP*` 旗標 |
 | `docs/README.md` | 索引與變更紀錄加入本檔 |
-| `docs/agent_autonomy_plan.md` | 階段 3 指向本檔 |
-| `docs/exposure_rotation_plan.md`、`docs/exposure_rotation_v2_plan.md`、`docs/rebound_participation_v2_plan.md` | 加註 v2 開啟時換股步驟被取代 |
+| `docs/plans/agent_autonomy_plan.md` | 階段 3 指向本檔 |
+| `docs/plans/exposure_rotation_plan.md`、`docs/plans/exposure_rotation_v2_plan.md`、`docs/plans/rebound_participation_v2_plan.md` | 加註 v2 開啟時換股步驟被取代 |
 | `docs/operations.md` | 每日檢視的新旗標、影子報告 |
 | `tradeagent/trading/trader/SKILL.md`（38、43、45 行）、`references/data-rules.md`（33、117、126、132 行）、新增 `references/swap-nomination.md` | 第一輪說明改為「名額卡住時第二輪會請你提名」；新輸出與引用規則 |
 | `config/policy_versions/README.md` | 切換時的樣板快照 |

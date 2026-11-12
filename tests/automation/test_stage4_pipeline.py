@@ -1,4 +1,4 @@
-"""docs/agent_autonomy_plan.md 階段 4 接入每日決策鏈的端到端測試（真實 pipeline＋真實 Finalizer／結果驗證）。
+"""docs/plans/agent_autonomy_plan.md 階段 4 接入每日決策鏈的端到端測試（真實 pipeline＋真實 Finalizer／結果驗證）。
 
 - ``held_weight_budget`` v2：交易 Agent 簡報附持股權重事實（citable=false）、team_inputs 存選配鍵 ``held_weight_facts``（版本不升）、
   Finalizer 雙向檢查並整份重算；缺少、竄改、沒有閘門卻帶事實一律拒絕；配置與 v1 對照組逐位相同；v1 的 team_inputs 逐鍵不變。

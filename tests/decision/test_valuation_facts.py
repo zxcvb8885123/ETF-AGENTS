@@ -1,4 +1,4 @@
-"""估值 V2（position_sizing.valuation_facts）：docs/quality_dip_plan.md 第 2.6 節與第 10.5 節。
+"""估值 V2（position_sizing.valuation_facts）：docs/plans/quality_dip_plan.md 第 2.6 節與第 10.5 節。
 
 覆蓋：
 

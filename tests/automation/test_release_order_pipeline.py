@@ -51,6 +51,7 @@ def template(version="v5"):
     sizing.pop("cash_stance_recency")
     sizing.pop("agent_swap", None)
     sizing.pop("exposure_view", None)  # 正式樣板已含 exposure_view（純紀錄）；整條鏈由 test_exposure_view 覆蓋
+    sizing.pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
     sizing["drawdown_derisk"] = dict(sizing["drawdown_derisk"], version=version)
     return value
 

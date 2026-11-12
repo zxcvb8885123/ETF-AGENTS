@@ -83,7 +83,7 @@ REBOUND_TEAM_FIELDS = EXPOSURE_TEAM_FIELDS | {"turn_state"}
 SWAP_TEAM_VERSION = "2.9"
 SWAP_TEAM_FIELDS = REBOUND_TEAM_FIELDS | {SWAP_NOMINATION_KEY}
 # 2.10：再加風險 Agent 對 quality_dip 配對的裁決 ``quality_dip_ruling``（position_sizing.agent_swap.quality_dip version=v3 才有，
-# 見 docs/quality_dip_agent_sizing_plan.md），須與該閘門同時存在（雙向）；是 2.9 的超集。v1／v2 或沒有 quality_dip 的 run 仍是 2.9。
+# 見 docs/plans/quality_dip_agent_sizing_plan.md），須與該閘門同時存在（雙向）；是 2.9 的超集。v1／v2 或沒有 quality_dip 的 run 仍是 2.9。
 QUALITY_RULING_TEAM_VERSION = "2.10"
 QUALITY_RULING_TEAM_FIELDS = SWAP_TEAM_FIELDS | {RULING_KEY}
 TEAM_FIELDS_BY_VERSION = {

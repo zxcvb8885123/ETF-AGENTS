@@ -26,10 +26,10 @@ from etf_agent.core import parse_aware_time
 from .fields import DecisionToolError, decimal_value, reject_unknown_fields, snapshot_execution_price
 
 EXPOSURE_ROTATION = "v1"
-# v2（docs/exposure_rotation_v2_plan.md）：刪 max_rotation_fraction 與 min_new_conviction（沿用 rotation 的）、
+# v2（docs/plans/exposure_rotation_v2_plan.md）：刪 max_rotation_fraction 與 min_new_conviction（沿用 rotation 的）、
 # release_margin 併進停止線 beta_target_by_stance；v1 路徑逐位元保留，沒有 v2 的舊 Policy／舊 run 行為不變。
 EXPOSURE_ROTATION_V2 = "v2"
-# v3（docs/exposure_rotation_v2_plan.md 末節）：欄位集合與行為都同 v2，唯一差別是 beta_target_by_stance.defensive 可填數字
+# v3（docs/plans/exposure_rotation_v2_plan.md 末節）：欄位集合與行為都同 v2，唯一差別是 beta_target_by_stance.defensive 可填數字
 # （v1／v2 只能 null）；defensive 為 null 時等同不觸發。v1／v2 路徑逐位元保留。
 EXPOSURE_ROTATION_V3 = "v3"
 EXPOSURE_ROTATION_VERSIONS = (EXPOSURE_ROTATION, EXPOSURE_ROTATION_V2, EXPOSURE_ROTATION_V3)

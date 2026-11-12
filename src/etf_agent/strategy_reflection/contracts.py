@@ -162,6 +162,11 @@ FORBIDDEN_PREFIXES = (
     "cash_stance_turn_facts",
     # 大盤指數事實：風險 Agent 簡報附證交所加權指數事實（紀錄用），切換程式路徑，只由人設定。
     "market_index_facts",
+    # 現金姿態簡報縮減（cash_stance_brief）：公司事件摘要、必讀欄位重排與對照樣本移除，切換簡報程式路徑，只由人設定。
+    "cash_stance_brief",
+    # 0050 基準事實（benchmark_facts，已實作、尚未開啟）：決策輸入多 benchmark_input、風險 Agent 簡報附 0050 事實（紀錄用），
+    # 切換程式路徑，只由人設定；max_holdings_age_days 由人填。
+    "benchmark_facts",
     # 優質股被大盤拖累的事實（quality_dip_facts，第一階段紀錄用）：切換程式路徑與 team_inputs 欄位，只由人設定。
     "quality_dip_facts",
     # 優質股階段 2：交易 Agent 的 dip_assessment 列舉（紀錄用，不影響配置），切換驗證路徑，只由人設定。

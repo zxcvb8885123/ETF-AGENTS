@@ -223,10 +223,23 @@ function renderBenchmarks(b) {
     const note = c.status === "ok" ? `超額報酬與相對回撤以 ${esc(c.trade_date)} 對齊（${c.aligned_days} 點）；起始日成交 ${item.execution && item.execution.price ? esc(item.execution.price) + " 元" : esc(String(item.execution ? item.execution.fills : "")) + " 筆"}，手續費 ${money(item.commission)} 元` : `超額報酬 unavailable：${esc(c.reason || "")}`;
     rows.push(row(esc(item.label), esc(item.start_date || "—"), esc(l.trade_date || "—"), money(l.nav), l.cumulative_return, c.excess_return, item.max_drawdown, c.relative_drawdown, note));
   });
+  const captureBlock = item => {
+    const c = item.daily_capture;
+    if (!c) return "";
+    if (c.status !== "ok") return `<div class="sub">${esc(item.label)} 每日捕捉 unavailable：${esc(c.reason || "")}</div>`;
+    const side = (name, s) => s.status !== "ok" ? `${name} unavailable（${esc(s.reason || "")}）` : `${name} <b>${(Number(s.capture) * 100).toFixed(1)}%</b>（${s.days} 日${s.small_sample ? "，small_sample 樣本不足" : ""}）`;
+    const cum = c.cumulative ? `；累積超額 <span class="${tone(c.cumulative.cumulative_excess)}">${pct(c.cumulative.cumulative_excess)}</span>（${esc(c.cumulative.trade_date)}）` : "";
+    const dir = { up: "漲", down: "跌", flat: "平" };
+    const days = c.rows.slice().reverse().map(r => `<tr><td>${esc(r.trade_date)}</td><td class="${tone(r.account_return)}">${pct(r.account_return)}</td><td class="${tone(r.benchmark_return)}">${pct(r.benchmark_return)}</td><td class="${tone(r.difference)}">${pct(r.difference)}</td><td>${dir[r.benchmark_direction] || ""}</td></tr>`).join("");
+    const skipped = c.skipped.length ? `；略過 ${c.skipped.length} 日（${esc(c.skipped.map(x => x.trade_date + " " + x.reason).join("、"))}）` : "";
+    return `<div class="sub"><b>${esc(item.label)}</b>（純觀察，不進決策）：${side("上漲捕捉", c.up)}、${side("下跌捕捉", c.down)}；持平 ${c.flat_days} 日${cum}${skipped}。各日報酬平均值之比，上漲＞100% 且下跌＜100% 為目標。</div>
+      <details><summary>逐日對 ${esc(item.label)}（%）</summary><table><tr><th>交易日</th><th>帳戶日報酬</th><th>基準日報酬</th><th>差額（帳戶−基準）</th><th>基準</th></tr>${days}</table></details>`;
+  };
+  const captures = b.benchmarks.filter(item => item.status === "ok").map(captureBlock).join("");
   el.innerHTML = `<table>
     <tr><th>項目</th><th>起始日</th><th>最新交易日</th><th>NAV</th><th>累積報酬（${UNIT()}）</th><th>超額報酬（帳戶−基準，${UNIT()}）</th><th>最大回撤</th><th>相對回撤</th><th>說明</th></tr>
     ${rows.join("")}
-  </table><div class="sub">as-of ${time(b.as_of)}；起始日 ${esc(b.start_date || "—")}；費稅 手續費率 ${esc(b.fees.commission_rate)}、最低 ${esc(b.fees.minimum_commission)} 元、賣出稅率 ${esc(b.fees.sell_tax_rate)}；${esc(b.method.valuation)}。</div>`;
+  </table><div class="sub">as-of ${time(b.as_of)}；起始日 ${esc(b.start_date || "—")}；費稅 手續費率 ${esc(b.fees.commission_rate)}、最低 ${esc(b.fees.minimum_commission)} 元、賣出稅率 ${esc(b.fees.sell_tax_rate)}；${esc(b.method.valuation)}。</div>${captures}`;
 }
 
 let selectedDate = null;

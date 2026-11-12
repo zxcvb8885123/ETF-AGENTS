@@ -1,4 +1,4 @@
-"""position_sizing.offense v1（轉向後進攻，已實作、尚未開啟）：docs/agent_led_offense_plan.md 4.1～4.10。
+"""position_sizing.offense v1（轉向後進攻，已實作、尚未開啟）：docs/plans/agent_led_offense_plan.md 4.1～4.10。
 
 覆蓋：Policy 閘門（形狀、值域、單調、前提、互斥、人專用）、有效等級壓回（缺資料永不升級）、現金目標只放寬、份量格只縮不放、
 進攻事實（合成行情，缺資料為 unavailable）、現金姿態驗證（一致性、證據、probe 欄位、defensive_reconciliation）、舊 Policy 不受影響。
@@ -66,6 +66,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(offense_errors(with_offense()), [])
         legacy = live()
         legacy["position_sizing"].pop("offense", None)  # 正式設定已開 offense：舊 Policy 以拿掉它的版本代表
+        legacy["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         legacy["position_sizing"]["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
         self.assertIsNone(offense_gate(legacy["position_sizing"]))
         self.assertEqual(offense_errors(legacy), [])
@@ -186,6 +187,7 @@ class FactsTests(unittest.TestCase):
         with self.assertRaises(DecisionToolError):
             legacy = live()
             legacy["position_sizing"].pop("offense", None)
+            legacy["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
             build_offense_facts(bundle(), legacy)
         late = bundle()
         late["price_series"][0]["bars"][-1]["available_at"] = "2026-11-10T14:00:00+08:00"

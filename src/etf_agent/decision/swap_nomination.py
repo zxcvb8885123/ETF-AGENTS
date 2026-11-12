@@ -1,6 +1,6 @@
 """換股提名（階段 3 的 5c）：交易 Agent 在入選排序之後、風險 Agent 之前，提名「用哪檔新股換掉哪檔持股」。
 
-設計見 ``docs/agent_nominated_rotation_plan.md``。本模組只含純函式與 Validator（不碰 pipeline、不呼叫 Agent）：
+設計見 ``docs/plans/agent_nominated_rotation_plan.md``。本模組只含純函式與 Validator（不碰 pipeline、不呼叫 Agent）：
 
 - 信封與封存：``nomination_envelope``／``seal_swap_nomination``／``program_nomination``，做法同 ``selection_ranking``；
   ``status`` 有四種：``completed``（Agent 提名，含空清單）、``not_needed``（程式判定不需要，不呼叫 Agent）、

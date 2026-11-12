@@ -1,6 +1,6 @@
 """優質股 v3（agent_swap.quality_dip version=v3）接入每日決策鏈與 team_inputs 2.10 的端到端測試。
 
-設計見 docs/quality_dip_agent_sizing_plan.md。整條鏈用正式樣板（只拿掉 fixture 沒有資料的 cash_stance_recency 與 v2 互斥的舊換股路徑），
+設計見 docs/plans/quality_dip_agent_sizing_plan.md。整條鏈用正式樣板（只拿掉 fixture 沒有資料的 cash_stance_recency 與 v2 互斥的舊換股路徑），
 把 quality_dip 改成 v3（組數與權重上限只放在測試內，不是 config 的值），跑真實 pipeline 與真實 Finalizer：
 
 - 提名只有 thesis 配對：裁決由程式封存 not_required、不呼叫風險 Agent；team_inputs 為 2.10，整份決策可重建。

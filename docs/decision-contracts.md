@@ -63,9 +63,9 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 選配鍵 `dip_facts`（`position_sizing.quality_dip_facts` v1，已開啟）：不升版本、不屬於上表的線性鏈，只要求 2.6 以上；與閘門雙向檢查（閘門在而鍵缺、或鍵在而閘門缺都拒絕），Finalizer 以 `validate_dip_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
 
-選配鍵 `valuation_facts`（`position_sizing.valuation_facts` v1，估值 V2，已實作、尚未開啟）：同 `dip_facts` 的做法，不升版本、不要求特定版本；與閘門雙向檢查，Finalizer 以 `validate_valuation_facts` 用同一個估值資料夾整份重算。沒有閘門的舊 run 欄位白名單不變。
+選配鍵 `valuation_facts`（`position_sizing.valuation_facts` v1，估值 V2，已開啟，2026-11-12 16:40）：同 `dip_facts` 的做法，不升版本、不要求特定版本；與閘門雙向檢查，Finalizer 以 `validate_valuation_facts` 用同一個估值資料夾整份重算。沒有閘門的舊 run 欄位白名單不變。
 
-選配鍵 `trader_background`（`position_sizing.trader_background_record` v1，交易背景封存，已實作、尚未開啟）：交易 Agent 簡報的策略教訓（`config/strategy_lessons.json`）與論點檢視（`var/strategy_reflection/thesis_verdicts.json`）原本每次 run 當場讀檔、事後無從還原；開閘門後 pipeline 在交易階段前把兩份來源檔的**完整內容**與 `content_sha256` 存成 run 目錄的 `trader_background.json`（可用與否的判斷與現行讀檔路徑一致，不可用記 `null`），簡報改由這份紀錄產生（形狀不變），續跑時驗證後沿用、不重讀來源檔。同 `valuation_facts` 的做法：不升版本、不要求特定版本，與閘門雙向檢查；Finalizer 以 `validate_trader_background` 驗證欄位白名單、內容雜湊、兩份檔各自的格式與雜湊、建立時間不晚於 cutoff、結論檔未超過有效天數，且 Policy 綁定的 `agent_swap.verdicts_ref` 存在時紀錄的結論雜湊必須一致。**限制**：Finalizer 驗證的是封存內容自洽、時間合法與綁定一致，無法證明來源檔當時沒有別的版本。回放略過此閘門。沒有閘門的舊 run 欄位白名單與簡報不變。
+選配鍵 `trader_background`（`position_sizing.trader_background_record` v1，交易背景封存，已開啟，2026-11-12 16:40）：交易 Agent 簡報的策略教訓（`config/strategy_lessons.json`）與論點檢視（`var/strategy_reflection/thesis_verdicts.json`）原本每次 run 當場讀檔、事後無從還原；開閘門後 pipeline 在交易階段前把兩份來源檔的**完整內容**與 `content_sha256` 存成 run 目錄的 `trader_background.json`（可用與否的判斷與現行讀檔路徑一致，不可用記 `null`），簡報改由這份紀錄產生（形狀不變），續跑時驗證後沿用、不重讀來源檔。同 `valuation_facts` 的做法：不升版本、不要求特定版本，與閘門雙向檢查；Finalizer 以 `validate_trader_background` 驗證欄位白名單、內容雜湊、兩份檔各自的格式與雜湊、建立時間不晚於 cutoff、結論檔未超過有效天數，且 Policy 綁定的 `agent_swap.verdicts_ref` 存在時紀錄的結論雜湊必須一致。**限制**：Finalizer 驗證的是封存內容自洽、時間合法與綁定一致，無法證明來源檔當時沒有別的版本。回放略過此閘門。沒有閘門的舊 run 欄位白名單與簡報不變。
 
 選配鍵 `exposure_facts`（`position_sizing.exposure_view` v1，2026-11-10 已開啟）：同 `dip_facts` 的做法，不升版本、只要求 2.7 以上；與閘門雙向檢查，Finalizer 以 `validate_exposure_facts` 整份重算。沒有閘門的舊 run 欄位白名單不變。
 
@@ -98,7 +98,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 ### 優質股被大盤拖累的事實（`position_sizing.quality_dip_facts` v1，第一階段，紀錄用）
 
-設計見 [quality_dip_plan.md](quality_dip_plan.md)；啟用狀態見 status.md（已開啟）。閘門存在時：
+設計見 [plans/quality_dip_plan.md](plans/quality_dip_plan.md)；啟用狀態見 status.md（已開啟）。閘門存在時：
 
 - `decision/dip_facts.py` 對全交易池重算，全部只用 cutoff 前可得的資料：日期格是行情交易日聯集；評估視窗＝最後 21 個日期（20 個日報酬），視窗前 beta 用基準日以前 61 個日期（60 個日報酬），兩窗在基準日相接。beta 直接用 `exposure.BetaModel`，只把行情截到基準日，`BetaModel` 與 `exposure_review` 的路徑不變。
 - 殘差 `residual_20d` ＝ 個股 20 日報酬 − beta × 交易池等權**日報酬連乘**的 20 日報酬（與 beta 同一個日報酬序列）；`relative_to_pool_20d` 另用各股 20 日報酬的簡單平均（與持股檢視同一公式），兩個池報酬欄位分開。有殘差的股票少於交易池 80%（沿用 `MIN_REGIME_COVERAGE`）時整份 `data_status: unavailable`。加權指數來源未核准或日期對不上只讓 `relative_to_index_20d` 為 null 並記 `data_gaps`。
@@ -110,29 +110,49 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 ### 優質股第二階段（`quality_dip_assessment` v1、`event_direction` v1，紀錄用）
 
-設計與實作紀錄見 [quality_dip_plan.md](quality_dip_plan.md#10-第二階段估值-v1-實作紀錄與第三階段修訂2026-11-10第六版)；啟用狀態見 status.md（兩個閘門皆已開啟，2026-11-10）。兩個閘門都只由人設定、前提 `quality_dip_facts`，沒有欄位的舊 Policy／舊報告／舊 run 逐位元不變：
+設計與實作紀錄見 [plans/quality_dip_plan.md](plans/quality_dip_plan.md#10-第二階段估值-v1-實作紀錄與第三階段修訂2026-11-10第六版)；啟用狀態見 status.md（兩個閘門皆已開啟，2026-11-10）。兩個閘門都只由人設定、前提 `quality_dip_facts`，沒有欄位的舊 Policy／舊報告／舊 run 逐位元不變：
 
 - `quality_dip_assessment`：交易 Agent 的 buy／add 必填列舉 `dip_assessment`，其餘意圖填 `null`；Validator 只驗必填、值域與 fail-closed（價格事實不可用只能 `undetermined`；缺 `team_inputs.dip_facts` 或非 `typed_evidence_v1` 即拒絕），不驗與意圖、信心或 `candidate` 的對應，也不進 Policy 綁定。Finalizer、回放與每日 pipeline 以 Policy 閘門重建同一個驗證。
 - `event_direction`：事件分析師每則事件的 `direction` 列舉。事件報告**不新增 `schema_version`**：`AnalystReportValidator` 對 `direction` 採「有就必須是列舉值」，每日 pipeline 產出與 Finalizer 在閘門開啟時才要求必填。閘門同時切換 `quality_dip_facts` 新壞事的事件面判準（`high_event_negative_direction`；沒有閘門仍是整檔 `event_outlook` 的 `high_event_negative_outlook`），`validate_dip_facts` 依 Policy 重算。
 
 ### 估值位置（`position_sizing.valuation_facts` v1，估值 V2，背景、紀錄用）
 
-設計與實作紀錄見 [quality_dip_plan.md](quality_dip_plan.md#105-估值-v2-實作紀錄2026-11-10第七版)；**已實作、尚未開啟**。只由人設定、策略反思禁區，沒有 Policy 層前提。
+設計與實作紀錄見 [plans/quality_dip_plan.md](plans/quality_dip_plan.md#105-估值-v2-實作紀錄2026-11-10第七版)；**已實作、尚未開啟**。只由人設定、策略反思禁區，沒有 Policy 層前提。
 
 - 事實（`decision/valuation_facts.py`）：只讀估值 V1 已不可變保存、run 時間不晚於 cutoff 的最新一個 run，先依原始回應整份重建；只用核對相符、`license_status=approved` 且授權範圍允許背景進簡報的紀錄（V1 的 `valuation_v1_collection_and_audit_only` 不允許，所以目前全部 `LICENSE_SCOPE_NOT_APPROVED`）。只算 PER／PBR；上櫃股不可用；三個寫死的視窗 `rows_250`、`rows_750`、`all` 並列，固定視窗資料列不足為 `insufficient_history`。缺資料、run 不合格或資料日晚於 Snapshot 時整份 `unavailable`、不補值、不讓決策失敗。
 - 簡報：基本面分析師與交易 Agent 各附 `valuation_background`（`citable=false`、沒有 evidence_id／facts_id／run_id）；交易 Agent 文字欄位出現 `valuation_background`、`valuation_facts`、facts_id 或 run_id 即拒絕。不新增 Agent 輸出欄位、不影響配置。
 - `team_inputs.valuation_facts` 選配鍵：與閘門雙向同時存在，Finalizer 以決策庫旁的 `valuation_collection` 資料夾與 `source.run_id` 整份重算；run 事後被改或讀不到資料夾即拒絕。回放略過（notes 標 `valuation_facts: ignored_in_replay`）。
-- 估值 V3（可引用、新證據政策版本）未實作；待決事項見 [quality_dip_plan.md 第 10.6 節](quality_dip_plan.md#106-v3-需要人決定的事2026-11-10第七版本次未實作)。
+- 估值 V3（可引用、新證據政策版本）未實作；待決事項見 [plans/quality_dip_plan.md 第 10.6 節](plans/quality_dip_plan.md#106-v3-需要人決定的事2026-11-10第七版本次未實作)。
 
 ### 組合曝險事實與風險 Agent 的回補意見（`position_sizing.exposure_view` v1，Agent 主導曝險階段 1，紀錄用）
 
-設計見 [agent_led_exposure_plan.md](agent_led_exposure_plan.md)；啟用狀態見 status.md（已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`）。前提 `exposure_rotation`、`cash_stance_turn_facts`、`market_index_facts`（GATE_PREREQUISITES）與 `typed_evidence_v1`（驗證現金姿態時檢查）。閘門存在時：
+設計見 [plans/agent_led_exposure_plan.md](plans/agent_led_exposure_plan.md)；啟用狀態見 status.md（已開啟（2026-11-10，使用者決定）；純紀錄、不影響配置；回滾＝刪掉 `position_sizing.exposure_view`）。前提 `exposure_rotation`、`cash_stance_turn_facts`、`market_index_facts`（GATE_PREREQUISITES）與 `typed_evidence_v1`（驗證現金姿態時檢查）。閘門存在時：
 
 - `decision/exposure_facts.py` 只依 bundle 與 Policy 中配置前後相同的欄位（`exposure_rotation.beta_window_days`、`sector_by_symbol`）重算，不讀任何 Agent 輸出：組合曝險直接重用 `build_exposure_review`（同口徑）再加持股數與低 beta 檔數；產業權重依 Policy 綁定的 `sector_by_symbol`，金融保險（`industry:17`）另列，缺代碼歸 `unknown`；上漲日＝最近 20 個交易日內最近一個交易池等權報酬（與 `turn_facts` 同一個函式）大於 0 的日子，持股當日貢獻＝Σ（本次決策起始權重 × 當日收盤報酬），任一持股缺行情即 null（不當成 0），沒有上漲日即 `unavailable`；非持股的 beta 用同一個 `BetaModel`。
 - 任何 bar 晚於最近交易日、bar 可得時間缺時區或晚於 cutoff 一律拒絕。
 - 風險 Agent 簡報附 `exposure_facts`（背景、`citable=false`、沒有 facts_id 與 evidence_id；不含交易 Agent 的意圖與信心統計），輸出多一個必填列舉 `exposure_view`（`keep_defensive`／`start_rebuild`／`rebuild`）：值域外或缺少即拒絕；非 `keep_defensive` 時 `evidence_ids` 須含市場層級證據（專屬檢查）；理由寫出 `exposure_facts` 鍵名或 facts_id 即拒絕；沒有閘門時輸出帶此欄位即拒絕。三個驗證點（風險階段、`apply_trade_decision`、Finalizer）用同一個 `validate_cash_stance`。
 - `agent_swap` 也開啟時，換股提名簡報多一個 `exposure_facts` 區塊（轉向、`turn_state`、加權指數、組合曝險、產業權重、上漲日與持股當日報酬、提名候選的 beta），全部是背景；階段 1 本身不改提名驗證規則與既有欄位（`purpose`、曝險事實編號與 `lower_conviction_review` 屬子閘門 `agent_swap.exposure`，見[換股提名](#換股提名agent_swap)）。
 - 純紀錄：不影響名額、權重、股數、現金、換股與 Guard；回放略過閘門（notes 標 `exposure_view: ignored_in_replay`）並拿掉封存姿態的 `exposure_view`。
+
+### 現金姿態簡報縮減（`position_sizing.cash_stance_brief` v2，已開啟，2026-11-12 16:40）
+
+只改風險 Agent 現金姿態的簡報副本與提示文字（計畫 3.1 與 3.5 合併）；簡報不進 `team_inputs`、不進雜湊，重建不讀它。啟用狀態與開啟、回滾方式見 [status.md](status.md#版本閘門啟用狀態)。
+
+- 形狀：`{"version": "v2", "company_events": "high_only", "offense_reference": "omit"}`；`version`、`company_events` 必填且各只有一個允許值，`offense_reference` 選配、只有 `offense` 閘門存在時才允許；版本錯、多餘欄位、列舉值錯、沒有 `offense` 卻填 `offense_reference` 一律整份 Policy 拒絕（`decision/cash_stance_brief.py`）。人專用、列入策略反思禁區。
+- `company_events`：簡報的 `company_events` 由逐檔明細改為摘要：`event_outlook_counts`（各看法檔數，加總等於交易池檔數）、`materiality_by_direction`（事件計數）、`high_events`（只列 high 事件：代號、事件文字、方向、`evidence_ids`）與 `omitted`（未列出的非 high 事件則數）；簡報鍵順序改為 `evidence_recency`（維持第一）、市場層級與可引用證據編號、現金格點、回撤與規則、市場事實、分析師與帳戶，公司事件摘要最後。公司事件的引用只用 high 事件的 `evidence_ids`；Validator 的引用規則不變。
+- `offense_reference: omit`：簡報的 `offense_facts` 不附 `reference`，提示文字同步拿掉「與一組對照樣本」；`team_inputs.offense_facts` 照舊計算與封存，Finalizer 重算不變。
+- 沒有閘門時簡報的鍵、順序、提示文字與 Schema 與舊版逐位元相同（`tests/decision/test_cash_stance_brief.py` 固定）。
+
+### 0050 基準事實（`position_sizing.benchmark_facts` v1，已開啟，2026-11-12 16:40）
+
+紀錄工具，不是規則（計畫 3.2）：風險 Agent 看得到「帳戶對 0050 的位置」，但程式不因它改變現金姿態、權重或換股。啟用狀態與開啟、回滾方式見 [status.md](status.md#版本閘門啟用狀態)。
+
+- 形狀：`{"version": "v1", "max_holdings_age_days": N}`，`N` 為 1 到 60 的整數、由人填、程式不給預設；多餘欄位、版本錯、非整數（含布林）整份 Policy 拒絕（`decision/benchmark_facts.py`）。前提 `exposure_view`；簡報時另要求 `typed_evidence_v1`（否則 pipeline 拒絕）。人專用、列入策略反思禁區。
+- 決策輸入：選配鍵 `benchmark_input`，**只在閘門開啟時建立**、進 `bundle_sha256`；內容：0050 官方收盤序列（來源只認已核准的 `TWSE_STOCK_DAY`，沿用 `benchmark/repository.py` 的 as-of 讀法：抓取時間與收盤時間都不晚於 `decision_cutoff`）、成分權重（`data/benchmark_holdings.csv`，欄位同 `data/active_etf_holdings.csv`；來源核准在 `config/benchmark_holdings_sources.json`，`reviewed_at` 與 `available_at` 都不得晚於截止、須含時區）與內容雜湊。來源未核准、代號重複、排名不連續、權重不在 (0,1]、合計超過 1、超過 10 列、價格或持股可得時間晚於截止或缺時區、交易日晚於 `latest_trade_date` 一律拒絕；持股檔只有表頭則該區塊 `unavailable`（不編造）。
+- 事實（全部 Decimal 字串，`citable=false`、沒有 `evidence_id`）：`benchmark_return`（最新日不是 `snapshot.latest_trade_date` 或歷史不足 → `unavailable`；近 5 日不足為 null）、`holdings_gap_1d`（口徑同 `exposure_facts.up_day`：持股依本次起始權重估的當日貢獻減 0050 當日報酬，任一缺 → `unavailable`）、`active_weights`（逐檔 0050 權重、組合起始權重、差額、規則單股上限；持股檔距今交易日數超過 `max_holdings_age_days` → `unavailable`）、`beta_to_benchmark`（組合含現金對 0050，視窗＝`exposure_rotation.beta_window_days`，0050 歷史不足視窗或視窗內沒有變動 → `unavailable`，不補值）。事實由決策輸入重算，不新增 `team_inputs` 鍵、不升版，Finalizer 不需重算。
+- 風險 Agent：簡報在 `market_index_facts` 之後附 `benchmark_facts`，提示文字說明這是事實不是目標（規則上單股上限 10%、2330 為 25%，無法複製 0050）並列「追高」與「錯過」兩種錯誤成本；理由出現區塊鍵名即驗證失敗（`validate_cash_stance`，只在決策輸入有 `benchmark_input` 時檢查）；不輸出任何數字。
+- 沒有閘門時決策輸入沒有 `benchmark_input`、簡報、提示、Schema 與舊 bundle／舊 run 逐位元不變（`tests/decision/test_benchmark_facts.py` 固定）。
+- 資料與授權：0050 行情用途 2026-11-12 起由使用者核准擴大為風險 Agent 背景事實（`config/benchmarks.json` 的 `basis`、[data_sources_inventory.md](data_sources_inventory.md#基準標的)）；成分權重人工抄錄元大投信官網，條款待確認、由使用者承擔，稽核見 [source_audit/2026-11-12_benchmark_holdings.md](source_audit/2026-11-12_benchmark_holdings.md)。
 
 ### 論點檢視背景與策略教訓
 
@@ -147,7 +167,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - **前次識別碼規則**（`cash_ratio_range.anchor` 的背景）：`anchor` 同樣 `citable=false`、沒有 evidence_id，簡報不放 run_id；風險理由文字出現前次識別碼（run_id、decision_id、proposal_id 與兩者的內容雜湊，含 decision_id／proposal_id 不帶前綴的完整 20 位摘要）即拒絕。比對有邊界：前後接 ASCII 英數或底線的較長 ID 不算，也不封鎖 run_id 片段、日期或短雜湊；decision_id 取自同一份前次決策背景，pipeline 與 Finalizer 共用同一個檢查。
 - **`increase_cash_buffer` 的邊際**（不論有無 `cash_ratio_range`）：配置後風險審查的修正動作 `increase_cash_buffer`，其值不得高於 `cash_weight_ceiling` 減 3 個百分點邊際（`decision/risk.py` 的 `CASH_BUFFER_CEILING_MARGIN`，比賽上限 25% 時為 22%），因整張取整會讓現金高於緩衝；否則該審查無效、退回重答。`cash_ratio_range` 開啟時另不得高於今日可選的最高格點。
 
-- **風險修正動作的數值界線（`position_sizing.revision_bounds` v1，已實作、尚未開啟）**：修正動作的 `value` 是「Agent 不輸出數字」的已知例外：只能往降風險方向、有上下界、由 Validator 檢查。沒有此閘門時 `reduce_max_stock_weight`／`reduce_turnover_limit` 只受 0～1 與「不得高於目前值」約束（無下限，舊 Policy 與舊 run 逐位元不變）。閘門形狀 `{"version": "v1", "min_max_stock_weight": "<小數字串>", "min_max_turnover_rate": "<小數字串>", "step": "<小數字串>"}`，三個數字全部由人填、程式不設預設；兩個下限須大於 0 且不高於 Policy 的 `max_stock_weight`／`max_turnover_rate`，`step` 須大於 0 且不高於 1，缺欄位、版本不是 `v1` 或有多餘欄位即整份 Policy 拒絕。開啟後 `RiskReviewValidator` 另要求兩種 `value` 不得低於對應下限、且為 `step` 的整數倍；`increase_cash_buffer` 的檢查不變；風險審查簡報附下限與步距。只由人設定、策略反思不得改（列入禁區）；不影響配置引擎與 `team_inputs`。`special_weight_limits` 內的股票（目前為 2330）不受 `reduce_max_stock_weight` 影響（配置的單股上限直接取特殊上限）；要降低它的權重請用 `remove_candidate` 或 `increase_cash_buffer`，不改配置。回滾＝刪掉 `position_sizing.revision_bounds`。
+- **風險修正動作的數值界線（`position_sizing.revision_bounds` v1，已開啟，2026-11-12 16:40）**：修正動作的 `value` 是「Agent 不輸出數字」的已知例外：只能往降風險方向、有上下界、由 Validator 檢查。沒有此閘門時 `reduce_max_stock_weight`／`reduce_turnover_limit` 只受 0～1 與「不得高於目前值」約束（無下限，舊 Policy 與舊 run 逐位元不變）。閘門形狀 `{"version": "v1", "min_max_stock_weight": "<小數字串>", "min_max_turnover_rate": "<小數字串>", "step": "<小數字串>"}`，三個數字全部由人填、程式不設預設；兩個下限須大於 0 且不高於 Policy 的 `max_stock_weight`／`max_turnover_rate`，`step` 須大於 0 且不高於 1，缺欄位、版本不是 `v1` 或有多餘欄位即整份 Policy 拒絕。開啟後 `RiskReviewValidator` 另要求兩種 `value` 不得低於對應下限、且為 `step` 的整數倍；`increase_cash_buffer` 的檢查不變；風險審查簡報附下限與步距。只由人設定、策略反思不得改（列入禁區）；不影響配置引擎與 `team_inputs`。`special_weight_limits` 內的股票（目前為 2330）不受 `reduce_max_stock_weight` 影響（配置的單股上限直接取特殊上限）；要降低它的權重請用 `remove_candidate` 或 `increase_cash_buffer`，不改配置。回滾＝刪掉 `position_sizing.revision_bounds`。
 - 風險 Agent 不處理停損停利。
 
 ### 回撤下限（`drawdown_control`、`history_ref`）
@@ -191,13 +211,13 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - **`agent_swap.exposure`（Agent 主導曝險階段 2、3，已開啟：v1 影子 2026-11-10 19:45、v2 23:20，現行 v2）**：`agent_swap` 內的子閘門，前提 `agent_swap` 與 `exposure_view`，只由人設定、策略反思禁區。`{"version":"v1"}` 影子：提名驗證與封存照新規則，配置略過所有 `purpose: exposure` 配對（thesis 配對照常）；`{"version":"v2","max_pairs_by_view":{"start_rebuild":n,"rebuild":m}}`（需 `agent_swap` v2、0≤n≤m≤`max_swaps_per_run`）：配置依風險 Agent 的 `exposure_view`（pipeline 綁進 `exposure.view`，Finalizer 與現金姿態比對）取用——`keep_defensive` 一對都不成交（`AGENT_SWAP_CANCELLED:exposure_view`、換出者不賣、不補挑），其餘取清單前 n／m 對、超過取消（`exposure_cap`，尾端先捨棄），再走與 thesis 配對相同的可行性檢查；減碼日、換手、現金、單股、產業、檔數等界線與降級不變。提名驗證：每對必填 `purpose`；`exposure` 配對的換出依據必須含該持股自己的 `review:<代號>:exposure`（程式由 `exposure_facts` 與該股行情 evidence_id 算出、只能用於 `exposure` 的換出依據、不得放買進依據、第一輪不可採納，不需要空頭論點，仍須持有天數與可交易）；提名 `high` 信心持股做 `exposure` 配對時，`lower_conviction_review` 須逐檔交代全部 medium／low 持股剛好一次（`nominated` 須在某對 exposure 的 `sell_symbol`、`kept` 附理由且不得被換出），且高信心配對排在所有 medium／low 的 exposure 配對之後；否則該欄必須為 `[]`；理由出現曝險區塊識別碼即拒絕。程式封存（exhausted／unavailable）帶空清單。`team_inputs` 不升版（沿用 2.9），Finalizer 以 `exposure_facts` 重算整份提名。
 - **`agent_swap.quality_dip`（優質股第三階段，已開啟：v1 影子 2026-11-10 23:05、v2 23:25，現行 v4）**：`agent_swap` 內的子閘門，前提 `agent_swap`、`agent_swap.exposure`（`purpose` 的宿主）、`quality_dip_facts`、`quality_dip_assessment`、`cash_stance_turn_facts`，只由人設定、策略反思禁區；欄位 `version`（v1 影子／v2 正式，v2 須 `agent_swap` v2）、`max_swaps_per_run`、`max_entry_weight`、`min_new_conviction`、`min_holding_days`、`min_turn_assessment`（`turn_unconfirmed`／`turn_confirmed`）全部必填，選填 `oversold`（不得高於上一層），v2 由 `apply_trade_decision` 綁 `turn_assessment`、Finalizer 以現金姿態比對。5c：`purpose` 可填 `quality_dip`，Validator 另驗換入者（下跌、無新壞事、候選標示與 `dip_assessment` 相符、超跌須另開 `oversold`、信心不低於門檻、`buy_basis_ids` 有非 `price` 的已採納多頭 claim）與換出者（hold／low、持有天數；換出依據同 thesis），不符時回饋並列「改用 thesis」與「刪除該對」；簡報多 `quality_dip_nominable` 與 `dip` 背景。配置：v1 略過 quality_dip 配對；v2 在回撤下限 defensive 或歷史不可用、`turn_assessment` 不足、賣款不可再用時取消全部 quality_dip 配對（`AGENT_SWAP_CANCELLED:quality_dip_stance_floor`／`quality_dip_drawdown_unavailable`／`quality_dip_turn`／`quality_dip_proceeds`），超過對數從尾端取消（`quality_dip_cap`），換入者股數以 `max_entry_weight` 與「買進含費不超過換出賣款淨額」為上限（`RISK_QUALITY_DIP_ENTRY`；不足一張時 `AGENT_SWAP_CANCELLED:quality_dip_entry`、換出者不賣）；減碼日整個略過；現金下限、換手、單股、產業、檔數不放寬。
 - **`agent_swap.quality_dip` v3（組數與份量由 Agent 提、風險 Agent 裁決，2026-11-11 階段 0b 已開啟，同日 12:36 升 v4）**：前提 `agent_swap` v2，其餘前提同 v2；欄位 `max_swaps_per_run`（0～10，**另計、不占 `agent_swap.max_swaps_per_run`**）、`max_entry_weight`（單檔買進權重硬上限）全由人填，另有 pipeline 綁定的 `turn_assessment`、`ruling_ref`、`rulings`。提名的 quality_dip 配對多 `size`（`small`／`medium`／`large`，權重上限＝硬上限×1/3、2/3、1），有可提名目標卻沒列 quality_dip 配對時須填 `quality_dip_decline`。裁決（`team_inputs.quality_dip_ruling`）：`approve` 維持、`downsize` 降一格（`small` 不能再降）、`reject` 取消；不能升級；防守看法下仍放行須附 `defensive_reconciliation`；裁決失敗取消全部 quality_dip 配對、不退回 v2。前置檢查（姿態下限、回撤、轉向）由純函式 `expected_program_status` 判斷，Finalizer 重算。v1／v2 與舊提名封存逐位元維持原行為。
-- **`agent_swap.quality_dip` v4（連跌後逢低布局，2026-11-11 12:36 已開啟，現行；v3 的超集）**：份量格、裁決、組數另計與 `team_inputs` 2.10 全部同 v3；另必填人填的 `ladder`（`min_pool_drawdown`、`max_dip_exposure`、`max_tranches`、`min_days_between_tranches`、`pause_after_further_drop`，`max_dip_exposure` 不得低於 `max_entry_weight`），只有 v4 才可有 `ladder`、才可把 `min_turn_assessment` 填 `no_turn_evidence`。程式新增 `decision/decline_depth.py`：（一）連跌深度事實 `team_inputs.decline_depth_facts`（選配鍵、不升版本，與 v4 雙向檢查，Finalizer 整份重算；`citable=false`、沒有 evidence_id；連跌天數與累計跌幅、離 60 日高點回檔與高點日、20 日新低比例、對照樣本〔連跌剛滿 3 天與回檔達目前深度的日子之後 3／5 日報酬分布，前瞻視窗不得越過最近交易日，`small_sample`、`replay_reference_only`〕，覆蓋低於 80% 或歷史不足只降級為 `unavailable`）；（二）梯度狀態 `ladder_state`（pipeline 在 `apply_trade_decision` 綁進 Policy、Finalizer 重算）：關閉原因 `facts_unavailable`、`held_since_unavailable`、`depth_below_gate`（只在 `no_turn_evidence` 時要求回檔深度）、`exposure_full`、`tranches_full`、`tranche_interval`、`paused_after_drop`、`pause_unavailable`，缺資料一律關閉。本輪下跌起點＝最近 60 個交易日交易池水位最高的那天（不是連跌起始日，避免一個反彈日就重置計數）；新建倉＝帳本連續持有起點不早於起點日的持股（含所有目的的新買進）；今天的買進權重上限加上已有的新建倉曝險超過 `max_dip_exposure` 時從清單尾端取消（`AGENT_SWAP_CANCELLED:quality_dip_ladder_exposure`）；梯度關閉時取消全部 quality_dip 配對（`quality_dip_ladder_<原因>`），風險 Agent 的裁決前置檢查（`program_skip_reason`）讀同一個綁定值。提名簡報附事實與梯度今天的判定（以最嚴格的 `no_turn_evidence` 假設計算），裁決簡報只附事實、不附任何上限數字；Agent 只輸出列舉與文字。沒有 `ladder` 的 v1～v3 與舊 run 逐位元不變。**`ladder.exposure_basis`（選配列舉，C1，已實作、尚未開啟）**：缺席＝總抄底曝險與批數照舊計所有新建倉（逐位元不變）；填 `quality_dip_fills` 只計 purpose=quality_dip 的成交（修正現狀：thesis／exposure／一般買進也算抄底曝險，兩組 medium 就 `exposure_full`、任何新建倉隔天都 `tranche_interval`）。成交清單 `quality_dip.ladder_entries`（`[{symbol, entry_date, run_id}]`）由 pipeline 比照 `bind_reentry_cooldown` 從決策庫確定性取得並綁進 Policy（來源：帳本已套用的前次 run，Policy 的 `nominated_pairs` 為 quality_dip、proposal 有買單與 `AGENT_SWAP_FILL`，只留目前仍持有且帳本持有起點日期不早於該 run 截止日者；樣板預填即拒絕、讀不到綁 null），`build_ladder_state` 只讀清單（公式不變），讀不到或與持股、帳本不一致即以新原因 `entries_unavailable` 關閉；Finalizer 以綁定清單重算並核對每筆在帳本驗證過的 `held_since_by_symbol` 內且日期相容、不重掃決策庫（信任層級同 `reentry_cooldown`）。沒有新的人填數字，開啟由人改 config。
+- **`agent_swap.quality_dip` v4（連跌後逢低布局，2026-11-11 12:36 已開啟，現行；v3 的超集）**：份量格、裁決、組數另計與 `team_inputs` 2.10 全部同 v3；另必填人填的 `ladder`（`min_pool_drawdown`、`max_dip_exposure`、`max_tranches`、`min_days_between_tranches`、`pause_after_further_drop`，`max_dip_exposure` 不得低於 `max_entry_weight`），只有 v4 才可有 `ladder`、才可把 `min_turn_assessment` 填 `no_turn_evidence`。程式新增 `decision/decline_depth.py`：（一）連跌深度事實 `team_inputs.decline_depth_facts`（選配鍵、不升版本，與 v4 雙向檢查，Finalizer 整份重算；`citable=false`、沒有 evidence_id；連跌天數與累計跌幅、離 60 日高點回檔與高點日、20 日新低比例、對照樣本〔連跌剛滿 3 天與回檔達目前深度的日子之後 3／5 日報酬分布，前瞻視窗不得越過最近交易日，`small_sample`、`replay_reference_only`〕，覆蓋低於 80% 或歷史不足只降級為 `unavailable`）；（二）梯度狀態 `ladder_state`（pipeline 在 `apply_trade_decision` 綁進 Policy、Finalizer 重算）：關閉原因 `facts_unavailable`、`held_since_unavailable`、`depth_below_gate`（只在 `no_turn_evidence` 時要求回檔深度）、`exposure_full`、`tranches_full`、`tranche_interval`、`paused_after_drop`、`pause_unavailable`，缺資料一律關閉。本輪下跌起點＝最近 60 個交易日交易池水位最高的那天（不是連跌起始日，避免一個反彈日就重置計數）；新建倉＝帳本連續持有起點不早於起點日的持股（含所有目的的新買進）；今天的買進權重上限加上已有的新建倉曝險超過 `max_dip_exposure` 時從清單尾端取消（`AGENT_SWAP_CANCELLED:quality_dip_ladder_exposure`）；梯度關閉時取消全部 quality_dip 配對（`quality_dip_ladder_<原因>`），風險 Agent 的裁決前置檢查（`program_skip_reason`）讀同一個綁定值。提名簡報附事實與梯度今天的判定（以最嚴格的 `no_turn_evidence` 假設計算），裁決簡報只附事實、不附任何上限數字；Agent 只輸出列舉與文字。沒有 `ladder` 的 v1～v3 與舊 run 逐位元不變。**`ladder.exposure_basis`（選配列舉，C1，已開啟，2026-11-12 16:40）**：缺席＝總抄底曝險與批數照舊計所有新建倉（逐位元不變）；填 `quality_dip_fills` 只計 purpose=quality_dip 的成交（修正現狀：thesis／exposure／一般買進也算抄底曝險，兩組 medium 就 `exposure_full`、任何新建倉隔天都 `tranche_interval`）。成交清單 `quality_dip.ladder_entries`（`[{symbol, entry_date, run_id}]`）由 pipeline 比照 `bind_reentry_cooldown` 從決策庫確定性取得並綁進 Policy（來源：帳本已套用的前次 run，Policy 的 `nominated_pairs` 為 quality_dip、proposal 有買單與 `AGENT_SWAP_FILL`，只留目前仍持有且帳本持有起點日期不早於該 run 截止日者；樣板預填即拒絕、讀不到綁 null），`build_ladder_state` 只讀清單（公式不變），讀不到或與持股、帳本不一致即以新原因 `entries_unavailable` 關閉；Finalizer 以綁定清單重算並核對每筆在帳本驗證過的 `held_since_by_symbol` 內且日期相容、不重掃決策庫（信任層級同 `reentry_cooldown`）。沒有新的人填數字，開啟由人改 config。
 - **`position_sizing.exposure_view` v2（簡報說真話，2026-11-11 12:36 已開啟）**：與 v1 的配置、Schema、`team_inputs` 完全相同，只有風險 Agent 簡報（`risk_exposure_brief` 的 note）與提示文字改為與現行行為一致；前提 `agent_swap` v2 與 `agent_swap.exposure` v2；v1 與沒有閘門的 Policy 簡報逐位元沿用舊文字。
-- 設計與實作註記見[換股提名計畫](agent_nominated_rotation_plan.md)；唯讀統計 `cli/calibration.py shadow-swap`（估算是上限、`replay_reference_only`）與 `intent-landing`。
+- 設計與實作註記見[換股提名計畫](plans/agent_nominated_rotation_plan.md)；唯讀統計 `cli/calibration.py shadow-swap`（估算是上限、`replay_reference_only`）與 `intent-landing`。
 
 ### Agent 自主權線：各版本（`reentry_cooldown` v3、`drawdown_derisk` v5、`cash_fit_order` v2、`high_conviction_cash_priority` v2、`held_weight_budget` v2 皆已開啟）
 
-下列版本皆只由人設定、策略反思禁區，舊版本與沒有欄位的舊 run 逐位元不變；設計與實作註記見[自主權計畫](agent_autonomy_plan.md)。**下表各版本現行正式設定都已開啟**（日期與回滾樣板見 [status.md](status.md#版本閘門啟用狀態)）；較舊的版本只供舊 run 重建。
+下列版本皆只由人設定、策略反思禁區，舊版本與沒有欄位的舊 run 逐位元不變；設計與實作註記見[自主權計畫](plans/agent_autonomy_plan.md)。**下表各版本現行正式設定都已開啟**（日期與回滾樣板見 [status.md](status.md#版本閘門啟用狀態)）；較舊的版本只供舊 run 重建。
 
 | 閘門 | 行為 |
 | --- | --- |
@@ -252,8 +272,8 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 ### 曝險換股與 hold 信心（`position_sizing.exposure_rotation` v1／v2／v3）
 
 - 欄位：`version`、`beta_window_days`、`beta_floor_by_stance`（`defensive` 只能 null）、`release_margin`、`max_swaps_per_run`、`max_rotation_fraction`、`min_holding_days`、`min_new_conviction`（不得低於 `rotation` 的）、`hold_conviction: v1`、選配 `conviction_gap_swap: v1`，另有流程綁入的 `held_since_by_symbol`（不得預填）。前提：`rotation`、`held_add_priority`、`selection_ranking`、`reentry_cooldown`、`turnover_fit`、`cash_buffer_floor` 與頂層 `position_review`。人設定、策略反思不得改；啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
-- **v2**（2026-11-09 已實作，同日 17:50 正式設定切到 v2，計劃見 [exposure_rotation_v2_plan.md](exposure_rotation_v2_plan.md)）：欄位只有 `version: v2`、`beta_window_days`、`beta_target_by_stance`（停止線，`defensive` 只能 null，進攻 ≥ 中性）、`max_swaps_per_run`、`min_holding_days`、`hold_conviction: v1`、選配 `conviction_gap_swap: v1` 與流程綁入的 `held_since_by_symbol`；v1 專屬欄位（`beta_floor_by_stance`、`release_margin`、`max_rotation_fraction`、`min_new_conviction`）出現即拒絕，v1 閘門逐位元不變。差異：觸發與停止都是「含現金整體 beta ≥ 目標」（沒有釋放帶）；換入者 beta 必須高於組合 beta（v1 是 ≥ 組合 beta + `release_margin`）；沒有賣出市值比例上限，換出量只受 `max_swaps_per_run` 與單股上限間接限制（換手由 `turnover_fit` 把關）；換入者的最低信心沿用 `rotation.min_new_conviction`。
-- **v3**（2026-11-09 已開啟，`beta_target_by_stance.defensive` 仍是 null；動機見 [exposure_rotation_v2_plan.md](exposure_rotation_v2_plan.md#12-v3防守姿態的-beta-停止線)）：欄位集合與全部行為都同 v2，唯一差別是 `beta_target_by_stance.defensive` 可填數字（v1／v2 只能 null）；`defensive` 為 null 時等同不觸發，有填時要求 進攻 ≥ 中性 ≥ 防守（有填的比較）。`team_inputs` 結構不變（仍為 2.7，`exposure_review.policy.version` 只回寫閘門版本）；與 `drawdown_derisk` 互斥（減碼日略過）、換股上限、不只賣不買、賣單標 `exit` 等規則與 v2 相同。v1／v2 的 Policy 重建逐位元不變。
+- **v2**（2026-11-09 已實作，同日 17:50 正式設定切到 v2，計劃見 [plans/exposure_rotation_v2_plan.md](plans/exposure_rotation_v2_plan.md)）：欄位只有 `version: v2`、`beta_window_days`、`beta_target_by_stance`（停止線，`defensive` 只能 null，進攻 ≥ 中性）、`max_swaps_per_run`、`min_holding_days`、`hold_conviction: v1`、選配 `conviction_gap_swap: v1` 與流程綁入的 `held_since_by_symbol`；v1 專屬欄位（`beta_floor_by_stance`、`release_margin`、`max_rotation_fraction`、`min_new_conviction`）出現即拒絕，v1 閘門逐位元不變。差異：觸發與停止都是「含現金整體 beta ≥ 目標」（沒有釋放帶）；換入者 beta 必須高於組合 beta（v1 是 ≥ 組合 beta + `release_margin`）；沒有賣出市值比例上限，換出量只受 `max_swaps_per_run` 與單股上限間接限制（換手由 `turnover_fit` 把關）；換入者的最低信心沿用 `rotation.min_new_conviction`。
+- **v3**（2026-11-09 已開啟，`beta_target_by_stance.defensive` 仍是 null；動機見 [plans/exposure_rotation_v2_plan.md](plans/exposure_rotation_v2_plan.md#12-v3防守姿態的-beta-停止線)）：欄位集合與全部行為都同 v2，唯一差別是 `beta_target_by_stance.defensive` 可填數字（v1／v2 只能 null）；`defensive` 為 null 時等同不觸發，有填時要求 進攻 ≥ 中性 ≥ 防守（有填的比較）。`team_inputs` 結構不變（仍為 2.7，`exposure_review.policy.version` 只回寫閘門版本）；與 `drawdown_derisk` 互斥（減碼日略過）、換股上限、不只賣不買、賣單標 `exit` 等規則與 v2 相同。v1／v2 的 Policy 重建逐位元不變。
 - hold 信心：閘門開啟時交易 Agent 對 `hold` 也必填 `conviction`，程式綁入 `hold_conviction_by_symbol`（不得與 `conviction_by_symbol` 重複）；沒開時 hold 帶信心被拒。
 - `exposure_review`（`team_inputs` 2.7）：程式依 `price_series` 對交易池等權基準算每檔 beta、up／down capture 與含現金的組合 beta；任何持股缺資料時組合層級為 null，不補假值。
 - 持有天數由帳本持股歷史算（連續持有、台北時區日曆日），Finalizer 以帳本獨立重算，讀不到或與 Policy 不符即拒絕。
@@ -262,7 +282,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 ### 反彈參與（`position_sizing.rebound_participation` v1 已開啟；v2 已開啟）
 
-動機、定義、過擬合風險與重放結果見 [rebound_participation_plan.md](rebound_participation_plan.md)。版本閘門，只由人設定，策略反思不得改（`FORBIDDEN_PREFIXES`）；沒有此欄位的舊 Policy／舊 run 逐位元不變。
+動機、定義、過擬合風險與重放結果見 [plans/rebound_participation_plan.md](plans/rebound_participation_plan.md)。版本閘門，只由人設定，策略反思不得改（`FORBIDDEN_PREFIXES`）；沒有此欄位的舊 Policy／舊 run 逐位元不變。
 
 - 前提（缺一 fail-closed 拒絕）：`exposure_rotation.version = v3`、`cash_stance_turn_facts = {version: v1}`、`drawdown_derisk.version = v4`、bundle 為 `typed_evidence_v1`（建 `turn_state` 時檢查）。
 - 欄位（全部由人設定、程式不給預設值）：`version`、`candidate_return`、`candidate_ma5_share`、`confirm_return`、`confirm_ma5_share`、`confirm_new_low_share_max`、`candidate_expiry_days`、`retreat_return`、`retreat_window_days`、`retreat_ma5_share`、`min_coverage`、`by_state`（`candidate`／`confirmed` 各有 `defensive_target`、`max_swaps_per_run`、`min_holding_days`；選填 `defensive_cash_buffer`（兩態皆可，見下「條件式現金放寬」）；`confirmed` 另可選 `neutral_target` 與 `max_turnover_rate`（見下「confirmed 換手上限」））；流程綁入、不得預填的 `effective_state` 與 `cash_loosening`。`by_state` 的檔數不得高於 `rotation.max_swaps_per_run`，confirmed 不得比 candidate 更保守（停止線不降、檔數不減、持有天數不增、現金比例不升）。小動大動分開：candidate 只建議放寬停止線（`max_swaps_per_run` 與 `min_holding_days` 與現行曝險換股相同），只有 confirmed 才放大檔數並取消持有天數限制。
@@ -276,7 +296,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 #### v2（2026-11-10 01:37 已開啟）：只算事實、由風險 Agent 單獨決定
 
-動機與取捨見 [rebound_participation_v2_plan.md](rebound_participation_v2_plan.md)。v1 保留不動（舊 Policy／舊 run 逐位元重建）；v2 是同一欄位的另一個版本，依 `version` 分派。
+動機與取捨見 [plans/rebound_participation_v2_plan.md](plans/rebound_participation_v2_plan.md)。v1 保留不動（舊 Policy／舊 run 逐位元重建）；v2 是同一欄位的另一個版本，依 `version` 分派。
 
 - 欄位只剩 `version`、`min_coverage`（資料品質數字，不是判斷）、`by_state`（對映列，規則同 v1）與程式綁入的 `effective_state`、`cash_loosening`；v1 的轉向門檻（`candidate_*`、`confirm_*`、`retreat_*`、`candidate_expiry_days`）出現即拒絕，v1 缺它們也照舊拒絕（不混用）。前提同 v1。
 - `team_inputs` 仍為 2.8、欄位名仍是 `turn_state`，但 v2 的 `turn_state`（`schema_version` 2.0）**沒有 `state` 欄位**：只有 `data_status`（available／unavailable）、`regime`、最新一日 `signals`（池報酬、站回 MA5 比例、20 日新低比例、當日覆蓋 `coverage` 與報酬樣本覆蓋 `return_coverage`）、最近 5 日 `recent_path` 與 `flags`。Finalizer 以同一輸入整份重算比對，欄位白名單與 v1 分開。

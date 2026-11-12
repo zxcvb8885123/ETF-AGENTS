@@ -1,0 +1,7 @@
+{
+  "version": "benchmark-holdings-sources-2026-11-12",
+  "note": "0050 成分權重（benchmark_facts 的 active_weights 用）的來源使用核准。只有 license_status=approved 且 reviewed_at 不晚於決策截止時間的來源可進入事實計算；未列入或非 approved 者拒絕。依據見 evidence 指向的稽核紀錄。",
+  "sources": [
+    {"source": "YUANTA_ETF_WEIGHTS", "license_status": "approved", "terms_url": "https://www.yuantaetfs.com/product/detail/0050/ratio", "usage_scope": "risk_agent_background", "reviewed_at": "2026-11-12T16:30:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-11-12_benchmark_holdings.md：元大投信官網持股權重頁的使用條款未確認（待確認）；使用者決定以風險 Agent 背景事實用途人工抄錄前幾大權重，屬使用者自行承擔的判斷。"}
+  ]
+}

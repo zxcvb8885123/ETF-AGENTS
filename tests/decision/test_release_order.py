@@ -1,4 +1,4 @@
-"""回撤減碼的釋出順序（drawdown_derisk v5，docs/agent_autonomy_plan.md 階段 2）：契約、事實、Validator、Policy 綁定與配置。
+"""回撤減碼的釋出順序（drawdown_derisk v5，docs/plans/agent_autonomy_plan.md 階段 2）：契約、事實、Validator、Policy 綁定與配置。
 
 覆蓋：
 

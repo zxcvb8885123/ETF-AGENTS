@@ -1,6 +1,6 @@
 """position_sizing.exposure_view v1（Agent 主導曝險階段 1：事實與紀錄）的測試。
 
-覆蓋（docs/agent_led_exposure_plan.md 第 6 節）：
+覆蓋（docs/plans/agent_led_exposure_plan.md 第 6 節）：
 
 1. 事實重算（合成行情）：組合曝險與 exposure_review 同口徑、產業權重（金融保險、缺代碼歸 unknown）、上漲日池報酬與
    turn_facts 同一個數字、持股當日貢獻＝Σ 起始權重 × 當日報酬、非持股 beta；bar 晚於最近交易日、可得時間晚於 cutoff 或缺時區
@@ -299,6 +299,7 @@ class ReplayTests(unittest.TestCase):
         helper.setUp()
         plain = helper.template(live_without_offense)
         plain["position_sizing"].pop("exposure_view", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
+        plain["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("quality_dip", None)  # 依賴 exposure 子閘門，要先於它拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("exposure", None)  # 子閘門依賴 exposure_view，要一併拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("entry_reserve", None)  # 它依賴 agent_swap.exposure，要先於 exposure 拿掉
@@ -328,6 +329,7 @@ class GatedHarness(swap.Harness):
             template["position_sizing"]["exposure_view"] = dict(GATE)
         else:
             template["position_sizing"].pop("exposure_view", None)  # 正式樣板已開啟；對照組明確拿掉
+            template["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         path.write_text(json.dumps(template, ensure_ascii=False), encoding="utf-8")
 
 
@@ -528,7 +530,7 @@ class StanceRuleTests(unittest.TestCase):
 # ---------------------------------------------------------------- 5. 封存 run
 @unittest.skipUnless((ARCHIVED / "team_inputs.json").is_file(), "封存 run 只在本機")
 class ArchivedCaseTests(unittest.TestCase):
-    """docs/agent_led_exposure_plan.md 第 5.1 節：2026-11-10 封存 run 唯讀重算（replay_reference_only）。
+    """docs/plans/agent_led_exposure_plan.md 第 5.1 節：2026-11-10 封存 run 唯讀重算（replay_reference_only）。
 
     計畫的數字取到 0.1 pp 或小數 3 位，這裡依各數字的位數容許半個進位單位；全局 Decimal 精度一律用預設 Context
     （calibration.tools 會把全域精度改成 40）。"""

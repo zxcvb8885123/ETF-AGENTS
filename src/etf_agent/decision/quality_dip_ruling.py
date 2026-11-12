@@ -1,6 +1,6 @@
 """優質股 v3 的風險 Agent 裁決（``position_sizing.agent_swap.quality_dip`` v3）。
 
-設計見 ``docs/quality_dip_agent_sizing_plan.md`` 第 3.3、4.3、4.4 節。流程：交易 Agent 在換股提名（5c）提名 ``purpose: quality_dip`` 配對並給
+設計見 ``docs/plans/quality_dip_agent_sizing_plan.md`` 第 3.3、4.3、4.4 節。流程：交易 Agent 在換股提名（5c）提名 ``purpose: quality_dip`` 配對並給
 份量格 ``size`` → 風險 Agent 給現金姿態（簡報不變）→ **本模組的裁決步驟**（風險 Agent 對每一組 quality_dip 配對給 approve／downsize／reject）→ 配置。
 
 本模組只含純函式與 Validator（不碰 pipeline、不呼叫 Agent），做法同 ``swap_nomination``：

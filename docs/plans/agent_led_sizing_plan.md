@@ -4,7 +4,7 @@
 
 與平行工作的關係：[`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)（`agent_swap.quality_dip` v3，兩段式：交易 Agent 提名＋風險 Agent 只能同意／降一格／否決）**正在工作區實作中、尚未 commit**；本文件不改它，也不假設它已經是現行行為。兩者的關係與遷移路徑見第 7 節。
 
-前置閱讀：[`agent_nominated_rotation_plan.md`](agent_nominated_rotation_plan.md)、[`agent_led_exposure_plan.md`](agent_led_exposure_plan.md)、[`decision-contracts.md`](decision-contracts.md) 的「換股提名」「風險 Agent」節。
+前置閱讀：[`agent_nominated_rotation_plan.md`](agent_nominated_rotation_plan.md)、[`agent_led_exposure_plan.md`](agent_led_exposure_plan.md)、[`decision-contracts.md`](../decision-contracts.md) 的「換股提名」「風險 Agent」節。
 
 ## 1. 使用者需求（原意，以此為準）
 

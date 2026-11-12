@@ -1,4 +1,4 @@
-"""估值收集與稽核（V1）：只收集、核對、不可變保存，不進決策與簡報。見 docs/quality_dip_plan.md 第 2.6 節。"""
+"""估值收集與稽核（V1）：只收集、核對、不可變保存，不進決策與簡報。見 docs/plans/quality_dip_plan.md 第 2.6 節。"""
 
 from .contracts import ValuationError, parse_roc_date
 from .provider import FinMindValuationProvider, OfficialValuationProvider

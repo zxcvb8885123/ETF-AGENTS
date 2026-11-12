@@ -219,7 +219,7 @@ Agent 的輸出只有列舉、代號、識別碼與文字，沒有數字。
 - **降級**：提名失敗只取消換股，其餘訂單照常（沿用換股提名計畫的規則）。
 - **舊 run 不變**：沒有閘門的 Policy，風險 Agent 與提名簡報逐鍵相同；封存 run 重建雜湊不變。
 
-實作時要同步的文件（本次不改）：`AGENTS.md`（風險 Agent 與交易 Agent 邊界、閘門清單）、`README.md`、`docs/status.md`、`docs/decision-contracts.md`、`docs/architecture.md`、`docs/glossary.md`、`docs/README.md`、`docs/agent_nominated_rotation_plan.md`、`docs/agent_autonomy_plan.md`、`docs/rebound_participation_v2_plan.md`、`docs/exposure_rotation_v2_plan.md`、`docs/operations.md`；Skill：`tradeagent/trading/trader/`（`SKILL.md`、`references/data-rules.md`、`references/swap-nomination.md`）、`tradeagent/risk/portfolio-risk-review/`（`references/cash-stance.md`）。
+實作時要同步的文件（本次不改）：`AGENTS.md`（風險 Agent 與交易 Agent 邊界、閘門清單）、`README.md`、`docs/status.md`、`docs/decision-contracts.md`、`docs/architecture.md`、`docs/glossary.md`、`docs/README.md`、`docs/plans/agent_nominated_rotation_plan.md`、`docs/plans/agent_autonomy_plan.md`、`docs/plans/rebound_participation_v2_plan.md`、`docs/plans/exposure_rotation_v2_plan.md`、`docs/operations.md`；Skill：`tradeagent/trading/trader/`（`SKILL.md`、`references/data-rules.md`、`references/swap-nomination.md`）、`tradeagent/risk/portfolio-risk-review/`（`references/cash-stance.md`）。
 
 ## 7. 已決定（使用者 2026-11-10）
 

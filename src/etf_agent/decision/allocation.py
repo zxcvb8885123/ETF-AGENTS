@@ -1120,7 +1120,7 @@ class AllocationOrderEngine:
         quality_fills: Optional[Dict[str, Tuple[str, Decimal]]] = None,
         assessments: Optional[Mapping[str, object]] = None,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
-        """換股改由交易 Agent 提名（``position_sizing.agent_swap`` v2，版本閘門；docs/agent_nominated_rotation_plan.md 2.6 B 段）。
+        """換股改由交易 Agent 提名（``position_sizing.agent_swap`` v2，版本閘門；docs/plans/agent_nominated_rotation_plan.md 2.6 B 段）。
 
         ``agent_swap.quality_dip``（優質股第三階段，版本閘門）：v1 影子整個略過 ``purpose: quality_dip`` 的配對（不會被當成 thesis 成交）；
         v2 在回撤下限 stance_floor 為 defensive 或帳本歷史不可用、turn_assessment 低於 min_turn_assessment、或賣款不可再用時取消全部

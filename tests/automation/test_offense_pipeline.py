@@ -52,6 +52,7 @@ def template_without_offense():
     value = live_like_template("v4")  # 正式設定已含 offense：對照組拿掉它並還原兩鍵的 max_pairs_by_view
     sizing = value["position_sizing"]
     sizing.pop("offense", None)
+    sizing.pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
     sizing["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
     return value
 
@@ -348,11 +349,13 @@ class ReplayAndGateKeyTests(unittest.TestCase):
         gated = helper.template(template_offense)  # 完整有效的樣板（含 offense 的全部前提）；回放在前提驗證之前略過 offense
         plain = copy.deepcopy(gated)
         del plain["position_sizing"]["offense"]
+        plain["position_sizing"].pop("cash_stance_brief", None)  # offense_reference: omit 需要 offense；回放兩者都略過
         plain["position_sizing"]["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
         plain_policy, plain_notes = helper.replay(plain)
         policy, notes = helper.replay(gated)
         self.assertEqual(notes["offense"], "ignored_in_replay")
-        self.assertEqual({k: v for k, v in notes.items() if k not in ("policy_id", "content_sha256", "offense")},
+        self.assertEqual(notes.get("cash_stance_brief"), "ignored_in_replay")
+        self.assertEqual({k: v for k, v in notes.items() if k not in ("policy_id", "content_sha256", "offense", "cash_stance_brief")},
                          {k: v for k, v in plain_notes.items() if k not in ("policy_id", "content_sha256")})
         self.assertNotIn("offense", policy["position_sizing"])
         body = AllocationOrderEngine(helper.bundle, policy).run(helper.intent)

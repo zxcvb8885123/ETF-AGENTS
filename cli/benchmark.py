@@ -72,6 +72,22 @@ def _table(result: dict) -> str:
             notes.append("%s：超額報酬與相對回撤取雙方都有估值的 %s（%d 個對齊點）" % (item["label"], comparison["trade_date"], comparison["aligned_days"]))
         else:
             notes.append("%s：超額報酬 unavailable：%s" % (item["label"], comparison.get("reason")))
+    for item in result["benchmarks"]:
+        capture = item.get("daily_capture")
+        if item["status"] != "ok" or capture is None:
+            continue
+        if capture["status"] != "ok":
+            notes.append("%s 上漲／下跌捕捉 unavailable：%s" % (item["label"], capture["reason"]))
+            continue
+        parts = []
+        for key, name in (("up", "上漲"), ("down", "下跌")):
+            side = capture[key]
+            if side["status"] != "ok":
+                parts.append("%s捕捉 unavailable（%s）" % (name, side["reason"]))
+            else:
+                parts.append("%s捕捉 %s（%d 日%s）" % (name, "%.1f%%" % (float(side["capture"]) * 100), side["days"], "，small_sample" if side["small_sample"] else ""))
+        cumulative = capture.get("cumulative") or {}
+        notes.append("%s 每日捕捉（純觀察）：%s；持平 %d 日；累積超額 %s" % (item["label"], "、".join(parts), capture["flat_days"], _pct(cumulative.get("cumulative_excess"))))
     widths = [max(_width(row[i]) for row in [headers] + rows) for i in range(len(headers))]
 
     def render(row) -> str:

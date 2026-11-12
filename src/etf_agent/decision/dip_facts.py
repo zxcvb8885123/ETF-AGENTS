@@ -1,6 +1,6 @@
 """優質股被大盤拖累時的事實（``position_sizing.quality_dip_facts`` v1 版本閘門，只由人設定、策略反思不得改）。
 
-第一階段只算事實與標示（設計見 ``docs/quality_dip_plan.md``）：程式對全交易池重算短期價格事實與三個財報清單，
+第一階段只算事實與標示（設計見 ``docs/plans/quality_dip_plan.md``）：程式對全交易池重算短期價格事實與三個財報清單，
 合成互斥的 ``price_pattern`` 與 ``candidate``，以背景放進簡報；**不影響名額、權重、股數、現金與 Guard**，
 Agent 也不輸出任何新欄位。整份事實另存為 ``team_inputs.dip_facts``，Finalizer 以同一份輸入整份重算比對。
 

@@ -1,4 +1,4 @@
-"""agent_swap.entry_reserve v1（階段 3，版本閘門，已實作、尚未開啟）：docs/agent_led_offense_plan.md 4.6、4.11～4.12。
+"""agent_swap.entry_reserve v1（階段 3，版本閘門，已實作、尚未開啟）：docs/plans/agent_led_offense_plan.md 4.6、4.11～4.12。
 
 覆蓋：
 
