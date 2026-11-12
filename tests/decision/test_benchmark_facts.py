@@ -402,13 +402,14 @@ class GateTests(unittest.TestCase):
         validate_benchmark_facts_gate({"benchmark_facts": GATE}, errors)
         self.assertEqual(errors, [])
 
-    def test_gate_requires_exposure_view_and_is_not_open_in_the_shipped_policy(self):
+    def test_gate_requires_exposure_view_and_is_open_in_the_shipped_policy(self):
         from etf_agent.decision.sizing import GATE_PREREQUISITES
         rule = next(item for item in GATE_PREREQUISITES if item.field == "benchmark_facts")
         self.assertEqual(rule.requires, ("exposure_view",))
         self.assertTrue(rule.human_only)
         policy = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
-        self.assertNotIn("benchmark_facts", policy["position_sizing"])
+        # 2026-11-12 使用者決定開啟；回滾樣板 config/policy_versions/2026-11-12-before-benchmark-facts.json
+        self.assertEqual(policy["position_sizing"]["benchmark_facts"], {"version": "v1", "max_holdings_age_days": 5})
 
 
 class StanceTests(unittest.TestCase):
