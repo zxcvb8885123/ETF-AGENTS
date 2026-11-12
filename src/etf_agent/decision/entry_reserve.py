@@ -1,6 +1,6 @@
 """換入者先保留預算：``position_sizing.agent_swap.entry_reserve`` v1（版本閘門，只由人設定；策略反思不得改，``agent_swap`` 前綴已在禁區）。
 
-設計見 ``docs/agent_led_offense_plan.md`` 4.6、4.11、4.12 與 ``docs/agent_led_sizing_plan.md`` 4.2、4.5。起因：2026-11-11 的 run，交易 Agent 提名兩組換股
+設計見 ``docs/plans/agent_led_offense_plan.md`` 4.6、4.11、4.12 與 ``docs/plans/agent_led_sizing_plan.md`` 4.2、4.5。起因：2026-11-11 的 run，交易 Agent 提名兩組換股
 （買 2408／6239、賣 2890／3034），換出者照賣，兩檔換入者卻因信心預算被高信心加碼先用掉而買不到一張，賣款流向 2330。
 
 - 每一組提名必填列舉 ``size``（small／medium／large，只有列舉、不輸出數字）。份量格對成權重上限沿用 quality_dip v3 的程式常數：

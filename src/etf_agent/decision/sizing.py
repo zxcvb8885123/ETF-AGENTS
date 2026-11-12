@@ -74,7 +74,7 @@ LIMIT_HEADROOM_BUY = Decimal("0.97")
 # 已持有的 add 不受影響、只減少增量。省略此欄位的舊 Decision run 維持依代號逐張減少的原重建行為。
 CASH_FIT_ORDER = "v1"
 CASH_FIT_MIN_FILL_RATIO = Decimal("0.5")
-# v2（docs/agent_autonomy_plan.md 階段 4，只由人設定）：買單取得現金的順序同 v1，但新股只買得到零頭時**不再整筆取消**
+# v2（docs/plans/agent_autonomy_plan.md 階段 4，只由人設定）：買單取得現金的順序同 v1，但新股只買得到零頭時**不再整筆取消**
 # （不記 RISK_CASH_FIT），買得到幾張買幾張；cash_fit_min_fill_ratio 在 v2 不允許出現。``_fit_turnover`` 的新股殘量取消屬換手護欄、
 # 本版不動。v1 逐位元維持原重建行為。
 CASH_FIT_ORDER_V2 = "v2"
@@ -134,7 +134,7 @@ DRAWDOWN_DERISK_VERSION = "v1"
 DRAWDOWN_DERISK_VERSION_V2 = "v2"
 DRAWDOWN_DERISK_VERSION_V3 = "v3"
 DRAWDOWN_DERISK_VERSION_V4 = "v4"
-# v5（docs/agent_autonomy_plan.md 階段 2，只由人設定）：v4 的數字（單次預算、換手餘額、整張、最低檔數）全部不變，只把「先賣誰」
+# v5（docs/plans/agent_autonomy_plan.md 階段 2，只由人設定）：v4 的數字（單次預算、換手餘額、整張、最低檔數）全部不變，只把「先賣誰」
 # 由程式的 ATR 順序改成交易 Agent 第二輪給的釋出順序（release_order，team_inputs 選配鍵）；順序由 pipeline 綁進本物件的
 # release_symbols／release_ref（樣板不得預填）。順序驗證用盡或呼叫失敗時退回 v4 的確定性順序並留旗標，硬規則仍整份拒絕。
 DRAWDOWN_DERISK_VERSION_V5 = "v5"
@@ -171,11 +171,11 @@ HIGH_CONVICTION_CASH_FLOOR_FIELDS = {"version", "floor_ratio"}
 # 2026-11-05 後新增（limit_scaled_conviction 版本閘門，只由人設定）：高信心候選的必要份額為
 # max(原式份額, min(alpha × 單股上限, 封頂))，必要份額總和超過預算時依入選名次填到用完；剩餘預算再依原式
 # 分給 medium／low（volatility_exponent = 0 時不得高於最小的 high／medium，分不完留作現金），
-# 見 docs/limit_aware_conviction_weights_plan.md「α 方案」。alpha 為必要欄位（不在程式寫死預設值）。
+# 見 docs/plans/limit_aware_conviction_weights_plan.md「α 方案」。alpha 為必要欄位（不在程式寫死預設值）。
 # 前提：method 為 conviction_volatility_v2 且已啟用 selection_ranking。省略此欄位的舊 run 走原式。
 LIMIT_SCALED_CONVICTION = "v1"
 LIMIT_SCALED_CONVICTION_FIELDS = {"version", "alpha"}
-# 2026-11-05 後新增（cash_ratio_range 版本閘門 v1，只由人設定；docs/agent_cash_ratio_range_plan.md 第一階段 C2）：
+# 2026-11-05 後新增（cash_ratio_range 版本閘門 v1，只由人設定；docs/plans/agent_cash_ratio_range_plan.md 第一階段 C2）：
 # 風險 Agent 仍只輸出列舉，在姿態內另選子等級 cash_grade（lower／middle／upper），現金比例由 grid 對應固定百分比，
 # 取代 cash_buffer_by_stance 的三段階梯（後者仍必填、驗證不變，只供舊 run 回放與對照）。單日只限制現金拉高：
 # 今日可選格點 ≤ max(該姿態 lower, 前次比例 anchor + max_daily_raise)，往下不限。anchor 由 pipeline 依前次決策挑選規則
@@ -197,7 +197,7 @@ CASH_ANCHOR_FIELDS = {"status", "ratio", "source"}
 CASH_ANCHOR_SOURCE_FIELDS = {
     "run_id", "selection", "target_session_start", "decision_sha256", "proposal_id", "proposal_sha256",
 }
-# 換股改由交易 Agent 提名（agent_swap 版本閘門，只由人設定；docs/agent_nominated_rotation_plan.md 第 3 節）：
+# 換股改由交易 Agent 提名（agent_swap 版本閘門，只由人設定；docs/plans/agent_nominated_rotation_plan.md 第 3 節）：
 # v1 為影子（跑第二輪提名、封存、重建驗證，配置完全不讀提名，訂單與旗標與沒有此欄位時相同）；
 # v2 為正式（配置依提名換股，且與 rotation.forced_swap、exposure_rotation.conviction_gap_swap 互斥）。
 # thesis_hint_symbols／verdicts_ref 由 pipeline 綁定（thesis_verdicts 的 broken 名單），樣板不得預填，重建只讀 Policy。
@@ -336,7 +336,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="程式兜底的條件式硬停損（v1）：自進場虧損、輸交易池與持有交易日數三個人填門檻全成立才強制出場（賣單意圖標 exit、旗標 RISK_STOP_EXIT，"
              "交易 Agent 的意圖不改寫），單日最多 max_exits_per_run 檔；事實取自頂層 position_review v2（由 stop_exit.validate_stop_exit_gate 檢查），"
              "持有起點取自 exposure_rotation 綁定的 held_since_by_symbol；缺資料不強制出場；出場股票進入 reentry_cooldown 名單；"
-             "team_inputs 不升版、沒有新鍵（配置引擎由 bundle 與 Policy 重算，Finalizer 以配置重建比對）；見 docs/stop_loss_take_profit_plan.md",
+             "team_inputs 不升版、沒有新鍵（配置引擎由 bundle 與 Policy 重算，Finalizer 以配置重建比對）；見 docs/plans/stop_loss_take_profit_plan.md",
     ),
     GateRule("slot_recycle", allowed=(SLOT_RECYCLE,), note="物件 {\"version\": \"v1\"}；LOT_SIZE 候選釋出占用的新增名額"),
     GateRule(
@@ -384,7 +384,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "買進取份量格權重與賣款加格點以上現金、單股與產業餘裕的最小值、先保留再跑信心預算、有 size 的組不適用 proceeds_to_add、"
              "max_nominations 大於成交上限時尾端先取消；須 agent_swap v2 與 agent_swap.exposure，quality_dip 若有只能是 v3／v4；"
              "team_inputs 不升版、沒有新鍵（size 放 swap_nomination，Policy 的 nominated_pairs 綁 size）；"
-             "形狀與值域由 entry_reserve.validate_entry_reserve_gate 檢查，見 docs/agent_led_offense_plan.md 4.6",
+             "形狀與值域由 entry_reserve.validate_entry_reserve_gate 檢查，見 docs/plans/agent_led_offense_plan.md 4.6",
     ),
     GateRule(
         "agent_swap.quality_dip",
@@ -396,7 +396,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "5c 需 team_inputs.dip_facts 與 typed_evidence_v1 的 claim_kind；v1／v2 的 team_inputs 仍是 2.9、不升版。"
              "v3（組數與份量由交易 Agent 提出、風險 Agent 裁決；須 agent_swap=v2；組數另計不占 agent_swap.max_swaps_per_run，"
              "ruling_ref／rulings 由 pipeline 綁定，team_inputs 升為 2.10；v4 為 v3 的超集，另有人填的 ladder 與 pipeline 綁定的 ladder_state、"
-             "min_turn_assessment 才可填 no_turn_evidence，team_inputs 多選配鍵 decline_depth_facts，見 docs/agent_led_offense_plan.md 4.13）見 docs/quality_dip_agent_sizing_plan.md",
+             "min_turn_assessment 才可填 no_turn_evidence，team_inputs 多選配鍵 decline_depth_facts，見 docs/plans/agent_led_offense_plan.md 4.13）見 docs/plans/quality_dip_agent_sizing_plan.md",
     ),
     GateRule(
         "offense",
@@ -406,7 +406,7 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "防守姿態下非 keep_defensive 另填 defensive_reconciliation；事實 offense_facts 由程式算並存為 team_inputs 選配鍵（須 2.9 以上，與閘門雙向同時存在）；"
              "有效等級由 apply_trade_decision 綁定、Finalizer 重算；須 agent_swap v2、agent_swap.exposure v2（max_pairs_by_view 含 probe 且與 by_view 相等）、"
              "exposure_view v2、與 rebound_participation.by_state.*.defensive_cash_buffer 互斥；形狀與值域由 offense.validate_offense_gate 檢查，"
-             "見 docs/agent_led_offense_plan.md",
+             "見 docs/plans/agent_led_offense_plan.md",
     ),
     GateRule(
         "cash_stance_recency",
@@ -1813,7 +1813,7 @@ def alpha_floor_weights(
     """limit_scaled_conviction v1（α 方案）：高信心候選的份額至少為 max(原式份額, ``floors``)，其餘照原式並受跨等級約束。
 
     ``order`` 必須已依（信心、入選名次、代號）排序；``floors`` 只含 high 的股票（min(α × 單股上限, 封頂)）。
-    公式見 docs/limit_aware_conviction_weights_plan.md「α 方案」：
+    公式見 docs/plans/limit_aware_conviction_weights_plan.md「α 方案」：
 
     0. ``base`` = 原式（``conviction_weights``）把預算分給全部入選股；每檔 high 的必要份額 r = max(base, floor)。
     1. 沒有 high 被抬高、且（volatility_exponent = 0 時）base 已滿足 high ≥ medium ≥ low：直接回傳 base（逐位同原式）。

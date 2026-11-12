@@ -1,6 +1,6 @@
 """估值 V2：PER／PBR 在自身歷史區間的位置（``position_sizing.valuation_facts`` 版本閘門，背景、不可引用）。
 
-設計見 ``docs/quality_dip_plan.md`` 第 2.6 節與第 10.5 節（實作紀錄與保守取捨）。閘門只由人設定、策略反思不得改；
+設計見 ``docs/plans/quality_dip_plan.md`` 第 2.6 節與第 10.5 節（實作紀錄與保守取捨）。閘門只由人設定、策略反思不得改；
 沒有欄位的舊 Policy／舊 run：簡報、``team_inputs`` 與重建逐位元不變。
 
 - 資料只讀估值 V1 已不可變保存的 run（``artifacts/valuation_collection``）：取 ``fetched_at``（= ``available_at``）不晚於
@@ -9,7 +9,7 @@
 - 只用逐檔核對相符（``status: matched``）且授權登記允許「背景進簡報」用途的紀錄。V1 的紀錄授權範圍是
   ``valuation_v1_collection_and_audit_only``（只收集與稽核），**不在允許清單內**：即使閘門開啟，每檔都是 ``LICENSE_SCOPE_NOT_APPROVED``。
   要開放須使用者核准新的用途範圍並改 V1 契約（不能只改收集器常數：重建以當下常數比對，會讓既有 run 全部重建失敗；
-  見 docs/quality_dip_plan.md 第 10.5 節）。程式不替使用者擴大授權範圍，也不回溯改寫舊 run。
+  見 docs/plans/quality_dip_plan.md 第 10.5 節）。程式不替使用者擴大授權範圍，也不回溯改寫舊 run。
 - 只算 PER 與 PBR；殖利率的股利基準尚未確認，不進簡報。上櫃股（``.TWO``）端點尚未確認，一律不可用。
 - 位置：三個寫死的視窗並列（近 250 個資料列、近 750 個資料列、全部可得歷史）；百分位＝視窗內「不高於當日值」的筆數 ÷ 樣本數
   （含當日，四捨五入到小數 4 位）。固定視窗的資料列不足時該視窗 ``insufficient_history``、不算數字；全部歷史至少 2 筆才算。
@@ -36,7 +36,7 @@ VALUATION_FACTS_FIELDS = {"version"}
 VALUATION_FACTS_KEY = "valuation_facts"  # team_inputs 的選配鍵：與 Policy 閘門雙向同時存在
 VALUATION_FACTS_SCHEMA_VERSION = "1.0"
 STORE_DIRNAME = "valuation_collection"
-METRICS = ("per", "pbr")  # 殖利率的股利基準尚未確認，不進簡報（docs/quality_dip_plan.md 第 2.6 節 (2)）
+METRICS = ("per", "pbr")  # 殖利率的股利基準尚未確認，不進簡報（docs/plans/quality_dip_plan.md 第 2.6 節 (2)）
 WINDOWS: Tuple[Tuple[str, Optional[int]], ...] = (("rows_250", 250), ("rows_750", 750), ("all", None))
 MIN_ALL_SAMPLE = 2
 # 允許「背景進簡報」的授權範圍。V1 收集器記的是 valuation_v1_collection_and_audit_only（只收集與稽核），不在清單內；

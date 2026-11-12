@@ -1,4 +1,4 @@
-"""回撤減碼的釋出順序（drawdown_derisk v5，docs/agent_autonomy_plan.md 階段 2）：交易 Agent 在入選排序之後，對「可減碼的持股」
+"""回撤減碼的釋出順序（drawdown_derisk v5，docs/plans/agent_autonomy_plan.md 階段 2）：交易 Agent 在入選排序之後，對「可減碼的持股」
 給「若需要降低持股，先放掉誰」的先後順序與有證據的理由。
 
 分工：Agent 只輸出代號、依據識別碼與文字（不輸出任何數字）；賣多少、單次預算、換手餘額、整張與最低持股檔數全部由

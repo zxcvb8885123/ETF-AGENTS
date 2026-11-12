@@ -1,6 +1,6 @@
 """反彈參與閘門（``position_sizing.rebound_participation`` v1 版本閘門，只由人設定、策略反思不得改）。
 
-動機與限制見 ``docs/rebound_participation_plan.md``：防守姿態下 beta 很低的持股，在市場快速反彈時幾乎沒有參與；
+動機與限制見 ``docs/plans/rebound_participation_plan.md``：防守姿態下 beta 很低的持股，在市場快速反彈時幾乎沒有參與；
 本閘門在「程式狀態機」與「風險 Agent 的既有列舉」都同意轉向時，放寬曝險換股（防守姿態改用 beta 停止線、
 換股檔數上調、持有天數下調）。整條鏈全部是確定性程式，Agent 不輸出任何數字、不新增欄位：
 
@@ -12,7 +12,7 @@
   ``drawdown_control.stance_floor`` 為 defensive 時恆 none（回撤下限優先）；減碼日（drawdown_derisk）由配置整個略過曝險換股。
 - 對映寫在 Policy 的 ``by_state``，只會放寬（beta 停止線取較大、換股檔數取較大、持有天數取較小），不會收緊現行設定。
 
-v2（``docs/rebound_participation_v2_plan.md``）：不再有狀態機與轉向門檻，程式只整理事實與資料品質（``data_status``），
+v2（``docs/plans/rebound_participation_v2_plan.md``）：不再有狀態機與轉向門檻，程式只整理事實與資料品質（``data_status``），
 ``effective_state`` 只由風險 Agent 的 ``turn_assessment`` 對映，資料缺漏或回撤下限為 defensive 時壓回 none；v1 函式本體保持不動。
 
 誰判斷方向：程式只算事實與狀態；有效狀態只是在既有曝險換股規則上調整三個參數，賣單仍標 ``exit``、不改寫交易 Agent 意圖、

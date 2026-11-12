@@ -1,6 +1,6 @@
 """組合曝險事實與風險 Agent 的回補意見（``position_sizing.exposure_view`` v1 版本閘門，只由人設定、策略反思不得改）。
 
-設計見 ``docs/agent_led_exposure_plan.md`` 第 3.5、4.1、6 節；本模組只做**階段 1：事實與紀錄**：
+設計見 ``docs/plans/agent_led_exposure_plan.md`` 第 3.5、4.1、6 節；本模組只做**階段 1：事實與紀錄**：
 
 - 程式依同一份 bundle 與 Policy 確定性重算組合曝險（直接重用 ``exposure.build_exposure_review``，與 ``exposure_review`` 同口徑）、
   依 Policy 綁定的 ``sector_by_symbol`` 算持股的產業權重、最近一個交易池上漲日的報酬，以及非持股的 beta（``exposure.BetaModel``，

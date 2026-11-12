@@ -1,4 +1,4 @@
-"""程式兜底的條件式硬停損（``position_sizing.stop_exit`` v1，版本閘門，只由人設定；見 ``docs/stop_loss_take_profit_plan.md`` 6.3）。
+"""程式兜底的條件式硬停損（``position_sizing.stop_exit`` v1，版本閘門，只由人設定；見 ``docs/plans/stop_loss_take_profit_plan.md`` 6.3）。
 
 停損停利的判斷仍交給交易 Agent（持股檢視警示）；程式只兜底一種情況：個股自進場起虧損很深，而且明顯輸給交易池。
 四個條件**全部成立**才強制出場（人填的數字，程式不給預設）：

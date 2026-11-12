@@ -1,6 +1,6 @@
 """優質股第三階段：換股提名的 ``purpose: quality_dip`` 配對（``position_sizing.agent_swap.quality_dip`` 版本閘門）。
 
-設計見 ``docs/quality_dip_plan.md`` 第 4.2、10.3 節（第三階段改走換股提名，不另開程式配對路徑）與第 10.4 節（實作紀錄與保守取捨）。
+設計見 ``docs/plans/quality_dip_plan.md`` 第 4.2、10.3 節（第三階段改走換股提名，不另開程式配對路徑）與第 10.4 節（實作紀錄與保守取捨）。
 閘門只由人設定、策略反思不得改（``agent_swap`` 前綴已在 ``FORBIDDEN_PREFIXES``）；沒有 ``quality_dip`` 欄位的舊 Policy／舊提名封存／
 舊 run 逐位元維持原行為。
 
@@ -10,13 +10,13 @@
   買進金額不超過該對換出者的賣款、``turn_assessment`` 不低於 ``min_turn_assessment``、回撤下限 ``stance_floor`` 為 defensive 時整個略過；
   減碼日由 ``_agent_swap`` 整個略過。現金下限、換手上限、檔數、單股與產業上限照舊是後段上限，一律不放寬。
 
-- **v3（組數與份量由 Agent 提出、風險 Agent 裁決；設計見 ``docs/quality_dip_agent_sizing_plan.md``）**：需 ``agent_swap`` v2；``max_swaps_per_run``
+- **v3（組數與份量由 Agent 提出、風險 Agent 裁決；設計見 ``docs/plans/quality_dip_agent_sizing_plan.md``）**：需 ``agent_swap`` v2；``max_swaps_per_run``
   與 ``max_entry_weight`` 改為人設的**絕對硬上限**（quality_dip 組數另計，不占用 ``agent_swap.max_swaps_per_run``）；交易 Agent 在每個
   quality_dip 配對填份量格列舉 ``size``（small／medium／large），風險 Agent 另做一次裁決（approve／downsize／reject，只能縮不能放），
   程式把有效份量格對成買進權重上限（large＝硬上限，medium 為其 2/3，small 為其 1/3）。裁決沒有完成（用盡、暫時性失敗、程式前置檢查不過）
   一律取消全部 quality_dip 配對，不退回 v2 行為。v1、v2 的程式分支原樣保留，供舊 Policy 與舊 run 重建。
 
-- **v4（連跌後逢低布局，梯度 ``ladder``；設計見 ``docs/agent_led_offense_plan.md`` 4.13、7.3）**：v3 的超集（份量格、風險 Agent 裁決、組數另計全部照舊），
+- **v4（連跌後逢低布局，梯度 ``ladder``；設計見 ``docs/plans/agent_led_offense_plan.md`` 4.13、7.3）**：v3 的超集（份量格、風險 Agent 裁決、組數另計全部照舊），
   另有人填的 ``ladder`` 區塊與 pipeline 綁定的 ``ladder_state``。有 ``ladder`` 時 ``min_turn_assessment`` 才可填 ``no_turn_evidence``：沒有轉向跡象
   也能抄底，但交易池離 60 日高點回檔須達 ``min_pool_drawdown``；有轉向跡象（turn_unconfirmed 以上）時不受該門檻限制。梯度另限制總抄底曝險、
   批數、批次間隔與上一批之後再跌的暫停線（``decline_depth.build_ladder_state``，缺資料一律不放行）。數字全由人填，程式不給預設；

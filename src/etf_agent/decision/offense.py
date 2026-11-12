@@ -1,6 +1,6 @@
 """轉向後進攻：``position_sizing.offense`` v1（版本閘門，只由人設定；策略反思不得改，``offense`` 前綴列在禁區）。
 
-設計見 ``docs/agent_led_offense_plan.md`` 4.1～4.10、第 6 節階段 2、7.1 節。起因：2026-11-11 的 run，風險 Agent 只有「維持防守」與「回補」兩個選擇，
+設計見 ``docs/plans/agent_led_offense_plan.md`` 4.1～4.10、第 6 節階段 2、7.1 節。起因：2026-11-11 的 run，風險 Agent 只有「維持防守」與「回補」兩個選擇，
 防守姿態的現金目標把買單砍成 0，轉向確認前組合 beta 停在 0.13。本閘門新增一級 ``probe``（預測型、小量先試），並讓風險 Agent 的
 ``exposure_view`` 對映一列人填的上限：
 

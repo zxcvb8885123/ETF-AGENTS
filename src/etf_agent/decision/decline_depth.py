@@ -1,6 +1,6 @@
 """連跌深度事實與抄底梯度狀態（``position_sizing.agent_swap.quality_dip`` v4 的 ``ladder``）。
 
-設計見 ``docs/agent_led_offense_plan.md`` 4.13、7.3。本模組只做兩件事，都是確定性程式、不讀任何 Agent 輸出的數字、不用模型記憶：
+設計見 ``docs/plans/agent_led_offense_plan.md`` 4.13、7.3。本模組只做兩件事，都是確定性程式、不讀任何 Agent 輸出的數字、不用模型記憶：
 
 1. ``build_decline_depth_facts``：交易池的連跌深度**事實**（連跌天數、累計跌幅、離 60 日高點回檔、20 日新低比例），
    加本次行情視窗內的**對照樣本**（連跌滿 3 天、回檔達目前深度的日子，之後 3／5 個交易日的報酬分布與最差值、樣本數、
