@@ -16,3 +16,4 @@
 - `2026-11-12-before-liquidity-v2-alerts.json`：2026-11-12 把 `liquidity_fit` 升 v2、放寬 `position_review` 的 `gain_alert`／`trail_alert`、`quality_dip.max_entry_weight` 改 0.06 之前的正式樣板（`policy_id: strategy-2026-11-11-probe-3-1`）。要回滾，以此檔對應區塊為準（`liquidity_fit` 改回 v1、警示改回 0.10／0.05／0.05、`max_entry_weight` 改回 0.04）。
 - `2026-11-12-before-turnover-029.json`：2026-11-12 把 `max_turnover_rate` 由 0.3 改 0.29 之前的正式樣板（`policy_id: strategy-2026-11-12-liquidity-v2-1`）。要回滾，把 `max_turnover_rate` 改回 `"0.3"`。
 - `2026-11-12-before-probe-beta-045.json`：2026-11-12 把 `offense.by_view.probe.beta_stop` 由 0.40 改 0.45 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-029-1`）。要回滾，把該值改回 `"0.40"`。
+- `2026-11-12-before-swap-cap-7.json`：2026-11-12 把 `offense.by_view.probe.beta_stop` 由 0.45 改 0.55、`agent_swap.max_swaps_per_run` 與 `rotation.max_swaps_per_run` 由 5 改 7 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-033-1`）。要回滾，把這三個值改回 `"0.45"`、5、5。

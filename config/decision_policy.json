@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-12-turnover-033-1",
-  "available_at": "2026-11-12T08:13:00+08:00",
+  "policy_id": "strategy-2026-11-12-swap-cap-7-1",
+  "available_at": "2026-11-12T10:01:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -68,7 +68,7 @@
     "cash_stance_turn_facts": {"version": "v1"},
     "market_index_facts": {"version": "v1"},
     "exposure_view": {"version": "v2"},
-    "offense": {"version": "v1", "by_view": {"probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.45"}, "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"}, "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"}}, "offense_off_drawdown": "0.12", "thesis_size_cap": {"version": "v1"}, "cash_glide": {"version": "v1"}},
+    "offense": {"version": "v1", "by_view": {"probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.55"}, "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"}, "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"}}, "offense_off_drawdown": "0.12", "thesis_size_cap": {"version": "v1"}, "cash_glide": {"version": "v1"}},
     "quality_dip_facts": {"version": "v1"},
     "quality_dip_assessment": {"version": "v1"},
     "event_direction": {"version": "v1"},
@@ -88,7 +88,7 @@
         "confirmed": {"defensive_target": "0.55", "max_swaps_per_run": 4, "min_holding_days": 0}
       }
     },
-    "agent_swap": {"version": "v2", "max_swaps_per_run": 5, "min_holding_days": 5, "exposure": {"version": "v2", "max_pairs_by_view": {"probe": 3, "start_rebuild": 4, "rebuild": 5}}, "quality_dip": {"version": "v4", "ladder": {"min_pool_drawdown": "0.08", "max_dip_exposure": "0.12", "max_tranches": 8, "min_days_between_tranches": 2, "pause_after_further_drop": "0.05", "exposure_basis": "quality_dip_fills"}, "max_swaps_per_run": 2, "max_entry_weight": "0.06", "oversold": {"max_swaps_per_run": 1, "max_entry_weight": "0.02"}, "min_new_conviction": "medium", "min_holding_days": 5, "min_turn_assessment": "no_turn_evidence"}, "derisk_day_view": {"version": "v1"}, "proceeds_to_add": {"version": "v1"}, "entry_reserve": {"version": "v1", "max_entry_weight": "0.06", "max_nominations": 8, "swap_priority": {"version": "v1"}}},
+    "agent_swap": {"version": "v2", "max_swaps_per_run": 7, "min_holding_days": 5, "exposure": {"version": "v2", "max_pairs_by_view": {"probe": 3, "start_rebuild": 4, "rebuild": 5}}, "quality_dip": {"version": "v4", "ladder": {"min_pool_drawdown": "0.08", "max_dip_exposure": "0.12", "max_tranches": 8, "min_days_between_tranches": 2, "pause_after_further_drop": "0.05", "exposure_basis": "quality_dip_fills"}, "max_swaps_per_run": 2, "max_entry_weight": "0.06", "oversold": {"max_swaps_per_run": 1, "max_entry_weight": "0.02"}, "min_new_conviction": "medium", "min_holding_days": 5, "min_turn_assessment": "no_turn_evidence"}, "derisk_day_view": {"version": "v1"}, "proceeds_to_add": {"version": "v1"}, "entry_reserve": {"version": "v1", "max_entry_weight": "0.06", "max_nominations": 8, "swap_priority": {"version": "v1"}}},
     "slot_recycle": {"version": "v1"},
     "liquidity_fit": {"version": "v2", "max_participation": "0.10"},
     "cash_ceiling_fix": "v1",
@@ -108,7 +108,7 @@
     },
     "rotation": {
       "version": "v1",
-      "max_swaps_per_run": 5,
+      "max_swaps_per_run": 7,
       "min_new_conviction": "medium"
     },
     "revision_bounds": {
