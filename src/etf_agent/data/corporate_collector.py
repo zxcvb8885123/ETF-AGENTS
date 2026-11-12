@@ -11,7 +11,7 @@ from .universe import Instrument
 from .corporate_contracts import CorporateCollectionResult, CorporateRecord, CorporateResponse
 from .corporate_provider import OfficialCorporateProvider
 from .corporate_parsing import _decimal_text
-from .monthly_revenue_identity import monthly_revenue_content_sha256
+from .monthly_revenue_identity import financial_statement_content_sha256, monthly_revenue_content_sha256
 
 
 class CorporateDataCollector:
@@ -260,6 +260,27 @@ def _store_record(
                 (document.source, document.external_id),
             ).fetchone()
             published_at = str(first["published_at"])
+    elif document.document_type == "financial_statement" and record.financial_statement is not None:
+        # 財報：同月營收，排除每日變動的「出表日期」，相同數字不再每天成為新版本（新文件編號會讓下游事件重用失效）。
+        # 舊列雜湊是含整列的舊公式，比較時對舊列以新公式重算（對映版本取自該列的 financial_statements），不改寫舊列。
+        content_sha256 = financial_statement_content_sha256(
+            document.document_type, document.title, document.body, record.financial_statement.mapping_version
+        )
+        previous_mapping = (
+            connection.execute(
+                "SELECT mapping_version FROM financial_statements WHERE document_id = ?", (previous["id"],)
+            ).fetchone()
+            if previous
+            else None
+        )
+        previous_sha256 = (
+            financial_statement_content_sha256(
+                str(previous["document_type"]), str(previous["title"]), str(previous["body"]),
+                str(previous_mapping["mapping_version"]),
+            )
+            if previous and previous_mapping
+            else (str(previous["content_sha256"]) if previous else None)
+        )
     else:
         content_sha256 = _legacy_content_sha256(record)
         previous_sha256 = str(previous["content_sha256"]) if previous else None

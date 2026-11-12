@@ -320,7 +320,8 @@ class TeamStagesMixin:
                     _SHARED_RULES + (_EVENT_RULES if analyst == "event" else "") + (_FINDING_KIND_RULES if typed else "")
                     + dip_rules + (_EVENT_DIRECTION_RULES if event_direction and analyst == "event" else ""),
                 ),
-                event_analyst_schema(typed, event_direction) if analyst == "event" else analyst_schema(typed),
+                event_analyst_schema(typed, event_direction, _batch_corroboration_ids(batch_brief))
+                if analyst == "event" else analyst_schema(typed),
             )
             return name, lambda: self.agent_step(
                 task,
@@ -893,3 +894,14 @@ def _with_dip_view(brief: Mapping[str, object], view: Mapping[str, object], anal
     output["dip_facts_background"] = view["background"]
     output["symbols"] = [{**row, **per_symbol.get(row["symbol"], {})} for row in brief["symbols"]]
     return output
+
+
+def _batch_corroboration_ids(batch_brief: Mapping[str, object]) -> List[str]:
+    """本批所有重大訊息與新聞的 evidence_id；沒有任何一則時回傳 None 以維持原 Schema（避免空列舉）。"""
+    ids = [
+        item["evidence_id"]
+        for row in batch_brief["symbols"]
+        for key in ("events", "news")
+        for item in row.get(key) or []
+    ]
+    return ids or None

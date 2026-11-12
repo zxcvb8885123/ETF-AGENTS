@@ -146,7 +146,7 @@ class KnobTests(Fixture):
         """正式樣板已啟用：反思員必須看得到這兩個旋鈕才可能依校準報告調整。"""
         values = current_knobs(self.template)
         self.assertEqual(values["volatility_exponent"], "0")
-        self.assertEqual(values["rotation.max_swaps_per_run"], "5")
+        self.assertEqual(values["rotation.max_swaps_per_run"], "7")
 
     def test_drawdown_can_only_tighten(self):
         self.assertEqual(check_proposal("drawdown_control.neutral_at", "0.04", self.template, self.rules)["proposed"], "0.04")

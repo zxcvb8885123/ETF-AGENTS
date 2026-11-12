@@ -49,3 +49,20 @@ def monthly_revenue_content_sha256(document_type: str, title: str, body: str) ->
             "body": comparable_monthly_revenue_body(body),
         }
     )
+
+
+def financial_statement_content_sha256(document_type: str, title: str, body: str, mapping_version: str) -> str:
+    """財報文件的內容雜湊：與月營收同理排除每日變動的產製欄位（出表日期／Date），並含欄位對映版本。
+
+    財報 OpenAPI 每日重新產製整份資料，只有「出表日期」變動時不應產生新版本（新文件編號會讓下游
+    事件重用與證據引用全部失效）。數字、備註或對映版本真的改變才不同。舊列的雜湊是含整列的舊公式，
+    比較時由呼叫端對舊列以本函式重算，不改寫舊列。
+    """
+    return canonical_sha256(
+        {
+            "document_type": document_type,
+            "title": title,
+            "body": comparable_monthly_revenue_body(body),
+            "mapping_version": mapping_version,
+        }
+    )

@@ -244,6 +244,13 @@ class AllocationTests(unittest.TestCase):
         self.assertNotIn((VICTIM, "sell"), sides)  # 整組取消，換出者不賣
         self.assertNotIn((BUYER, "buy"), sides)
 
+    def test_turnover_skip_keeps_a_single_over_limit_pair_cancelled(self):
+        # 單一組超過上限時，turnover_skip 與舊行為結果相同（整組取消、換出者不賣）；差別只在其後還有較小的組時。
+        gate = dict(RESERVE, turnover_skip={"version": "v1"})
+        body = self.reserved("large", gate=gate, policy_changes={"max_turnover_rate": "0.3"})
+        self.assertIn((BUYER, "AGENT_SWAP_CANCELLED:entry_reserve_turnover"), self.flags(body))
+        self.assertNotIn((VICTIM, "sell"), {(o["symbol"], o["side"]) for o in body["order_proposal"]["orders"]})
+
     def test_forced_overweight_trims_that_come_later_count_toward_the_pair_turnover(self):
         # 2330 現有權重高於單股上限，後段 _fit_stock_weights 會把它賣回上限（此刻還不在 target_shares）。
         # 保守計入基底換手：0.5 的上限下由 entry_reserve 自己整組取消，而不是留給後段 turnover_fit。
