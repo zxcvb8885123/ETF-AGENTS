@@ -227,6 +227,27 @@ class FinancialStatementTests(unittest.TestCase):
         self.assertEqual(records, [])
         self.assertEqual(warnings, [])
 
+    def test_same_numbers_with_drifting_report_date_keep_one_document(self):
+        def provider(report_date, fetched_at, revenue="1000"):
+            row = income_row(revenue=revenue)
+            row["出表日期"] = report_date
+            return FixtureFinancialProvider(
+                source="TWSE_MOPS_INCOME_CI", market="TWSE", statement_type="income_statement",
+                industry="ci", rows=[row], fetched_at=fetched_at,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            CorporateDataCollector(database, [provider("1150921", "2026-09-21T04:00:00+00:00")]).collect(self.universe)
+            second = CorporateDataCollector(database, [provider("1150922", "2026-09-22T04:00:00+00:00")]).collect(self.universe)
+            self.assertEqual(second.stored_documents, 0)
+            self.assertEqual(second.duplicate_documents, 1)
+            changed = CorporateDataCollector(database, [provider("1150923", "2026-09-23T04:00:00+00:00", "2000")]).collect(self.universe)
+            self.assertEqual(changed.stored_documents, 1)
+            with database.connect() as connection:
+                versions = [row[0] for row in connection.execute("SELECT version FROM source_documents ORDER BY id")]
+            self.assertEqual(versions, [1, 2])
+
     def test_collection_snapshot_and_correction_keep_versions_time_isolated(self):
         with tempfile.TemporaryDirectory() as directory:
             database = MarketDataDatabase(Path(directory) / "test.db")

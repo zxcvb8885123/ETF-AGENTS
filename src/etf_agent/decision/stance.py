@@ -124,11 +124,11 @@ def build_stance_brief(
                 "tradability_state": tradability.get(symbol),
                 "momentum_status": momentum_status.get(symbol),
                 "analysts": {
-                    name: {
+                    name: _drop_empty_lists({
                         key: value
                         for key, value in by_analyst[name].get(symbol, {}).items()
                         if key != "symbol"
-                    }
+                    })
                     for name in analyst_report_names(analyst_reports)
                 },
                 "event_research": research.get(symbol, []),
@@ -140,6 +140,7 @@ def build_stance_brief(
         )
     brief = {
         "role": role,
+        "presentation_note": "analysts 內值為空陣列的欄位（如 counter_evidence、pending_confirmations、corroborated_by、data_gaps）已省略；缺欄位就是沒有內容，不是資料遺失。",
         "packet_envelope": stance_envelope(bundle, momentum, shared, role),
         "regime_assessment": momentum.get("regime_assessment"),
         "research_status": research_result.get("status"),
@@ -160,6 +161,15 @@ def build_stance_brief(
                     "market／account／status 種類只能作補充，不能單獨成立；finding_ids 只能引用同種類的發現。",
         }
     return brief
+
+
+def _drop_empty_lists(value):
+    """只用於研究員 brief 的呈現：遞迴拿掉值為空陣列的欄位以省 token；分析報告原檔與所有雜湊、驗證都不受影響。"""
+    if isinstance(value, dict):
+        return {key: _drop_empty_lists(item) for key, item in value.items() if item != []}
+    if isinstance(value, list):
+        return [_drop_empty_lists(item) for item in value]
+    return value
 
 
 class StancePacketValidator:
