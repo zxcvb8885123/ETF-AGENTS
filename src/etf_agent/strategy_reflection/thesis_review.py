@@ -17,6 +17,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, Mapping, Sequence
 
+from etf_agent.decision.thesis_verdicts import forbidden_text
+
 from .contracts import ReflectionError
 
 BATCH_SIZE = 10
@@ -93,6 +95,8 @@ def validate_review(output: Mapping[str, object], briefs: Sequence[Mapping[str, 
         symbol = str(item["symbol"]).upper()
         brief = expected[symbol]
         allowed = set(brief["allowed_ids"])  # type: ignore[arg-type]
+        if forbidden_text(item.get("summary")):
+            errors.append("%s summary 不得含證據／claim／發現識別碼或網址" % symbol)
         conditions = item["conditions"]
         if len(conditions) != len(brief["entry"]["invalidation_conditions"]):  # type: ignore[index]
             errors.append("%s conditions 必須和原重估條件逐條對應（%d 條）" % (symbol, len(brief["entry"]["invalidation_conditions"])))  # type: ignore[index]
