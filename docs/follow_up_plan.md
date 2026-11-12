@@ -7,10 +7,10 @@
 證據等級：本檔所有數字都是封存決策的事後統計或離線重算，一律是 `evidence_grade: replay_reference_only`——只說明「當時發生了什麼」，不是績效，也不是對 LLM 判斷的前瞻驗證。**本檔沒有任何一個數字屬於「新閘門開啟後的比賽期間即時紀錄」**，因為 2026-11-10 下午開的閘門到撰寫時還沒有任何一份封存 run（見第 1.2 節）。
 
 > **2026-11-10 20:10 更新（使用者決定，覆蓋下文過期處）**：
-> - 比賽預計 2026-11-24 結束（使用者口述，文件中查無出處）。10 個決策日的影子門檻不再適用於 `agent_swap` v2。
+> - 比賽預計 2026-11-27 結束（使用者口述，文件中查無出處；2026-11-11 使用者更正，原記 11-24）。10 個決策日的影子門檻不再適用於 `agent_swap` v2。
 > - `agent_swap` v2 已於 20:10 開啟，**沒有等影子期**；同時移除 `rotation.forced_swap` 與 `exposure_rotation.conviction_gap_swap`。回滾樣板：`config/policy_versions/2026-11-10-before-agent-swap-v2.json`。下文第 2.4 節、第 3 節 `agent_swap` v2 一列、P7 的進入條件，一律以本段為準。
 > - `agent_swap.exposure` v1（曝險提名影子）已於 19:45 開啟；其 v2（第 2.5 節）的前提「`agent_swap` v2 已開」已滿足，建議 2026-11-13 看過約 3 個決策日的紀錄後由人決定，不是自動開。
-> - 現金三個 v2、`reentry_cooldown` v2、`drawdown_derisk` v5 已於 17:40／17:58 開啟；`reentry_cooldown` v3、`slot_recycle` 的「觀察 10 個決策日」在 11/24 前無法完成，是否縮短由人另行決定。
+> - 現金三個 v2、`reentry_cooldown` v2、`drawdown_derisk` v5 已於 17:40／17:58 開啟；`reentry_cooldown` v3、`slot_recycle` 的「觀察 10 個決策日」在 11/27 前不一定能完成，是否縮短由人另行決定。
 > - 因 v2 已開，下文所有「現在可以開：沒有」只代表撰寫當時（19:24）的結論；開啟後請看 `AGENT_SWAP`、`AGENT_SWAP_CANCELLED` 旗標與換股成交。
 
 > **工作包 P11、P12 實作更新（2026-11-10，使用者下令；閘門都沒有開，`config/decision_policy.json` 未改）**：

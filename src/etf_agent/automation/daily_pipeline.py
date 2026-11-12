@@ -8,6 +8,7 @@ Validator 檢查，失敗時把錯誤回饋重試一次，仍失敗就停止，�
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
@@ -48,6 +49,9 @@ from etf_agent.decision.quality_dip_swap import (
     bind_quality_dip_ladder_entries, ladder_counts_quality_dip_fills_only, quality_dip_ladder_gate, quality_dip_swap_gate, quality_dip_v3_gate,
 )
 from etf_agent.decision.quality_dip_ruling import apply_quality_dip_ruling
+from etf_agent.decision.trader_background import (
+    TRADER_BACKGROUND_FILE, build_trader_background, trader_background_gate, validate_trader_background,
+)
 from etf_agent.decision.valuation_facts import build_valuation_facts, valuation_facts_gate, valuation_root_for
 from etf_agent.decision.release_order import apply_release_order
 from etf_agent.decision.sizing import drawdown_derisk_v5, held_weight_facts_gate, reentry_hint_symbols
@@ -124,12 +128,16 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         overnight_root: Optional[Path] = None,
         overnight_approvals_path: Optional[Path] = None,
         holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
+        require_nav_history: bool = False,
     ) -> PipelineResult:
         """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
         挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。
 
         ``holdings_history`` 是帳本逐狀態的持股（舊到新，與 ``nav_history`` 同一條鏈）：只有 Policy 啟用
-        position_sizing.exposure_rotation 才用，沒有它時閘門啟用即拒絕。"""
+        position_sizing.exposure_rotation 才用，沒有它時閘門啟用即拒絕。
+
+        ``require_nav_history`` 為真（正式入口）時，Policy 有 ``drawdown_control`` 而 ``nav_history`` 為 None
+        即在任何子 Agent 被呼叫之前拒絕，避免漏傳帳本歷史使回撤下限無聲失效；空清單（新帳戶）不拒絕。"""
         result = PipelineResult(status="failed")
         try:
             self._run(
@@ -141,7 +149,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 active_share_holdings_path=active_share_holdings_path,
                 active_share_approvals_path=active_share_approvals_path,
                 overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
-                holdings_history=holdings_history,
+                holdings_history=holdings_history, require_nav_history=require_nav_history,
             )
             result.status = "completed"
         except Exception as error:
@@ -182,8 +190,12 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         overnight_root: Optional[Path] = None,
         overnight_approvals_path: Optional[Path] = None,
         holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
+        require_nav_history: bool = False,
     ) -> None:
         service = PortfolioDecisionApplicationService
+        if require_nav_history and nav_history is None and isinstance(
+                service.read_json(policy_template_path, " 策略樣板").get("drawdown_control"), Mapping):
+            raise DailyPipelineError("正式流程必須提供帳本 NAV 歷史（nav_history），否則回撤下限無法計算；已停止")
         chain = {"schema_version": "2.1", "event_analysis_mode": "integrated_analyst"}
         chain_path = self._path("decision_chain")
         if chain_path.exists():
@@ -420,6 +432,22 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self.save_artifact("held_weight_facts", held_weight_facts)
         # reentry_cooldown v3：名單（已綁進 base_policy）改成交易 Agent 簡報的提示，沒有 v3 時為 None、簡報逐鍵不變。
         reentry_hints = reentry_hint_symbols(base_policy.get("position_sizing"))
+        # trader_background_record（交易背景封存，版本閘門）：交易簡報的策略教訓與論點檢視背景改由封存紀錄產生、另存 team_inputs.trader_background。
+        # 續跑時若 run 目錄已有封存檔，驗證後沿用、不重讀來源檔；沒有閘門時不建立、簡報逐鍵不變。
+        trader_background = None
+        if trader_background_gate(base_policy.get("position_sizing")) is not None:
+            background_path = self._path(TRADER_BACKGROUND_FILE)
+            if self.resume and background_path.exists():
+                try:
+                    trader_background = json.loads(background_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as error:
+                    raise DailyPipelineError("續跑的 trader_background.json 讀不回：%s" % error) from error
+                background_errors = validate_trader_background(trader_background, bundle, base_policy)
+                if background_errors:
+                    raise DailyPipelineError("續跑的 trader_background.json 驗證失敗：" + "；".join(background_errors))
+            else:
+                trader_background = build_trader_background(self.root, bundle)
+                self.save_artifact(TRADER_BACKGROUND_FILE, trader_background)
 
         self.log("[decision 5] 交易 Agent：整合多頭與空頭研究（附前次決策背景，不可引用）")
         with self._timed("trader"):
@@ -430,6 +458,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 **({"reentry_hint_symbols": reentry_hints} if reentry_hints is not None else {}),
                 **({"dip_assessment": True} if quality_dip_assessment_gate((base_policy or {}).get("position_sizing")) is not None else {}),
                 **({"valuation_facts": valuation_facts} if valuation_facts is not None else {}),
+                **({"trader_background": trader_background} if trader_background is not None else {}),
             )
 
         # 樣板啟用 position_sizing.selection_ranking 才加這一步；沒有的樣板維持舊排序與 team_inputs 版本。
@@ -569,6 +598,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             **({"valuation_facts": valuation_facts} if valuation_facts is not None else {}),
             **({"decline_depth_facts": decline_depth_facts} if decline_depth_facts is not None else {}),
             **({"offense_facts": offense_facts} if offense_facts is not None else {}),
+            **({"trader_background": trader_background} if trader_background is not None else {}),
         )
         final = DecisionFinalizer(bundle, policy, momentum, debate, trade, team, self.decision_repository, history_provider).run(
             proposal, scenario, guard, review, history

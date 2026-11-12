@@ -9,6 +9,7 @@ from etf_agent.core.artifact_store import ImmutableRunStore
 
 ROOT = Path(__file__).resolve().parents[2]
 REAL_DECISIONS = ROOT / "artifacts" / "decisions"
+ARCHIVE_UNTIL = "2026-11-11"  # 期望數字固定針對 10-27～11-11 的 12 份 run；之後新增的 run 不納入，避免每天改數字
 
 
 def order(symbol, side, amount, intent="buy"):
@@ -206,7 +207,7 @@ class ArchivedRunsReproductionTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.report = intent_landing_report(REAL_DECISIONS)
+        cls.report = intent_landing_report(REAL_DECISIONS, until=ARCHIVE_UNTIL)
 
     def test_overall_landing(self):
         totals = self.report["totals"]
@@ -225,7 +226,7 @@ class ArchivedRunsReproductionTest(unittest.TestCase):
         self.assertEqual(sum(segment["run_count"] for segment in segments), self.report["run_count"])
 
     def test_since_1104(self):
-        totals = intent_landing_report(REAL_DECISIONS, since="2026-11-04")["totals"]
+        totals = intent_landing_report(REAL_DECISIONS, since="2026-11-04", until=ARCHIVE_UNTIL)["totals"]
         self.assertEqual((totals["buy_add_intents"], totals["landed"]), (117, 7))
 
     def test_1104_hold_sold(self):

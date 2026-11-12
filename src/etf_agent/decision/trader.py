@@ -19,7 +19,7 @@ from .contracts import (
 )
 from .drawdown import stance_meets_floor
 from .exposure import hold_conviction_enabled
-from .position_review import position_ids_by_symbol, review_ids_by_symbol
+from .position_review import POLICY_VERSION_V2, position_ids_by_symbol, review_ids_by_symbol
 from .prior_decision import prior_reference_tokens
 from .dip_facts import dip_reference_tokens, validate_dip_assessment
 from .valuation_facts import valuation_reference_tokens
@@ -41,6 +41,8 @@ TRADE_INTENTS = ("buy", "add", "hold", "trim", "exit", "forced_exit", "no_trade"
 SIZED = {"buy", "add"}
 REDUCING = {"trim", "exit", "forced_exit"}
 HELD_ONLY = {"add", "hold", "trim", "exit", "forced_exit"}
+# 背景照抄檢查：短於此長度的背景字串略過（避免誤擋一般用語）。
+MIN_BACKGROUND_COPY_CHARS = 10
 
 
 def trade_decision_envelope(bundle: Mapping[str, object], debate: Mapping[str, object], decision_id: str) -> Dict[str, object]:
@@ -98,6 +100,7 @@ class TradeDecisionValidator:
         reentry_hint_symbols: Optional[Sequence[str]] = None,
         dip_assessment: bool = False,
         valuation_facts: Optional[Mapping[str, object]] = None,
+        background_texts: Sequence[str] = (),
     ):
         """``prior_context`` 是交易 brief 附的前次決策背景（PriorDecisionContext）；它不是證據，
         交易 Agent 的文字欄位出現其識別碼即拒絕。沒有附背景的舊 run 傳 None，驗證不變。
@@ -116,7 +119,11 @@ class TradeDecisionValidator:
 
         ``reentry_hint_symbols``（reentry_cooldown v3）是近期出場的代號：未持有者各有一個 ``cooldown:<代號>`` 提示，買回時放進
         ``adopted_claim_ids`` 回應；只檢查結構（只屬於該股票、不可否決、不重複），**不強制**回應——沒回應的買單由配置取消並留旗標
-        （RISK_REENTRY_COOLDOWN），不讓一個提示沒回應就耗盡修正循環。沒有 v3 的舊 run 傳 None，驗證不變。"""
+        （RISK_REENTRY_COOLDOWN），不讓一個提示沒回應就耗盡修正循環。沒有 v3 的舊 run 傳 None，驗證不變。
+
+        ``background_texts``（只在 pipeline 即時驗證傳入，Finalizer 與其他重建呼叫端不傳）是簡報附的策略教訓文字與論點檢視摘要：
+        ``rationale``、``unresolved_questions``、``invalidation_conditions`` 完整照抄其中任一句（至少 10 個字）即拒絕。只擋整句照抄，
+        改寫轉述無法由程式偵測。預設空，驗證與舊版相同。"""
         self.hold_conviction = hold_conviction
         self.dip_assessment = dip_assessment
         self.dip_facts = dip_facts
@@ -129,11 +136,17 @@ class TradeDecisionValidator:
             self.claims.setdefault(symbol, {}).update({review: "review" for review in flags})
         # 選用的「持股事實」編號：減碼／出場可引用它當依據（交易 Agent 對報酬與回落的自主判斷），但不強制處理、可不採納。
         self.position_ids = position_ids_by_symbol(position_review)
+        # position_review v2：未處理警示的回饋另列一行，明確列出缺少的警示 id 與處理方式（只改錯誤文字，不改任何判定）。
+        policy = position_review.get("policy") if isinstance(position_review, Mapping) else None
+        self.review_v2 = isinstance(policy, Mapping) and policy.get("version") == POLICY_VERSION_V2
         for symbol, identifier in self.position_ids.items():
             self.claims.setdefault(symbol, {})[identifier] = "position"
         for symbol in sorted({str(item).upper() for item in (reentry_hint_symbols or ())} - self.context.held_symbols):
             self.claims.setdefault(symbol, {})["cooldown:%s" % symbol] = "cooldown"
         self.prior_tokens = prior_reference_tokens(prior_context)
+        self.background_texts = tuple(sorted({
+            text.strip() for text in background_texts if isinstance(text, str) and len(text.strip()) >= MIN_BACKGROUND_COPY_CHARS
+        }))
         self.dip_tokens = dip_reference_tokens(dip_facts)
         # valuation_facts（估值 V2，版本閘門）：交易 brief 以 valuation_background 附上，不是證據；沒有閘門的舊 run 傳 None，驗證不變。
         self.valuation_tokens = valuation_reference_tokens(valuation_facts)
@@ -232,6 +245,15 @@ class TradeDecisionValidator:
         )
         if cited:
             errors.append("%s 不得引用前次決策背景（%s）；它不是本次證據" % (prefix, ", ".join(cited)))
+        copied = sorted(
+            text for text in self.background_texts
+            if any(text in field for field in (rationale, *questions, *conditions))
+        )
+        if copied:
+            errors.append(
+                "%s 不得照抄策略教訓或論點檢視背景（%s）；它不是本次證據，請改以本次多空 claim 的依據說明"
+                % (prefix, "、".join(text[:20] for text in copied))
+            )
         dip_cited = sorted(
             token for token in self.dip_tokens
             if any(token in text for text in (rationale, *questions, *conditions))
@@ -263,6 +285,12 @@ class TradeDecisionValidator:
         missing = sorted(set(available) - optional - set(adopted) - set(rejected))
         if missing:
             errors.append("%s 未處理全部 claim：%s" % (prefix, ", ".join(missing)))
+            missing_reviews = [claim for claim in missing if available.get(claim) == "review"]
+            if self.review_v2 and missing_reviews:
+                errors.append(
+                    "%s 尚未處理的持股檢視警示（程式算的事實，每個都必須放進 adopted_claim_ids 剛好一次、不可否決；"
+                    "採納警示不代表要賣，賣不賣仍由你判斷）：%s" % (prefix, ", ".join(missing_reviews))
+                )
         adopted_roles: Set[str] = {available[claim] for claim in adopted if claim in available}
         if intent in SIZED and "bull" not in adopted_roles:
             errors.append(

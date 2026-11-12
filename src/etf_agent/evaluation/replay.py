@@ -279,6 +279,11 @@ def bind_replay_policy(
         if valuation_ignored:
             base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "valuation_facts"}
             base["content_sha256"] = decision_policy_sha256(base)
+        # trader_background_record（交易背景封存）只把背景封存進 team_inputs，不影響配置：回放略過並標一次；沒有閘門的舊回放逐位元不變。
+        background_ignored = isinstance(base.get("position_sizing"), Mapping) and "trader_background_record" in base["position_sizing"]
+        if background_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "trader_background_record"}
+            base["content_sha256"] = decision_policy_sha256(base)
         # agent_swap 依賴 exposure_rotation／rebound_participation（回放都略過）與封存 run 沒有的換股提名：必須先於它們移除，
         # 否則前提驗證會失敗；沒有閘門的舊回放 notes 與 policy 逐位元不變。
         swap_ignored = isinstance(base.get("position_sizing"), Mapping) and "agent_swap" in base["position_sizing"]
@@ -295,6 +300,18 @@ def bind_replay_policy(
             derisk = {key: value for key, value in base["position_sizing"]["drawdown_derisk"].items() if key not in ("release_symbols", "release_ref")}
             derisk["version"] = "v4"
             base["position_sizing"] = {**base["position_sizing"], "drawdown_derisk": derisk}
+            base["content_sha256"] = decision_policy_sha256(base)
+        # stop_exit（程式兜底硬停損）依賴 position_review v2 與 exposure_rotation 綁定的持有起點（封存 run 沒有；回放也略過 exposure_rotation）：
+        # 先於它們移除，並把 position_review v2 當 v1 回放（拿掉三個自進場門檻）；沒有 stop_exit／v2 的舊回放 notes 與 policy 逐位元不變。
+        stop_ignored = isinstance(base.get("position_sizing"), Mapping) and "stop_exit" in base["position_sizing"]
+        if stop_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "stop_exit"}
+            base["content_sha256"] = decision_policy_sha256(base)
+        review_v2_ignored = isinstance(base.get("position_review"), Mapping) and base["position_review"].get("version") == "v2"
+        if review_v2_ignored:
+            base["position_review"] = {
+                key: value for key, value in base["position_review"].items() if key in ("loss_alert", "retrace_alert_20d", "gain_alert", "context")
+            } | {"version": "v1"}
             base["content_sha256"] = decision_policy_sha256(base)
         # exposure_rotation 需要封存 run 沒有的 hold 信心與帳本持有天數：樣板有閘門時回放略過它（不換股），
         # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
@@ -336,6 +353,10 @@ def bind_replay_policy(
         notes["cash_stance_recency"] = "ignored_in_replay"
     if turn_facts_ignored:
         notes["cash_stance_turn_facts"] = "ignored_in_replay"
+    if stop_ignored:
+        notes["stop_exit"] = "ignored_in_replay"
+    if review_v2_ignored:
+        notes["position_review_v2"] = "replayed_as_v1"
     if exposure_ignored:
         notes["exposure_rotation"] = "ignored_in_replay"
     if rebound_ignored:
@@ -346,6 +367,8 @@ def bind_replay_policy(
         notes["agent_swap.quality_dip"] = "ignored_in_replay"
     if valuation_ignored:
         notes["valuation_facts"] = "ignored_in_replay"
+    if background_ignored:
+        notes["trader_background_record"] = "ignored_in_replay"
     if view_ignored:
         notes["exposure_view"] = "ignored_in_replay"
     if offense_ignored:

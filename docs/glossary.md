@@ -49,6 +49,7 @@
 | `event_direction`（`{version: v1}`） | 優質股第二階段（已實作、尚未開啟）：事件分析師每則事件多填 `direction`（`positive`／`negative`／`neutral`／`unknown`，只描述該則事件對公司的方向）；`quality_dip_facts` 新壞事的事件面改看每則事件；缺方向列「不知道」 |
 | `agent_swap.quality_dip`（`version`、`max_swaps_per_run`、`max_entry_weight`、`min_new_conviction`、`min_holding_days`、`min_turn_assessment`，選填 `oversold`，v2 流程綁入的 `turn_assessment`） | 優質股第三階段子閘門（已實作、尚未開啟）：換股提名 `purpose` 多 `quality_dip`；5c 只驗結構（被大盤拖累候選、`dip_assessment` 相符、非 `price` 已採納多頭 claim、換出者 hold／low 且依據同 thesis）；v1 影子配置略過，v2 另限對數、買進權重（`RISK_QUALITY_DIP_ENTRY`）、買進不超過換出賣款、`turn_assessment` 下限，回撤強制防守或歷史不可用時取消（`AGENT_SWAP_CANCELLED:quality_dip_*`）。程式在 `decision/quality_dip_swap.py` |
 | `quality_dip_ruling`（team_inputs 2.10）、`QualityDipRulingValidator`、`size`（`small`／`medium`／`large`）、`quality_dip_decline` | 優質股 v3（已實作、尚未開啟）：風險 Agent 對 quality_dip 配對的裁決（`approve`／`downsize`／`reject`）封存與重建驗證、交易 Agent 提名的份量格與不提名說明 | `decision/quality_dip_ruling.py`、`decision/quality_dip_swap.py` |
+| `trader_background_record`（`{version: v1}`，交易背景封存） | 交易 Agent 簡報的策略教訓與論點檢視背景，改由 run 開始時封存的來源檔完整內容產生（`trader_background.json`、`team_inputs.trader_background` 選配鍵、不升版）；Finalizer 驗證封存自洽、時間合法與 `verdicts_ref` 一致，無法證明來源檔當時沒有別的版本；紀錄用、不影響配置，只由人設定。 |
 | `valuation_facts`（`{version: v1}`，估值 V2） | PER／PBR 在自身歷史區間的位置（`rows_250`、`rows_750`、`all` 三個視窗並列，百分位＝不高於當日值的筆數 ÷ 樣本數）；以 `valuation_background`（`citable=false`）給基本面分析師與交易 Agent，`team_inputs.valuation_facts` 選配鍵由 Finalizer 以同一個估值資料夾整份重算；只讀授權範圍允許背景進簡報的紀錄（V1 的紀錄不允許）；已實作、尚未開啟 |
 | `valuation_collection`（估值 V1） | 證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 的 PER／PBR／殖利率逐檔核對與不可變保存（已實作、已掛進資料排程）；只收集與稽核，不進決策、簡報或報告；僅上市股 |
 | `exposure_view`（`{version: v1}`） | Agent 主導曝險的階段 1 閘門（紀錄工具，不是規則；2026-11-10 已開啟）：風險 Agent 簡報附 `exposure_facts`（組合曝險、產業權重、上漲日報酬；背景、不可引用）並多填列舉 `exposure_view`（`keep_defensive` 維持防守／`start_rebuild` 開始回補／`rebuild` 回補，純紀錄、不影響配置）；換股提名簡報（`agent_swap` 也開時）另附轉向、加權指數與候選新股 beta。程式在 `decision/exposure_facts.py`，`team_inputs.exposure_facts` 是選配鍵。 |
@@ -78,6 +79,7 @@
 | `reuse_sell_proceeds` | 賣款當日可用（淨額交割） | rules；`ledger/execution.py`、`ledger/account.py` | — |
 | `sector_fit`、`max_sector_weight` | 產業上限只按整張縮減當日買進增量，不賣既有持股 | `sector_fit` 在 policy、上限在 rules；`decision/risk.py`、`decision/allocation.py` | `RISK_SECTOR_WEIGHT` |
 | `turnover_fit`、`max_turnover_rate` | 換手上限：先逐筆縮減買單；賣單本身就超過時依 ATR 留住出場持股 | policy；`decision/allocation.py` | `TURNOVER_LIMIT`（逐筆縮減）、`RISK_TURNOVER`（留住出場） |
+| `liquidity_fit`、`max_participation` | 買單流動性縮減：買單股數縮到 max_participation × 20 日均量以內（向下取整張，不足一張取消） | policy；`decision/liquidity_fit.py`、`decision/allocation.py` | `LIQUIDITY_LIMIT`、`LIQUIDITY_UNAVAILABLE` |
 | `reentry_cooldown`（`version`、`days`、流程綁入的名單） | 出場後 N 日內不再買進未持有的新股；名單由每日流程從決策庫取得 | policy；`decision/reentry_cooldown.py`（`recent_exit_symbols`、`bind_reentry_cooldown`）、`decision/allocation.py` | `RISK_REENTRY_COOLDOWN` |
 | `reentry_cooldown` v2／v3（已實作、尚未開啟） | v2 名單只計交易 Agent 自己的 exit／forced_exit；v3 名單同 v2 但改成簡報的 `cooldown:<代號>` 提示，買回須在 `adopted_claim_ids` 回應，沒回應由配置取消買單 | policy；`decision/reentry_cooldown.py`、`decision/trader.py`、`decision/allocation.py` | `RISK_REENTRY_COOLDOWN` |
 | `cash_fit_order` v2、`high_conviction_cash_priority` v2（已實作、尚未開啟） | v2：新股只買得到零頭時不整筆取消（不允許 `cash_fit_min_fill_ratio`）；v2：移除「high 被縮減後擋後面中低信心新股」 | policy；`decision/sizing.py`、`decision/allocation.py` | — |
@@ -101,6 +103,7 @@
 | 名稱 | 白話意思 | 設定或程式位置 | 旗標 |
 | --- | --- | --- | --- |
 | `position_review`（`version`、`loss_alert`、`retrace_alert_20d`、`gain_alert`、`context`） | 持股檢視：程式算帳面報酬與近 20 日高點回落並依門檻標警示；`context` 另附相對交易池報酬與基本面可得時間 | policy；`decision/position_review.py`（`build_position_review`、`validate_position_review`） | 警示 `review:<代號>:<旗標>`、持股事實 `review:<代號>:position` |
+| `stop_exit`（`version`、`loss`、`lag_to_pool`、`min_holding_days`、`max_exits_per_run`） | 程式兜底硬停損（已實作、尚未開啟）：自進場虧損、輸交易池、持有天數三者同時成立才強制出場；旗標 `RISK_STOP_EXIT`／`RISK_STOP_EXIT_CANCELLED`／`STOP_EXIT_UNAVAILABLE` | policy；`decision/stop_exit.py` |
 | `prior_decision_context` | 前次決策背景：同帳戶、更早時段、通過驗證的封存 run 的持股意圖與重估條件；`citable=false` | `decision/prior_decision.py`（`find_prior_decision_run`、`PriorDecisionContextValidator`） | — |
 | `thesis_review_background` | 每週論點檢視的結論，只給交易 Agent 當持股背景，不是證據 | `decision/thesis_verdicts.py`；來源 `var/strategy_reflection/thesis_verdicts.json`；放入簡報 `automation/team_stages.py` | — |
 | `strategy_lessons` | 反思旁觀者整理的經驗教訓，只是背景、不可引用 | `decision/strategy_lessons.py`；`config/strategy_lessons.json` | — |

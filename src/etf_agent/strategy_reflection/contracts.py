@@ -141,6 +141,9 @@ FORBIDDEN_PREFIXES = (
     # 版本閘門只由人設定：這些不是調整幅度，而是切換程式路徑（與 method、stock_weight_fit 同性質）。
     # 低波動偏好強度 volatility_exponent 與換股上限 rotation.max_swaps_per_run 是正式旋鈕，見 KNOBS。
     "held_add_priority", "rotation.version", "rotation.forced_swap", "position_review.version", "position_review.gain_alert",
+    "position_review.trail_alert", "position_review.relative_loss_alert", "position_review.stale_alert",
+    # 程式兜底的條件式硬停損：強制出場的門檻與上限放寬或收緊都是改變風控路徑，只由人設定。
+    "stop_exit",
     "selection_ranking", "selection_tiebreak", "rank_by_symbol", "cash_buffer_floor",
     # 2026-11-03 新增的執行面閘門與其比例參數（買單順序與塵埃取消、現金上限補救、單股封頂空間、跳空預留、
     # 結算現金不足整批作廢）：都切換程式路徑或對應主辦方結算口徑，只由人設定。
@@ -181,6 +184,11 @@ FORBIDDEN_PREFIXES = (
     "offense",
     # 估值 V2：PER／PBR 位置事實以背景進基本面分析師與交易 Agent 簡報（紀錄用），切換程式路徑與 team_inputs 欄位，只由人設定。
     "valuation_facts",
+    # 交易背景封存：策略教訓與論點檢視背景改由 run 內封存的來源檔內容產生並進 team_inputs（紀錄用），只由人設定。
+    "trader_background_record",
+    # 風險修正動作的數值下限與步距：放寬或收緊都是改變風控界線，只由人設定。
+    "revision_bounds",
+    "liquidity_fit",
 )
 
 

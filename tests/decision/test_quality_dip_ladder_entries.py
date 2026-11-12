@@ -378,7 +378,11 @@ class Scenario1111Tests(unittest.TestCase):
         from etf_agent.decision import apply_trade_decision, decision_policy_sha256
         from etf_agent.decision.selection_ranking import apply_selection_ranking
 
-        template = copy.deepcopy(self.template)
+        from test_daily_pipeline import without_stop_exit
+
+        # 情境回歸只比 ladder 曝險計法：stop_exit（正式設定 2026-11-11 17:49 起）會把封存持股中的 3034／8046 程式兜底賣出，
+        # 釋出資金先流向 2330 高信心加碼、擠掉換股買進，與本測試要比的曝險計法無關；明確移除它並把 position_review 降回 v1。
+        template = without_stop_exit(copy.deepcopy(self.template))
         ladder = template["position_sizing"]["agent_swap"]["quality_dip"]["ladder"]
         ladder.pop("exposure_basis", None)
         # 情境回歸只比 ladder 曝險計法：明確移除 offense 的兩個選配子欄位（正式設定已開，但它們的 anchor 旗標需要前次 run，這裡沒有）。

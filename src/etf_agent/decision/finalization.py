@@ -28,6 +28,7 @@ from .quality_dip_ruling import RULING_KEY, validate_team_quality_dip_ruling
 from .decline_depth import DECLINE_DEPTH_FACTS_KEY, validate_decline_depth_facts, validate_ladder_state
 from .offense import OFFENSE_FACTS_KEY, offense_gate, validate_offense_binding, validate_offense_facts
 from .quality_dip_swap import QUALITY_DIP_TURN_BOUND_VERSIONS, quality_dip_ladder_gate, quality_dip_swap_gate, quality_dip_v3_gate
+from .trader_background import TRADER_BACKGROUND_KEY, trader_background_gate, validate_trader_background
 from .valuation_facts import VALUATION_FACTS_KEY, validate_valuation_facts, valuation_facts_gate, valuation_root_for
 from .exposure import exposure_rotation_gate, hold_conviction_enabled, validate_exposure_review, validate_held_since
 from .position_review import validate_position_review
@@ -133,6 +134,7 @@ def build_team_inputs(
     valuation_facts: Optional[Mapping[str, object]] = None,
     decline_depth_facts: Optional[Mapping[str, object]] = None,
     offense_facts: Optional[Mapping[str, object]] = None,
+    trader_background: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, object]:
     """Decision run 的 team_inputs artifact：重建多空辯論、交易決策與現金姿態所需的全部輸入。
 
@@ -159,6 +161,10 @@ def build_team_inputs(
 
     選配鍵 ``held_weight_facts``（position_sizing.held_weight_budget=v2 才有）：程式算的持股權重事實，做法同 dip_facts，不升版本，
     只要求 2.5 以上；Finalizer 以 Policy 閘門雙向檢查並整份重算。沒有傳入時 team_inputs 逐鍵不變。
+
+    選配鍵 ``trader_background``（position_sizing.trader_background_record 才有）：交易 Agent 簡報看到的策略教訓與論點檢視來源檔完整內容，
+    做法同 valuation_facts，不升版本；Finalizer 以 Policy 閘門雙向檢查，驗證封存自洽、時間合法與 verdicts_ref 一致（無法證明來源檔當時
+    沒有別的版本）。沒有傳入時 team_inputs 逐鍵不變。
 
     選配鍵 ``decline_depth_facts``（position_sizing.agent_swap.quality_dip v4 才有）：程式算的交易池連跌深度事實與對照樣本，做法同 dip_facts，
     不升版本、不排進線性版本鏈，只要求 2.10（v4 是 v3 的超集），與 v4 閘門雙向同時存在，Finalizer 整份重算。
@@ -269,6 +275,10 @@ def build_team_inputs(
         if not isinstance(valuation_facts, Mapping):
             raise DecisionToolError("team_inputs 的 valuation_facts 必須是物件")
         team[VALUATION_FACTS_KEY] = dict(valuation_facts)
+    if trader_background is not None:
+        if not isinstance(trader_background, Mapping):
+            raise DecisionToolError("team_inputs 的 trader_background 必須是物件")
+        team[TRADER_BACKGROUND_KEY] = dict(trader_background)
     return team
 
 
@@ -473,7 +483,7 @@ class DecisionFinalizer:
         dip_gate = quality_dip_facts_gate(self.policy.get("position_sizing"))
         if set(team) - {
             DIP_FACTS_KEY, EXPOSURE_FACTS_KEY, RELEASE_ORDER_KEY, HELD_WEIGHT_FACTS_KEY, VALUATION_FACTS_KEY, DECLINE_DEPTH_FACTS_KEY,
-            OFFENSE_FACTS_KEY,
+            OFFENSE_FACTS_KEY, TRADER_BACKGROUND_KEY,
         } != fields:
             return ["team_inputs 欄位必須剛好是：%s" % "、".join(sorted(fields))]
         # drawdown_derisk v5（版本閘門）的 release_order 也是選配鍵：與 Policy 閘門雙向同時存在、須 2.5 以上，整份重建驗證並比對 Policy 綁定。
@@ -510,6 +520,13 @@ class DecisionFinalizer:
             errors.append("DecisionPolicy 的 position_sizing.valuation_facts 必須與 team_inputs.valuation_facts 同時存在")
         elif valuation_gate is not None:
             validate_valuation_facts(valuation_root_for(self.decision_repository), self.bundle, self.policy, team, errors)
+        # trader_background（交易背景封存，版本閘門）也是選配鍵：與 Policy 閘門雙向同時存在、不升 team_inputs 版本，驗證封存自洽、時間合法與
+        # verdicts_ref 一致。沒有閘門的舊 run 完全不碰這段。
+        background_gate = trader_background_gate(self.policy.get("position_sizing"))
+        if (TRADER_BACKGROUND_KEY in team) != (background_gate is not None):
+            errors.append("DecisionPolicy 的 position_sizing.trader_background_record 必須與 team_inputs.trader_background 同時存在")
+        elif background_gate is not None:
+            errors.extend(validate_trader_background(team[TRADER_BACKGROUND_KEY], self.bundle, self.policy))
         # agent_swap.quality_dip v4（版本閘門，連跌後逢低布局）的 decline_depth_facts 也是選配鍵：與 v4 的 ladder 雙向同時存在、須 2.10，整份重算比對。
         # 沒有 v4 的舊 run 完全不碰這段。
         ladder_gate = quality_dip_ladder_gate(self.policy.get("position_sizing"))

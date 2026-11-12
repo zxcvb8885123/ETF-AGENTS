@@ -13,6 +13,7 @@ from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from etf_agent.core import untrusted_value
 
+from .trader_background import TRADER_BACKGROUND_GATE
 from .contracts import (
     DecisionContext,
     DecisionToolError,
@@ -330,6 +331,13 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "exposure_rotation 須為 v3、cash_stance_turn_facts v1、drawdown_derisk v4（自訂檢查在 rebound.validate_rebound_gate）；"
              "bundle 須為 typed_evidence_v1（建 turn_state 時檢查）；effective_state 由 apply_trade_decision 綁定；team_inputs 須為 2.8",
     ),
+    GateRule(
+        "stop_exit", requires=("exposure_rotation", "reentry_cooldown"),
+        note="程式兜底的條件式硬停損（v1）：自進場虧損、輸交易池與持有交易日數三個人填門檻全成立才強制出場（賣單意圖標 exit、旗標 RISK_STOP_EXIT，"
+             "交易 Agent 的意圖不改寫），單日最多 max_exits_per_run 檔；事實取自頂層 position_review v2（由 stop_exit.validate_stop_exit_gate 檢查），"
+             "持有起點取自 exposure_rotation 綁定的 held_since_by_symbol；缺資料不強制出場；出場股票進入 reentry_cooldown 名單；"
+             "team_inputs 不升版、沒有新鍵（配置引擎由 bundle 與 Policy 重算，Finalizer 以配置重建比對）；見 docs/stop_loss_take_profit_plan.md",
+    ),
     GateRule("slot_recycle", allowed=(SLOT_RECYCLE,), note="物件 {\"version\": \"v1\"}；LOT_SIZE 候選釋出占用的新增名額"),
     GateRule(
         "high_conviction_cash_floor", requires=("cash_buffer_floor", "cash_fit_order"),
@@ -442,6 +450,25 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "與交易 Agent；只讀估值 V1 已不可變保存且 fetched_at 不晚於 cutoff 的 run，授權範圍須允許背景進簡報（V1 的紀錄目前不允許，"
              "所以開了也是 unavailable）；不新增 Agent 輸出欄位、不影響配置；team_inputs 另存 valuation_facts（選配鍵，與本閘門雙向同時存在），"
              "Finalizer 以同一個估值資料夾整份重算",
+    ),
+    GateRule(
+        TRADER_BACKGROUND_GATE,
+        note="交易背景封存（v1，紀錄用）：交易 Agent 簡報的策略教訓與論點檢視背景，改由 run 開始時封存的完整來源檔內容產生（trader_background.json），"
+             "team_inputs 另存 trader_background（選配鍵，與本閘門雙向同時存在、不升 team_inputs 版本），Finalizer 驗證封存自洽、時間合法與"
+             "agent_swap.verdicts_ref 一致（無法證明來源檔當時沒有別的版本）；簡報形狀、驗證與配置不變；回放略過",
+    ),
+    GateRule(
+        "liquidity_fit",
+        note="買單流動性縮減（v1）：配置引擎在其他縮減之後，把買單股數縮到人填 max_participation × 20 日均量以內（向下取整張，不足一張取消該筆）；"
+             "只縮買單、不改寫交易 Agent 意圖，旗標 LIQUIDITY_LIMIT；缺均量不縮並留 LIQUIDITY_UNAVAILABLE；沒有此欄位的舊 Policy 逐位元不變；"
+             "不影響 team_inputs（自訂檢查在 liquidity_fit.validate_liquidity_fit_gate）",
+    ),
+    GateRule(
+        "revision_bounds",
+        note="風險修正動作的數值界線（v1）：reduce_max_stock_weight／reduce_turnover_limit 的 value 不得低於人填的下限、須為 step 的整數倍"
+             "（自訂檢查在 validate_revision_bounds_gate，驗證在 RiskReviewValidator._validate_action）；這是「Agent 不輸出數字」的已知例外，"
+             "只能往降風險方向、有上下界、由 Validator 檢查；下限與步距全部由人填、程式不設預設；沒有此欄位的舊 Policy 逐位元維持原行為；"
+             "不影響配置引擎、team_inputs 不變；special_weight_limits 內的股票不受 reduce_max_stock_weight 影響",
     ),
     GateRule(
         "exposure_view",
@@ -720,6 +747,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "valuation_facts" in sizing:
         from .valuation_facts import validate_valuation_facts_gate
         validate_valuation_facts_gate(sizing, errors)
+    if TRADER_BACKGROUND_GATE in sizing:
+        from .trader_background import validate_trader_background_gate
+        validate_trader_background_gate(sizing, errors)
     if "exposure_rotation" in sizing:
         from .exposure import validate_exposure_rotation_gate
         validate_exposure_rotation_gate(sizing, errors)
@@ -1098,6 +1128,54 @@ def cash_ratio_gate(sizing: Mapping[str, object]) -> Optional[Mapping[str, objec
     return gate if isinstance(gate, Mapping) else None
 
 
+REVISION_BOUNDS_V1 = "v1"
+REVISION_BOUNDS_FIELDS = frozenset({"version", "min_max_stock_weight", "min_max_turnover_rate", "step"})
+
+
+def revision_bounds_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """revision_bounds 啟用時回傳閘門物件；沒有閘門回 None（修正動作的 value 維持原行為，只受 0～1 與不得提高風險上限約束）。"""
+    gate = sizing.get("revision_bounds") if isinstance(sizing, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def validate_revision_bounds_gate(policy: Mapping[str, object], errors: List[str]) -> None:
+    """閘門形狀：{version: v1, min_max_stock_weight, min_max_turnover_rate, step}，三個數字都由人填（字串小數）。
+
+    兩個下限須大於 0 且不高於 Policy 的 max_stock_weight／max_turnover_rate；step 須介於 0（不含）與 1。
+    """
+    gate = (policy.get("position_sizing") or {}).get("revision_bounds")
+    prefix = "position_sizing.revision_bounds"
+    if not isinstance(gate, Mapping):
+        errors.append("%s 必須是物件" % prefix)
+        return
+    reject_unknown_fields(gate, REVISION_BOUNDS_FIELDS, prefix, errors)
+    if gate.get("version") != REVISION_BOUNDS_V1:
+        errors.append("%s.version 只允許 %s" % (prefix, REVISION_BOUNDS_V1))
+    for field in ("min_max_stock_weight", "min_max_turnover_rate", "step"):
+        if field not in gate:
+            errors.append("%s 缺少 %s（數值由人填，程式不設預設）" % (prefix, field))
+    for field, limit_field in (("min_max_stock_weight", "max_stock_weight"), ("min_max_turnover_rate", "max_turnover_rate")):
+        if field not in gate:
+            continue
+        try:
+            floor = decimal_value(gate[field], "%s.%s" % (prefix, field))
+            if floor <= 0:
+                errors.append("%s.%s 必須大於 0" % (prefix, field))
+            elif limit_field in policy:
+                limit = decimal_value(policy[limit_field], limit_field)
+                if floor > limit:
+                    errors.append("%s.%s 不得高於 Policy 的 %s（%s）" % (prefix, field, limit_field, limit))
+        except DecisionToolError as error:
+            errors.append(str(error))
+    if "step" in gate:
+        try:
+            step = decimal_value(gate["step"], "%s.step" % prefix)
+            if step <= 0 or step > 1:
+                errors.append("%s.step 必須大於 0 且不高於 1" % prefix)
+        except DecisionToolError as error:
+            errors.append(str(error))
+
+
 def cash_ratio_selection_check(sizing: Mapping[str, object]) -> bool:
     """cash_ratio_range.selection_check 開啟時為 True：重建時以決策庫重跑前次 run 的挑選；沒有閘門回 False（原行為）。"""
     gate = cash_ratio_gate(sizing)
@@ -1463,6 +1541,14 @@ def validate_position_sizing(
     if "offense" in sizing:
         from .offense import validate_offense_limits
         validate_offense_limits(policy, errors)
+    if "stop_exit" in sizing:
+        from .stop_exit import validate_stop_exit_gate
+        validate_stop_exit_gate(policy, errors)
+    if "revision_bounds" in sizing:
+        validate_revision_bounds_gate(policy, errors)
+    if "liquidity_fit" in sizing:
+        from .liquidity_fit import validate_liquidity_fit_gate
+        validate_liquidity_fit_gate(policy, errors)
     if "agent_swap" in sizing and "position_review" not in policy:
         errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
     if "cash_ratio_range" in sizing:

@@ -22,6 +22,7 @@ from .contracts import (
 from .active_share import active_share, top_weights
 from .drawdown import validate_drawdown_control
 from .position_review import validate_position_review_policy
+from .stop_exit import EMPTY_PLAN, STOP_EXIT_CANCELLED_CODE, STOP_EXIT_CODE, StopExitPlan, build_stop_exit_plan, stop_exit_gate
 from .rebound import apply_rebound, lifted_turnover_rate
 from .exposure import (
     SKIP_PORTFOLIO_SYMBOL, BetaModel, Fill, Victim, beta_model,
@@ -40,7 +41,8 @@ from .sizing import (
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
 )
-from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight
+from .liquidity_fit import liquidity_fit_limit, liquidity_fit_upstream
+from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 from .offense import capped_size, offense_bound, thesis_size_cap_active
 from .quality_dip_swap import (
@@ -253,6 +255,10 @@ class DecisionPolicyValidator:
             validate_drawdown_control(policy, self.context.bundle, errors, nav_history)
         if "position_review" in policy:
             validate_position_review_policy(policy["position_review"], errors)
+            # v2 的自進場事實讀 exposure_rotation 綁定的持有起點；沒有閘門就永遠沒有起點，拒絕而不是靜默失效。
+            if isinstance(policy["position_review"], Mapping) and policy["position_review"].get("version") == "v2" \
+                    and not (isinstance(policy.get("position_sizing"), Mapping) and "exposure_rotation" in policy["position_sizing"]):
+                errors.append("position_review v2 必須與 position_sizing.exposure_rotation 同時存在（自進場事實讀帳本綁定的持有起點）")
         if isinstance(policy.get("position_sizing"), Mapping) and "exposure_rotation" in policy["position_sizing"] \
                 and "position_review" not in policy:
             errors.append("position_sizing.exposure_rotation 必須與 position_review 同時存在（曝險檢視與 hold 信心建立在持股檢視之上）")
@@ -303,11 +309,22 @@ class AllocationOrderEngine:
             raise DecisionToolError("DecisionPolicy 驗證失敗：" + "；".join(errors))
         self.policy = dict(policy)
         self.prices = self._latest_prices()
+        self._liquidity_caps_cache: Optional[Dict[str, int]] = None  # liquidity_fit v2：每個 _run 重算一次
         self._reserved_shares: Dict[str, int] = {}  # entry_reserve：本次重算中換入者先保留的買進股數（只在 _run 內有值）
         self._proceeds_accepted: Set[str] = set()  # proceeds_to_add：本次重算中接受「賣款流向加碼持股」的換入者（只在 _run_exposure 迴圈內有值）
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
         self._beta_model: Optional[BetaModel] = None
+        self._stop_plan: Optional[StopExitPlan] = None  # stop_exit：觸發判定只由 bundle 與 Policy 決定，整個引擎生命週期只算一次
+        self._stop_applied: Set[str] = set()  # stop_exit：本次重算中實際被程式強制出場的持股（只在 _run 內有值）
+
+    def _stop_exits(self) -> StopExitPlan:
+        """stop_exit（版本閘門）的觸發判定；沒有閘門回空計畫、完全不呼叫持股檢視計算（舊 Policy 逐位元維持舊行為）。"""
+        if stop_exit_gate(self.policy.get("position_sizing")) is None:
+            return EMPTY_PLAN
+        if self._stop_plan is None:
+            self._stop_plan = build_stop_exit_plan(self.context.bundle, self.policy, self._untradable())
+        return self._stop_plan
 
     def run(
         self,
@@ -434,7 +451,13 @@ class AllocationOrderEngine:
             exits |= {
                 str(flag["symbol"]).upper() for flag in body.get("constraint_flags", []) if flag.get("code") == "RISK_FORCED_SWAP"
             }
+        stops = set(self._stop_exits().triggered)
+        exits |= stops
         remaining = sorted(exits, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol))
+        if stops:
+            # stop_exit：程式強制出場的持股優先放回（程式自己的決定先讓位給硬規則，才輪到留住交易 Agent 的 exit）。
+            remaining = sorted(stops, key=lambda symbol: (atr.get(symbol, Decimal("Infinity")), symbol)) + [
+                symbol for symbol in remaining if symbol not in stops]
         if body is not None and exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
             # exposure_rotation：程式自己換出的持股優先放回（優先序：交易 Agent 的 exit／trim ＞ forced_swap ＞ 曝險換股），
             # 才輪到留住交易 Agent 的 exit；曝險換股可以被取消，交易 Agent 的賣出意圖不應為它讓路。
@@ -561,6 +584,7 @@ class AllocationOrderEngine:
         ``agent_cancelled`` 是 agent_swap v2 復原迴圈取消的換入者與原因（只有 v2 才傳）。"""
         excluded = {value.upper() for value in (excluded_symbols or set())}
         self._reserved_shares = {}
+        self._liquidity_caps_cache = None
         effective = self._effective_policy(overrides or {})
         intents = {
             str(item.get("symbol", "")).upper(): str(item.get("intent", ""))
@@ -594,6 +618,11 @@ class AllocationOrderEngine:
         max_positions = int(effective["max_positions"])
         constraint_flags: List[Dict[str, object]] = []
         untradable = self._untradable()
+        # stop_exit（版本閘門）：程式兜底的條件式硬停損，觸發名單只由 bundle 與 Policy 決定；沒有閘門時下面全部不經過。
+        stop_plan = self._stop_exits()
+        stops = set(stop_plan.triggered)
+        self._stop_applied = set()
+        constraint_flags.extend(dict(note) for note in stop_plan.notes)
 
         # Exits and trims run before capital is assigned to buys.
         for symbol in sorted(current):
@@ -609,7 +638,15 @@ class AllocationOrderEngine:
             if symbol in kept_exits and (
                 intent == "exit"
                 or (intent == "hold" and (self._forced_swap_confirmed() or exposure_rotation_gate(self.policy.get("position_sizing")) is not None))
+                or (symbol in stops and intent != "trim")  # trim 本來就不減少持股檔數，照原減碼處理
             ):
+                if symbol in stops and intent not in {"exit", "forced_exit"}:
+                    # 硬規則（最少檔數、現金上限、換手上限）優先於停損：留住續抱並明說停損被取消（原因旗標在下面）。
+                    constraint_flags.append({
+                        "symbol": symbol, "code": STOP_EXIT_CANCELLED_CODE,
+                        "detail": "停損條件成立（%s），但硬規則優先（%s）：由程式留住續抱，停損取消（交易 Agent 的意圖未被改寫）"
+                        % (stop_plan.details[symbol].split("：")[0], kept_exits[symbol]),
+                    })
                 if kept_exits[symbol] == "RISK_CASH_CEILING":
                     constraint_flags.append({
                         "symbol": symbol, "code": "RISK_CASH_CEILING",
@@ -629,7 +666,12 @@ class AllocationOrderEngine:
                     "detail": "出場後持股將低於 %d 檔，由程式依 ATR14 由低到高留住續抱（交易 Agent 的意圖未被改寫）" % int(self.policy["min_positions"]),
                 })
                 continue
-            if intent in {"exit", "forced_exit"}:
+            if symbol in stops and symbol not in kept_exits and intent not in {"exit", "forced_exit"}:
+                # 程式兜底的硬停損：交易 Agent 原本標 hold／add／buy／trim 也整檔賣出（賣單意圖下面標 exit，不改寫交易 Agent 的意圖）。
+                target_shares[symbol] = 0
+                self._stop_applied.add(symbol)
+                constraint_flags.append({"symbol": symbol, "code": STOP_EXIT_CODE, "detail": stop_plan.details[symbol]})
+            elif intent in {"exit", "forced_exit"}:
                 target_shares[symbol] = 0
             elif intent == "trim":
                 trim_shares = int(
@@ -651,6 +693,8 @@ class AllocationOrderEngine:
 
         active_symbols = {symbol for symbol, shares in target_shares.items() if shares > 0}
         order_intents = dict(intents)
+        for symbol in self._stop_applied:
+            order_intents[symbol] = "exit"
         derisk_gate = drawdown_derisk_fraction(self.policy.get("position_sizing") or {}) is not None
         # drawdown_derisk（版本閘門）：防守姿態時由程式把持股減碼到姿態現金緩衝；不改寫交易 Agent 的意圖。
         derisk_notes: List[Dict[str, object]] = []  # v5 退回 ATR 順序的旗標：PORTFOLIO 層級、不算減碼日（不進 derisk_flags）
@@ -663,7 +707,7 @@ class AllocationOrderEngine:
         candidates = [
             symbol
             for symbol in sorted(intents)
-            if intents[symbol] in {"buy", "add"} and symbol not in excluded
+            if intents[symbol] in {"buy", "add"} and symbol not in excluded and symbol not in self._stop_applied
         ]
         # drawdown_derisk v3：被減碼的持股不再是本次加碼候選，減碼後的股數就是上限；否則下面的
         # `desired = max(current, desired)` 會把交易 Agent 標 add 的同一檔加回原持股，留下減碼旗標卻沒有賣單。
@@ -856,6 +900,8 @@ class AllocationOrderEngine:
         constraint_flags.extend(sector_flags)
         orders, projected_cash, turnover_flags = self._fit_turnover(current, orders, projected_cash, marked_nav, effective)
         constraint_flags.extend(turnover_flags)
+        orders, projected_cash, liquidity_flags = self._fit_liquidity(orders, projected_cash, effective)
+        constraint_flags.extend(liquidity_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1
@@ -1200,8 +1246,10 @@ class AllocationOrderEngine:
             elif sell in kept_exits:
                 cancel(buy, sell, "victim_kept")
             elif not (
-                sell in current and intents.get(sell, "hold") == "hold" and sell in active_symbols
-                and target_shares.get(sell, 0) > 0 and sell in self.prices and sell not in untradable
+                sell in current and intents.get(sell, "hold") == "hold"
+                # stop_exit：同日被程式強制出場的持股（目標已是 0）仍可當換出者，換股照成交、賣單只有一張（不重複賣）。
+                and ((sell in active_symbols and target_shares.get(sell, 0) > 0) or sell in self._stop_applied)
+                and sell in self.prices and sell not in untradable
             ):
                 cancel(buy, sell, "victim_unavailable")
             else:
@@ -1296,6 +1344,9 @@ class AllocationOrderEngine:
             needed, reserve_plan = self._entry_reserve_plan(
                 needed, entry_weights, quality_pairs, current, target_shares, marked_nav, effective, cancel, size_override)
         baseline_new = set(weights) - active_symbols
+        if swap_priority_enabled(self.policy.get("position_sizing")):
+            # swap_priority：slot_recycle 以權重 0 保留的買不到一張的新股不是「不換股時有名額」的新股，不該擋換股。
+            baseline_new = {symbol for symbol in baseline_new if weights[symbol] > 0}
         accepted: List[Tuple[str, str]] = []
         result = targets
         for count in range(len(needed), 0, -1):
@@ -1489,6 +1540,9 @@ class AllocationOrderEngine:
             limits = {"size": self._shares_for_value(marked_nav * weight, price)}
             limits["single"] = self._shares_for_value(
                 marked_nav * self._weight_limit(buy, effective) * self._headroom(effective, buying=True), price)
+            liquidity_caps = self._liquidity_caps(effective)
+            if liquidity_caps is not None and buy.upper() in liquidity_caps:
+                limits["liquidity"] = liquidity_caps[buy.upper()]  # liquidity_fit v2：換入者保留股數不超過均量上限
             victim_value = Decimal(current[sell]) * self.prices[sell]
             if sector_cap is not None and buy in sectors:
                 room = sector_cap - sector_value.get(sectors[buy], Decimal(0))
@@ -1998,6 +2052,15 @@ class AllocationOrderEngine:
             limits = {
                 symbol: self._weight_limit(symbol, effective) * self._headroom(effective, buying=True) for symbol in weighted
             }
+            liquidity_caps = self._liquidity_caps(effective)
+            if liquidity_caps is not None:
+                # liquidity_fit v2：單檔權重上限再取「現有權重＋均量上限股數的市值」的較小值；封頂後多出的預算由 conviction_weights 重新分配。
+                for symbol in weighted:
+                    cap = liquidity_caps.get(symbol.upper())
+                    if cap is None:
+                        continue
+                    held_weight = Decimal(target_shares.get(symbol, 0)) * self.prices[symbol] / marked_nav if symbol in active_symbols else Decimal("0")
+                    limits[symbol] = min(limits[symbol], held_weight + Decimal(cap) * self.prices[symbol] / marked_nav)
             if alpha is None:
                 weights = conviction_weights(weighted, tiers, multipliers, volatility, floor, limits, budget, exponent)
             else:
@@ -2327,6 +2390,8 @@ class AllocationOrderEngine:
         atr = self._atr_pct()
         min_fill_ratio = cash_fit_min_fill_ratio(sizing)
         lot = int(effective["lot_size"])
+        swap_first = swap_priority_enabled(sizing)
+        protected = set(self._reserved_shares) if swap_first else set()
         fitted = list(orders)
         requested = {str(o["symbol"]): int(o["shares"]) for o in orders if o["side"] == "buy"}
         flags: Dict[str, Dict[str, object]] = {}
@@ -2341,6 +2406,7 @@ class AllocationOrderEngine:
             weakest = min(
                 buys,
                 key=lambda o: (
+                    1 if str(o["symbol"]) in protected else 0,
                     -(CONVICTION_LEVELS.index(tiers[str(o["symbol"])]) if str(o["symbol"]) in tiers else len(CONVICTION_LEVELS)),
                     -atr.get(str(o["symbol"]), Decimal("Infinity")),
                     str(o["symbol"]),
@@ -2371,6 +2437,76 @@ class AllocationOrderEngine:
             }
         fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
         return fitted, cash, [flags[symbol] for symbol in sorted(flags)]
+
+    def _liquidity_caps(self, effective: Mapping[str, object]) -> Optional[Dict[str, int]]:
+        """liquidity_fit v2：``{代號大寫: 可買股數上限}``（max_participation × 20 日均量，向下取整張）；缺均量的股票不放進字典。
+        v1 與沒有閘門回 None。算式與 ``_fit_liquidity`` 相同、來源同為 ``MomentumEngine``。"""
+        sizing = self.policy.get("position_sizing")
+        if not liquidity_fit_upstream(sizing):
+            return None
+        if self._liquidity_caps_cache is None:
+            limit = liquidity_fit_limit(sizing)
+            lot = int(effective["lot_size"])
+            caps: Dict[str, int] = {}
+            for item in MomentumEngine(self.context.bundle).run()["items"]:
+                volume = item.get("average_volume_20d")
+                symbol = str(item["symbol"]).upper()
+                if volume is None or decimal_value(volume, "%s.average_volume_20d" % symbol) <= 0:
+                    continue
+                caps[symbol] = int((limit * decimal_value(volume, "%s.average_volume_20d" % symbol) / lot).to_integral_value(rounding=ROUND_FLOOR)) * lot  # type: ignore[operator]
+            self._liquidity_caps_cache = caps
+        return self._liquidity_caps_cache
+
+    def _fit_liquidity(
+        self,
+        orders: List[Dict[str, object]],
+        cash: Decimal,
+        effective: Mapping[str, object],
+    ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
+        """``liquidity_fit``（版本閘門）：買單股數縮到 max_participation × 20 日均量以內（向下取整張，不足一張取消該筆）。
+
+        只縮買單、不碰賣單、不改寫交易 Agent 意圖；縮減釋出的現金留在現金，不再分配。缺均量的買單不縮並留
+        LIQUIDITY_UNAVAILABLE。沒有閘門的舊 run 原樣返回。"""
+        limit = liquidity_fit_limit(self.policy.get("position_sizing"))
+        if limit is None:
+            return orders, cash, []
+        volumes = {
+            str(item["symbol"]).upper(): item.get("average_volume_20d")
+            for item in MomentumEngine(self.context.bundle).run()["items"]
+        }
+        lot = int(effective["lot_size"])
+        fitted: List[Dict[str, object]] = []
+        flags: List[Dict[str, object]] = []
+        for order in orders:
+            symbol = str(order["symbol"])
+            volume = volumes.get(symbol.upper())
+            if order["side"] != "buy":
+                fitted.append(order)
+                continue
+            if volume is None or decimal_value(volume, "%s.average_volume_20d" % symbol) <= 0:
+                flags.append({
+                    "symbol": symbol, "code": "LIQUIDITY_UNAVAILABLE",
+                    "detail": "缺 20 日均量，買單未依流動性縮減（交易 Agent 的意圖未被改寫）",
+                })
+                fitted.append(order)
+                continue
+            cap = int((limit * decimal_value(volume, "%s.average_volume_20d" % symbol) / lot).to_integral_value(rounding=ROUND_FLOOR)) * lot
+            shares = int(order["shares"])
+            if shares <= cap:
+                fitted.append(order)
+                continue
+            cash -= decimal_value(order["net_cash_impact"], "net_cash_impact")
+            if cap > 0:
+                replacement = self._order(symbol, "buy", cap, str(order["intent"]), effective)
+                fitted.append(replacement)
+                cash += decimal_value(replacement["net_cash_impact"], "net_cash_impact")
+            flags.append({
+                "symbol": symbol, "code": "LIQUIDITY_LIMIT",
+                "detail": "買單超過 20 日均量的 %s：買進股數由 %d 降為 %d（向下取整張%s，交易 Agent 的意圖未被改寫）"
+                % (format(limit, ".0%"), shares, cap, "，不足一張取消該筆" if cap == 0 else ""),
+            })
+        fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
+        return fitted, cash, sorted(flags, key=lambda item: str(item["symbol"]))
 
     def _drawdown_derisk(
         self,

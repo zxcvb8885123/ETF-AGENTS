@@ -251,6 +251,41 @@ class EvaluateTests(DecisionRunFixture):
         self.assertEqual((report["observation_count"], report["decision_days"]), (2, 1))
 
 
+class ExRightsAsOfTests(unittest.TestCase):
+    """除權息標記與交易日一樣，只認 as_of 前已抓到的列。"""
+
+    AS_OF = "2026-11-01T00:00:00+00:00"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.db = self.tmp / "exrights.db"
+        make_database(self.db, symbols=["2330.TW", "2317.TW"])
+        from etf_agent.calibration.prices import OfficialPriceBook
+        self.book = OfficialPriceBook(self.db, self.AS_OF)
+
+    def symbols(self):
+        return self.book.ex_rights_symbols("2026-10-19", "2026-10-30")
+
+    def test_row_fetched_before_as_of_is_included(self):
+        add_price(self.db, "2330.TW", "2026-10-20", 90, ex_rights=1, fetched="2026-10-21T00:00:00+00:00")
+        self.assertEqual(self.symbols(), {"2330.TW"})
+
+    def test_row_fetched_at_as_of_is_included(self):
+        add_price(self.db, "2330.TW", "2026-10-20", 90, ex_rights=1, fetched=self.AS_OF)
+        self.assertEqual(self.symbols(), {"2330.TW"})
+
+    def test_row_fetched_after_as_of_is_excluded(self):
+        add_price(self.db, "2330.TW", "2026-10-20", 90, ex_rights=1, fetched="2026-11-02T00:00:00+00:00")
+        add_price(self.db, "2317.TW", "2026-10-20", 50, ex_rights=1, fetched="2026-10-21T00:00:00+00:00")
+        self.assertEqual(self.symbols(), {"2317.TW"})
+
+    def test_later_fetch_does_not_hide_earlier_row(self):
+        add_price(self.db, "2330.TW", "2026-10-20", 90, ex_rights=1, fetched="2026-10-21T00:00:00+00:00")
+        add_price(self.db, "2330.TW", "2026-10-22", 90, ex_rights=1, fetched="2026-11-05T00:00:00+00:00")
+        self.assertEqual(self.symbols(), {"2330.TW"})
+
+
 class GapAuditTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

@@ -42,6 +42,17 @@ def live_without_offense():
     return value
 
 
+def without_stop_exit(value):
+    """對照組樣板拿掉 stop_exit 並把 position_review 降回 v1：stop_exit 與 position_review v2 都依賴 exposure_rotation，
+    凡是拿掉 exposure_rotation 的對照組必須先降版，否則 Policy 驗證失敗。整條含 v2 與 stop_exit 的鏈由 test_position_review_v2_pipeline／test_stop_exit 覆蓋。"""
+    review = value["position_review"]
+    review["version"] = "v1"
+    for key in ("trail_alert", "relative_loss_alert", "stale_alert"):
+        review.pop(key, None)
+    value["position_sizing"].pop("stop_exit", None)
+    return value
+
+
 def fixed_policy_template():
     """固定版本的測試樣板；正式設定變更不能改變舊行為測試世界。"""
     return json.loads((ROOT / "config/policy_versions/2026-11-09-before-review.json").read_text(encoding="utf-8"))
@@ -71,6 +82,35 @@ def fill_dip_assessment(task, output):
     return dict(output, items=items)
 
 
+def fill_review_alerts(task, output, run_dir):
+    """正式樣板的 position_review 門檻（loss／retrace／gain）會讓 fixture 持股出現程式算的警示：交易 Agent 必須把每個
+    ``review:<代號>:<旗標>`` 在 adopted_claim_ids 剛好處理一次。舊夾具的交易輸出沒有處理它們，這裡照真實 Agent 的做法補上：
+    讀本批簡報（brief_<任務名>.json）逐檔的 position_review.flags，把「採納與否決都沒出現」的警示補進 adopted_claim_ids。
+    只補缺漏：夾具已自己處理的警示（含故意否決、重複的錯誤）原樣不動，驗證照樣拒絕；沒有警示的輸出逐位不變。
+    不放寬任何驗證：意圖、多頭依據與其他規則仍由 TradeDecisionValidator 檢查。"""
+    if not str(task.name).startswith("trader_") or not isinstance(output, dict) or "items" not in output:
+        return output
+    brief_path = Path(run_dir) / ("brief_%s.json" % task.name)
+    if not brief_path.exists():
+        return output
+    brief = json.loads(brief_path.read_text(encoding="utf-8"))
+    alerts = {
+        str(row["symbol"]).upper(): [flag["review_id"] for flag in (row.get("position_review") or {}).get("flags", [])]
+        for row in brief.get("symbols", [])
+    }
+    if not any(alerts.values()):
+        return output
+    items = []
+    for row in output["items"]:
+        row = dict(row)
+        handled = set(row.get("adopted_claim_ids", [])) | set(row.get("rejected_claim_ids", []))
+        missing = [review for review in alerts.get(str(row.get("symbol", "")).upper(), []) if review not in handled]
+        if missing:
+            row["adopted_claim_ids"] = [*row.get("adopted_claim_ids", []), *missing]
+        items.append(row)
+    return dict(output, items=items)
+
+
 class FakeRunner:
     """依 Agent 名稱依序回傳預先準備的結構化輸出，並記錄提示詞。"""
 
@@ -86,7 +126,7 @@ class FakeRunner:
         if not self.outputs.get(task.name):
             raise AssertionError("未預期的 Agent 呼叫：%s" % task.name)
         output = self.outputs[task.name].pop(0)
-        return AgentCall(task.name, 0, fill_dip_assessment(task, output), 0.01)
+        return AgentCall(task.name, 0, fill_review_alerts(task, fill_dip_assessment(task, output), run_dir), 0.01)
 
 
 # PipelineWorld 用 DecisionInputBuilder 建 bundle，預設帶 evidence_policy=typed_evidence_v1：
@@ -578,6 +618,56 @@ class DailyPipelineTests(unittest.TestCase):
         self.assertTrue(any(flag.startswith("GUARD_FAILED") for flag in review["risk_flags"]))
 
 
+class RequireNavHistoryTests(unittest.TestCase):
+    """G1：正式入口缺 nav_history 時，在任何子 Agent 被呼叫前拒絕。"""
+
+    def run_pipeline(self, world, runner, **kwargs):
+        pipeline = DailyDecisionPipeline(ROOT, world.run_dir, runner, world.repository, log=lambda _: None)
+        return pipeline.run(
+            world.paths["snapshot"], world.paths["account"], world.paths["trading_status"],
+            world.paths["rules"], world.paths["database"], world.paths["template"], world.paths["sectors"],
+            "decision-fixture", **kwargs,
+        )
+
+    def test_required_but_missing_history_fails_before_any_agent_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            self.assertIn("drawdown_control", json.loads(world.paths["template"].read_text(encoding="utf-8")))
+            runner = FakeRunner({})
+            result = self.run_pipeline(world, runner, require_nav_history=True, nav_history=None)
+            self.assertEqual(result.status, "failed")
+            self.assertTrue(any("nav_history" in error for error in result.errors), result.errors)
+            self.assertEqual(runner.prompts, [])
+
+    def test_required_with_empty_history_is_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = self.run_pipeline(world, runner, require_nav_history=True, nav_history=[])
+            self.assertEqual(result.status, "completed", result.errors)
+            policy = json.loads((DecisionRepository(world.repository).verify("decision-fixture") / "policy.json").read_text(encoding="utf-8"))
+            self.assertEqual(policy["drawdown_control"]["status"], "available")
+            self.assertEqual(policy["drawdown_control"]["history_length"], 0)
+
+    def test_not_required_keeps_unavailable_drawdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = FakeRunner(team_outputs())
+            result = self.run_pipeline(world, runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            policy = json.loads((DecisionRepository(world.repository).verify("decision-fixture") / "policy.json").read_text(encoding="utf-8"))
+            self.assertEqual(policy["drawdown_control"]["status"], "unavailable")
+
+    def test_policy_without_drawdown_control_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            template = gateless_policy_template()
+            template.pop("drawdown_control")
+            world = PipelineWorld(Path(directory), approved_status=True, template=template)
+            runner = FakeRunner(team_outputs())
+            result = self.run_pipeline(world, runner, require_nav_history=True, nav_history=None)
+            self.assertEqual(result.status, "completed", result.errors)
+
+
 class RevisionLimitTests(unittest.TestCase):
     """修正次數用完後的 revise 由程式確定性降級為 reject，整條鏈不因此失敗。"""
 
@@ -812,7 +902,7 @@ class LiveTemplatePipelineTests(unittest.TestCase):
     def test_live_template_with_both_gates_finalizes_and_rebuilds(self):
         from etf_agent.decision import DecisionResultValidator
 
-        template = live_without_offense()
+        template = without_stop_exit(live_without_offense())
         for field in PRODUCTION_SIZING_GATES:
             self.assertIn(field, template["position_sizing"], "正式樣板未開啟 %s；本測試前提已變" % field)
         # cash_stance_recency 需要 typed_evidence_v1 的 bundle 與 recency_reconciliation，這份 fixture 沒有；

@@ -611,11 +611,11 @@ class BriefAndReplayTests(unittest.TestCase):
     def test_replay_ignores_the_gate_and_adds_one_note(self):
         from etf_agent.evaluation.replay import bind_replay_policy
         from test_cash_ratio_range import STANCE as LEGACY_STANCE, chain_inputs
-        from test_daily_pipeline import live_without_offense
+        from test_daily_pipeline import live_without_offense, without_stop_exit
         from test_exposure_rotation import REVIEW_POLICY
 
         bundle, _, debate, intent, archived, _, _, _ = chain_inputs()
-        template = live_without_offense()
+        template = without_stop_exit(live_without_offense())  # stop_exit／position_review v2 依賴 exposure_rotation，對照組先降回 v1
         template.update(policy_id="replay-A", available_at="2026-09-19T00:00:00+00:00")
         template["position_sizing"].pop("agent_swap", None)  # 依賴另兩個閘門，要先拿掉
         template["position_sizing"].pop("exposure_view", None)  # 依賴 exposure_rotation，同上

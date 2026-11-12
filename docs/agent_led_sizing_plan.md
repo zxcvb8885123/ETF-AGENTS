@@ -288,7 +288,7 @@ Finalizer 整份重算、Guard
 1. 等 v3 完成；人決定 v3 是否開啟（其硬上限仍待人填）。
 2. 實作 `agent_swap.sizing` v1，前提 `agent_swap` v2；與 quality_dip v3 同時開啟時，quality_dip 配對改由 `swap_ruling` 裁決（`quality_dip_ruling` 封存 `superseded`），v3 的 `max_entry_weight` 當 quality_dip 配對的份量上限。
 3. 回滾：刪掉 `position_sizing.agent_swap.sizing`，`team_inputs` 回到 2.10（或 2.9），行為回到 v3（或 v2）。開啟前先存樣板 `config/policy_versions/【開啟日期】-before-agent-sizing.json`。
-4. 比賽 11-24 結束，11-12 起剩約 9 個交易日；實作與測試時間無法在本文件保證，若趕不上，v3 仍是可用的較小版本。
+4. 比賽 11-27 結束（使用者 11-11 更正，原記 11-24），11-12 起剩約 12 個交易日；實作與測試時間無法在本文件保證，若趕不上，v3 仍是可用的較小版本。
 
 ## 8. 實作順序與測試清單
 

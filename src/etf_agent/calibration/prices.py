@@ -64,10 +64,10 @@ class OfficialPriceBook:
         return self._vwap[trade_date]
 
     def ex_rights_symbols(self, after: str, through: str) -> Set[str]:
-        """(after, through] 內有除權息標記的股票；窗口內價格不連續，不拿來算報酬。"""
+        """(after, through] 內、``as_of`` 前已抓到除權息標記的股票；窗口內價格不連續，不拿來算報酬。"""
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT DISTINCT symbol FROM daily_prices WHERE ex_rights_marker = 1 AND trade_date > ? AND trade_date <= ?",
-                (after, through),
+                "SELECT DISTINCT symbol FROM daily_prices WHERE ex_rights_marker = 1 AND trade_date > ? AND trade_date <= ? AND fetched_at <= ?",
+                (after, through, self.as_of),
             ).fetchall()
         return {str(row[0]).upper() for row in rows}

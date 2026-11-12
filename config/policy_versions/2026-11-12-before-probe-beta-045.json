@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "policy_id": "strategy-2026-11-12-turnover-029-1",
+  "available_at": "2026-11-12T00:40:00+08:00",
+  "currency": "TWD",
+  "cash_buffer_rate": "0.05",
+  "default_target_weight": "0.04",
+  "trim_fraction": "0.5",
+  "slippage_bps": "10",
+  "max_turnover_rate": "0.29",
+  "stress_price_decline_rate": "0.10",
+  "stress_slippage_multiplier": "2",
+  "liquidity_fill_rate": "1",
+  "max_revisions": 3,
+  "drawdown_control": {
+    "neutral_at": "0.05",
+    "defensive_at": "0.15",
+    "release_neutral_below": "0.03",
+    "release_defensive_below": "0.11"
+  },
+  "position_review": {
+    "version": "v2",
+    "loss_alert": "0.12",
+    "retrace_alert_20d": "0.20",
+    "gain_alert": "0.20",
+    "trail_alert": {
+      "arm_gain": "0.10",
+      "giveback": "0.08"
+    },
+    "relative_loss_alert": {
+      "loss": "0.08",
+      "lag": "0.04"
+    },
+    "stale_alert": null,
+    "context": "v1"
+  },
+  "position_sizing": {
+    "method": "conviction_volatility_v2",
+    "conviction_multipliers": {
+      "high": "1.5",
+      "medium": "0.6",
+      "low": "0.3"
+    },
+    "volatility_floor": "0.01",
+    "volatility_exponent": "0",
+    "stock_weight_fit": "v1",
+    "selection_ranking": "v1",
+    "held_add_priority": "v1",
+    "cash_buffer_floor": "v1",
+    "cash_fit_order": "v2",
+    "held_weight_budget": "v2",
+    "high_conviction_cash_priority": "v2",
+    "limit_scaled_conviction": {
+      "version": "v1",
+      "alpha": "0.6"
+    },
+    "cash_ratio_range": {
+      "version": "v1",
+      "grid": {
+        "aggressive": {"lower": "0.03", "middle": "0.05", "upper": "0.08"},
+        "neutral": {"lower": "0.08", "middle": "0.10", "upper": "0.13"},
+        "defensive": {"lower": "0.15", "middle": "0.18", "upper": "0.21"}
+      },
+      "max_daily_raise": "0.03",
+      "selection_check": "v1"
+    },
+    "cash_stance_recency": {"version": "v1"},
+    "cash_stance_turn_facts": {"version": "v1"},
+    "market_index_facts": {"version": "v1"},
+    "exposure_view": {"version": "v2"},
+    "offense": {"version": "v1", "by_view": {"probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.40"}, "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"}, "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"}}, "offense_off_drawdown": "0.12", "thesis_size_cap": {"version": "v1"}, "cash_glide": {"version": "v1"}},
+    "quality_dip_facts": {"version": "v1"},
+    "quality_dip_assessment": {"version": "v1"},
+    "event_direction": {"version": "v1"},
+    "exposure_rotation": {
+      "version": "v3",
+      "beta_window_days": 60,
+      "beta_target_by_stance": {"aggressive": "0.90", "neutral": "0.55", "defensive": null},
+      "max_swaps_per_run": 2,
+      "min_holding_days": 5,
+      "hold_conviction": "v1"
+    },
+    "rebound_participation": {
+      "version": "v2",
+      "min_coverage": "0.80",
+      "by_state": {
+        "candidate": {"defensive_target": "0.30", "max_swaps_per_run": 2, "min_holding_days": 5},
+        "confirmed": {"defensive_target": "0.55", "max_swaps_per_run": 4, "min_holding_days": 0}
+      }
+    },
+    "agent_swap": {"version": "v2", "max_swaps_per_run": 5, "min_holding_days": 5, "exposure": {"version": "v2", "max_pairs_by_view": {"probe": 3, "start_rebuild": 4, "rebuild": 5}}, "quality_dip": {"version": "v4", "ladder": {"min_pool_drawdown": "0.08", "max_dip_exposure": "0.12", "max_tranches": 8, "min_days_between_tranches": 2, "pause_after_further_drop": "0.05", "exposure_basis": "quality_dip_fills"}, "max_swaps_per_run": 2, "max_entry_weight": "0.06", "oversold": {"max_swaps_per_run": 1, "max_entry_weight": "0.02"}, "min_new_conviction": "medium", "min_holding_days": 5, "min_turn_assessment": "no_turn_evidence"}, "derisk_day_view": {"version": "v1"}, "proceeds_to_add": {"version": "v1"}, "entry_reserve": {"version": "v1", "max_entry_weight": "0.06", "max_nominations": 8, "swap_priority": {"version": "v1"}}},
+    "slot_recycle": {"version": "v1"},
+    "liquidity_fit": {"version": "v2", "max_participation": "0.10"},
+    "cash_ceiling_fix": "v1",
+    "stock_limit_headroom": "v1",
+    "buy_gap_reserve": "v1",
+    "buy_gap_reserve_rate": "0.03",
+    "insufficient_funds_policy": "void_batch",
+    "sector_fit": "v1",
+    "turnover_fit": "v1",
+    "reentry_cooldown": {
+      "version": "v3",
+      "days": 3
+    },
+    "drawdown_derisk": {
+      "version": "v5",
+      "max_derisk_fraction": "0.25"
+    },
+    "rotation": {
+      "version": "v1",
+      "max_swaps_per_run": 5,
+      "min_new_conviction": "medium"
+    },
+    "revision_bounds": {
+      "version": "v1",
+      "min_max_stock_weight": "0.06",
+      "min_max_turnover_rate": "0.15",
+      "step": "0.01"
+    },
+    "cash_buffer_by_stance": {
+      "aggressive": "0.03",
+      "neutral": "0.10",
+      "defensive": "0.20"
+    },
+    "positions_by_breadth": {
+      "concentrated": 22,
+      "balanced": 26,
+      "diversified": 30
+    }
+  }
+}

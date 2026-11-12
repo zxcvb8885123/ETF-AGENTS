@@ -482,12 +482,13 @@ class PipelineBase:
         ``DailyPipelineError`` 直接往上拋。"""
         for retry in range(self.transient_retries + 1):
             started = time.monotonic()
-            if task.deny_reads and not getattr(runner, "enforces_deny_reads", False) and self._staged_raw is None:
+            if (task.deny_reads or task.deny_read_directories) and not getattr(runner, "enforces_deny_reads", False) and self._staged_raw is None:
                 # 不強制拒讀的執行器只能在研究階段輸出暫存之內執行帶 deny_reads 的任務；其他情形直接拒絕，不重試。
                 raise DailyPipelineError("%s 的執行器無法強制拒讀規則，且不在研究階段輸出暫存內，已拒絕啟動" % task.name)
             try:
                 call = runner.run(AgentTask(
                     task.name, prompt, task.schema, task.deny_reads, stage_isolated=self._staged_raw is not None,
+                    deny_read_directories=task.deny_read_directories,
                 ), self.run_dir)
             except TransientAgentError as error:
                 duration = round(time.monotonic() - started, 1)

@@ -103,6 +103,15 @@ def _thesis_section(thesis: Optional[List[Mapping[str, object]]], week: object, 
     return lines + [""]
 
 
+def _in_sample_notice(apply_result: Optional[Mapping[str, object]]) -> str:
+    text = "> 影子回放用的是提案時已經看過的同一段日期，不是樣本外驗證"
+    gate = (apply_result or {}).get("replay_gate")
+    days = gate.get("available_at_overridden_days") if isinstance(gate, Mapping) else None
+    if isinstance(days, int) and not isinstance(days, bool):
+        text += "；其中 %d 天的策略樣板建立時間晚於當日截止時間" % days
+    return text + "。"
+
+
 def render_weekly_report(
     now: datetime,
     brief: Mapping[str, object],
@@ -127,6 +136,7 @@ def render_weekly_report(
         "",
         "> 本報告的數字由程式依已封存決策與官方成交價計算；Agent 的摘要只是解讀。樣本少時任何比例都可能只是雜訊。",
         "> %s（evidence_grade：%s）" % (brief.get("notice") or REPLAY_NOTICE, brief.get("evidence_grade") or REPLAY_EVIDENCE_GRADE),
+        _in_sample_notice(apply_result),
         "> 自動套用只放行降風險方向的旋鈕提案；加風險或方向不明的提案只封存並標 needs_human，要人用 `apply-pending --allow-risk-increase <reflection_id>` 明確放行。",
         "",
     ]

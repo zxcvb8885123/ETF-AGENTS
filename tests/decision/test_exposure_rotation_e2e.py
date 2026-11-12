@@ -70,7 +70,7 @@ from etf_agent.evaluation.replay import ReplayError, bind_replay_policy
 
 from test_analysts import event_items, finding, report, technical_items
 from test_cash_ratio_range import STANCE as LEGACY_STANCE, chain_inputs
-from test_daily_pipeline import gateless_policy_template, live_without_offense
+from test_daily_pipeline import gateless_policy_template, live_without_offense, without_stop_exit
 from test_exposure_rotation import (
     GATE, LIMITS, NARROW, REVIEW_POLICY, decisions, exposure_bundle, exposure_sizing, flag_map, gate_with,
     hold_item,
@@ -600,7 +600,7 @@ class ReplayTests(unittest.TestCase):
     def test_replay_ignores_the_gate_and_adds_one_note(self):
         for factory in (live_without_offense, gateless_policy_template):
             with self.subTest(factory.__name__):
-                plain = self.template(factory)
+                plain = without_stop_exit(self.template(factory))  # stop_exit／position_review v2 依賴 exposure_rotation，對照組先降回 v1
                 plain["position_sizing"].pop("rebound_participation", None)
                 plain["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation，要先於它拿掉
                 plain["position_sizing"].pop("exposure_view", None)  # 同上
@@ -622,8 +622,20 @@ class ReplayTests(unittest.TestCase):
                 self.assertEqual(policy["position_sizing"], plain_policy["position_sizing"])
                 self.assertEqual(policy["content_sha256"], plain_policy["content_sha256"])
 
+    def test_replay_lists_stop_exit_and_review_v2_as_skipped(self):
+        template = self.template(live_without_offense)
+        self.assertNotIn("stop_exit", template["position_sizing"])  # 正式設定不含 stop_exit（硬停損不開）；這裡明確加上以測回放略過
+        template["position_sizing"]["stop_exit"] = {"version": "v1", "loss": "0.15", "lag_to_pool": "0.08", "min_holding_days": 3, "max_exits_per_run": 2}
+        self.assertEqual(template["position_review"]["version"], "v2")
+        policy, notes = self.replay(template)
+        self.assertEqual(notes["stop_exit"], "ignored_in_replay")
+        self.assertEqual(notes["position_review_v2"], "replayed_as_v1")
+        self.assertNotIn("stop_exit", policy["position_sizing"])
+        self.assertEqual(policy["position_review"]["version"], "v1")
+        self.assertFalse({"trail_alert", "relative_loss_alert", "stale_alert"} & set(policy["position_review"]))
+
     def test_replayed_allocation_never_rotates(self):
-        gated = self.template(live_without_offense)
+        gated = without_stop_exit(self.template(live_without_offense))
         gated["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation／rebound_participation，要先拿掉
         gated["position_sizing"].pop("exposure_view", None)  # exposure_view v2 需要 agent_swap v2，拿掉 agent_swap 時一併拿掉
         gated["position_sizing"].pop("rebound_participation", None)
@@ -633,7 +645,7 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(ProposalValidator(self.bundle, policy, self.intent).validate(body), [])
         self.assertFalse([c for c in codes(body) if "EXPOSURE" in c or "GAP_SWAP" in c], codes(body))
         # 與沒有閘門的回放配置逐位元相同。
-        plain_policy, _ = self.replay(self.template(live_without_offense))
+        plain_policy, _ = self.replay(without_stop_exit(self.template(live_without_offense)))
         self.assertEqual(AllocationOrderEngine(self.bundle, plain_policy).run(self.intent)["content_sha256"], body["content_sha256"])
 
     def test_replay_of_the_live_template_notes_ignored_gates(self):
@@ -643,7 +655,8 @@ class ReplayTests(unittest.TestCase):
             {"policy_id", "content_sha256", "available_at_overridden", "archived_cash_stance", "cash_stance", "stance_floor",
              "stance_raised_to_floor", "selection_ranking_applied", "breadth_unavailable", "cash_buffer_rate", "drawdown",
              "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation", "rebound_participation", "agent_swap", "exposure_view",
-             "quality_dip_facts", "quality_dip_assessment", "event_direction", "drawdown_derisk_v5", "agent_swap.quality_dip"},  # 正式樣板已開這些閘門，回放各標一次略過
+             "quality_dip_facts", "quality_dip_assessment", "event_direction", "drawdown_derisk_v5", "agent_swap.quality_dip",
+             "position_review_v2"},  # 正式樣板已開這些閘門，回放各標一次略過（position_review v2 當 v1 回放；正式設定沒有 stop_exit）
         )
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):

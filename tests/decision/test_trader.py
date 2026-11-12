@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
 from etf_agent.decision import (
@@ -156,6 +157,72 @@ class TraderRunTests(unittest.TestCase):
         self.assertEqual([item["intent"] for item in trade["items"]], ["buy", "hold"])
         self.assertEqual(len(runner.prompts), 2)
         self.assertIn("未處理全部 claim", runner.prompts[1][1])
+
+
+class BackgroundCopyTests(unittest.TestCase):
+    """項目 F：理由與條件不得整句照抄策略教訓或論點檢視摘要；只在 pipeline 即時驗證傳入，Finalizer 不傳。"""
+
+    LESSON = "買進後連續下跌時先檢查買進理由是否仍成立"
+    SUMMARY = "毛利率連續下滑，買進理由轉弱"
+
+    def errors(self, values, **kwargs):
+        bundle, momentum, _, debate = world()
+        return TradeDecisionValidator(bundle, momentum, debate, **kwargs).validate(decision(bundle, debate, values))
+
+    def test_without_background_texts_the_errors_are_unchanged_even_when_a_lesson_is_copied(self):
+        values = items()
+        values[0]["rationale"] = self.LESSON
+        self.assertEqual(self.errors(values), [])
+        self.assertEqual(self.errors(values, background_texts=()), [])
+
+    def test_a_rationale_without_copying_passes(self):
+        self.assertEqual(self.errors(items(), background_texts=[self.LESSON, self.SUMMARY]), [])
+
+    def test_a_paraphrase_passes_which_is_a_known_undetectable_case(self):
+        # 已知無法偵測：改寫轉述不是完整子字串，程式擋不到，靠提示與「行動須由本次 claim 支持」把關。
+        values = items()
+        values[0]["rationale"] = "股價連跌之後，我會先回頭確認當初買進的理由還成不成立。"
+        self.assertEqual(self.errors(values, background_texts=[self.LESSON]), [])
+
+    def test_copying_a_lesson_in_the_rationale_is_refused(self):
+        values = items()
+        values[0]["rationale"] = "多頭論點成立，而且%s。" % self.LESSON
+        errors = self.errors(values, background_texts=[self.LESSON])
+        self.assertTrue(any("不得照抄策略教訓或論點檢視背景" in error for error in errors), errors)
+
+    def test_copying_a_verdict_summary_into_invalidation_conditions_or_questions_is_refused(self):
+        for field in ("invalidation_conditions", "unresolved_questions"):
+            values = items()
+            values[0][field] = ["先前：%s" % self.SUMMARY]
+            errors = self.errors(values, background_texts=[self.SUMMARY])
+            self.assertTrue(any("不得照抄策略教訓或論點檢視背景" in error for error in errors), (field, errors))
+
+    def test_background_strings_shorter_than_ten_characters_never_trigger(self):
+        values = items()
+        values[0]["rationale"] = "多頭論點成立，買進理由轉弱。"
+        self.assertEqual(self.errors(values, background_texts=["買進理由轉弱。"]), [])  # 7 字
+        nine = "買進理由仍然成立啊"
+        self.assertEqual(len(nine), 9)
+        values[0]["rationale"] = "多頭論點成立，%s。" % nine
+        self.assertEqual(self.errors(values, background_texts=[nine]), [])
+        ten = "買進理由仍然成立啊啊"
+        values[0]["rationale"] = "多頭論點成立，%s。" % ten
+        self.assertTrue(self.errors(values, background_texts=[ten]))
+
+    def test_run_trader_passes_the_brief_texts_and_the_finalizer_signature_default_is_empty(self):
+        import inspect
+        self.assertEqual(inspect.signature(TradeDecisionValidator).parameters["background_texts"].default, ())
+        bundle, momentum, reports, debate = world()
+        copied = items()
+        copied[0]["rationale"] = "多頭論點成立，而且%s。" % self.LESSON
+        runner = FakeRunner({"trader_b0": [{"items": copied}, {"items": items()}]})
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline = DailyDecisionPipeline(ROOT, Path(directory), runner, Path(directory) / "repo", log=lambda _: None)
+            with patch("etf_agent.automation.team_stages.load_strategy_lessons", return_value={"lessons_id": "l", "texts": [self.LESSON], "sha256": "x"}):
+                trade = pipeline.run_trader(bundle, momentum, reports, debate, "run-1")
+        self.assertEqual([item["intent"] for item in trade["items"]], ["buy", "hold"])
+        self.assertEqual(len(runner.prompts), 2)  # 第一次被退回，第二次修正後通過
+        self.assertIn("不得照抄策略教訓或論點檢視背景", runner.prompts[1][1])
 
 
 if __name__ == "__main__":

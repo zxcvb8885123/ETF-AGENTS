@@ -145,9 +145,16 @@ class SensitiveReadTests(unittest.TestCase):
 
             def fake_run(command, *args, **kwargs):
                 settings = json.loads(command[command.index("--settings") + 1])
-                self.assertEqual(settings["permissions"]["deny"], ["Read(**/%s)" % pattern for pattern in SENSITIVE_READ_GLOBS])
+                self.assertEqual(
+                    settings["permissions"]["deny"],
+                    ["%s(**/%s)" % (tool, pattern) for tool in ("Read", "Grep", "Glob") for pattern in SENSITIVE_READ_GLOBS],
+                )
                 self.assertIn("Read(**/.env)", settings["permissions"]["deny"])
                 self.assertEqual(command[command.index("--tools") + 1], "Read")
+                disallowed = command[command.index("--disallowedTools") + 1].split(",")
+                for tool in ("Grep", "Glob", "Bash", "Write", "Edit", "WebFetch", "WebSearch", "Task", "NotebookEdit"):
+                    self.assertIn(tool, disallowed)
+                self.assertNotIn("Read", disallowed)
                 payload = {"structured_output": {"items": []}, "total_cost_usd": 0.1}
                 return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
 
@@ -256,6 +263,34 @@ class SensitiveReadTests(unittest.TestCase):
             self.assertIn(pattern, _peer_deny_reads("bear"))
         self.assertNotIn("decision*", _peer_deny_reads("bull"))
 
+    def test_later_stage_artifacts_are_denied_to_researchers(self):
+        import fnmatch
+        from etf_agent.automation.agent_runner import LATER_STAGE_GLOBS
+        from etf_agent.automation.team_stages import _peer_deny_reads
+
+        for role in ("bull", "bear"):
+            for pattern in ("brief_swap_nomination*", "brief_selection_ranking*", "ranker_*"):
+                self.assertIn(pattern, _peer_deny_reads(role))
+        rules = json.loads(claude_read_deny_settings(_peer_deny_reads("bull")))["permissions"]["deny"]
+        self.assertIn("Read(**/brief_swap_nomination*)", rules)
+        later_names = (
+            "research_debate", "debate", "intent", "trade_decision", "trader_b0_raw_1", "brief_trader_b0", "team_inputs",
+            "selection_ranking", "brief_selection_ranking", "ranker_raw_1", "swap_nomination", "brief_swap_nomination",
+            "swap_nominator_raw_1", "release_order", "brief_release_order", "quality_dip_ruling",
+            "brief_quality_dip_ruling",
+        )
+        for name in later_names:
+            with self.subTest(name=name):
+                self.assertTrue(any(fnmatch.fnmatch(name + ".json", pattern) for pattern in LATER_STAGE_GLOBS), name)
+
+    def test_research_stage_inputs_are_not_residue_globs(self):
+        import fnmatch
+        from etf_agent.automation.agent_runner import LATER_STAGE_GLOBS
+
+        for name in ("decision_input.json", "brief_bull_b0.json", "brief_bear_b0.json", "pipeline.json"):
+            with self.subTest(name=name):
+                self.assertFalse(any(fnmatch.fnmatch(name, pattern) for pattern in LATER_STAGE_GLOBS), name)
+
     def test_codex_output_leak_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -324,7 +359,7 @@ class SensitiveReadTests(unittest.TestCase):
             trace = (root / "var" / "logs" / "agent_trace" / "run-1" / "trader_b0.jsonl").read_text(encoding="utf-8")
             rows = [json.loads(line) for line in trace.splitlines()]
             self.assertEqual([row["type"] for row in rows], ["system", "assistant", "rate_limit_event", "result"])
-            self.assertEqual(rows[1]["tools"], [{"name": "Read", "file": "/x/brief.json"}])
+            self.assertEqual(rows[1]["tools"], [{"name": "Read", "file": "/x/brief.json", "path": None}])
             self.assertEqual(rows[2]["rate_limit_info"], {"status": "allowed"})
             self.assertEqual(list(run_dir.iterdir()), [])
 
@@ -353,6 +388,82 @@ class SensitiveReadTests(unittest.TestCase):
     def test_trace_does_not_store_model_text_or_secrets(self):
         row = _trace_summary({"type": "assistant", "message": {"content": [{"type": "text", "text": "機密內文"}]}}, 1.234)
         self.assertEqual(row, {"t": 1.2, "type": "assistant"})
+
+    def test_trace_records_non_read_tool_path_but_not_pattern(self):
+        event = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Grep", "input": {"path": "/proj/artifacts", "pattern": "bear-2330-1"}},
+        ]}}
+        row = _trace_summary(event, 0.5)
+        self.assertEqual(row["tools"], [{"name": "Grep", "file": None, "path": "/proj/artifacts"}])
+        self.assertNotIn("bear-2330-1", json.dumps(row))
+        bad_path = _trace_summary({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Glob", "input": {"path": ["x"]}}]}}, 0.5)
+        self.assertIsNone(bad_path["tools"][0]["path"])
+
+    def test_trace_counts_tool_errors_without_content(self):
+        event = {"type": "user", "message": {"content": [
+            {"type": "tool_result", "is_error": True, "content": "denied: secret text"},
+            {"type": "tool_result", "is_error": False, "content": "ok"},
+        ]}}
+        row = _trace_summary(event, 1.0)
+        self.assertEqual(row["tool_errors"], 1)
+        self.assertNotIn("secret text", json.dumps(row))
+        clean = _trace_summary({"type": "user", "message": {"content": [
+            {"type": "tool_result", "content": "ok"}]}}, 1.0)
+        self.assertNotIn("tool_errors", clean)
+
+    def test_deny_settings_cover_read_grep_glob_for_task_and_sensitive_patterns(self):
+        rules = json.loads(claude_read_deny_settings(("bear_*",)))["permissions"]["deny"]
+        for tool in ("Read", "Grep", "Glob"):
+            self.assertIn("%s(**/bear_*)" % tool, rules)
+            self.assertIn("%s(**/.env)" % tool, rules)
+
+    def test_directory_deny_rules_reach_claude_and_opencode(self):
+        rules = json.loads(claude_read_deny_settings((), ("artifacts/reports",)))["permissions"]["deny"]
+        for tool in ("Read", "Grep", "Glob"):
+            self.assertIn("%s(**/artifacts/reports/**)" % tool, rules)
+        self.assertEqual(json.loads(claude_read_deny_settings())["permissions"]["deny"],
+                         json.loads(claude_read_deny_settings((), ()))["permissions"]["deny"])
+        permission = _opencode_read_permission((), Path("artifacts/daily/run1"), ("artifacts/reports",))
+        self.assertEqual(permission["*/artifacts/reports/*"], "deny")
+        anchored = _opencode_read_permission(("bear_*",), Path("artifacts/daily/run1"), ("var/logs",))
+        self.assertEqual(anchored["*/run1/bear_*"], "deny")
+        self.assertEqual(anchored["*/var/logs/*"], "deny")
+
+    def test_research_deny_directories_constant_and_claude_command(self):
+        from etf_agent.automation.agent_runner import RESEARCH_DENY_DIRECTORIES
+
+        self.assertIn("artifacts/reports", RESEARCH_DENY_DIRECTORIES)
+        self.assertIn("var/strategy_reflection", RESEARCH_DENY_DIRECTORIES)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def fake_run(command, *args, **kwargs):
+                deny = json.loads(command[command.index("--settings") + 1])["permissions"]["deny"]
+                self.assertIn("Read(**/artifacts/archive/**)", deny)
+                payload = {"structured_output": {"items": []}, "total_cost_usd": 0.1}
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+            task = AgentTask("bull_b0", "x", {"type": "object"}, deny_read_directories=RESEARCH_DENY_DIRECTORIES)
+            with patch("etf_agent.automation.agent_runner._run_claude_streaming", side_effect=fake_run):
+                self.assertEqual(ClaudeAgentRunner(root).run(task, root).output, {"items": []})
+
+    def test_codex_refuses_directory_only_deny_task_before_launch(self):
+        task = AgentTask("bull_b0", "x", {"type": "object"}, deny_read_directories=("artifacts/reports",))
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("etf_agent.automation.agent_runner.subprocess.run") as run:
+                with self.assertRaises(DailyPipelineError):
+                    CodexAgentRunner(Path(directory)).run(task, Path(directory))
+                run.assert_not_called()
+
+    def test_pipeline_json_is_denied_to_researchers_but_not_residue_glob(self):
+        import fnmatch
+        from etf_agent.automation.agent_runner import LATER_STAGE_GLOBS
+        from etf_agent.automation.team_stages import _peer_deny_reads
+
+        for role in ("bull", "bear"):
+            self.assertIn("pipeline.json", _peer_deny_reads(role))
+        self.assertFalse(any(fnmatch.fnmatch("pipeline.json", pattern) for pattern in LATER_STAGE_GLOBS))
 
     def test_missing_env_file_does_not_block(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -444,6 +555,69 @@ class OpenCodeAgentRunnerTests(unittest.TestCase):
             pipeline = DailyDecisionPipeline(root, root, StubRunner(), root / "decisions", log=lambda _: None)
             pipeline.agent_step(self.task, dict, lambda output: [])
             self.assertEqual(pipeline.calls[0]["usage_tokens"]["input_tokens"], 40)
+
+
+    def test_sibling_run_names_add_anchored_deny_rules(self):
+        permission = _opencode_read_permission(("bear_*",), Path("a/2026-11-11/run2"), sibling_run_names=("run1", "run2"))
+        self.assertEqual(permission["*/run2/bear_*"], "deny")
+        self.assertEqual(permission["*/run1/bear_*"], "deny")
+        # 不誤擋：沒有任何未錨定的 */bear_* 規則。
+        self.assertNotIn("*/bear_*", permission)
+        # 不傳 sibling_run_names 時與舊行為相同。
+        self.assertEqual(_opencode_read_permission(("bear_*",), Path("a/2026-11-11/run2")),
+                         _opencode_read_permission(("bear_*",), Path("a/2026-11-11/run2"), sibling_run_names=()))
+
+    def test_run_lists_other_run_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in ("daily/2026-11-10/runA", "daily/2026-11-11/runB", "daily/2026-11-11/runC"):
+                (root / relative).mkdir(parents=True)
+            task = AgentTask("bull_b0", "x", {"type": "object", "properties": {"items": {"type": "array"}}, "required": ["items"]},
+                             deny_reads=("bear_*",))
+            captured = {}
+
+            def fake_run(command, **kwargs):
+                captured.update(json.loads(kwargs["env"]["OPENCODE_CONFIG_CONTENT"])["agent"]["etf-read-only"]["permission"]["read"])
+                return subprocess.CompletedProcess(command, 0, self.result(), "")
+
+            with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
+                OpenCodeAgentRunner(root).run(task, root / "daily/2026-11-11/runC")
+            self.assertEqual(captured["*/runA/bear_*"], "deny")
+            self.assertEqual(captured["*/runB/bear_*"], "deny")
+            self.assertEqual(captured["*/runC/bear_*"], "deny")
+            self.assertEqual([key for key in captured if key.endswith("/bear_*")].count("*/runC/bear_*"), 1)
+            self.assertNotIn("*/bear_*", captured)
+
+    def test_missing_parent_directory_does_not_raise(self):
+        from etf_agent.automation.agent_runner import _sibling_run_names
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "nope" / "2026-11-11" / "runX"
+            self.assertEqual(_sibling_run_names(run_dir, 1), [])
+            task = AgentTask("bull_b0", "x", {"type": "object", "properties": {"items": {"type": "array"}}, "required": ["items"]},
+                             deny_reads=("bear_*",))
+            captured = {}
+
+            def fake_run(command, **kwargs):
+                captured.update(json.loads(kwargs["env"]["OPENCODE_CONFIG_CONTENT"])["agent"]["etf-read-only"]["permission"]["read"])
+                return subprocess.CompletedProcess(command, 0, self.result(), "")
+
+            with patch("etf_agent.automation.agent_runner.subprocess.run", side_effect=fake_run):
+                OpenCodeAgentRunner(Path(directory)).run(task, run_dir)
+            self.assertEqual(captured["*/runX/bear_*"], "deny")
+
+    def test_sibling_rules_capped_to_recent_dates(self):
+        from etf_agent.automation.agent_runner import _sibling_run_names
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for day in range(1, 21):
+                for run in range(3):
+                    (root / "daily" / ("2026-10-%02d" % day) / ("r%02d_%d" % (day, run))).mkdir(parents=True)
+            own = root / "daily" / "2026-10-20" / "r20_0"
+            names = _sibling_run_names(own, 30)  # 59 個 × 30 樣式 > 500 → 只取最近 14 日
+            self.assertEqual(len(names), 14 * 3 - 1)
+            self.assertNotIn("r01_0", names)
+            self.assertNotIn("r20_0", names)
+            self.assertEqual(len(_sibling_run_names(own, 1)), 59)
 
 
 class TransientErrorClassificationTests(unittest.TestCase):

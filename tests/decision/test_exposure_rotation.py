@@ -237,6 +237,22 @@ class GateShapeTests(unittest.TestCase):
         errors = DecisionPolicyValidator(bundle).validate(policy)
         self.assertTrue(any("必須與 position_review 同時存在" in error for error in errors), errors)
 
+    def test_position_review_v2_requires_exposure_rotation(self):
+        bundle = exposure_bundle()
+        policy = base_policy()
+        policy["position_review"] = {
+            "version": "v2", "loss_alert": None, "retrace_alert_20d": None, "gain_alert": None,
+            "trail_alert": None, "relative_loss_alert": None, "stale_alert": {"days": 3},
+        }
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        errors = DecisionPolicyValidator(bundle).validate(policy)
+        self.assertTrue(any("position_review v2 必須與 position_sizing.exposure_rotation 同時存在" in error for error in errors), errors)
+        policy["position_review"]["version"] = "v1"
+        for field in ("trail_alert", "relative_loss_alert", "stale_alert"):
+            del policy["position_review"][field]
+        policy["content_sha256"] = decision_policy_sha256(policy)
+        self.assertFalse(any("position_review v2" in error for error in DecisionPolicyValidator(bundle).validate(policy)))
+
     def test_hold_conviction_binding_requires_the_gate(self):
         bundle = exposure_bundle()
         intent = three_symbol_intent(bundle, decisions())
