@@ -20,7 +20,7 @@
 | [多季基本面候選](#多季基本面候選) | FinMind 三張財報 | `scripts/collect_supplemental_sources.py finmind` | 部分：現金流經核對後使用；其餘僅補抓去年同期時使用 |
 | [個股新聞](#個股新聞) | FinMind 個股新聞 | `scripts/collect_supplemental_sources.py finmind-news` | 可，只進事件分析師的公司事件 |
 | [正式帳本價量](#正式帳本價量) | 證交所／櫃買中心官方價量 | `scripts/collect_latest_prices.py` 等 | 可，帳本結算依據 |
-| [基準標的](#基準標的) | 證交所個股日成交資訊（0050） | `./start.sh benchmark collect` | 只供績效比較 |
+| [基準標的](#基準標的) | 證交所個股日成交資訊（0050） | `./start.sh benchmark collect` | 績效比較；2026-11-12 起另作風險 Agent 的背景事實（benchmark_facts） |
 | [交易限制與日曆](#交易限制與日曆) | 政府開放 CSV 七份、證交所開休市表 | `scripts/run_daily_pipeline.py` | 可，風控必要輸入 |
 | [交易池](#交易池) | 主辦方名單 | `data/universe.py` | 可，一次性版本化輸入 |
 | [隔夜市場背景](overnight_market.md) | Yahoo Finance 的美股與亞股指數；期交所官網即時行情的台指期夜盤 | `cli/overnight_market.py capture` | 使用者已核准；只作現金姿態與報告背景 |
@@ -203,6 +203,8 @@ FinMind 個股新聞，含股票代號、標題、原媒體、連結與來源時
 - 補抓：2026-10-23 前資料庫只有 0050 一筆全市場抓取殘留，須執行 `./start.sh benchmark collect` 補抓；`./start.sh daily` 會在帳本結算前補抓。
 - 不污染交易池：基準以「不屬於交易池」的標記保存，交易池驗證、分析用價格與當日價格查詢都只看交易池成員，不會因此多一檔。
 - 時點：比較只採用「抓取時間與收盤都不晚於 as-of」的官方日線版本；補抓的歷史列以實際抓取時間為可得時間，不回填。
+- 用途擴大（2026-11-12 使用者核准）：0050 行情除績效比較外，可作風險 Agent 的背景事實（`position_sizing.benchmark_facts`，已實作、尚未開啟；紀錄用、不可引用、不作交易標的），來源與端點不變。
+- 0050 成分權重（benchmark_facts 的 active_weights 用）：人工抄錄元大投信官網持股權重頁，存 `data/benchmark_holdings.csv`，來源核准在 `config/benchmark_holdings_sources.json`，稽核紀錄見 [2026-11-12_benchmark_holdings.md](source_audit/2026-11-12_benchmark_holdings.md)。該頁使用條款**待確認**，屬使用者自行承擔的判斷；權重會隨股價每日漂移，須由人每週一、四更新，過期超過 `max_holdings_age_days` 即 `unavailable`。
 - 限制：等權基準每檔預算為本金 ÷ 150，整張買不起的股票留現金並列在 `unaffordable_symbols`；基準不計現金股利與配股。
 
 ## 交易限制與日曆
