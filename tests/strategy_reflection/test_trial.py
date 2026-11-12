@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -88,7 +89,9 @@ class HistoryTests(unittest.TestCase):
 
     def test_observe_knobs_force_observe_verification(self):
         self.assertEqual(trial_verification(["trim_fraction"]), "replay")
-        self.assertEqual(trial_verification(["trim_fraction", "position_review.loss_alert"]), "observe")
+        # 2026-11-12 起 position_review 警示門檻移出可調範圍，目前沒有 observe 旋鈕；以暫時加入的旋鈕驗證規則本身仍成立。
+        with mock.patch.dict(KNOBS, {"trim_fraction": KNOBS["trim_fraction"]._replace(verification="observe")}):
+            self.assertEqual(trial_verification(["trim_fraction"]), "observe")
 
     def test_origin_is_first_value_still_in_effect(self):
         history = [{"action": "apply", "origins": {"trim_fraction": "0.5"}}, {"action": "apply", "origins": {"trim_fraction": "0.45"}}]
@@ -115,8 +118,8 @@ class KnobTests(Fixture):
 
     def test_review_thresholds_are_in_bounds_and_version_is_forbidden(self):
         template = {**self.template, "position_review": {"version": "v1", "loss_alert": "0.10", "retrace_alert_20d": "0.12", "gain_alert": None}}
-        self.assertEqual(check_proposal("position_review.loss_alert", "0.11", template, self.rules)["proposed"], "0.11")
-        for knob, value in (("position_review.loss_alert", "0.30"), ("position_review.version", "v2"), ("position_review.gain_alert", "0.3")):
+        for knob, value in (("position_review.loss_alert", "0.11"), ("position_review.retrace_alert_20d", "0.11"),
+                            ("position_review.version", "v2"), ("position_review.gain_alert", "0.3")):
             with self.assertRaises(ReflectionError, msg=knob):
                 check_proposal(knob, value, template, self.rules)
 

@@ -86,9 +86,11 @@ class Knob(NamedTuple):
 def _knobs() -> Dict[str, Knob]:
     knobs: Dict[str, Knob] = {}
     for level in ("high", "medium", "low"):
-        # 信心乘數越低，單檔集中度與整體曝險越低：調低＝降風險。
+        # 預算依乘數比例分配、總預算固定：只有 high 調低會把預算移往 medium／low（較分散，降風險）；
+        # 調低 medium／low 反而把預算集中到 high，方向不明，任何方向都要人決定。
         knobs["conviction_multipliers.%s" % level] = Knob(
-            "conviction_multipliers.%s" % level, "decimal", Decimal("0.10"), Decimal("0.1"), Decimal("3"), risk_reducing=-1)
+            "conviction_multipliers.%s" % level, "decimal", Decimal("0.10"), Decimal("0.1"), Decimal("3"),
+            risk_reducing=-1 if level == "high" else 0)
     for stance in ("aggressive", "neutral", "defensive"):
         # 上限 0.22 是競賽現金建議上限，不得由反思員放寬。現金緩衝越高曝險越低：調高＝降風險。
         knobs["cash_buffer_by_stance.%s" % stance] = Knob(
@@ -115,12 +117,8 @@ def _knobs() -> Dict[str, Knob]:
     # 出場釋出的名額只給信心不低於此等級的新股；有序列舉，單次移一階（回放可重算）。門檻越高換股越少：調高＝降風險。
     knobs["rotation.min_new_conviction"] = Knob(
         "rotation.min_new_conviction", "enum", Decimal("1"), Decimal("0"), None, choices=("low", "medium", "high"), risk_reducing=+1)
-    # 停損／停利警示門檻只影響交易 Agent 的判斷，影子回放驗不了，所以走試用觀察期；gain_alert 啟用與否由人決定。
-    # 警示門檻越低越早提醒檢視：調低＝降風險。
-    knobs["position_review.loss_alert"] = Knob(
-        "position_review.loss_alert", "decimal", Decimal("0.01"), Decimal("0.05"), Decimal("0.20"), verification="observe", risk_reducing=-1)
-    knobs["position_review.retrace_alert_20d"] = Knob(
-        "position_review.retrace_alert_20d", "decimal", Decimal("0.01"), Decimal("0.06"), Decimal("0.25"), verification="observe", risk_reducing=-1)
+    # 2026-11-12：position_review 的警示門檻（loss_alert、retrace_alert_20d）移出可調範圍，改由人設定（見下方禁區）：
+    # 它們只影響交易 Agent 的判斷、回放驗不了，且人已多次依實況調整。
     return knobs
 
 
@@ -141,6 +139,7 @@ FORBIDDEN_PREFIXES = (
     # 版本閘門只由人設定：這些不是調整幅度，而是切換程式路徑（與 method、stock_weight_fit 同性質）。
     # 低波動偏好強度 volatility_exponent 與換股上限 rotation.max_swaps_per_run 是正式旋鈕，見 KNOBS。
     "held_add_priority", "rotation.version", "rotation.forced_swap", "position_review.version", "position_review.gain_alert",
+    "position_review.loss_alert", "position_review.retrace_alert_20d",
     "position_review.trail_alert", "position_review.relative_loss_alert", "position_review.stale_alert",
     # 程式兜底的條件式硬停損：強制出場的門檻與上限放寬或收緊都是改變風控路徑，只由人設定。
     "stop_exit",

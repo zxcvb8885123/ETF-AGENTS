@@ -57,7 +57,6 @@
 | `volatility_exponent` | 0.10 | 0～1 | 調高（逆波動偏好更強） |
 | `rotation.max_swaps_per_run` | 1 檔 | 0～10 | 調低（少換股） |
 | `rotation.min_new_conviction` | 相鄰一階 | low／medium／high | 調高（換股門檻更嚴） |
-| `position_review.loss_alert`／`retrace_alert_20d` | 0.01 | 0.05～0.20／0.06～0.25，影子回放驗不了，一週最多一個，走試用觀察期 | 調低（更早警示） |
 
 反方向（提高曝險、降低現金緩衝、減少檔數、放寬回撤門檻、增加換股、放寬警示門檻）屬加風險：只封存標 `needs_human`，不自動套用。
 
