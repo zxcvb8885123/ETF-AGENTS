@@ -253,7 +253,7 @@ class AnalystBriefTests(unittest.TestCase):
         brief = build_analyst_brief(bundle, MomentumEngine(bundle).run(), "event", event_market_scope=True)
         event = next(item for item in brief["symbols"] if item["symbol"] == "2330.TW")["events"][0]
         self.assertTrue(event["body_truncated"])
-        self.assertEqual(unwrap_untrusted_text(event["body"]), "甲" * 1500)
+        self.assertEqual(unwrap_untrusted_text(event["body"]), "甲" * 800)
         self.assertNotIn("delimiters_escaped", event["body"])
 
     def test_briefs_only_rearrange_existing_inputs(self):

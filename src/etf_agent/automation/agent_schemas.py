@@ -361,4 +361,7 @@ _EVENT_RULES = (
     "輸入列出的每一則重大訊息與 news（evidence_id 用 news:finmind: 代號）都在該股票的 events 剛好分級一次；"
     "每檔 event_outlook 等於 outlook；counter_evidence 與 pending_confirmations 只依輸入、沒有就給空陣列；"
     "新聞只憑單一標題不給 high，給 high 時 corroborated_by 要有同一件事的佐證；corroborated_by 只能填同一檔股票「其他」重大訊息或 news 的 evidence_id，不可填財報、現金流、profile 或別檔股票的編號（那些寫在 findings）。"
+    "控制輸出長度（每則 token 都要付費）：materiality 為 low 的事件 summary 不超過 30 字，counter_evidence 與 pending_confirmations 給空陣列；"
+    "medium／high 的 summary 不超過 60 字，counter_evidence 與 pending_confirmations 各最多 1 項、每項不超過 30 字；"
+    "同一件事被多則新聞報導時，summary 寫一次、其餘重複報導只寫「同上」並照填 materiality；每項 finding 的 text 不超過 100 字，同類的多則事件合併成一項 finding。"
 )

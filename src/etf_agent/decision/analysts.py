@@ -62,7 +62,7 @@ MATERIALITY = ("high", "medium", "low", "unknown")
 NO_SENTIMENT_SOURCE = "NO_LICENSED_SENTIMENT_SOURCE"
 # 逐檔期別的合併指標 artifact 版本；舊 run 的 fundamental_metrics 仍是 fundamentals 契約的 1.0。
 FUNDAMENTAL_METRICS_PER_SYMBOL_VERSION = "1.1"
-_EVENT_BODY_LIMIT = 1500
+_EVENT_BODY_LIMIT = 800
 _EVENT_EXCERPT_HEAD = 500
 _EVENT_EXCERPT_TAIL = 160
 _MOMENTUM_FIELDS = (
