@@ -394,8 +394,12 @@ def _run_claude_streaming(
         trace_file = unique_path.open("x", encoding="utf-8")
     except OSError:
         trace_file = None
+    # 實測 claude -p 預設用 1 小時快取（寫入單價較高）；批次專屬資料不會被再讀，改 5 分鐘 TTL 只降寫入單價。
+    # 使用者已自行設定時不覆蓋。
+    env = dict(os.environ)
+    env.setdefault("CLAUDE_CODE_PROMPT_CACHE_TTL", "5m")
     process = subprocess.Popen(
-        list(command), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        list(command), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
     )
     result_line = {"text": ""}
     stderr_chunks: list[str] = []
