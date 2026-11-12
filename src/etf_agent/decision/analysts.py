@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import json
+import re
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from etf_agent.fundamentals import FundamentalMetricsCalculator, FundamentalSnapshotTools
@@ -63,6 +64,12 @@ NO_SENTIMENT_SOURCE = "NO_LICENSED_SENTIMENT_SOURCE"
 # 逐檔期別的合併指標 artifact 版本；舊 run 的 fundamental_metrics 仍是 fundamentals 契約的 1.0。
 FUNDAMENTAL_METRICS_PER_SYMBOL_VERSION = "1.1"
 _EVENT_BODY_LIMIT = 800
+# 公告本文結構化抽取（slim_event_body）：固定格式的「N.題目:答案」逐項切開，丟掉「不適用／無」與空白答案、題目只留前 24 字，再套 1200 字上限。
+_EVENT_SLIM_LIMIT = 1200
+_EVENT_SLIM_QUESTION_CHARS = 24
+_EVENT_SLIM_EMPTY_ANSWERS = frozenset({"", "不適用", "無", "n/a", "na", "none"})
+BODY_FORMAT_ITEMS = "items_v1"
+BODY_FORMAT_TRUNCATED = "truncated_v1"
 _EVENT_EXCERPT_HEAD = 500
 _EVENT_EXCERPT_TAIL = 160
 _MOMENTUM_FIELDS = (
@@ -84,6 +91,40 @@ def _short_number(value: object) -> object:
     except (InvalidOperation, ValueError):
         return value
     return str(number.quantize(Decimal("0.01"))) if number.is_finite() else value
+
+
+def extract_event_body(body: object) -> Optional[str]:
+    """把固定格式公告（``1.題目:答案`` 逐項、項號連號）整理成較短的文字；格式不符（連號項目少於三個）回 None，呼叫端退回截斷。
+
+    只做呈現：Snapshot 原文不動，Validator 不讀簡報。答案為「否」等有意義的內容一律保留，只丟「不適用／無／空白」。"""
+    text = str(body or "")
+    lines = text.split("\n")
+    starts: List[int] = []
+    expected = 1
+    for index, line in enumerate(lines):
+        match = re.match(r"(\d{1,2})\.", line)
+        if match and int(match.group(1)) == expected:
+            starts.append(index)
+            expected += 1
+    if len(starts) < 3:
+        return None
+    pieces: List[str] = []
+    preamble = "\n".join(lines[:starts[0]]).strip()
+    if preamble:
+        pieces.append(preamble)
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        item = "\n".join(lines[start:end]).strip()
+        number, _, rest = item.partition(".")
+        cut = min((i for i in (rest.find(":"), rest.find("：")) if i >= 0), default=-1)
+        if cut < 0:
+            pieces.append(item)
+            continue
+        question, answer = rest[:cut].replace("\n", ""), rest[cut + 1:].strip()
+        if answer.rstrip("。.").strip().lower() in _EVENT_SLIM_EMPTY_ANSWERS:
+            continue
+        pieces.append("%s.%s:%s" % (number, question[:_EVENT_SLIM_QUESTION_CHARS], answer))
+    return "\n".join(pieces)
 
 
 def technical_trend_gate(item: Mapping[str, object]) -> str:
@@ -213,13 +254,33 @@ def growth_signal_quality(metrics: Mapping[str, object]) -> Dict[str, object]:
     }
 
 
+def _event_entry(document: Mapping[str, object], slim: bool) -> Dict[str, object]:
+    entry: Dict[str, object] = {
+        "evidence_id": document.get("source_evidence_id"),
+        "title": wrap_untrusted_text(document.get("title")),
+        "published_at": document.get("published_at"),
+        "available_at": document.get("available_at"),
+    }
+    extracted = extract_event_body(document.get("body")) if slim else None
+    if extracted is not None:
+        entry["body"] = wrap_untrusted_text(extracted, limit=_EVENT_SLIM_LIMIT)
+        entry["body_truncated"] = len(extracted) > _EVENT_SLIM_LIMIT
+        entry["body_format"] = BODY_FORMAT_ITEMS
+    else:
+        entry["body"] = wrap_untrusted_text(document.get("body"), limit=_EVENT_BODY_LIMIT)
+        entry["body_truncated"] = len(str(document.get("body") or "")) > _EVENT_BODY_LIMIT
+        if slim:
+            entry["body_format"] = BODY_FORMAT_TRUNCATED
+    return entry
+
+
 def build_analyst_brief(
     bundle: Mapping[str, object],
     momentum: Mapping[str, object],
     analyst: str,
     fundamental_metrics: Optional[Mapping[str, object]] = None,
     *, event_market_scope: bool = False, compact_technical: bool = False,
-    technical_gate: bool = False,
+    technical_gate: bool = False, slim_event_body: bool = False,
 ) -> Dict[str, object]:
     """只重排共同輸入中已存在的事實與程式計算結果，供分析師閱讀。"""
     if analyst not in LLM_ANALYSTS:
@@ -355,14 +416,7 @@ def build_analyst_brief(
                 entry["sentiment"] = {key: value for key, value in sentiment_by_symbol[symbol].items() if key != "symbol"}
             # 公告標題與內文是外部文字，只在這最後一層包成 untrusted_text；Snapshot 文件與 Validator 重算的內容不變。
             entry["events"] = [
-                {
-                    "evidence_id": document.get("source_evidence_id"),
-                    "title": wrap_untrusted_text(document.get("title")),
-                    "published_at": document.get("published_at"),
-                    "available_at": document.get("available_at"),
-                    "body": wrap_untrusted_text(document.get("body"), limit=_EVENT_BODY_LIMIT),
-                    "body_truncated": len(str(document.get("body") or "")) > _EVENT_BODY_LIMIT,
-                }
+                _event_entry(document, slim_event_body)
                 for document in sorted(events.get(symbol, []), key=lambda doc: str(doc.get("published_at")))
             ]
             if news is not None:
