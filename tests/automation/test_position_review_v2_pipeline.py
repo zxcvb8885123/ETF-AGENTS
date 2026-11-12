@@ -321,7 +321,7 @@ class ProductionTemplateTests(unittest.TestCase):
              "relative_loss_alert": {"loss": "0.08", "lag": "0.04"}, "stale_alert": None, "context": "v1"},
         )
         self.assertNotIn("stop_exit", live["position_sizing"])
-        self.assertEqual(live["policy_id"], "strategy-2026-11-12-probe-beta-045-1")
+        self.assertEqual(live["policy_id"], "strategy-2026-11-12-turnover-033-1")
         self.assertIn("exposure_rotation", live["position_sizing"])  # position_review v2 的前提
 
     def test_a_run_on_the_untouched_live_gates_completes_and_rebuilds_clean(self):
