@@ -9,6 +9,7 @@
 | `contracts.py` | 錯誤型別、費稅設定（讀 `decision_rules.json`）、官方日線列、來源優先序 | `BenchmarkError`、`FeeSchedule`、`OfficialPriceRow`、`OFFICIAL_SOURCE_PRIORITY` |
 | `repository.py` | 唯讀（`mode=ro`）讀取 as-of 時點已可得的官方日線版本（`fetched_at ≤ as_of`、收盤 ≤ as_of、不含 Yahoo） | `BenchmarkPriceRepository` |
 | `tools.py` | 整張買進（含手續費不超過預算）、每日估值、累積報酬、最大回撤、相對回撤 | `whole_lot_buy`、`buy_and_hold`、`valuation`、`cumulative_return`、`max_drawdown`、`relative_drawdown` |
+| `capture.py` | 純觀察的每日上漲／下跌捕捉（逐日表、彙總、累積超額），純函式、不讀檔 | `build_daily_capture`、`MIN_CAPTURE_DAYS`、`DEFINITION` |
 | `service.py` | 組合帳本摘要、基準設定、交易池與行情，產生比較結果 | `build_benchmark_comparison`、`METHOD` |
 
 ## 口徑
@@ -18,6 +19,18 @@
 - 估值：每個交易日現金＋持股 × 官方未還原收盤價。任一持股當日缺官方收盤價，該日 NAV 為 `null`（列出缺價標的），不以其他來源補。
 - 指標：累積報酬＝NAV ÷ 本金 − 1；最大回撤＝峰值到谷底最大跌幅；超額報酬＝帳戶累積報酬 − 基準累積報酬（取雙方都有估值的最後一個交易日）；相對回撤＝帳戶 NAV ÷ 基準 NAV 序列的最大回撤。
 - 時點：只採用 `fetched_at ≤ as_of` 且收盤時間 ≤ as_of 的官方日線版本（`daily_prices` 為 append-only 版本表），事後用舊 as-of 重算會得到當時可見的結果。
+
+## 每日上漲／下跌捕捉（純觀察）
+
+每個 `status=ok` 的基準結果多一個 `daily_capture`（`compare --json`、`/api/benchmarks` 共用）。**只是觀察指標**：不進決策輸入、不進 `team_inputs`、不給任何 Agent、不改配置。目標：基準漲時帳戶漲得比它多（上漲捕捉 > 100%）、基準跌時帳戶跌得比它少（下跌捕捉 < 100%）。
+
+- 日報酬：同一條 NAV 序列相鄰交易日的 NAV 比 − 1（開帳後第一天相對本金，所以第一天含基準與帳戶各自的成交價差）。前一日或當日任一邊缺估值（基準缺價、帳本缺日）就略過並列在 `skipped`，不跨日硬湊、不補值；日期完全對不上則整體 `unavailable`。
+- 方向：基準日報酬 > 0 上漲日、< 0 下跌日、= 0 持平日（不計入任一側，記 `flat_days`）。
+- 上漲捕捉＝上漲日帳戶日報酬**平均值** ÷ 同期基準日報酬平均值；下跌捕捉同理（各日報酬平均值之比，不是累積報酬比）。附各側 `days`、兩個平均值。
+- `small_sample`：任一側少於 `MIN_CAPTURE_DAYS`（5）個交易日即標記，數字仍附但不可當結論；該側沒有任何日子則該側 `unavailable`（`capture` 為 `null`）。
+- `cumulative`：帳戶累積報酬、基準累積報酬與兩者差（累積超額，取雙方都有估值的最後一個交易日，與 `comparison.excess_return` 同值）。
+- `rows`：逐日表（交易日、帳戶日報酬、基準日報酬、差額＝帳戶−基準、`benchmark_direction`）。全部數值為有限 Decimal 字串（6 位小數）。
+- 終端機 `compare` 在註記列印彙總；dashboard 基準比較區塊顯示彙總與可展開的逐日表。
 
 ## 上下游
 

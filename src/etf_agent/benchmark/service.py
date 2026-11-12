@@ -30,6 +30,7 @@ from etf_agent.data.trading_calendar import DECISION_DEADLINE
 from etf_agent.data.universe import UniverseLoader
 from etf_agent.virtual_account import VirtualAccountError, VirtualAccountRepository
 
+from .capture import build_daily_capture
 from .contracts import EXECUTION_PRICE_RULE, PRICE_BASIS, TAIPEI, BenchmarkError, FeeSchedule
 from .repository import BenchmarkPriceRepository, PriceTable
 from .tools import buy_and_hold, cumulative_return, max_drawdown, money, rate, relative_drawdown, valuation
@@ -42,6 +43,7 @@ METHOD = {
     "as_of_rule": "只用 fetched_at ≤ as_of 且收盤時間 ≤ as_of 的官方日線版本",
     "excess_return": "帳戶累積報酬 − 基準累積報酬，取雙方都有估值的最後一個交易日",
     "relative_drawdown": "帳戶 NAV ÷ 基準 NAV（同日對齊）序列的最大回撤",
+    "daily_capture": "純觀察：基準上漲日／下跌日的帳戶日報酬平均 ÷ 基準日報酬平均（上漲捕捉、下跌捕捉）；定義見各基準 daily_capture.definition",
 }
 
 
@@ -247,6 +249,7 @@ def build_benchmark_comparison(
             result = _build_equal_weight(definition, universe_prices, symbols, capital, fees, start_date, trading_dates, genesis_point)
         if result["status"] == "ok":
             result["comparison"] = _compare(account_points, result["series"], capital)
+            result["daily_capture"] = build_daily_capture(account_points, result["series"], capital)
         benchmarks.append(result)
 
     return {

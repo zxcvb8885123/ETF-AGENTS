@@ -1,5 +1,6 @@
 """虛擬帳戶績效對基準（0050 買入持有、交易池等權買入持有）的確定性比較。"""
 
+from .capture import MIN_CAPTURE_DAYS, build_daily_capture
 from .contracts import BenchmarkError, FeeSchedule, OfficialPriceRow
 from .repository import BenchmarkPriceRepository
 from .service import METHOD, build_benchmark_comparison
@@ -7,11 +8,13 @@ from .tools import buy_and_hold, cumulative_return, max_drawdown, relative_drawd
 
 __all__ = [
     "METHOD",
+    "MIN_CAPTURE_DAYS",
     "BenchmarkError",
     "BenchmarkPriceRepository",
     "FeeSchedule",
     "OfficialPriceRow",
     "build_benchmark_comparison",
+    "build_daily_capture",
     "buy_and_hold",
     "cumulative_return",
     "max_drawdown",

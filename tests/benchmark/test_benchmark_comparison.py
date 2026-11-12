@@ -181,6 +181,34 @@ class ComparisonTests(_Fixture):
         self.assertEqual(yahoo["status"], "unavailable")
         self.assertIn("license_status=research_only", yahoo["reason"])
 
+    def test_daily_capture_is_attached_and_hand_checkable(self):
+        result = self.build()
+        etf = next(item for item in result["benchmarks"] if item["benchmark_id"] == "0050_buy_and_hold")
+        capture = etf["daily_capture"]
+        self.assertEqual(capture["status"], "ok")
+        # 0050：10-01 NAV 1e9 → 10-02 993,609,040（下跌）→ 10-03 1,013,481,040（上漲）；帳戶 1e9 → 1,000,098,575 → 1,000,048,575。
+        self.assertEqual([row["trade_date"] for row in capture["rows"]], ["2026-10-02", "2026-10-03"])
+        self.assertEqual([row["benchmark_direction"] for row in capture["rows"]], ["down", "up"])
+        up = Decimal("1000048575") / Decimal("1000098575") - 1
+        bench_up = Decimal("1013481040") / Decimal("993609040") - 1
+        self.assertEqual(capture["up"]["capture"], str((up / bench_up).quantize(Decimal("0.000001"))))
+        self.assertTrue(capture["up"]["small_sample"])
+        self.assertEqual(capture["cumulative"]["cumulative_excess"], etf["comparison"]["excess_return"])
+        self.assertNotIn("daily_capture", next(item for item in result["benchmarks"] if item["benchmark_id"] == "yahoo_0050"))
+
+    def test_daily_capture_skips_day_missing_in_ledger(self):
+        # 只有 10-02 的帳本 close：10-03 帳本缺日 → 只剩一日，10-03 如實略過。
+        self.repository = VirtualAccountRepository(self.root / "ledger2", "cup-test")
+        self.service = VirtualAccountService(self.repository)
+        self.service.initialize(self.root / "competition_rules.json", "cup-test", OPENED_AT)
+        self.close_state("close-1", "2026-10-02T17:30:00+08:00", "998998575", "110")
+        result = self.build("2026-10-04T00:00:00+08:00")
+        etf = next(item for item in result["benchmarks"] if item["benchmark_id"] == "0050_buy_and_hold")
+        capture = etf["daily_capture"]
+        self.assertEqual([row["trade_date"] for row in capture["rows"]], ["2026-10-02"])
+        self.assertEqual([item["trade_date"] for item in capture["skipped"]], ["2026-10-03"])
+        self.assertEqual(capture["up"]["status"], "unavailable")
+
     def test_rows_fetched_after_as_of_are_invisible(self):
         # 10-03 的行情在 10-03 17:00 才抓到；as-of 10-03 16:00 只能看到 10-02。
         result = self.build("2026-10-03T16:00:00+08:00")
