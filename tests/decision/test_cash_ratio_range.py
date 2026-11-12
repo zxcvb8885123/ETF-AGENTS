@@ -794,3 +794,24 @@ class CashRatioReflectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewCashBufferCapPromptTests(unittest.TestCase):
+    """風險審查提示給的 increase_cash_buffer 上限必須與 RiskReviewValidator 實際上限一致。"""
+
+    def test_prompt_cap_uses_daily_top_grade_when_gate_on(self):
+        from etf_agent.automation.risk_stages import _increase_cash_buffer_cap
+        from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
+
+        policy = {"cash_weight_ceiling": "0.25",
+                  "position_sizing": {"cash_stance": "defensive", "cash_ratio_range": anchored(ratio="0.10000000")}}
+        top = Decimal(GRID["defensive"][allowed_cash_grades(policy["position_sizing"]["cash_ratio_range"])["defensive"][-1]])
+        self.assertEqual(_increase_cash_buffer_cap(policy), top)
+        self.assertLess(top, Decimal("0.25") - CASH_BUFFER_CEILING_MARGIN)
+
+    def test_prompt_cap_without_gate_is_ceiling_minus_margin(self):
+        from etf_agent.automation.risk_stages import _increase_cash_buffer_cap
+        from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
+
+        policy = {"cash_weight_ceiling": "0.25", "position_sizing": {}}
+        self.assertEqual(_increase_cash_buffer_cap(policy), Decimal("0.25") - CASH_BUFFER_CEILING_MARGIN)

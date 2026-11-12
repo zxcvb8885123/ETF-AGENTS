@@ -82,6 +82,22 @@ LATER_STAGE_GLOBS = (
     "brief_selection_ranking*", "ranker_*",  # 入選排序的簡報與嘗試紀錄含交易 Agent 意圖，研究員不得讀
 )
 
+# 風險 Agent 的現金姿態與優質股裁決是「獨立判斷」：run 目錄在交易、排序、提名之後已有交易 Agent 的意圖檔，
+# 簡報刻意不附意圖，所以拒讀這些檔。只在執行器能強制拒讀時才帶（Codex 無法強制，帶了會被拒絕啟動）。
+# 不含 quality_dip_ruling*：裁決任務自己的簡報 brief_quality_dip_ruling.json 必須可讀。
+RISK_INDEPENDENT_DENY_GLOBS = (
+    "trade_decision*", "intent*", "trader_*", "brief_trader_*", "selection_ranking*", "brief_selection_ranking*", "ranker_*",
+    "swap_nomination*", "brief_swap_nomination*", "swap_nominator*", "release_order*", "brief_release_order*",
+)
+
+# 前次（其他日）run 的決策與背景檔：多空研究員不得讀（AGENTS.md：多空研究員不讀前次決策背景）。
+# 與 LATER_STAGE_GLOBS 分開、不進殘留偵測：本次 run 在研究階段前就有 prior_decision_context、position_review 等，
+# 進殘留偵測會讓每次續跑被判殘留。研究員任務須在 _peer_deny_reads 併入此組（目前由 team_stages.py 負責接線）。
+RESEARCH_PRIOR_RUN_DENY_GLOBS = (
+    "decision.json", "proposal*", "policy*", "prior_decision_context*", "position_review*", "revision_history*",
+    "risk_review*", "cash_stance*", "thesis_review_background*", "strategy_lessons*",
+)
+
 # 專案層級、含多空論點的目錄：研究員不需要讀，整個目錄拒讀。與 LATER_STAGE_GLOBS 分開，
 # 因為這些不是 run 目錄內的檔名，不能進殘留偵測。
 RESEARCH_DENY_DIRECTORIES = (
