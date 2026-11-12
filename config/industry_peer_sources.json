@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "purpose": "產業比較 C1：只收集與稽核，不進決策（docs/fundamental_data_gaps_plan.md 第 4 節）",
+  "purpose": "產業比較 C1：只收集與稽核，不進決策（docs/plans/fundamental_data_gaps_plan.md 第 4 節）",
   "sources": [
     {"source": "TWSE_INDUSTRY_EPS", "market": "TWSE", "url": "https://openapi.twse.com.tw/v1/opendata/t187ap14_L", "license_status": "approved", "terms_url": "https://openapi.twse.com.tw/", "usage_scope": "competition_research", "reviewed_at": "2026-11-10T00:00:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-11-10_industry_peer_sources.md：證交所 OpenAPI 上市公司各產業EPS統計資訊（t187ap14_L）；使用者 2026-11-10 下令開工 C1 並視同登記為政府開放資料來源。"},
     {"source": "TPEX_INDUSTRY_EPS", "market": "TPEX", "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap14_O", "license_status": "approved", "terms_url": "https://www.tpex.org.tw/web/inc/gtsm_disclaimer.php?l=zh-tw", "usage_scope": "competition_research", "reviewed_at": "2026-11-10T00:00:00+08:00", "approved_by": "Apollo", "evidence": "docs/source_audit/2026-11-10_industry_peer_sources.md：櫃買中心 OpenAPI 上櫃公司各產業EPS統計資訊（mopsfin_t187ap14_O，swagger 公司治理類別）；使用者 2026-11-10 下令開工 C1 並視同登記為政府開放資料來源。"}
