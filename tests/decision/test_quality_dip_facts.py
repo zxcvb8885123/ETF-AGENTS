@@ -12,7 +12,7 @@
    配置輸出（訂單、配置、旗標）與沒有閘門時相同。
 6. 每日 pipeline：技術／基本面分析師簡報多附事實（不含 price_pattern／candidate）、交易 Agent 簡報附 dip_background、
    多空研究員簡報沒有；研究員不得讀 dip_facts 檔；沒有閘門時簡報與 team_inputs 逐鍵不變。
-7. 封存 run（本機才有，CI 沒有時略過）：2026-11-10 案例與 docs/quality_dip_plan.md 第 6.1 節的表比對；
+7. 封存 run（本機才有，CI 沒有時略過）：2026-11-10 案例與 docs/plans/quality_dip_plan.md 第 6.1 節的表比對；
    沒有閘門時封存 team_inputs 的重建驗證不變、``exposure_review`` 逐位元不變。
 
 合成行情是機制測試，不是對真實行情的驗證；封存案例的證據等級是 replay_reference_only。
@@ -626,7 +626,7 @@ class PipelineBriefTests(unittest.TestCase):
 # ---------------------------------------------------------------- 7. 封存 run 的案例與回歸
 @unittest.skipUnless((ARCHIVED / "team_inputs.json").is_file(), "封存 run 只在本機")
 class ArchivedCaseTests(unittest.TestCase):
-    """docs/quality_dip_plan.md 第 6.1 節：2026-11-10 封存 run 唯讀重算（replay_reference_only）。
+    """docs/plans/quality_dip_plan.md 第 6.1 節：2026-11-10 封存 run 唯讀重算（replay_reference_only）。
 
     同一個測試行程裡其他模組（calibration.tools）會把全域 Decimal 精度改成 40；正式 pipeline 與 CLI 用預設的 28，
     所以這裡的重算一律在預設 Context 內執行，與封存當時相同。"""

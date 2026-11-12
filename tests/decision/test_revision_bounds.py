@@ -1,4 +1,4 @@
-"""風險修正動作的數值界線（position_sizing.revision_bounds v1）：docs/audit_fix_plan.md 項目 B。
+"""風險修正動作的數值界線（position_sizing.revision_bounds v1）：docs/plans/audit_fix_plan.md 項目 B。
 
 1. Policy 驗證：形狀、下限不得高於 Policy 上限、缺欄位、多餘欄位、版本一律 fail-closed。
 2. RiskReviewValidator：閘門開時 value 不得低於下限且須為 step 整數倍；沒有閘門時行為逐位元不變（0.01 仍通過）。

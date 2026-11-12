@@ -258,7 +258,7 @@ class ValuationAuditSummaryTests(unittest.TestCase):
 
 @unittest.skipUnless((REAL_VALUATION_ROOT / "2026-11-10").is_dir(), "沒有封存的 artifacts/valuation_collection，略過重現文件數字")
 class ArchivedValuationSummaryTests(unittest.TestCase):
-    """重現 docs/follow_up_plan.md 第 1.3 節的估值 V1 數字（replay_reference_only）。"""
+    """重現 docs/plans/follow_up_plan.md 第 1.3 節的估值 V1 數字（replay_reference_only）。"""
 
     def test_archived_summary(self):
         report = summarize_valuation_audits(REAL_VALUATION_ROOT)

@@ -1,4 +1,4 @@
-"""position_sizing.offense v1（轉向後進攻，已實作、尚未開啟）：docs/agent_led_offense_plan.md 4.1～4.10。
+"""position_sizing.offense v1（轉向後進攻，已實作、尚未開啟）：docs/plans/agent_led_offense_plan.md 4.1～4.10。
 
 覆蓋：Policy 閘門（形狀、值域、單調、前提、互斥、人專用）、有效等級壓回（缺資料永不升級）、現金目標只放寬、份量格只縮不放、
 進攻事實（合成行情，缺資料為 unavailable）、現金姿態驗證（一致性、證據、probe 欄位、defensive_reconciliation）、舊 Policy 不受影響。

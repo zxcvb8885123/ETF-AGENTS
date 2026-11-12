@@ -1,4 +1,4 @@
-"""優質股 v4（position_sizing.agent_swap.quality_dip version=v4）：連跌後逢低布局的梯度 ``ladder``（docs/agent_led_offense_plan.md 4.13）。
+"""優質股 v4（position_sizing.agent_swap.quality_dip version=v4）：連跌後逢低布局的梯度 ``ladder``（docs/plans/agent_led_offense_plan.md 4.13）。
 
 覆蓋：
 
