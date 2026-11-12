@@ -21,7 +21,7 @@ description: 讀程式整理的校準簡報（信心等級與多空強度事後�
 
 ## 邊界（程式會逐項重算，違反整份拒絕）
 
-- 只能調：`conviction_multipliers.{high,medium,low}`、`cash_buffer_by_stance.{aggressive,neutral,defensive}`、`positions_by_breadth.{concentrated,balanced,diversified}`、`drawdown_control.{neutral_at,defensive_at}`（只准調低）、`volatility_floor`、`volatility_exponent`、`trim_fraction`、`rotation.max_swaps_per_run`、`rotation.min_new_conviction`（low／medium／high，一次一階）、`position_review.{loss_alert,retrace_alert_20d}`。
+- 只能調：`conviction_multipliers.{high,medium,low}`、`cash_buffer_by_stance.{aggressive,neutral,defensive}`、`positions_by_breadth.{concentrated,balanced,diversified}`、`drawdown_control.{neutral_at,defensive_at}`（只准調低）、`volatility_floor`、`volatility_exponent`、`trim_fraction`、`rotation.max_swaps_per_run`、`rotation.min_new_conviction`（low／medium／high，一次一階）。`position_review.*` 警示門檻由人設定，不在可調範圍。
 - 單次變幅上限：乘數 0.10、現金 0.02（且須低於 0.22）、檔數 1（夾在 min／max positions）、回撤門檻 0.01、`volatility_floor` 0.005、`volatility_exponent` 0.10、`trim_fraction` 0.05、換股上限 1 檔、停損／回落門檻 0.01。任一旋鈕離「人設定的起點」最多累積偏離 2 個 step。
 - `position_review.*` 只影響交易 Agent 的判斷，影子回放驗不了，所以一週最多提一個，且套用後走試用觀察期；`gain_alert`、`position_review.version` 只由人設定。
 - 不得提案：單股／產業上限、現金上限、持股數、費稅、Active Share、滑價與壓力情境、`policy_id`、任何個股權重或股數。

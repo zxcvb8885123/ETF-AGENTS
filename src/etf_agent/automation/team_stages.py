@@ -80,7 +80,7 @@ from etf_agent.decision.strategy_lessons import lessons_brief, load_strategy_les
 from etf_agent.decision.thesis_verdicts import load_thesis_verdicts, verdicts_brief
 from etf_agent.decision.trader_background import lessons_from_record, verdicts_from_record
 
-from .agent_runner import LATER_STAGE_GLOBS, RESEARCH_DENY_DIRECTORIES, AgentTask, DailyPipelineError
+from .agent_runner import LATER_STAGE_GLOBS, RESEARCH_DENY_DIRECTORIES, RESEARCH_PRIOR_RUN_DENY_GLOBS, AgentTask, DailyPipelineError
 from .agent_schemas import (
     EVENT_BATCH_MAX_EVENTS,
     EVENT_BATCH_SIZE,
@@ -162,7 +162,7 @@ def _peer_deny_reads(role: str) -> Tuple[str, ...]:
     peer = "bear" if role == "bull" else "bull"
     # 續跑時 run 目錄可能已有後段產物（含對方論點的 debate、交易與 team_inputs），一併擋掉；不用 ``decision*``，會擋到共同輸入。
     # pipeline.json 只在這裡擋、不進 LATER_STAGE_GLOBS：它在研究階段前就存在，進殘留偵測會讓每次續跑被判殘留。
-    return ("%s_*" % peer, "brief_%s_*" % peer, "pipeline.json") + LATER_STAGE_GLOBS
+    return ("%s_*" % peer, "brief_%s_*" % peer, "pipeline.json") + LATER_STAGE_GLOBS + RESEARCH_PRIOR_RUN_DENY_GLOBS
 
 
 class TeamStagesMixin:
@@ -860,7 +860,7 @@ NOMINATION_QUALITY_DIP_LADDER_PROMPT = (
 
 
 NOMINATION_QUALITY_DIP_SIZED_PROMPT = (
-    "本次 quality_dip 為 v3：每個 purpose=quality_dip 的配對另填份量格 size（small／medium／large），其他 purpose 的 size 填空字串；"
+    "本次 quality_dip 為 v3 以上（份量格版，v4 另見後段）：每個 purpose=quality_dip 的配對另填份量格 size（small／medium／large），其他 purpose 的 size：簡報有 entry_reserve 時每組都須填份量格（以下方 entry_reserve 段為準），否則填空字串；"
     "quality_dip 的組數就是你列出的 quality_dip 配對數，不超過簡報 quality_dip_swap.max_quality_dip_pairs，且與其他配對的上限分開計；"
     "風險 Agent 稍後對每一組裁決（同意、降一格或否決，只能縮不能放）。簡報顯示有可提名的 quality_dip 換入者與換出者、而你沒有提名任何 "
     "quality_dip 配對時，必須在 quality_dip_decline 以列舉加一句文字交代原因；其他情況 reason_kind 填 not_applicable、reason 填空字串。"

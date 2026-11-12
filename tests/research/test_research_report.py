@@ -145,6 +145,17 @@ class ResearchReportTests(unittest.TestCase):
             self.assertTrue(markdown_output.exists())
             self.assertTrue(service.validate_file(json_output)["valid"])
 
+    def test_from_paths_rejects_unvalidated_upstream_research(self):
+        research = valid_result()
+        research["items"][0]["evidence_ids"] = ["missing-evidence"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "snapshot.json").write_text(json.dumps(snapshot_fixture()), encoding="utf-8")
+            (root / "research.json").write_text(json.dumps(research), encoding="utf-8")
+            with self.assertRaises(ResearchReportError) as raised:
+                ResearchReportApplicationService.from_paths(root / "snapshot.json", root / "research.json")
+            self.assertIn("上游 artifact 驗證失敗", str(raised.exception))
+
     def test_sources_include_only_used_evidence(self):
         snapshot = snapshot_fixture()
         snapshot["source_evidence"].append(

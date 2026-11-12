@@ -289,6 +289,19 @@ class ThesisReviewTests(unittest.TestCase):
         self.assertTrue(any("逐條對應" in e for e in self.errors(self.item(conditions=[{"status": "unknown", "finding_ids": []}]))))
         self.assertTrue(any("不屬於該檔最新內容" in e for e in self.errors(self.item(finding_ids=["fund-9999-1"]))))
 
+    def test_summary_with_citable_id_shapes_is_rejected(self):
+        for bad in ("見 f-4772 的說明", "2330.TW:f1 顯示轉弱", "news:finmind:abc 利空", "fear-greed:TAIFEX_VIX:ab 偏高",
+                    "overnight:YAHOO_FINANCE:^GSPC 下跌", "trading-status:X 處置", "見 https://a.b"):
+            self.assertTrue(any("summary" in e for e in self.errors(self.item(summary=bad))), bad)
+        self.assertEqual(self.errors(self.item(summary="F-16 概念股毛利持平")), [])
+
+    def test_verdicts_filter_drops_missed_id_formats(self):
+        from etf_agent.decision.thesis_verdicts import forbidden_text
+
+        for bad in ("f-4772", "2330.TW:f2", "6488.TWO:f1", "news:finmind:1", "market-news-9", "sentiment:x"):
+            self.assertTrue(forbidden_text("理由 " + bad), bad)
+        self.assertFalse(forbidden_text("毛利率持平，理由仍在"))
+
     def test_triggered_needs_evidence_and_verdict_must_agree(self):
         triggered = [{"status": "triggered", "finding_ids": []}, {"status": "unknown", "finding_ids": []}]
         self.assertTrue(any("必須引用" in e for e in self.errors(self.item(conditions=triggered))))

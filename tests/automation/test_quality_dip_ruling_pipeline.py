@@ -17,6 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from etf_agent.automation.agent_runner import RISK_INDEPENDENT_DENY_GLOBS
 from etf_agent.decision import decision_policy_sha256
 
 from test_agent_swap_v2_pipeline import V2Harness
@@ -137,3 +138,25 @@ class QualityDipRulingPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QualityDipRulerDenyReadsTests(unittest.TestCase):
+    """裁決任務與現金姿態同為獨立判斷：能強制拒讀的執行器帶拒讀樣式，Codex 型不帶（否則被拒絕啟動）。"""
+
+    def test_ruler_task_is_built_with_the_same_independent_deny_reads(self):
+        from etf_agent.automation.daily_pipeline import DailyDecisionPipeline
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            for enforces, expected in ((True, RISK_INDEPENDENT_DENY_GLOBS), (False, ())):
+                runner = FakeRunner({})
+                runner.enforces_deny_reads = enforces
+                pipeline = DailyDecisionPipeline(root, Path(directory), runner, Path(directory) / "decisions", log=lambda _: None)
+                self.assertEqual(tuple(pipeline._independent_deny_reads()), expected)
+        self.assertNotIn("quality_dip_ruling*", RISK_INDEPENDENT_DENY_GLOBS)  # 裁決自己的簡報必須可讀
+        self.assertIn("swap_nomination*", RISK_INDEPENDENT_DENY_GLOBS)
+        self.assertIn("trade_decision*", RISK_INDEPENDENT_DENY_GLOBS)
+
+    def test_the_ruler_task_uses_the_helper(self):
+        source = (Path(__file__).resolve().parents[2] / "src/etf_agent/automation/risk_stages.py").read_text(encoding="utf-8")
+        start = source.index('"quality_dip_ruler"')
+        self.assertIn("deny_reads=self._independent_deny_reads()", source[start:start + 3000])

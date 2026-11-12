@@ -465,6 +465,23 @@ class SensitiveReadTests(unittest.TestCase):
             self.assertIn("pipeline.json", _peer_deny_reads(role))
         self.assertFalse(any(fnmatch.fnmatch("pipeline.json", pattern) for pattern in LATER_STAGE_GLOBS))
 
+    def test_prior_run_deny_globs_are_separate_from_residue_detection(self):
+        import fnmatch
+        from etf_agent.automation.agent_runner import LATER_STAGE_GLOBS, RESEARCH_PRIOR_RUN_DENY_GLOBS, claude_read_deny_settings
+        from etf_agent.automation.pipeline_base import RESEARCH_RESIDUE_GLOBS
+
+        for name in ("decision.json", "proposal_r0.json", "policy.json", "prior_decision_context.json", "position_review.json",
+                     "revision_history.json", "risk_review.json", "cash_stance.json"):
+            self.assertTrue(any(fnmatch.fnmatch(name, pattern) for pattern in RESEARCH_PRIOR_RUN_DENY_GLOBS), name)
+            # 本次 run 在研究階段前就有這些檔：進殘留偵測會讓每次續跑被判殘留。
+            self.assertFalse(any(fnmatch.fnmatch(name, pattern) for pattern in RESEARCH_RESIDUE_GLOBS), name)
+        self.assertEqual(set(RESEARCH_PRIOR_RUN_DENY_GLOBS) & set(LATER_STAGE_GLOBS), set())
+        # 研究員自己要讀的檔不得被擋。
+        for name in ("brief_bull_b0.json", "brief_bear_b1.json", "SKILL.md", "data-rules.md", "decision_input.json"):
+            self.assertFalse(any(fnmatch.fnmatch(name, pattern) for pattern in RESEARCH_PRIOR_RUN_DENY_GLOBS), name)
+        rules = json.loads(claude_read_deny_settings(RESEARCH_PRIOR_RUN_DENY_GLOBS))["permissions"]["deny"]
+        self.assertIn("Read(**/decision.json)", rules)
+
     def test_missing_env_file_does_not_block(self):
         with tempfile.TemporaryDirectory() as directory:
             reject_secret_leak("trader_b0", {"items": []}, Path(directory))

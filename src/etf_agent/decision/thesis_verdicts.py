@@ -27,14 +27,25 @@ USABLE_VERDICTS = ("intact", "weakened", "broken")  # unknown 沒有資訊，不
 MAX_AGE_DAYS = 8
 FILE_FIELDS = {"schema_version", "verdicts_id", "created_at", "items", "content_sha256"}
 ITEM_FIELDS = {"symbol", "verdict", "summary"}
-_FORBIDDEN = re.compile(r"review:|bull-|bear-|fund-|tech-|event-|document:|price:|evidence|https?://", re.IGNORECASE)
+# 擋所有可被引用的識別碼形狀：證據（document/price/news/overnight/sentiment/trading-status/fear-greed/market-*）、
+# claim（bull-/bear-）、發現（fund-/tech-/event-/f-<數字>/<代號>.TW(O):f<數字>）與持股檢視（review:）。
+_FORBIDDEN = re.compile(
+    r"review:|bull-|bear-|fund-|tech-|event-|document:|price:|news:|overnight:|sentiment:|trading-status:"
+    r"|fear-greed|market-news|market-fear|(?-i:\bf-\d)|\d[A-Za-z]?\.TWO?:f\d|evidence|https?://",
+    re.IGNORECASE,
+)
+
+
+def forbidden_text(text: object) -> bool:
+    """文字是否含可被引用的識別碼或網址（論點檢視摘要不得出現）。"""
+    return isinstance(text, str) and bool(_FORBIDDEN.search(text))
 
 
 def usable_item(item: object) -> bool:
     return (
         isinstance(item, Mapping) and set(item) == ITEM_FIELDS and item["verdict"] in USABLE_VERDICTS
         and isinstance(item["symbol"], str) and bool(item["symbol"])
-        and isinstance(item["summary"], str) and bool(item["summary"].strip()) and not _FORBIDDEN.search(item["summary"])
+        and isinstance(item["summary"], str) and bool(item["summary"].strip()) and not forbidden_text(item["summary"])
     )
 
 

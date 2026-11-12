@@ -420,13 +420,12 @@ class RiskDirectionTests(Fixture):
     """只有降風險方向可自動套用；加風險或方向不明的提案只封存標 needs_human，需人明確放行。"""
 
     EXPECTED = {
-        "conviction_multipliers.high": "decrease", "conviction_multipliers.medium": "decrease", "conviction_multipliers.low": "decrease",
+        "conviction_multipliers.high": "decrease", "conviction_multipliers.medium": "ambiguous", "conviction_multipliers.low": "ambiguous",
         "cash_buffer_by_stance.aggressive": "increase", "cash_buffer_by_stance.neutral": "increase", "cash_buffer_by_stance.defensive": "increase",
         "positions_by_breadth.concentrated": "increase", "positions_by_breadth.balanced": "increase", "positions_by_breadth.diversified": "increase",
         "drawdown_control.neutral_at": "decrease", "drawdown_control.defensive_at": "decrease",
         "volatility_floor": "ambiguous", "trim_fraction": "increase", "volatility_exponent": "increase",
         "rotation.max_swaps_per_run": "decrease", "rotation.min_new_conviction": "increase",
-        "position_review.loss_alert": "decrease", "position_review.retrace_alert_20d": "decrease",
     }
 
     def test_every_knob_has_a_declared_risk_direction(self):
@@ -445,6 +444,8 @@ class RiskDirectionTests(Fixture):
         self.assertEqual(risk_direction("conviction_multipliers.high", "1.5", "1.6"), "risk_increasing")
         self.assertEqual(risk_direction("cash_buffer_by_stance.neutral", "0.10", "0.08"), "risk_increasing")
         self.assertEqual(risk_direction("rotation.min_new_conviction", "medium", "high"), "risk_reducing")
+        self.assertEqual(risk_direction("conviction_multipliers.low", "0.5", "0.4"), "ambiguous")
+        self.assertEqual(risk_direction("conviction_multipliers.medium", "1.0", "0.9"), "ambiguous")
         self.assertEqual(risk_direction("volatility_floor", "0.01", "0.005"), "ambiguous")
         self.assertEqual(risk_direction("nope", "1", "2"), "ambiguous")
 

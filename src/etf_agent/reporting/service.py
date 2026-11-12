@@ -6,6 +6,12 @@ import json
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
+from etf_agent.perception.contracts import PerceptionToolError
+from etf_agent.perception.tools import PerceptionDataTools
+from etf_agent.perception.validator import MarketPerceptionResultValidator
+from etf_agent.research.contracts import ResearchToolError
+from etf_agent.research.validator import ResearchResultValidator
+
 from .builder import ResearchReportBuilder
 from .contracts import ResearchReportError
 from .renderer import ResearchReportMarkdownRenderer
@@ -49,7 +55,32 @@ class ResearchReportApplicationService:
             if perception_bundle_path is not None
             else None
         )
+        cls._validate_upstream(snapshot, research, perception, bundle)
         return cls(ResearchReportBuilder(snapshot, research, perception, bundle))
+
+    @staticmethod
+    def _validate_upstream(
+        snapshot: Mapping[str, object],
+        research: Mapping[str, object],
+        perception: Optional[Mapping[str, object]],
+        bundle: Optional[Mapping[str, object]],
+    ) -> None:
+        """報告只整合「已驗證」artifact：建立前先跑上游 validator，任何錯誤即拒絕。
+
+        ResearchResult 的價格確認重算需要歷史價格庫，這裡不重算；其餘規則（引用、時間、辯論、閘門）全驗。
+        """
+        try:
+            errors = ["ResearchResult：%s" % e for e in ResearchResultValidator(snapshot).validate(research)]
+            if perception is not None and bundle is not None:
+                errors.extend(
+                    "MarketPerceptionResult：%s"
+                    % e
+                    for e in MarketPerceptionResultValidator(PerceptionDataTools(bundle)).validate(perception)
+                )
+        except (ResearchToolError, PerceptionToolError) as error:
+            raise ResearchReportError("上游 artifact 無法驗證：%s" % error) from error
+        if errors:
+            raise ResearchReportError("上游 artifact 驗證失敗：%s" % "; ".join(errors))
 
     def __init__(self, builder: ResearchReportBuilder):
         self.builder = builder

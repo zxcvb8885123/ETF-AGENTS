@@ -23,10 +23,10 @@ from etf_agent.decision.quality_dip_ruling import (
 from etf_agent.decision.risk import CASH_BUFFER_CEILING_MARGIN
 from etf_agent.decision.market_scope import market_sentiment_channel, overnight_market_channel
 from etf_agent.decision.sizing import (
-    CASH_STANCES, POSITION_BREADTHS, allowed_cash_grades, cash_grade_grid, revision_bounds_gate, validate_cash_stance,
+    CASH_STANCES, POSITION_BREADTHS, allowed_cash_grades, cash_grade_grid, cash_ratio_gate, revision_bounds_gate, validate_cash_stance,
 )
 
-from .agent_runner import AgentTask, DailyPipelineError
+from .agent_runner import RISK_INDEPENDENT_DENY_GLOBS, AgentTask, DailyPipelineError
 from .agent_schemas import (
     CASH_GRADE_STANCE_SCHEMA, CASH_STANCE_SCHEMA, QUALITY_DIP_RULING_SCHEMA, REVIEW_SCHEMA, _SHARED_RULES, cash_stance_recency_schema,
     cash_stance_turn_facts_schema, exposure_view_schema, offense_stance_schema,
@@ -195,6 +195,18 @@ CASH_GRADE_PROMPT = (
     "Policy 啟用 cash_ratio_range：摘要含 cash_grade_grid 與 cash_grade_allowed_by_stance，除了姿態另給 cash_grade"
     "（lower／middle／upper），只能選該姿態今日可選的子等級，你不得輸出百分比，規則見 cash-stance.md「cash_grade_allowed_by_stance」節。"
 )
+
+
+def _increase_cash_buffer_cap(policy: Mapping[str, object]) -> Decimal:
+    """increase_cash_buffer 的 value 上限：與 risk.py 驗證一致（現金上限減邊際；cash_ratio_range 開啟時再取今日最高格點）。"""
+    cap = Decimal(str(policy["cash_weight_ceiling"])) - CASH_BUFFER_CEILING_MARGIN
+    sizing = policy.get("position_sizing") or {}
+    gate = cash_ratio_gate(sizing)  # type: ignore[arg-type]
+    if gate is not None:
+        allowed = allowed_cash_grades(gate).get(str(sizing.get("cash_stance")), [])  # type: ignore[union-attr]
+        top = cash_grade_grid(gate)[str(sizing.get("cash_stance"))][allowed[-1]] if allowed else Decimal("0")  # type: ignore[union-attr]
+        cap = min(cap, Decimal(str(top)))
+    return cap
 
 
 def _grade_brief(gate: Mapping[str, object]) -> Dict[str, object]:
@@ -420,6 +432,7 @@ class RiskStagesMixin:
                 if exposure_view_gate is not None else ""
             ),
             schema,
+            deny_reads=self._independent_deny_reads(),
         )
         # offense 的 Schema 要求不適用欄位以空陣列／空字串送出，封存時還原成缺席；沒有閘門時與舊版相同（原樣複製）。
         # offense 的跨欄位規則多，第一次加兩次帶回饋的重試共三次嘗試（與降級版步驟的上限相同）；沒有 offense 時沿用 ``self.max_attempts``，行為不變。
@@ -428,6 +441,12 @@ class RiskStagesMixin:
             **({"max_attempts": max(self.max_attempts, OFFENSE_STANCE_ATTEMPTS)} if offense_gate is not None else {}))
         self.save_artifact("cash_stance", stance)
         return stance
+
+    def _independent_deny_reads(self) -> Sequence[str]:
+        """獨立判斷任務（現金姿態、優質股裁決）的拒讀樣式：只在主執行器能強制拒讀時才帶。
+
+        Codex 無法強制拒讀，帶 deny_reads 會在 ``_call_agent`` 被拒絕啟動（會讓 Codex 路徑整個跑不起來），所以不帶、維持原行為。"""
+        return RISK_INDEPENDENT_DENY_GLOBS if getattr(self.runner, "enforces_deny_reads", False) else ()
 
     # ------------------------------------------------------------------ quality_dip 裁決
     def run_quality_dip_ruling(
@@ -483,6 +502,7 @@ class RiskStagesMixin:
                 % (self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
                    self.root / "tradeagent/risk/portfolio-risk-review/references/quality-dip-ruling.md", brief_path, _SHARED_RULES),
                 QUALITY_DIP_RULING_SCHEMA,
+                deny_reads=self._independent_deny_reads(),
             )
             fingerprint = canonical_sha256({"envelope": envelope, "brief": brief})
             outcome = self.agent_step_degradable(
@@ -581,13 +601,13 @@ class RiskStagesMixin:
             "你是 $portfolio-risk-review 風險審查子 Agent。先讀 %s 及其連結的 %s，再讀提案 %s、情境 %s、Guard %s、"
             "程式計算的產業實際權重 %s 與每筆委託佔 20 日均量的比例 %s（flagged 表示超過警示比例或缺均量，可考慮 remove_candidate 或降低周轉）；"
             "可引用的 evidence ID 清單在 %s（evidence_ids 只能從它選取）。輸出 approve、revise 或 reject；revision_actions 的欄位格式與限制依 risk-review-output.md，"
-            "本次 increase_cash_buffer 的 value 不得高於 %s（競賽現金上限 %s 減邊際 %s）；已是第 %d 次修正、上限 %d 次"
+            "本次 increase_cash_buffer 的 value 不得高於 %s（競賽現金上限 %s 減邊際 %s；cash_ratio_range 開啟時另取今日可選最高格點，且為兩位小數）；已是第 %d 次修正、上限 %d 次"
             "（已達上限時不得再 revise，只能 approve 或 reject，要求修正會由程式降級為 reject）。%s%s"
             % (
                 self.root / "tradeagent/risk/portfolio-risk-review/SKILL.md",
                 self.root / "tradeagent/risk/portfolio-risk-review/references/risk-review-output.md",
                 names["proposal"], names["scenario"], names["guard"], names["sector_exposure"], names["liquidity_exposure"], citable_path,
-                Decimal(str(policy["cash_weight_ceiling"])) - CASH_BUFFER_CEILING_MARGIN,
+                _increase_cash_buffer_cap(policy),
                 policy["cash_weight_ceiling"], CASH_BUFFER_CEILING_MARGIN, revision, int(policy["max_revisions"]),
                 _revision_bounds_text(policy), _SHARED_RULES,
             ),
