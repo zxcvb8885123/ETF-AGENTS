@@ -320,7 +320,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 | `turnover_fit`＋`max_turnover_rate=0.3` | 換手超過上限時縮減買單；賣單本身超過時留住 exit |
 | `liquidity_fit` v1／v2＋`max_participation` | 買單股數不得超過 `max_participation` × 20 日均量（向下取整張，不足一張取消，`LIQUIDITY_LIMIT`；缺均量不縮，`LIQUIDITY_UNAVAILABLE`）；v1 在 `turnover_fit` 之後最後縮減，v2 把同一條上限提前到預算階段（換入者保留 `entry_reserve` 與 `_conviction_targets` 的單檔權重上限都先封頂，釋出的預算重新分配），最後縮減留作保險；只縮買單、不改寫交易 Agent 意圖、不影響 `team_inputs` |
 | `entry_reserve.swap_priority` v1 | 換股試算的名額保護只計分到至少一張的新股（`slot_recycle` 以權重 0 保留的買不到一張的新股不擋換股）；`turnover_fit` 縮買單時已保留預算的換股換入者最後才縮 |
-| `entry_reserve.turnover_skip` v1（**已實作、尚未開啟**） | 某一組讓累計換手超過 `max_turnover_rate` 時，只取消該組（`entry_reserve_turnover`、換出者不賣）並繼續試清單後面的組，較小的組放得進就留下；沒有它時，第一個超過的組之後全部取消。只有版本欄位、沒有人填數字；不改寫交易 Agent 意圖與提名順序、不影響 `team_inputs`；沒有該欄位時行為逐位元不變 |
+| `entry_reserve.turnover_skip` v1（**2026-11-12 已開啟**） | 某一組讓累計換手超過 `max_turnover_rate` 時，只取消該組（`entry_reserve_turnover`、換出者不賣）並繼續試清單後面的組，較小的組放得進就留下；沒有它時，第一個超過的組之後全部取消。只有版本欄位、沒有人填數字；不改寫交易 Agent 意圖與提名順序、不影響 `team_inputs`；沒有該欄位時行為逐位元不變 |
 | `reentry_cooldown` | 出場後 3 日不得再買未持有新股，`RISK_REENTRY_COOLDOWN` |
 | `drawdown_derisk` | defensive 時程式按 ATR 減碼至緩衝，附 hysteresis 的 `release_*`；`version` v1／v2／v3 差異見[決策流程細節](decision-details.md#控制回撤)，v4（2026-11-08）在 v3 之上把單次減碼預算限制在「換手上限減去交易 Agent 賣單」的餘額內；現行正式設定為 v5（見「Agent 自主權線」表） |
 | `forced_swap.confirmation` | 強制換股須有交易 Agent 採納的該股空頭 claim（`forced_swap` 已於 2026-11-10 20:10 隨 `agent_swap` v2 自現行設定移除，僅舊 Policy 重建使用） |

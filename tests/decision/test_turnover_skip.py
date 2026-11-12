@@ -37,11 +37,11 @@ class TurnoverSkipGateTests(unittest.TestCase):
         sizing["agent_swap"]["entry_reserve"]["turnover_skip"] = {"version": "v1"}
         self.assertFalse(turnover_skip_enabled(sizing))
 
-    def test_live_template_does_not_enable_it_yet(self):
+    def test_live_template_enables_it(self):
         import json
         from pathlib import Path
         live = json.loads((Path(__file__).resolve().parents[2] / "config" / "decision_policy.json").read_text(encoding="utf-8"))
-        self.assertFalse(turnover_skip_enabled(live["position_sizing"]))
+        self.assertTrue(turnover_skip_enabled(live["position_sizing"]))
 
 
 if __name__ == "__main__":

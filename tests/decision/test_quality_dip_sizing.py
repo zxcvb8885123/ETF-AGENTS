@@ -910,7 +910,8 @@ class ProductionTemplateTests(unittest.TestCase):
         # 2026-11-11：開啟 agent_swap.entry_reserve（policy_id strategy-2026-11-11-entry-reserve-1；回滾樣板 2026-11-11-before-entry-reserve.json）。
         live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         swap = live["position_sizing"]["agent_swap"]
-        self.assertEqual(swap["entry_reserve"], {"version": "v1", "max_entry_weight": "0.06", "max_nominations": 8, "swap_priority": {"version": "v1"}})
+        self.assertEqual(swap["entry_reserve"], {"version": "v1", "max_entry_weight": "0.06", "max_nominations": 8, "swap_priority": {"version": "v1"},
+                                         "turnover_skip": {"version": "v1"}})
         self.assertLessEqual(swap["max_swaps_per_run"], swap["entry_reserve"]["max_nominations"])
         self.assertEqual([e for e in errors_for(live["position_sizing"]) if "entry_reserve" in e], [])
         self.assertTrue((ROOT / "config" / "policy_versions" / "2026-11-11-before-entry-reserve.json").exists())
