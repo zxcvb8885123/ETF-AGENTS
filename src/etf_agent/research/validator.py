@@ -23,6 +23,9 @@ from .contracts import (
 )
 from .repository import HistoricalPriceFeatureRepository
 
+# 目前沒有核准的市場共識 Provider：歷史比較（MoM／YoY／累計）不是市場預期，任何 True 都拒絕。
+_NO_CONSENSUS_PROVIDER = "%s.is_market_expectation 不得為 true：目前沒有核准的市場共識 Provider，歷史比較不是市場預期"
+
 
 class ResearchResultValidator:
     """Validate LLM-produced research against one snapshot and its evidence."""
@@ -244,6 +247,8 @@ class ResearchResultValidator:
                     errors.append("%s.%s" % (frame_prefix, error))
             if not isinstance(frame.get("is_market_expectation"), bool):
                 errors.append("%s.is_market_expectation 必須是布林值" % frame_prefix)
+            elif frame["is_market_expectation"]:
+                errors.append(_NO_CONSENSUS_PROVIDER % frame_prefix)
             try:
                 evidence_ids = _string_list(frame, "evidence_ids")
                 self._validate_related_references(evidence_ids, item, frame_prefix, errors)
@@ -541,6 +546,17 @@ class ResearchDebateValidator:
         for role in ("bull", "bear"):
             if by_role[role].get("input_packet_ids") != [fact_id]:
                 errors.append("%s 子 Agent 必須只讀 fact packet，以維持多空獨立" % role)
+        # Adjudicator 不得新增事實：其引用的證據必須是 fact、bull、bear 三個 packet 已引用過的子集。
+        upstream_evidence = set()
+        for role in ("fact", "bull", "bear"):
+            refs = by_role[role].get("evidence_ids")
+            if isinstance(refs, list):
+                upstream_evidence.update(str(ref) for ref in refs)
+        adjudicator_refs = by_role["adjudicator"].get("evidence_ids")
+        if isinstance(adjudicator_refs, list):
+            extra = sorted({str(ref) for ref in adjudicator_refs} - upstream_evidence)
+            if extra:
+                errors.append("adjudicator 引用 fact、bull、bear 都沒有引用過的證據（不得新增事實）：%s" % ", ".join(extra))
         adjudicator_inputs = by_role["adjudicator"].get("input_packet_ids")
         if not isinstance(adjudicator_inputs, list) or set(adjudicator_inputs) != {
             fact_id, bull_id, bear_id
@@ -633,6 +649,8 @@ class ResearchDebateValidator:
                     continue
                 if not isinstance(frame.get("is_market_expectation"), bool):
                     errors.append("%s.is_market_expectation 必須是布林值" % frame_prefix)
+                elif frame["is_market_expectation"]:
+                    errors.append(_NO_CONSENSUS_PROVIDER % frame_prefix)
                 try:
                     refs = _string_list(frame, "evidence_ids")
                 except ResearchToolError as error:

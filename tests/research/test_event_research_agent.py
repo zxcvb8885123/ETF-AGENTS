@@ -400,6 +400,25 @@ class SnapshotResearchToolTests(unittest.TestCase):
         self.assertTrue(any("維持多空獨立" in error for error in errors))
 
 
+    def test_adjudicator_cannot_add_evidence_outside_upstream_packets(self):
+        validator = ResearchDebateValidator(snapshot_fixture())
+        invalid = valid_debate_bundle()
+        invalid["packets"][0]["evidence_ids"] = ["document-evidence-1"]
+        invalid["packets"][3]["evidence_ids"] = ["document-evidence-1", "price-evidence-1"]
+        errors = validator.validate(invalid)
+        self.assertTrue(any("不得新增事實" in error and "price-evidence-1" in error for error in errors))
+
+    def test_historical_comparison_cannot_be_marked_market_expectation(self):
+        validator = ResearchDebateValidator(snapshot_fixture())
+        invalid = valid_debate_bundle()
+        invalid["packets"][0]["output"]["reference_frames"][0]["is_market_expectation"] = True
+        self.assertTrue(any("沒有核准的市場共識 Provider" in e for e in validator.validate(invalid)))
+        result = valid_result()
+        result["items"][0]["assessment"]["reference_frames"][0]["is_market_expectation"] = True
+        errors = ResearchResultValidator(snapshot_fixture()).validate(result)
+        self.assertTrue(any("沒有核准的市場共識 Provider" in e for e in errors))
+
+
 class HistoricalPriceFeatureTests(unittest.TestCase):
     def test_features_prefer_same_day_official_price_over_yahoo(self):
         with tempfile.TemporaryDirectory() as directory:
