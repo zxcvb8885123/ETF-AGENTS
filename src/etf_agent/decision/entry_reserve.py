@@ -29,7 +29,9 @@ ENTRY_RESERVE_V1 = "v1"
 ENTRY_RESERVE_FIELDS = {"version", "max_entry_weight", "max_nominations"}
 # 選配子欄位 ``swap_priority``（只有 {"version": "v1"}、沒有人填數字）：沒有它的舊 Policy／舊 run 逐位元維持原行為。
 SWAP_PRIORITY_V1 = "v1"
-ENTRY_RESERVE_OPTIONAL_FIELDS = {"swap_priority"}
+ENTRY_RESERVE_OPTIONAL_FIELDS = {"swap_priority", "turnover_skip"}
+# 選配子欄位 ``turnover_skip``（只有 {"version": "v1"}、沒有人填數字）：沒有它的舊 Policy／舊 run 逐位元維持原行為（某組超過換手上限就從該組起全部取消）。
+TURNOVER_SKIP_V1 = "v1"
 ENTRY_RESERVE_MAX_NOMINATIONS = 20
 ENTRY_RESERVE_NOTE = (
     "每一組換股都要填份量格 size（small 試單、medium 一般、large 把握最高；只有列舉、不輸出任何百分比）。程式把份量格對成買進權重上限，"
@@ -61,6 +63,14 @@ def swap_priority_enabled(sizing: object) -> bool:
     return isinstance(value, Mapping) and value.get("version") == SWAP_PRIORITY_V1
 
 
+def turnover_skip_enabled(sizing: object) -> bool:
+    """``agent_swap.entry_reserve.turnover_skip`` v1：某一組讓累計換手超過上限時只取消該組、繼續試清單後面的組（後面較小的組放得進就留下）。
+    沒有它時，第一個超過的組之後全部取消。只改程式內的取捨，不改寫交易 Agent 的意圖與提名順序。"""
+    gate = entry_reserve_gate(sizing)
+    value = gate.get("turnover_skip") if gate is not None else None
+    return isinstance(value, Mapping) and value.get("version") == TURNOVER_SKIP_V1
+
+
 def validate_entry_reserve_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
     """形狀、值域與前提：agent_swap v2、agent_swap.exposure（purpose 的宿主）、quality_dip 若有只能是 v3／v4（份量格語意一致）。"""
     swap = sizing.get("agent_swap")
@@ -85,6 +95,14 @@ def validate_entry_reserve_gate(sizing: Mapping[str, object], errors: List[str])
             reject_unknown_fields(priority, {"version"}, prefix + ".swap_priority", errors)
             if priority.get("version") != SWAP_PRIORITY_V1:
                 errors.append("%s.swap_priority.version 只允許 %s" % (prefix, SWAP_PRIORITY_V1))
+    if "turnover_skip" in gate:
+        skip = gate["turnover_skip"]
+        if not isinstance(skip, Mapping):
+            errors.append("%s.turnover_skip 必須是物件" % prefix)
+        else:
+            reject_unknown_fields(skip, {"version"}, prefix + ".turnover_skip", errors)
+            if skip.get("version") != TURNOVER_SKIP_V1:
+                errors.append("%s.turnover_skip.version 只允許 %s" % (prefix, TURNOVER_SKIP_V1))
     if swap.get("version") != "v2":
         errors.append("%s 只允許用於 agent_swap.version=v2（配置才讀提名）" % prefix)
     if not isinstance(swap.get("exposure"), Mapping):

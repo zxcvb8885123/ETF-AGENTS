@@ -42,7 +42,7 @@ from .sizing import (
     reentry_cooldown_hint_only, reentry_hint_id,
 )
 from .liquidity_fit import liquidity_fit_limit, liquidity_fit_upstream
-from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled
+from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled, turnover_skip_enabled
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 from .offense import capped_size, offense_bound, thesis_size_cap_active
 from .quality_dip_swap import (
@@ -1529,6 +1529,7 @@ class AllocationOrderEngine:
         kept: List[Tuple[str, str]] = []
         plan: Dict[str, Tuple[int, Decimal, str]] = {}
         stop = False
+        skip_over = turnover_skip_enabled(sizing)
         for buy, sell in needed:
             if stop:
                 cancel(buy, sell, "entry_reserve_turnover")
@@ -1570,7 +1571,8 @@ class AllocationOrderEngine:
             buy_gross = decimal_value(self._order(buy, "buy", shares, "buy", effective)["gross_amount"], "gross_amount")
             pair_turnover = (decimal_value(sell_order["gross_amount"], "gross_amount") + buy_gross) / marked_nav
             if turnover + pair_turnover > turnover_limit:
-                stop = True
+                # turnover_skip v1：只取消這一組、繼續試後面的組（此時尚未動用任何累計狀態，跳過不影響後面的試算）；沒有它時第一個超過的組之後全部取消。
+                stop = not skip_over
                 cancel(buy, sell, "entry_reserve_turnover")
                 continue
             turnover += pair_turnover
