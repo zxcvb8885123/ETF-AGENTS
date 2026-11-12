@@ -440,6 +440,45 @@ class DailyPipelineTests(unittest.TestCase):
             self.assertEqual(models["bull_b0"], "strong-model")
             self.assertEqual(models["trader_b0"], "strong-model")
 
+    def _recording_runner(self, outputs, enforces):
+        class Recording(FakeRunner):
+            enforces_deny_reads = enforces
+
+            def __init__(self, items):
+                super().__init__(items)
+                self.tasks = {}
+
+            def run(self, task, run_dir):
+                self.tasks[task.name] = task
+                return super().run(task, run_dir)
+
+        return Recording(outputs)
+
+    def test_cash_stance_denies_trader_intent_files_when_the_runner_enforces_it(self):
+        from etf_agent.automation.agent_runner import RISK_INDEPENDENT_DENY_GLOBS
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            runner = self._recording_runner(team_outputs(), True)
+            result = world.run(runner)
+            self.assertEqual(result.status, "completed", result.errors)
+            task = runner.tasks["cash_stance"]
+            self.assertEqual(tuple(task.deny_reads), RISK_INDEPENDENT_DENY_GLOBS)
+            for pattern in ("trade_decision*", "swap_nomination*", "selection_ranking*", "trader_*"):
+                self.assertIn(pattern, task.deny_reads)
+            self.assertNotIn("brief_cash_stance*", task.deny_reads)  # 自己的簡報必須可讀
+            self.assertEqual(runner.tasks["review_r0"].deny_reads, ())  # 審查看提案，不套用
+
+    def test_cash_stance_has_no_deny_reads_on_a_runner_that_cannot_enforce_it(self):
+        # Codex 型主執行器（不強制拒讀）：任務不帶 deny_reads，否則會被拒絕啟動；研究階段另由暫存隔離。
+        with tempfile.TemporaryDirectory() as directory:
+            world = PipelineWorld(Path(directory), approved_status=True)
+            outputs = team_outputs()
+            research = FakeRunner({name: outputs[name] for name in ("bull_b0", "bear_b0")})  # 研究員用 Claude 型：不觸發暫存
+            runner = self._recording_runner({name: items for name, items in outputs.items() if name not in research.outputs}, False)
+            result = world.run(runner, research_runner=research)
+            self.assertEqual(result.status, "completed", result.errors)
+            self.assertEqual(runner.tasks["cash_stance"].deny_reads, ())
+
     def test_research_runner_only_handles_bull_and_bear(self):
         with tempfile.TemporaryDirectory() as directory:
             world = PipelineWorld(Path(directory), approved_status=True)
@@ -589,6 +628,9 @@ class DailyPipelineTests(unittest.TestCase):
         trader_prompts = [prompt for name, prompt in runner.prompts if name == "trader_b0"]
         self.assertEqual(len(trader_prompts), 2)
         self.assertIn("上一次輸出未通過確定性驗證", trader_prompts[1])
+        self.assertIn("trader_b0_raw_1.json", trader_prompts[1])
+        self.assertIn("只更正上列有錯的項目", trader_prompts[1])
+        self.assertNotIn("trader_b0_raw", trader_prompts[0])
 
     def test_repeated_invalid_output_stops_without_fallback(self):
         wrong = {"items": TECHNICAL["items"][:1]}

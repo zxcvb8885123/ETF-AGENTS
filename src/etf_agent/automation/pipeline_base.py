@@ -117,6 +117,13 @@ _ORDERS = {
 }
 
 
+# 重試時附上一次完整輸出的路徑：只更正有錯的項目，沒被指出的判斷不要為了重做而改動。
+VALIDATION_RAW_HINT = (
+    "\n\n上一次的完整輸出已存在 %s，可讀取對照；請只更正上列有錯的項目，沒被指出錯誤的項目維持原判斷、不要重新評估，"
+    "但仍須輸出完整結果。"
+)
+
+
 def _direction(field: str, before: object, after: object) -> str:
     """同一欄位前後值的方向：積極、保守或無法排序；供稽核統計，不影響驗證。
 
@@ -468,6 +475,9 @@ class PipelineBase:
                 item["first_validation_errors"] = [str(error)[:200] for error in errors[:3]]
             # 錯誤可能含 Agent 輸出的外來值：逐條壓成單行並限長，避免偽造新的回饋條目或指示。
             prompt = task.prompt + VALIDATION_FEEDBACK_PREFIX + "\n- ".join(single_line(error) for error in errors[:40])
+            if not (self._staged_raw is not None and prefix in RESEARCH_TASK_PREFIXES):
+                # 原始輸出已落地才附路徑（研究階段輸出暫存不落地、也不得讓研究員讀檔，故不附）。
+                prompt += VALIDATION_RAW_HINT % self._path("%s_raw_%d" % (task.name, offset + attempt))
         if degradable:
             return self._degrade(task, STEP_EXHAUSTED, errors, max_attempts, fingerprint)
         raise DailyPipelineError("%s Agent 輸出驗證失敗：%s" % (task.name, "；".join(errors[:10])))
