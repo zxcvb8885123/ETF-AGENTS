@@ -39,6 +39,7 @@ def live_without_offense():
         pairs = sizing["agent_swap"]["exposure"]["max_pairs_by_view"]
         pairs.pop("probe", None)
         sizing.pop("offense")
+        sizing.pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
     return value
 
 
@@ -955,6 +956,7 @@ class LiveTemplatePipelineTests(unittest.TestCase):
         template["position_sizing"].pop("agent_swap")  # 前提含 exposure_rotation 與 rebound_participation；整條鏈由 test_swap_nomination_pipeline 覆蓋
         template["position_sizing"].pop("rebound_participation")  # 需要 exposure_rotation 與 turn_facts，同上
         template["position_sizing"].pop("exposure_view")  # 前提含 exposure_rotation 與 cash_stance_turn_facts；整條鏈由 test_exposure_view 覆蓋
+        template["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         template["position_sizing"].pop("exposure_rotation")
         high_trade = copy.deepcopy(TRADE)
         high_trade["items"][0]["conviction"] = "high"

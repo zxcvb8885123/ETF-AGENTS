@@ -44,6 +44,7 @@ def template_view_v1():
     value = template_v4()
     value["position_sizing"]["exposure_view"] = {"version": "v1"}
     value["position_sizing"].pop("offense", None)  # offense 需要 exposure_view v2；max_pairs_by_view 還原成沒有 probe 的兩鍵
+    value["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
     value["position_sizing"]["agent_swap"]["exposure"]["max_pairs_by_view"].pop("probe", None)
     return value
 

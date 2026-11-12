@@ -12,9 +12,13 @@ from etf_agent.decision import (
 from etf_agent.decision.contracts import DecisionContext
 from etf_agent.decision.drawdown import stance_meets_floor
 from etf_agent.decision.recency import evidence_recency
+from etf_agent.decision.benchmark_facts import risk_benchmark_brief
 from etf_agent.decision.market_index import market_index_facts
 from etf_agent.decision.exposure_facts import exposure_view_agent_led, risk_exposure_brief
 from etf_agent.decision.offense import cash_glide_brief, normalize_offense_stance, offense_brief
+from etf_agent.decision.cash_stance_brief import (
+    BRIEF_PROMPT, REFERENCE_PHRASE, REFERENCE_PHRASE_OMITTED, company_events_summary, offense_reference_omitted, reorder_brief,
+)
 from etf_agent.decision.turn_facts import turn_facts
 from etf_agent.decision.quality_dip_ruling import (
     DEGRADED_STATUSES, STATUS_NOT_REQUIRED, STATUS_SKIPPED, QualityDipRulingValidator, expected_program_status, program_ruling,
@@ -84,6 +88,13 @@ RECENCY_PROMPT = (
 MARKET_INDEX_PROMPT = (
     "摘要含 market_index_facts（程式依證交所加權指數算的當日收盤、漲跌、近 5／20 日報酬與離高點回檔，是背景事實、"
     "沒有 evidence_id、不可引用）：判斷現金姿態時一併參考，但單日漲跌不代表趨勢，不要只憑它改變姿態。規則見 cash-stance.md「market_index_facts」節。"
+)
+
+BENCHMARK_PROMPT = (
+    "摘要含 benchmark_facts（程式算的 0050 近 1／5 日報酬、持股對 0050 的當日貢獻差、前幾大成分的權重與組合權重差額、組合對 0050 的 beta，"
+    "是背景事實、沒有 evidence_id、不可引用，理由也不要寫出這個鍵名或其區塊鍵名；缺資料的區塊標 unavailable、不補值）：判斷現金姿態時一併參考。"
+    "這是事實不是目標：規則上單股上限 10%（2330 為 25%），帳戶無法複製 0050 的集中度；落後 0050 可能是錯過反彈、也可能只是不追高，"
+    "兩種錯誤都有成本，不要只憑與 0050 的差距改變姿態。規則見 cash-stance.md「benchmark_facts」節。"
 )
 
 TURN_FACTS_PROMPT = (
@@ -265,6 +276,8 @@ class RiskStagesMixin:
         agent_led: bool = False,
         offense_gate: Optional[Mapping[str, object]] = None,
         offense_facts: Optional[Mapping[str, object]] = None,
+        cash_stance_brief_gate: Optional[Mapping[str, object]] = None,
+        benchmark_facts: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -316,6 +329,12 @@ class RiskStagesMixin:
         index_brief: Dict[str, object] = (
             {"market_index_facts": market_index_facts(bundle)} if market_index_facts_gate is not None else {}
         )
+        # benchmark_facts（版本閘門）：附程式算的 0050 基準事實（背景、不可引用）；沒有閘門時簡報與舊版逐鍵相同。
+        benchmark_brief: Dict[str, object] = {}
+        if benchmark_facts is not None:
+            if not typed:
+                raise DailyPipelineError("position_sizing.benchmark_facts 只能用於 evidence_policy=typed_evidence_v1")
+            benchmark_brief = {"benchmark_facts": risk_benchmark_brief(benchmark_facts)}
         # exposure_view（版本閘門）：附程式算的組合曝險與產業權重事實（背景、不可引用）；沒有閘門時簡報與舊版逐鍵相同。
         exposure_brief: Dict[str, object] = {}
         if exposure_view_gate is not None:
@@ -330,17 +349,20 @@ class RiskStagesMixin:
         if offense_gate is not None:
             if exposure_view_gate is None or not isinstance(offense_facts, Mapping):
                 raise DailyPipelineError("position_sizing.offense 啟用時必須有 exposure_view 與 offense_facts")
-            offense_block = {"offense_facts": offense_brief(offense_facts, offense_gate)}
+            offense_block = {"offense_facts": (
+                offense_brief(offense_facts, offense_gate, include_reference=False) if offense_reference_omitted(cash_stance_brief_gate)
+                else offense_brief(offense_facts, offense_gate))}
             glide = cash_glide_brief(offense_gate, cash_ratio_range)
             if glide is not None:
                 offense_block["offense_cash_glide"] = glide  # offense.cash_glide：只在前次放寬過現金時附（背景、不可引用）
-        brief_path = self.save_brief(
-            "brief_cash_stance",
-            {
+        if offense_reference_omitted(cash_stance_brief_gate) and offense_gate is None:
+            raise DailyPipelineError("position_sizing.cash_stance_brief.offense_reference 需要 position_sizing.offense")
+        brief_body = {
                 **recency_brief,
                 "regime_assessment": regime,
                 **turn_brief,
                 **index_brief,
+                **benchmark_brief,
                 **exposure_brief,
                 **offense_block,
                 "analyst_outlooks": {
@@ -375,8 +397,11 @@ class RiskStagesMixin:
                 # typed_evidence_v1：市場層級證據另列一份，至少要引用其中一個；個股行情只能作補充。
                 **({"market_level_evidence_ids": sorted(context.market_evidence_ids),
                     "citable_evidence_ids": sorted(set(price_evidence) | context.market_evidence_ids)} if typed else {}),
-            },
-        )
+            }
+        # cash_stance_brief（版本閘門）：公司事件改摘要、必讀欄位重排；沒有閘門時簡報與舊版逐鍵相同。
+        if cash_stance_brief_gate is not None:
+            brief_body = reorder_brief(brief_body, company_events_summary(analyst_reports["event"].get("items", [])))
+        brief_path = self.save_brief("brief_cash_stance", brief_body)
         floor = (drawdown_control or {}).get("stance_floor")
 
         def validate(stance: Mapping[str, object]) -> List[str]:
@@ -426,11 +451,14 @@ class RiskStagesMixin:
                 if turn_state is not None else ""
             )
             + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else "")
+            + (BENCHMARK_PROMPT if benchmark_facts is not None else "")
             + (
-                OFFENSE_VIEW_PROMPT if offense_gate is not None else
+                (OFFENSE_VIEW_PROMPT.replace(REFERENCE_PHRASE, REFERENCE_PHRASE_OMITTED)
+                 if offense_reference_omitted(cash_stance_brief_gate) else OFFENSE_VIEW_PROMPT) if offense_gate is not None else
                 (EXPOSURE_VIEW_PROMPT_AGENT_LED if agent_led else EXPOSURE_VIEW_PROMPT)
                 if exposure_view_gate is not None else ""
-            ),
+            )
+            + (BRIEF_PROMPT if cash_stance_brief_gate is not None else ""),
             schema,
             deny_reads=self._independent_deny_reads(),
         )

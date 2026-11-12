@@ -105,6 +105,10 @@ class PortfolioDecisionApplicationService:
         active_share_holdings_path: Optional[Path] = None,
         active_share_approvals_path: Optional[Path] = None,
         company_news: bool = True,
+        benchmark_facts_gate: Optional[Mapping[str, object]] = None,
+        benchmark_holdings_path: Optional[Path] = None,
+        benchmark_holdings_approvals_path: Optional[Path] = None,
+        benchmarks_config_path: Optional[Path] = None,
     ) -> Dict[str, object]:
         """由 Snapshot 與 SQLite 歷史行情建立 DecisionInputBundle；未附帳戶時輸出樣板。
 
@@ -151,6 +155,14 @@ class PortfolioDecisionApplicationService:
         if company_news:
             from etf_agent.perception.company_news import build_company_news_input
             company_news_input = build_company_news_input(database_path, snapshot)
+        benchmark_input = None
+        if benchmark_facts_gate is not None:
+            # position_sizing.benchmark_facts 開啟時才建立 benchmark_input（0050 收盤加成分權重）；缺任一路徑即拒絕。
+            if benchmark_holdings_path is None or benchmark_holdings_approvals_path is None or benchmarks_config_path is None:
+                raise DecisionToolError("benchmark_facts 啟用時必須提供 0050 成分權重檔、來源核准檔與基準設定檔")
+            from .benchmark_facts import build_benchmark_input
+            benchmark_input = build_benchmark_input(
+                database_path, benchmark_holdings_path, benchmark_holdings_approvals_path, benchmarks_config_path, snapshot)
         rules = cls.read_json(rules_path, " DecisionRules")
         required_benchmarks = rules.get("required_benchmark_ids") or []
         benchmarks: List[Dict[str, object]] = []
@@ -180,6 +192,7 @@ class PortfolioDecisionApplicationService:
             ),
             market_fear_greed_input=fear_greed,
             overnight_market_input=overnight,
+            benchmark_input=benchmark_input,
             market_news_input=market_news_input,
             benchmarks=benchmarks,
             company_news_input=company_news_input,

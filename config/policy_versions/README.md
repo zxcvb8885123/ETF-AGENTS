@@ -18,3 +18,4 @@
 - `2026-11-12-before-probe-beta-045.json`：2026-11-12 把 `offense.by_view.probe.beta_stop` 由 0.40 改 0.45 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-029-1`）。要回滾，把該值改回 `"0.40"`。
 - `2026-11-12-before-swap-cap-7.json`：2026-11-12 把 `offense.by_view.probe.beta_stop` 由 0.45 改 0.55、`agent_swap.max_swaps_per_run` 與 `rotation.max_swaps_per_run` 由 5 改 7 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-033-1`）。要回滾，把這三個值改回 `"0.45"`、5、5。
 - `2026-11-12-before-turnover-skip.json`：2026-11-12 開啟 `agent_swap.entry_reserve.turnover_skip` 之前的正式樣板（`policy_id: strategy-2026-11-12-swap-cap-7-1`）。要回滾，刪掉 `position_sizing.agent_swap.entry_reserve.turnover_skip`（舊 run 仍讀各自封存的 `policy.json`）。
+- `2026-11-12-before-cash-stance-brief.json`：2026-11-12 開啟 `position_sizing.cash_stance_brief` 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-skip-1`）。要回滾，刪掉 `position_sizing.cash_stance_brief`（舊 run 仍讀各自封存的 `policy.json`）。

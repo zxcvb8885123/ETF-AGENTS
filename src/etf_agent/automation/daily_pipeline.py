@@ -36,6 +36,7 @@ from etf_agent.decision import (
     revision_effects,
 )
 from etf_agent.decision.allocation import DecisionPolicyValidator
+from etf_agent.decision.benchmark_facts import benchmark_facts_gate, build_benchmark_facts
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
@@ -45,6 +46,7 @@ from etf_agent.decision.reentry_cooldown import bind_reentry_cooldown
 from etf_agent.decision.swap_nomination import agent_swap_gate, apply_swap_nomination, bind_thesis_hints
 from etf_agent.decision.decline_depth import build_decline_depth_facts, scan_quality_dip_entries
 from etf_agent.decision.offense import build_offense_facts, offense_gate
+from etf_agent.decision.cash_stance_brief import cash_stance_brief_gate
 from etf_agent.decision.quality_dip_swap import (
     bind_quality_dip_ladder_entries, ladder_counts_quality_dip_fills_only, quality_dip_ladder_gate, quality_dip_swap_gate, quality_dip_v3_gate,
 )
@@ -129,6 +131,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         overnight_approvals_path: Optional[Path] = None,
         holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
         require_nav_history: bool = False,
+        benchmark_holdings_path: Optional[Path] = None,
+        benchmark_holdings_approvals_path: Optional[Path] = None,
+        benchmarks_config_path: Optional[Path] = None,
     ) -> PipelineResult:
         """``applied_decision_run_ids`` 是帳本實際結算過的 Decision run（舊到新），用來在前一交易時段有多個封存 run 時
         挑出真正交出去的那一個；不給時取該時段 cutoff 最新者。
@@ -150,6 +155,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 active_share_approvals_path=active_share_approvals_path,
                 overnight_root=overnight_root, overnight_approvals_path=overnight_approvals_path,
                 holdings_history=holdings_history, require_nav_history=require_nav_history,
+                benchmark_holdings_path=benchmark_holdings_path,
+                benchmark_holdings_approvals_path=benchmark_holdings_approvals_path,
+                benchmarks_config_path=benchmarks_config_path,
             )
             result.status = "completed"
         except Exception as error:
@@ -191,6 +199,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
         overnight_approvals_path: Optional[Path] = None,
         holdings_history: Optional[Sequence[Mapping[str, object]]] = None,
         require_nav_history: bool = False,
+        benchmark_holdings_path: Optional[Path] = None,
+        benchmark_holdings_approvals_path: Optional[Path] = None,
+        benchmarks_config_path: Optional[Path] = None,
     ) -> None:
         service = PortfolioDecisionApplicationService
         if require_nav_history and nav_history is None and isinstance(
@@ -220,6 +231,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 self.save_artifact("market_news_error", {"error": str(error)})
                 self.log("[新聞] 未接入（%s），市場情緒改用恐懼貪婪指標" % error)
         self.log("[decision 1] 建立並驗證 DecisionInputBundle")
+        benchmark_gate = benchmark_facts_gate(service.read_json(policy_template_path, " 策略樣板").get("position_sizing"))
         # 公司事件由分析團隊交付，不另產生四子 Agent 的 ResearchResult。
         built = service.build_input_file(
             snapshot_path, database_path, rules_path, self._path("decision_input"),
@@ -230,6 +242,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             market_news_input=market_news,
             active_share_holdings_path=active_share_holdings_path,
             active_share_approvals_path=active_share_approvals_path,
+            # benchmark_facts（版本閘門）：策略樣板有此欄位才建立 benchmark_input；沒有時不傳，決策輸入與舊版逐位元相同。
+            **({"benchmark_facts_gate": benchmark_gate, "benchmark_holdings_path": benchmark_holdings_path,
+                "benchmark_holdings_approvals_path": benchmark_holdings_approvals_path,
+                "benchmarks_config_path": benchmarks_config_path} if benchmark_gate is not None else {}),
         )
         if not built["valid"]:
             raise DailyPipelineError("DecisionInputBundle 驗證失敗：" + "；".join(built["errors"]))
@@ -396,6 +412,13 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             exposure_facts = build_exposure_facts(bundle, base_policy)
             self.save_artifact("exposure_facts", exposure_facts)
 
+        # benchmark_facts（版本閘門，已實作、尚未開啟）：程式依決策輸入的 benchmark_input 算 0050 基準事實，只給風險 Agent 當背景；
+        # 不進 team_inputs（由決策輸入重算）。沒有閘門時不建立，簡報與 team_inputs 逐鍵不變。
+        benchmark_facts = None
+        if benchmark_facts_gate(base_policy.get("position_sizing")) is not None:
+            benchmark_facts = build_benchmark_facts(bundle, base_policy)
+            self.save_artifact("benchmark_facts", benchmark_facts)
+
         # offense（版本閘門，轉向後進攻）：程式算的賣壓竭盡、廣度回升、量能、情緒極端、指數站回五類事實與對照樣本，只給風險 Agent 當背景；
         # 另存進 team_inputs.offense_facts（選配鍵，須 2.9 以上）供 Finalizer 整份重算。沒有閘門時不建立，team_inputs 逐鍵不變。
         offense_facts = None
@@ -520,7 +543,10 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                               "exposure_facts": exposure_facts} if exposure_facts is not None else {}),
                                           agent_led=exposure_view_agent_led(base_policy.get("position_sizing")),
                                           **({"offense_gate": offense_gate(base_policy.get("position_sizing")),
-                                              "offense_facts": offense_facts} if offense_facts is not None else {}))
+                                              "offense_facts": offense_facts} if offense_facts is not None else {}),
+                                          **({"cash_stance_brief_gate": cash_stance_brief_gate(base_policy.get("position_sizing"))}
+                                             if cash_stance_brief_gate(base_policy.get("position_sizing")) is not None else {}),
+                                          **({"benchmark_facts": benchmark_facts} if benchmark_facts is not None else {}))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)

@@ -1239,6 +1239,9 @@ def _main(args) -> int:
                 applied_decision_run_ids=VirtualAccountRepository(ROOT / "artifacts" / "ledger", args.account_id).applied_decision_run_ids(),
                 active_share_holdings_path=ROOT / "data" / "active_etf_holdings.csv",
                 active_share_approvals_path=ROOT / "config" / "active_share_sources.json",
+                benchmark_holdings_path=ROOT / "data" / "benchmark_holdings.csv",
+                benchmark_holdings_approvals_path=ROOT / "config" / "benchmark_holdings_sources.json",
+                benchmarks_config_path=ROOT / "config" / "benchmarks.json",
             )
 
         result, agent_calls, auto_resume = run_decision_chain(

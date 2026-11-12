@@ -424,6 +424,20 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "不新增 Agent 輸出欄位、不影響配置，所以 Finalizer 不需重算；與其他現金姿態閘門可獨立開關",
     ),
     GateRule(
+        "cash_stance_brief",
+        note="風險 Agent 現金姿態簡報縮減（v2，只改簡報副本與提示文字）：company_events 改為摘要（只列 high 事件）並重排必讀欄位在前；"
+             "選配 offense_reference=omit（需 offense）使簡報的 offense_facts 不附 reference 對照樣本；不新增 Agent 輸出欄位、不改 Validator、"
+             "不改配置，team_inputs 不升版、沒有新鍵（offense_facts 照舊封存與重算）；形狀由 cash_stance_brief.validate_cash_stance_brief_gate 檢查",
+    ),
+    GateRule(
+        "benchmark_facts",
+        requires=("exposure_view",),
+        note="風險 Agent 現金姿態簡報附 benchmark_facts（0050 報酬、持股對 0050 的當日貢獻差、前幾大成分的主動權重、組合對 0050 的 beta，"
+             "紀錄用、不可引用）；決策輸入多選配鍵 benchmark_input（只在本閘門開啟時建立、進 bundle 雜湊），事實由決策輸入重算、"
+             "team_inputs 不升版、沒有新鍵；max_holdings_age_days 由人填（程式不給預設）；需 typed_evidence_v1（簡報時檢查）；"
+             "不新增 Agent 輸出欄位、不影響配置；形狀由 benchmark_facts.validate_benchmark_facts_gate 檢查",
+    ),
+    GateRule(
         "quality_dip_facts",
         note="優質股被大盤拖累的事實（第一階段，紀錄用）：程式算全交易池的視窗前 beta 殘差、價格位置與財報三個清單，"
              "以背景給技術／基本面分析師與交易 Agent（不給多空研究員），不新增 Agent 輸出欄位、不影響配置；"
@@ -627,6 +641,12 @@ def validate_cash_stance(
         validate_offense_stance(
             stance, evidence, context.market_evidence_ids, non_news_market_ids(context.bundle, context.overnight_evidence_ids),
             offense_facts, tokens, prefix, errors)
+    if "benchmark_input" in context.bundle and isinstance(stance.get("rationale"), str):
+        # benchmark_facts（版本閘門，決策輸入有 benchmark_input 才檢查）：背景不是證據，理由不得寫出區塊鍵名。
+        from .benchmark_facts import benchmark_reference_tokens
+        cited = cited_reference_tokens(str(stance["rationale"]), benchmark_reference_tokens())
+        if cited:
+            errors.append("%s.rationale 不得寫出基準事實的鍵名（背景不是證據，請用白話描述事實）：%s" % (prefix, "、".join(cited)))
     if evidence and not set(evidence) & context.market_evidence_ids:
         errors.append(
             "%s 至少要引用一個市場層級證據（market_level_evidence_ids：全市場情緒、恐懼貪婪成分、隔夜市場或市場狀態編號）；"
@@ -732,6 +752,12 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "market_index_facts" in sizing:
         from .market_index import validate_market_index_facts_gate
         validate_market_index_facts_gate(sizing, errors)
+    if "cash_stance_brief" in sizing:
+        from .cash_stance_brief import validate_cash_stance_brief_gate
+        validate_cash_stance_brief_gate(sizing, errors)
+    if "benchmark_facts" in sizing:
+        from .benchmark_facts import validate_benchmark_facts_gate
+        validate_benchmark_facts_gate(sizing, errors)
     if "quality_dip_facts" in sizing:
         from .dip_facts import validate_quality_dip_facts_gate
         validate_quality_dip_facts_gate(sizing, errors)

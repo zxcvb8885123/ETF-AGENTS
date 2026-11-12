@@ -50,6 +50,7 @@ class DecisionInputBuilder:
         benchmarks: Sequence[Mapping[str, object]] = (),
         company_news_input: Optional[Mapping[str, object]] = None,
         overnight_market_input: Optional[Mapping[str, object]] = None,
+        benchmark_input: Optional[Mapping[str, object]] = None,
         fundamental_period_policy: Optional[str] = FUNDAMENTAL_PERIOD_PER_SYMBOL,
         evidence_policy: Optional[str] = EVIDENCE_POLICY_TYPED,
     ):
@@ -68,6 +69,7 @@ class DecisionInputBuilder:
         self.market_fear_greed_input = dict(market_fear_greed_input) if market_fear_greed_input is not None else None
         self.company_news_input = dict(company_news_input) if company_news_input is not None else None
         self.overnight_market_input = dict(overnight_market_input) if overnight_market_input is not None else None
+        self.benchmark_input = dict(benchmark_input) if benchmark_input is not None else None
         self.snapshot = dict(snapshot)
         self.rules = dict(rules)
         self.history_rows = list(history_rows)
@@ -105,6 +107,8 @@ class DecisionInputBuilder:
             bundle["market_fear_greed_input"] = self.market_fear_greed_input
         if self.overnight_market_input is not None:
             bundle["overnight_market_input"] = self.overnight_market_input
+        if self.benchmark_input is not None:
+            bundle["benchmark_input"] = self.benchmark_input
         if self.company_news_input is not None:
             bundle["company_news_input"] = self.company_news_input
         if self.fundamental_period_policy is not None:

@@ -66,6 +66,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(offense_errors(with_offense()), [])
         legacy = live()
         legacy["position_sizing"].pop("offense", None)  # 正式設定已開 offense：舊 Policy 以拿掉它的版本代表
+        legacy["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         legacy["position_sizing"]["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
         self.assertIsNone(offense_gate(legacy["position_sizing"]))
         self.assertEqual(offense_errors(legacy), [])
@@ -186,6 +187,7 @@ class FactsTests(unittest.TestCase):
         with self.assertRaises(DecisionToolError):
             legacy = live()
             legacy["position_sizing"].pop("offense", None)
+            legacy["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
             build_offense_facts(bundle(), legacy)
         late = bundle()
         late["price_series"][0]["bars"][-1]["available_at"] = "2026-11-10T14:00:00+08:00"

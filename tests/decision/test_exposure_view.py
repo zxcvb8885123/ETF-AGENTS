@@ -299,6 +299,7 @@ class ReplayTests(unittest.TestCase):
         helper.setUp()
         plain = helper.template(live_without_offense)
         plain["position_sizing"].pop("exposure_view", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
+        plain["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("quality_dip", None)  # 依賴 exposure 子閘門，要先於它拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("exposure", None)  # 子閘門依賴 exposure_view，要一併拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("entry_reserve", None)  # 它依賴 agent_swap.exposure，要先於 exposure 拿掉
@@ -328,6 +329,7 @@ class GatedHarness(swap.Harness):
             template["position_sizing"]["exposure_view"] = dict(GATE)
         else:
             template["position_sizing"].pop("exposure_view", None)  # 正式樣板已開啟；對照組明確拿掉
+            template["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         path.write_text(json.dumps(template, ensure_ascii=False), encoding="utf-8")
 
 

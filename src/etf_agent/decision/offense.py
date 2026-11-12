@@ -600,9 +600,10 @@ def offense_levels(gate: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
     return {view: dict(gate["by_view"][view]) for view in OFFENSE_VIEWS}  # type: ignore[index]
 
 
-def offense_brief(facts: Mapping[str, object], gate: Mapping[str, object]) -> Dict[str, object]:
-    """風險 Agent 的背景區塊（citable=false、沒有 evidence_id）；附各等級對映的人填上限，但不附交易 Agent 的任何意圖或信心統計。"""
-    return {
+def offense_brief(facts: Mapping[str, object], gate: Mapping[str, object], include_reference: bool = True) -> Dict[str, object]:
+    """風險 Agent 的背景區塊（citable=false、沒有 evidence_id）；附各等級對映的人填上限，但不附交易 Agent 的任何意圖或信心統計。
+    ``include_reference=False``（cash_stance_brief.offense_reference=omit）時不附 ``reference`` 對照樣本；預設行為不變。"""
+    brief = {
         "citable": False,
         "note": OFFENSE_NOTE,
         "as_of": facts["as_of"],
@@ -613,6 +614,9 @@ def offense_brief(facts: Mapping[str, object], gate: Mapping[str, object]) -> Di
         "offense_off_drawdown": gate["offense_off_drawdown"],
         "data_gaps": facts["data_gaps"],
     }
+    if not include_reference:
+        brief.pop("reference")
+    return brief
 
 
 # ---------------------------------------------------------------- 風險 Agent 的列舉驗證

@@ -604,6 +604,7 @@ class ReplayTests(unittest.TestCase):
                 plain["position_sizing"].pop("rebound_participation", None)
                 plain["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation，要先於它拿掉
                 plain["position_sizing"].pop("exposure_view", None)  # 同上
+                plain["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
                 plain["position_sizing"].pop("exposure_rotation", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
                 plain_policy, plain_notes = self.replay(plain)
                 self.assertNotIn("exposure_rotation", plain_notes)
@@ -638,6 +639,7 @@ class ReplayTests(unittest.TestCase):
         gated = without_stop_exit(self.template(live_without_offense))
         gated["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation／rebound_participation，要先拿掉
         gated["position_sizing"].pop("exposure_view", None)  # exposure_view v2 需要 agent_swap v2，拿掉 agent_swap 時一併拿掉
+        gated["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         gated["position_sizing"].pop("rebound_participation", None)
         gated["position_sizing"]["exposure_rotation"] = copy.deepcopy(GATE)
         policy, _ = self.replay(gated)

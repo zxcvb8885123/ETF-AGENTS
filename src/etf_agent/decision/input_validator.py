@@ -96,6 +96,7 @@ class DecisionInputValidator:
                 "market_news_input",
                 "market_fear_greed_input",
                 "overnight_market_input",
+                "benchmark_input",
                 "company_news_input",
                 "trading_status_bundle",
                 "tradability_assessment",
@@ -161,6 +162,11 @@ class DecisionInputValidator:
                                    self.bundle.get("decision_cutoff"), self.snapshot.get("latest_trade_date"))
             except (OvernightMarketError, TypeError, KeyError) as error:
                 errors.append("隔夜市場輸入：%s" % error)
+        if "benchmark_input" in self.bundle:
+            from .benchmark_facts import validate_benchmark_input
+            errors.extend(validate_benchmark_input(
+                self.bundle["benchmark_input"], self.bundle.get("snapshot_id"), self.bundle.get("decision_cutoff"),
+                self.snapshot.get("latest_trade_date")))
         if "company_news_input" in self.bundle:
             from etf_agent.perception.company_news import validate_pack, CompanyNewsError
             try:
