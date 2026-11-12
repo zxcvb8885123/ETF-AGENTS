@@ -285,6 +285,8 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 .venv/bin/python cli/strategy_reflection.py apply-pending --allow-risk-increase <reflection_id>
 ```
 
+快速指令：`./start.sh reflect` 手動補跑一次反思週報（等於 `auto --force --no-apply`，只封存、不改策略樣板）；`./start.sh reflect brief`、`reflect history`、`reflect apply-pending …`、`reflect rollback` 等其餘子命令直接轉給 `cli/strategy_reflection.py`。
+
 放行後仍要通過驗證、影子回放與時段保護（20:50 到隔天 09:00 不套用）。想還原最近一次套用：`cli/strategy_reflection.py rollback`（經驗教訓用 `lessons-rollback`），看歷史用 `history`。
 
 ## 評測與回放（選用）
