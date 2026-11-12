@@ -33,4 +33,5 @@
 - 數值必須是有限 Decimal，否則 `PerformanceError`。
 - 帳本鏈驗證失敗時不顯示部分結果。
 - 預定買賣只顯示帳本最新 prepare 狀態綁定的那份決策（同一時段重跑時舊決策已移到封存區），即最終版；另附決策時間（台北）與 `competition_d_plan/versions/<交易日>/` 的版本數。
+- 基準比較區塊另顯示每日上漲／下跌捕捉彙總與可展開的逐日表（純觀察，來自 `daily_capture`，口徑見 [benchmark/README.md](../benchmark/README.md#每日上漲下跌捕捉純觀察)；不進任何決策輸入）。
 - 基準比較只用 as-of 時點已可得、已定案的官方日線；某基準資料不足時該列顯示 unavailable 與原因。
