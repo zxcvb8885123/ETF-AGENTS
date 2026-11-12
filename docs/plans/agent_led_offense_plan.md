@@ -13,11 +13,11 @@
 9. 最快順序：今天改設定 → 簡報說真話 → 抄底梯度（約 11-16 可用）→ 換入者保留預算 → 分級上限表與試單。
 10. 剩下 9 個交易日裡，抄底主軸只有再出現連跌才用得上；現在（已反彈兩天）用到的是主軸二。
 
-狀態：**計畫，未實作、未開啟**（2026-11-11 撰寫；同日第二版加入進攻版）。本文件只寫設計，沒有改程式、設定、Policy、Skill 或其他文件的內容。例外說明：第 6 節的「階段 0」是只改設定的過渡手段，已由人於 2026-11-11 另行套用（`policy_id strategy-2026-11-11-offense-stage0-1`，樣板 `config/policy_versions/2026-11-11-before-offense-stage0.json`），不是本文件改的；目前值以 `config/decision_policy.json` 與 [`status.md`](status.md#版本閘門啟用狀態) 為準。文中新名稱（`probe`、`offense`、`offense_facts`、`entry_reserve` 等）都是暫名。把本文件的行為當成現行行為是錯的。
+狀態：**計畫，未實作、未開啟**（2026-11-11 撰寫；同日第二版加入進攻版）。本文件只寫設計，沒有改程式、設定、Policy、Skill 或其他文件的內容。例外說明：第 6 節的「階段 0」是只改設定的過渡手段，已由人於 2026-11-11 另行套用（`policy_id strategy-2026-11-11-offense-stage0-1`，樣板 `config/policy_versions/2026-11-11-before-offense-stage0.json`），不是本文件改的；目前值以 `config/decision_policy.json` 與 [`status.md`](../status.md#版本閘門啟用狀態) 為準。文中新名稱（`probe`、`offense`、`offense_facts`、`entry_reserve` 等）都是暫名。把本文件的行為當成現行行為是錯的。
 
 證據等級：所有數字都是以唯讀腳本讀封存檔算的，沒有驗 manifest 與雜湊；一律 `evidence_grade: replay_reference_only`，其中多數只是算術估計，連重放都不是。它們不是對 LLM 的前瞻驗證，只有比賽期間的即時紀錄算證據。
 
-前置閱讀：[`agent_led_sizing_plan.md`](agent_led_sizing_plan.md)、[`agent_led_exposure_plan.md`](agent_led_exposure_plan.md)、[`rebound_participation_plan.md`](rebound_participation_plan.md)、[`rebound_participation_v2_plan.md`](rebound_participation_v2_plan.md)、[`turn_facts_plan.md`](turn_facts_plan.md)、[`quality_dip_plan.md`](quality_dip_plan.md)、[`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)、[`decision-contracts.md`](decision-contracts.md)。閘門啟用狀態以 [`status.md`](status.md#版本閘門啟用狀態) 與 `config/decision_policy.json` 為準。
+前置閱讀：[`agent_led_sizing_plan.md`](agent_led_sizing_plan.md)、[`agent_led_exposure_plan.md`](agent_led_exposure_plan.md)、[`rebound_participation_plan.md`](rebound_participation_plan.md)、[`rebound_participation_v2_plan.md`](rebound_participation_v2_plan.md)、[`turn_facts_plan.md`](turn_facts_plan.md)、[`quality_dip_plan.md`](quality_dip_plan.md)、[`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)、[`decision-contracts.md`](../decision-contracts.md)。閘門啟用狀態以 [`status.md`](../status.md#版本閘門啟用狀態) 與 `config/decision_policy.json` 為準。
 
 ## 1. 目標與非目標
 
@@ -273,7 +273,7 @@ Policy 驗證（fail-closed）：缺任一必填欄、等級之間不單調、�
 
 ### 4.6 換入者先保留預算（併入換股份量計畫）
 
-> 實作紀錄（2026-11-11 階段 3）：`agent_swap.entry_reserve` v1 已實作、尚未開啟（`decision/entry_reserve.py`、`allocation.py` 的 `_entry_reserve_plan`）；形狀與行為見 [decision-contracts.md](decision-contracts.md)。實作的取捨：以下 1～5 全做；格點以上現金依清單先後貪婪分配；換手累計只計入配置當下已決定的賣單與各組賣買 gross，之後的 `turnover_fit` 仍會再檢查。
+> 實作紀錄（2026-11-11 階段 3）：`agent_swap.entry_reserve` v1 已實作、尚未開啟（`decision/entry_reserve.py`、`allocation.py` 的 `_entry_reserve_plan`）；形狀與行為見 [decision-contracts.md](../decision-contracts.md)。實作的取捨：以下 1～5 全做；格點以上現金依清單先後貪婪分配；換手累計只計入配置當下已決定的賣單與各組賣買 gross，之後的 `turnover_fit` 仍會再檢查。
 
 解鎖 4。子閘門 `agent_swap.entry_reserve`（暫名）v1，內容取自 `agent_led_sizing_plan.md` 第 4.2、4.5 節：
 
@@ -558,7 +558,7 @@ Policy 驗證（fail-closed）：缺任一必填欄、等級之間不單調、�
 | 1 | 試單（預測型）開多大。這題決定能不能吃到反彈的第一根 | (a) `probe` 停止線 0.40 (b) 0.55（極限版） (c) 不開試單 | **(a)**。等確認才動，第一天一定吃不到（7.2 的時間表）。(b) 等於不論有沒有轉向都長期帶著 0.55 的曝險，假訊號時與確認級虧得一樣多 |
 | 2 | 今天要不要做 0b | (a) 做：組數 5、曝險配對 3／5、`candidate` 現金目標 0.10 (b) 不做 | **(a)**。只改設定、可回滾；成交仍要兩個 Agent 都同意 |
 | 3 | 強制防守線 | (a) `drawdown_control.defensive_at` 0.10→0.15、`release_defensive_below` 0.07→0.11，進攻停用線 0.12；`neutral_at` 不動 (b) 維持 10%，`rebuild` 的 `beta_stop` 壓在 0.50 以下 | **(a)**，前提是使用者真的接受帳戶回撤到 15%。目前回撤 4.7%，離 10% 只有 5.3% NAV；組合 beta 0.70 時等於交易池跌 7.6% 就被強制防守並在低點賣出，進攻版會自相矛盾。這條線是 Policy 數字、不是競賽硬規則，只由人設定；舊 run 仍讀自己的 Policy |
-| 4 | 確認日的換手 | (a) 維持 30%，由 0.13 到 0.70 約 3 個交易日 (b) 填既有的 `rebound_participation.by_state.confirmed.max_turnover_rate` 0.45，只在 `turn_confirmed` 當天生效，約 2 個交易日 | **(a)**。使用者原先把 30% 列為不可放寬。文件記載它是 Policy 值而非競賽規則（[decision-contracts](decision-contracts.md) 反彈參與節），(b) 只改設定即可；但它只由 `turn_assessment` 一把鑰匙觸發，確認錯了當天就換掉更多。要最快速度才選 (b) |
+| 4 | 確認日的換手 | (a) 維持 30%，由 0.13 到 0.70 約 3 個交易日 (b) 填既有的 `rebound_participation.by_state.confirmed.max_turnover_rate` 0.45，只在 `turn_confirmed` 當天生效，約 2 個交易日 | **(a)**。使用者原先把 30% 列為不可放寬。文件記載它是 Policy 值而非競賽規則（[decision-contracts](../decision-contracts.md) 反彈參與節），(b) 只改設定即可；但它只由 `turn_assessment` 一把鑰匙觸發，確認錯了當天就換掉更多。要最快速度才選 (b) |
 | 5 | 回補時的現金目標 | (a) `rebuild` 0.05（`offense.cash_floor` 0.05，階段 2 才有） (b) 維持 8% | **(a)**。多 3% NAV 持股，風險遠小於換股本身；姿態仍不得是 `aggressive` |
 | 6 | 上限表用哪一欄 | 7.1 的進攻版或極限版 | **進攻版**。極限版的 0.85 需要換掉約 45% NAV 的持股，在剩下的交易日內做不完，而且會動到高信心持股 |
 | 7 | 假反彈怎麼退 | (a) 風險 Agent 降回 `keep_defensive`→現金回格點→依交易 Agent 的 `release_order` 減碼，加回撤停用線 (b) 另由程式強制賣出進攻買進的部位 | **(a)**。(b) 要程式記住哪些是進攻部位並替 Agent 決定賣誰，違反「程式不改寫意圖」，工期也不夠 |

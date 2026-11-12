@@ -249,7 +249,7 @@
 | `docs/architecture.md` | 「一天怎麼跑」、「風控與配置規則」表、`team_inputs` 版本表 |
 | `docs/decision-details.md`、`docs/glossary.md` | 白話說明與新旗標、新名稱 |
 | `docs/README.md` | 文件索引與變更紀錄加上本檔 |
-| `docs/exposure_rotation_plan.md`、`docs/exposure_rotation_v2_plan.md`、`docs/rebound_participation_plan.md`、`docs/rebound_participation_v2_plan.md` | 階段 3 開啟時加註被取代的說明 |
+| `docs/plans/exposure_rotation_plan.md`、`docs/plans/exposure_rotation_v2_plan.md`、`docs/plans/rebound_participation_plan.md`、`docs/plans/rebound_participation_v2_plan.md` | 階段 3 開啟時加註被取代的說明 |
 | `docs/operations.md` | 每日檢視要看的新旗標與落地率統計 |
 | `tradeagent/trading/trader/`（`SKILL.md` 與 `references/ranking.md`） | 第二輪的新輸出與提示回應規則 |
 | `config/policy_versions/README.md` | 新增的樣板快照說明 |

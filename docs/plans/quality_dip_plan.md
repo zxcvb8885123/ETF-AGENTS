@@ -102,7 +102,7 @@
 ### 2.3 「低於本來價值」：誠實的範圍
 
 - 已接入的資料**算得出來**的只有第 2.1 節的價格位置（欄位名不得出現 valuation／便宜／低估；120 日是目前 bundle 的歷史上限，**不是** 52 週高點）。
-- 本益比、股價淨值比、殖利率：**資料可得、系統尚未接入、尚未登記授權與核對方式**（第 2.6 節）。Snapshot 的損益表 `facts` 只有 `revenue`／`operating_profit`／`net_income`，自己算不出來；[資料來源清單](data_sources_inventory.md)目前沒有這個來源。
+- 本益比、股價淨值比、殖利率：**資料可得、系統尚未接入、尚未登記授權與核對方式**（第 2.6 節）。Snapshot 的損益表 `facts` 只有 `revenue`／`operating_profit`／`net_income`，自己算不出來；[資料來源清單](../data_sources_inventory.md)目前沒有這個來源。
 - 目標價、分析師共識：沒有合法歷史化的 Provider，依 AGENTS.md 一律 `unavailable`。
 - 估值事實核准接入並寫明口徑之前，任何 Skill、簡報與報告都不得寫「低於合理價值」「便宜」「低估」；只能寫「相對近期高點回檔多少、殘差多少」。接入之後可以寫的也只有第 2.6 節定義的位置事實。
 
@@ -144,7 +144,7 @@
 ### 2.5 資料面：財報缺口（使用者 2026-11-10 說明，尚未接入）
 
 - **FinMind 去年同期補抓**（`cli/fundamental_repair.py`）：目前只能手動執行，不在每日排程。使用者今天已對全交易池手動補抓一次；補抓後 `degraded` 的檔數會下降多少，要等下一份 Snapshot 才知道（待確認）。是否排進每日流程是待辦，不在本計畫第一階段。
-- **Yahoo Finance 作財報缺口的備援來源**：使用者已核准「可以用」，但**現在不是已接入的來源**。目前 Yahoo 只核准用於研究日線與隔夜指數（見[資料來源清單](data_sources_inventory.md)）。實作前須另案定義三件事，缺一不得進正式計算：
+- **Yahoo Finance 作財報缺口的備援來源**：使用者已核准「可以用」，但**現在不是已接入的來源**。目前 Yahoo 只核准用於研究日線與隔夜指數（見[資料來源清單](../data_sources_inventory.md)）。實作前須另案定義三件事，缺一不得進正式計算：
   1. 授權狀態怎麼登記（`license_status`、用途範圍、核准日期與核准人）。
   2. 與官方數字的核對方式（比照 `FINMIND_VERIFIED_PRIOR`：當期金額與官方相符才採用；核對不過即不用，不補值）。
   3. `available_at` 規則（第一次抓取時間，不回填；重編或改寫的偵測方式）。
@@ -163,7 +163,7 @@
 
 櫃買端點的確認方式：對照櫃買中心 OpenAPI 的官方說明文件確認資料集名稱與授權；連續數個交易日抓取，逐檔與 FinMind 同日數字比對；確認 3718.TWO 缺漏的原因。確認前上櫃股的估值一律 `unavailable`。
 
-**(1) 來源與角色**（沿用[基本面缺口補抓](fundamental_data_repair.md)的「官方當標準答案、FinMind 補歷史、對得上才收」）：
+**(1) 來源與角色**（沿用[基本面缺口補抓](../fundamental_data_repair.md)的「官方當標準答案、FinMind 補歷史、對得上才收」）：
 
 - 官方當日資料是核對基準；FinMind 提供歷史序列。
 - 每個抓取日，逐檔比對 FinMind 同一資料日的 PER／PBR／殖利率與官方數字（以 Decimal 比較，兩位小數）。完全相符才接受該檔的 FinMind 序列。
@@ -511,7 +511,7 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 
 ### 10.2 估值 V1（已實作、已掛進資料排程；只收集與稽核，不進決策、簡報或報告）
 
-只做上市股（`BWIBBU_ALL`）與 FinMind `TaiwanStockPER` 的逐檔核對與不可變保存，細節見 [資料來源清單](data_sources_inventory.md#估值資料v1)與 [來源核對紀錄](source_audit/2026-11-10_valuation_sources.md)。指令：`cli/valuation_collect.py collect`、`validate <run_id>`。**已於 2026-11-10 由使用者下令掛進每日資料排程**（`start.sh` 的資料階段，20:00、06:00 各一次，`VALUATION_COLLECT=0` 關閉，失敗只記錄、不影響資料狀態與決策）。真實端點驗證：官方端點已實測（2026-11-10 回 1087 檔、100 檔交易池上市股都找得到）；FinMind 端因執行環境沒有 `FINMIND_TOKEN` 尚未實測，其餘靠 mock 測試。V2 的進入條件（連續核對相符的天數由人指定、EPS 與殖利率基準待釐清、上櫃端點待確認）都未滿足，所以**沒有做 V2、V3**。
+只做上市股（`BWIBBU_ALL`）與 FinMind `TaiwanStockPER` 的逐檔核對與不可變保存，細節見 [資料來源清單](../data_sources_inventory.md#估值資料v1)與 [來源核對紀錄](../source_audit/2026-11-10_valuation_sources.md)。指令：`cli/valuation_collect.py collect`、`validate <run_id>`。**已於 2026-11-10 由使用者下令掛進每日資料排程**（`start.sh` 的資料階段，20:00、06:00 各一次，`VALUATION_COLLECT=0` 關閉，失敗只記錄、不影響資料狀態與決策）。真實端點驗證：官方端點已實測（2026-11-10 回 1087 檔、100 檔交易池上市股都找得到）；FinMind 端因執行環境沒有 `FINMIND_TOKEN` 尚未實測，其餘靠 mock 測試。V2 的進入條件（連續核對相符的天數由人指定、EPS 與殖利率基準待釐清、上櫃端點待確認）都未滿足，所以**沒有做 V2、V3**。
 
 ### 10.3 第三階段修訂：改走換股提名（使用者 2026-11-10 選 A；尚未實作）
 

@@ -16,7 +16,7 @@
 
 證據等級：所有數字都是唯讀腳本讀封存檔與 `price_series` 算的算術，沒有驗 manifest 與雜湊，一律 `evidence_grade: replay_reference_only`。它們不是重放，也不是對 LLM 的前瞻驗證；樣本只有一個 120 日行情視窗，進場日彼此重疊、不獨立。
 
-前置閱讀：[`decision-contracts.md`](decision-contracts.md#持股檢視停損停利)、[`agent_led_offense_plan.md`](agent_led_offense_plan.md)、[`status.md`](status.md#版本閘門啟用狀態)。
+前置閱讀：[`decision-contracts.md`](../decision-contracts.md#持股檢視停損停利)、[`agent_led_offense_plan.md`](agent_led_offense_plan.md)、[`status.md`](../status.md#版本閘門啟用狀態)。
 
 ## 1. 目標與非目標
 

@@ -1,6 +1,6 @@
 # 曝險換股參數精簡（`exposure_rotation` v2）：設計計劃
 
-狀態（2026-11-09）：**v2 程式與測試已實作（`decision/exposure.py`、`decision/allocation.py`、`tests/decision/test_exposure_rotation_v2.py`），`config/decision_policy.json` 已於 2026-11-09 17:50 切到 v2**（見 [status.md](status.md#版本閘門啟用狀態)；切換前的 v1 樣板存於 `config/policy_versions/2026-11-09-exposure-rotation-v1.json`）。本檔的數字全部來自 `replay_reference_only` 的重算（固定封存的 Agent 意圖與 11-09 的真實持股重跑確定性程式），不是對 LLM 判斷的前瞻驗證；只有比賽期間的即時紀錄算證據。
+狀態（2026-11-09）：**v2 程式與測試已實作（`decision/exposure.py`、`decision/allocation.py`、`tests/decision/test_exposure_rotation_v2.py`），`config/decision_policy.json` 已於 2026-11-09 17:50 切到 v2**（見 [status.md](../status.md#版本閘門啟用狀態)；切換前的 v1 樣板存於 `config/policy_versions/2026-11-09-exposure-rotation-v1.json`）。本檔的數字全部來自 `replay_reference_only` 的重算（固定封存的 Agent 意圖與 11-09 的真實持股重跑確定性程式），不是對 LLM 判斷的前瞻驗證；只有比賽期間的即時紀錄算證據。
 
 ## 1. 要解決的問題
 
@@ -89,7 +89,7 @@ v2 欄位：`version`（`v2`）、`beta_window_days`、`beta_target_by_stance`�
 | 驗證與白名單 | `src/etf_agent/decision/exposure.py`：`GATE_REQUIRED_FIELDS`（33 行）、形狀驗證（103 行起，含 `release_margin`／`max_rotation_fraction`／`min_new_conviction` 各段與「下限必須大於 margin」檢查） |
 | 換股配對 | `exposure.py` 的 `exposure_rotation_plan`（537 行起：`cap`、`margin`、`min_tier`、`target`、`fill_pool` 條件）；`allocation.py` 的 `_exposure_rotation`（910 行起，`Fill` 的信心仍要保留） |
 | 設定 | `config/decision_policy.json`（`position_sizing.exposure_rotation`，開啟 v2 才改，見第 9 節） |
-| 文件 | `docs/decision-contracts.md`（曝險換股欄位與規則段）、`docs/status.md`（版本閘門啟用狀態）、`docs/glossary.md`（`exposure_rotation` 列）、`docs/exposure_rotation_plan.md`（加註 v2 取代說明）、`README.md`、`AGENTS.md`（曝險換股段，目前寫 v1） |
+| 文件 | `docs/decision-contracts.md`（曝險換股欄位與規則段）、`docs/status.md`（版本閘門啟用狀態）、`docs/glossary.md`（`exposure_rotation` 列）、`docs/plans/exposure_rotation_plan.md`（加註 v2 取代說明）、`README.md`、`AGENTS.md`（曝險換股段，目前寫 v1） |
 | 測試 | `tests/decision/test_exposure_rotation.py`、`tests/decision/test_exposure_rotation_e2e.py`（v1 測試全保留，另加 v2 版本） |
 
 ## 8. 測試（`unittest.TestCase` 風格）

@@ -2,7 +2,7 @@
 
 狀態（2026-11-10）：**階段 A1 已實作（連網版，尚未在排程環境實跑確認）；階段 C1 已實作（只收集與稽核、不進決策，見第 4.7 節）；沒有任何閘門；C2、B 階段仍只有計畫，開工需使用者另行下令**。設計取捨已由使用者於 2026-11-10 回覆「照建議」定案（第 7 節）；這只決定了設計，不是實作指令。文中的數字是 2026-11-10 以唯讀方式查 `var/etf_agent.db`、公開端點與 yfinance 得到的，只代表當下狀態；財報公布季每天都在變。
 
-相關文件：[基本面缺口補抓](fundamental_data_repair.md)（現行核對規則）、[資料來源清單](data_sources_inventory.md)、[優質股進場判斷計畫](quality_dip_plan.md)（本計畫的下游）。
+相關文件：[基本面缺口補抓](../fundamental_data_repair.md)（現行核對規則）、[資料來源清單](../data_sources_inventory.md)、[優質股進場判斷計畫](quality_dip_plan.md)（本計畫的下游）。
 
 ## 1. 現況（事實）
 
@@ -75,7 +75,7 @@
 
 ### 2.4 7828.TWO 與 3718.TWO
 
-- 兩檔都在[基本面缺口補抓](fundamental_data_repair.md)的「確定補不了」名單：7828 缺 2025-03-31 那一期；3718 自 2026-08 才 100% 認列中強光電營收，沒有可比的去年同期（今天的警告是缺 2026-03-31 可比單季營收）。
+- 兩檔都在[基本面缺口補抓](../fundamental_data_repair.md)的「確定補不了」名單：7828 缺 2025-03-31 那一期；3718 自 2026-08 才 100% 認列中強光電營收，沒有可比的去年同期（今天的警告是缺 2026-03-31 可比單季營收）。
 - 處理：維持不可用，**不推算、不借用其他法律主體的歷史**。排程每天仍會嘗試（成本只是一次本機比對），失敗原因固定列在資料狀態；新一季資料出現時自然重評。
 - 對下游的意義：這兩檔的年增率是「不知道」，依 [quality_dip_plan.md](quality_dip_plan.md) 不擋進場也不算通過。
 
@@ -144,7 +144,7 @@
 
 - **最小樣本數**：同產業有效樣本少於門檻時整組不可用。門檻是資料品質常數（建議 5），寫死在版本內，不是策略旋鈕。
 - **缺值**：營業收入不為正、營業利益或營業收入缺值的公司不計入；不補值。
-- **排除**：金融保險業整組不算（官方損益表沒有可比的營業收入與營業利益，[基本面缺口補抓](fundamental_data_repair.md)「刻意不接入金融業的淨收益」的規則照舊）。其他業、證券期貨等報表格式不同的公司不與一般業混算。
+- **排除**：金融保險業整組不算（官方損益表沒有可比的營業收入與營業利益，[基本面缺口補抓](../fundamental_data_repair.md)「刻意不接入金融業的淨收益」的規則照舊）。其他業、證券期貨等報表格式不同的公司不與一般業混算。
 - **公布期內樣本不完整**：期限前只有先公布的公司，中位數會偏。程式要標 `sample_complete: false` 與目前家數；期別混雜（有人 Q2、有人 Q3）時只取同期別，該股自己的期別沒有足夠樣本就不可用。
 - **時間**：`available_at` 是抓取時間；`出表日期` 是內容時間（民國日期須轉換驗證）。晚於截止時間的不用。
 - Agent 不輸出數字；程式不設「高於中位數多少算好」的門檻。
@@ -175,7 +175,7 @@
 - **核對**：營業收入、營業利益、稅後淨利三項與官方損益表同公司同期別累計**完全相符**才是 `verified`；期別不同、任一項缺值、數值不符一律 `unavailable` 並記原因；金融類（官方損益表業別非 `ci`，或產業名稱為「金融保險業」「金融業」）標 `not_comparable`，不算失敗。
 - **代碼↔名稱**：以市場為範圍，只收交易池內有 t187ap14 資料的公司；同一代碼對多名稱、同一名稱對多代碼整組拒絕並列入 `conflicts`，不猜。上市「金融保險業」與上櫃「金融業」共用代碼 17，列為 `cross_market_name_differences`，不合併。
 - **2026-11-10 對正式資料庫複本的實測**：上市 296 家、上櫃 173 家（皆 115 年第 3 季）；交易池 150 檔中 54 檔核對通過（上市 35、上櫃 19）、0 檔數值不符、78 檔尚未公布本期（t187ap14 與官方損益表都沒有）、18 檔金融類不可比；代碼名稱表收 24 組（上市 16、上櫃 8），無衝突，另有 94 檔因尚未公布而未對照。
-- **櫃買端點確認**：四步中的 1（正式資料集與欄位）、3（名稱同一套，金融類名稱不同）已完成；2（連續數日對照）只有一天，**尚未滿足**；細節見[來源核對](source_audit/2026-11-10_industry_peer_sources.md)。授權條文未逐條讀取，依使用者決定核准。
+- **櫃買端點確認**：四步中的 1（正式資料集與欄位）、3（名稱同一套，金融類名稱不同）已完成；2（連續數日對照）只有一天，**尚未滿足**；細節見[來源核對](../source_audit/2026-11-10_industry_peer_sources.md)。授權條文未逐條讀取，依使用者決定核准。
 - **整合**：`start.sh` 資料階段在產業分類之後執行，`INDUSTRY_PEER=0` 關閉；退出碼 0 完成、2 部分來源失敗（資料狀態標部分完成，不中斷每日決策）、1 全部失敗或設定錯誤。核對不符與衝突只寫入摘要，不改退出碼。
 - **沒做**：沒有計算任何產業中位數、沒有最小樣本數與 `sample_complete` 判斷（C2）、沒有進 bundle、`team_inputs`、`fundamental_metrics`、簡報或 Agent 輸入；沒有保存歷次核對結果的獨立紀錄（`industry_peer_stats` 保存每日列，可由資料庫重算核對）。C2 的進入條件「連續核對相符」要看多日摘要，目前只有最新一份。
 
@@ -205,7 +205,7 @@
 - **金鑰**：日誌、警告、manifest 與原始回應存檔不含金鑰值。
 - **舊 run 不變**：沒有新 bundle 欄位的封存 run 重建雜湊不變。
 
-文件同步清單（實作各階段時）：`README.md`、`AGENTS.md`（bundle 版本閘門總則若新增欄位）、`docs/status.md`（資料表與閘門表）、`docs/data_sources_inventory.md`、`docs/fundamental_data_repair.md`、`docs/fundamental_growth_signal_plan.md`、`docs/operations.md`、`docs/docker.md`（金鑰與開關）、`docs/decision-contracts.md`、`docs/glossary.md`、`docs/source_audit/`（新來源核對紀錄）、`docs/quality_dip_plan.md`（第 2.5、2.6 節）；Skill：`fundamental-analyst`、`fundamental-research`。
+文件同步清單（實作各階段時）：`README.md`、`AGENTS.md`（bundle 版本閘門總則若新增欄位）、`docs/status.md`（資料表與閘門表）、`docs/data_sources_inventory.md`、`docs/fundamental_data_repair.md`、`docs/fundamental_growth_signal_plan.md`、`docs/operations.md`、`docs/docker.md`（金鑰與開關）、`docs/decision-contracts.md`、`docs/glossary.md`、`docs/source_audit/`（新來源核對紀錄）、`docs/plans/quality_dip_plan.md`（第 2.5、2.6 節）；Skill：`fundamental-analyst`、`fundamental-research`。
 
 ## 7. 已決定（使用者 2026-11-10 回覆「照建議」）
 

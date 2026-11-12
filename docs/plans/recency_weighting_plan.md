@@ -1,6 +1,6 @@
 # 風險 Agent 現金姿態：讓「越新的資料」分量更重
 
-狀態（2026-11-09）：**閘門 `position_sizing.cash_stance_recency` v1 已實作、測試通過，並已在 `config/decision_policy.json` 開啟**（人決定）。開啟後從 2026-11-10 07:00 的決策起生效；明顯變差由人刪除該欄位即回滾。契約見 [decision-contracts.md](decision-contracts.md#現金姿態的資料新舊cash_stance_recency)，啟用狀態見 [status.md](status.md#版本閘門啟用狀態)。
+狀態（2026-11-09）：**閘門 `position_sizing.cash_stance_recency` v1 已實作、測試通過，並已在 `config/decision_policy.json` 開啟**（人決定）。開啟後從 2026-11-10 07:00 的決策起生效；明顯變差由人刪除該欄位即回滾。契約見 [decision-contracts.md](../decision-contracts.md#現金姿態的資料新舊cash_stance_recency)，啟用狀態見 [status.md](../status.md#版本閘門啟用狀態)。
 
 ## 起因（事實）
 

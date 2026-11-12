@@ -10,7 +10,7 @@
 - **還不是 Agent 決定的是「多少」**：每檔買多少、防守時賣多少、現金留幾趴、持有幾檔、`trim` 賣多少，全部是 Agent 選一個列舉、人設的數字把它換成幅度。另外有 5 處程式仍會否決或替 Agent 選。
 - **這套新設定還沒有任何一份真實 run。** 2026-11-10 一天內切換了 6 個會影響帳本的閘門版本（另開 1 個影子），封存裡最新一份仍是舊設定。現在的分工是「設定上如此」，不是「已經觀察到如此」。
 
-證據等級：本檔所有統計數字都是 `evidence_grade: replay_reference_only`（封存決策的事後統計，不是績效，也不是對 LLM 判斷的前瞻驗證）。**本檔沒有任何數字來自現行設定下的即時紀錄。**閘門狀態的唯一出處仍是 `config/decision_policy.json` 與 [status.md](status.md#版本閘門啟用狀態)；本檔與它們不一致時以它們為準。
+證據等級：本檔所有統計數字都是 `evidence_grade: replay_reference_only`（封存決策的事後統計，不是績效，也不是對 LLM 判斷的前瞻驗證）。**本檔沒有任何數字來自現行設定下的即時紀錄。**閘門狀態的唯一出處仍是 `config/decision_policy.json` 與 [status.md](../status.md#版本閘門啟用狀態)；本檔與它們不一致時以它們為準。
 
 ## 0. 依據與方法
 
@@ -18,7 +18,7 @@
 
 - 設定：`config/decision_policy.json`（`policy_id: strategy-2026-11-10-agent-swap-v2-1`，`available_at: 2026-11-10T20:10:00+08:00`）、`config/decision_rules.json`（`decision-rules-2026-11-03b`）。
 - 程式：`src/etf_agent/decision/` 的 `allocation.py`、`sizing.py`、`swap_nomination.py`、`release_order.py`、`rebound.py`、`exposure.py`、`drawdown.py`、`cash_ratio.py`、`reentry_cooldown.py`、`risk.py`。下文行號是這個版本的 `allocation.py`。
-- 文件：`AGENTS.md`、[status.md](status.md)、[agent_autonomy_plan.md](agent_autonomy_plan.md) 第 1～3 節、[agent_led_exposure_plan.md](agent_led_exposure_plan.md) 第 8 節、[follow_up_plan.md](follow_up_plan.md)。
+- 文件：`AGENTS.md`、[status.md](../status.md)、[agent_autonomy_plan.md](agent_autonomy_plan.md) 第 1～3 節、[agent_led_exposure_plan.md](agent_led_exposure_plan.md) 第 8 節、[follow_up_plan.md](follow_up_plan.md)。
 - 封存：`artifacts/decisions/` 共 11 份 run（目標交易日 2026-10-27～2026-11-10），以 `.venv/bin/python cli/calibration.py intent-landing` 唯讀統計（22:3x 執行，結束碼 0）。截至撰寫時沒有目標交易日 2026-11-11 的封存。
 
 ### 0.2 分類方法
@@ -285,7 +285,7 @@
 | 2 | **決定要不要讓「組合太防守」成為可成交的換股理由**（`agent_swap.exposure` v2，已實作）。這是使用者原始疑慮最直接對應的一項：風險 Agent 的 `exposure_view` 與交易 Agent 的曝險提名都同意才換 | 能（只改設定）。[follow_up_plan.md](follow_up_plan.md) 建議 2026-11-13 看過約 3 個決策日的影子紀錄後決定 | 開或不開；`max_pairs_by_view` 兩格數字（不得高於 2） |
 | 3 | **檢視三組人設數字**（只改設定、不改程式）：高信心至少六成（`alpha 0.6`）、換股一次 2 對、換入者至少中信心。它們決定 Agent 的選擇有多少能成交 | 能，但都是加風險或加換手的方向，建議排在第 1 項之後、一次只動一個 | 每個數字要不要動、動多少。本檔不代訂 |
 | 4 | **冷卻改成提示**（`reentry_cooldown` v3，已實作）：Agent 買回時必須交代，沒交代才取消 | 能（只改設定）。原訂觀察 10 個決策日已不可能，要縮短 | 是否接受縮短觀察期；是否接受來回交易的費稅風險 |
-| 5 | **同步文件**：`AGENTS.md` 第 76–78 行仍把 `forced_swap`＋`confirmation`、`drawdown_derisk` v4 列為已開啟、把 `exposure_rotation` 寫成會動作；[status.md](status.md) 閘門表開頭仍是 `strategy-2026-11-10-cash-v2-1`，`agent_swap` 同時出現在「已開啟（v1 影子）」與「未開啟」兩張表。這些與現行設定不符（事實），本檔沒有修改 | 能 | 下令即可 |
+| 5 | **同步文件**：`AGENTS.md` 第 76–78 行仍把 `forced_swap`＋`confirmation`、`drawdown_derisk` v4 列為已開啟、把 `exposure_rotation` 寫成會動作；[status.md](../status.md) 閘門表開頭仍是 `strategy-2026-11-10-cash-v2-1`，`agent_swap` 同時出現在「已開啟（v1 影子）」與「未開啟」兩張表。這些與現行設定不符（事實），本檔沒有修改 | 能 | 下令即可 |
 
 11/27 前不建議做（都要新增 Agent 輸出、改契約與 Skill，沒有時間觀察）：部位大小列舉、`trim` 幅度列舉、讓 Agent 表達減碼的量或速度、改現金格點或單日拉高上限。這幾項是第 2.1、2.2、2.6 節指出的最大缺口，賽後再排。
 

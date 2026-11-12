@@ -1,6 +1,6 @@
 # 產業比較 C1 來源核對（2026-11-10）
 
-範圍：[基本面資料缺口補強計畫](../fundamental_data_gaps_plan.md)階段 C1，只收集與稽核，不進決策。使用者於 2026-11-10 下令開工 C1，並視同登記證交所與櫃買中心開放資料為來源（政府開放資料）。登記內容在 `config/industry_peer_sources.json`（`license_status=approved`，核准人 Apollo，用途 `competition_research`）；來源未核准時收集器明列跳過、不抓取。
+範圍：[基本面資料缺口補強計畫](../plans/fundamental_data_gaps_plan.md)階段 C1，只收集與稽核，不進決策。使用者於 2026-11-10 下令開工 C1，並視同登記證交所與櫃買中心開放資料為來源（政府開放資料）。登記內容在 `config/industry_peer_sources.json`（`license_status=approved`，核准人 Apollo，用途 `competition_research`）；來源未核准時收集器明列跳過、不抓取。
 
 | 來源代碼 | 資料集 | 端點 | 內容 |
 | --- | --- | --- | --- |

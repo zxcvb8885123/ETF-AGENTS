@@ -2,7 +2,7 @@
 
 本文件只有計畫，尚未實作任何一項。來源是 2026-11-11 的唯讀設計審查（發現 A～H），每一項都已在撰寫當下開檔核實；核實結果與原發現不同之處寫在各項的「核實」與第 7 節。
 
-實作者請先讀 [`AGENTS.md`](../AGENTS.md)，再讀本文件第 1、2 節，然後只做被指派的那一項。
+實作者請先讀 [`AGENTS.md`](../../AGENTS.md)，再讀本文件第 1、2 節，然後只做被指派的那一項。
 
 ## 1. 目標、範圍外與全域限制
 
@@ -525,55 +525,55 @@ RESEARCH_DENY_DIRECTORIES = (
 
 **A1**
 
-> 讀 `/Users/apollo/stock/ETF_AGENTS/AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「A1」節，只做 A1。在 `src/etf_agent/automation/agent_runner.py` 的 `LATER_STAGE_GLOBS` 加入 `brief_swap_nomination*`、`brief_selection_ranking*`、`ranker_*`（各附註解），不要加任何研究階段前就存在的檔名。在 `tests/automation/test_agent_runner.py` 依計畫新增三個測試（`unittest.TestCase` 風格）。跑 AGENTS.md「測試與驗證」的三個指令。不要 commit，不要碰 `config/decision_policy.json`。回報修改的檔案與測試結果。
+> 讀 `/Users/apollo/stock/ETF_AGENTS/AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「A1」節，只做 A1。在 `src/etf_agent/automation/agent_runner.py` 的 `LATER_STAGE_GLOBS` 加入 `brief_swap_nomination*`、`brief_selection_ranking*`、`ranker_*`（各附註解），不要加任何研究階段前就存在的檔名。在 `tests/automation/test_agent_runner.py` 依計畫新增三個測試（`unittest.TestCase` 風格）。跑 AGENTS.md「測試與驗證」的三個指令。不要 commit，不要碰 `config/decision_policy.json`。回報修改的檔案與測試結果。
 
 **A4**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「A4」節，只做 A4（A1 已完成）。修改 `src/etf_agent/automation/agent_runner.py`：`_trace_summary` 多記 `path` 與 `tool_errors`（不記 pattern 等模型文字）；`claude_read_deny_settings` 每個樣式多加 `Grep(...)`、`Glob(...)` 規則；先用 `claude --help` 確認 `--disallowedTools` 旗標存在才加到 `ClaudeAgentRunner.run` 的指令，不存在就不加並回報。依計畫補測試。既有測試 `test_trace_does_not_store_model_text_or_secrets` 必須仍通過。跑三個驗證指令。不要 commit。回報時附上計畫要求的人工確認步驟。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「A4」節，只做 A4（A1 已完成）。修改 `src/etf_agent/automation/agent_runner.py`：`_trace_summary` 多記 `path` 與 `tool_errors`（不記 pattern 等模型文字）；`claude_read_deny_settings` 每個樣式多加 `Grep(...)`、`Glob(...)` 規則；先用 `claude --help` 確認 `--disallowedTools` 旗標存在才加到 `ClaudeAgentRunner.run` 的指令，不存在就不加並回報。依計畫補測試。既有測試 `test_trace_does_not_store_model_text_or_secrets` 必須仍通過。跑三個驗證指令。不要 commit。回報時附上計畫要求的人工確認步驟。
 
 **A2**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「A2」節，只做 A2（A1、A4 已完成）。`src/etf_agent/automation/team_stages.py` 有他人未提交的修改：先 `git diff` 看過，不得還原，只加自己的一行。依計畫新增 `RESEARCH_DENY_DIRECTORIES`、`AgentTask.deny_read_directories`，接到 Claude、OpenCode、Codex 三個 runner、`team_stages.py` 的研究員任務與 `pipeline_base.py` 重建任務處；`_peer_deny_reads` 加 `pipeline.json`。開工前先確認研究員提示沒有要求讀這些目錄，若有就停下回報。依計畫補測試、跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「A2」節，只做 A2（A1、A4 已完成）。`src/etf_agent/automation/team_stages.py` 有他人未提交的修改：先 `git diff` 看過，不得還原，只加自己的一行。依計畫新增 `RESEARCH_DENY_DIRECTORIES`、`AgentTask.deny_read_directories`，接到 Claude、OpenCode、Codex 三個 runner、`team_stages.py` 的研究員任務與 `pipeline_base.py` 重建任務處；`_peer_deny_reads` 加 `pipeline.json`。開工前先確認研究員提示沒有要求讀這些目錄，若有就停下回報。依計畫補測試、跑三個驗證指令。不要 commit。
 
 **A3**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「A3」節，只做 A3（A1、A2、A4 已完成）。在 `_opencode_read_permission` 加 `sibling_run_names`，`OpenCodeAgentRunner.run` 列出其他 run 目錄名稱傳入；目錄不存在時不得拋例外。更新 `src/etf_agent/automation/README.md` 與 `AGENTS.md` 的 Codex 條目（各加一句已知差距）。Codex runner 的程式不改。依計畫補測試、跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「A3」節，只做 A3（A1、A2、A4 已完成）。在 `_opencode_read_permission` 加 `sibling_run_names`，`OpenCodeAgentRunner.run` 列出其他 run 目錄名稱傳入；目錄不存在時不得拋例外。更新 `src/etf_agent/automation/README.md` 與 `AGENTS.md` 的 Codex 條目（各加一句已知差距）。Codex runner 的程式不改。依計畫補測試、跑三個驗證指令。不要 commit。
 
 **B**（使用者決定後才可使用）
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節、「B」節與 4.1。使用者的決定是：〈決定〉。只做 B。不得編輯 `config/decision_policy.json`，不得修改 `allocation.py`。新增版本閘門 `position_sizing.revision_bounds`（實作、不開啟）：在 `decision/sizing.py` 登記與驗證、在 `strategy_reflection/contracts.py` 列入禁區（此檔有他人修改，只加一行）、在 `decision/risk.py` 的 `_validate_action` 加下限與步距檢查（閘門不存在時行為必須逐位元不變）、在 `automation/risk_stages.py` 的簡報與 `tradeagent/risk/portfolio-risk-review/references/risk-review-output.md` 補說明。依計畫新增 `tests/decision/test_revision_bounds.py`，並更新計畫列出的三份文件（只新增段落）。跑三個驗證指令。不要 commit。回報時附上要由人加入設定的 JSON 片段（數值留空）。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節、「B」節與 4.1。使用者的決定是：〈決定〉。只做 B。不得編輯 `config/decision_policy.json`，不得修改 `allocation.py`。新增版本閘門 `position_sizing.revision_bounds`（實作、不開啟）：在 `decision/sizing.py` 登記與驗證、在 `strategy_reflection/contracts.py` 列入禁區（此檔有他人修改，只加一行）、在 `decision/risk.py` 的 `_validate_action` 加下限與步距檢查（閘門不存在時行為必須逐位元不變）、在 `automation/risk_stages.py` 的簡報與 `tradeagent/risk/portfolio-risk-review/references/risk-review-output.md` 補說明。依計畫新增 `tests/decision/test_revision_bounds.py`，並更新計畫列出的三份文件（只新增段落）。跑三個驗證指令。不要 commit。回報時附上要由人加入設定的 JSON 片段（數值留空）。
 
 **C**（使用者決定後才可使用）
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節、「C」節與 4.2。使用者的決定是：〈決定〉。只做 C（A2、G1、B 已完成）。`team_stages.py` 有他人修改，先 `git diff` 看過、不得還原。新增 `src/etf_agent/decision/trader_background.py`（閘門 `position_sizing.trader_background_record`、建立與驗證函式），在 `strategy_lessons.py`、`thesis_verdicts.py` 各加一個回傳完整檔案的函式（既有 `load_*` 的回傳值不得改變），接到 `run_trader`、`build_team_inputs`、Finalizer 的選配鍵雙向檢查與 `daily_pipeline.py`。`team_inputs` 的 `schema_version` 不得改變；沒有閘門時簡報與 `team_inputs` 必須逐鍵不變，既有測試不得需要改期望值。依計畫新增測試與文件段落。不得編輯 `config/decision_policy.json`。跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節、「C」節與 4.2。使用者的決定是：〈決定〉。只做 C（A2、G1、B 已完成）。`team_stages.py` 有他人修改，先 `git diff` 看過、不得還原。新增 `src/etf_agent/decision/trader_background.py`（閘門 `position_sizing.trader_background_record`、建立與驗證函式），在 `strategy_lessons.py`、`thesis_verdicts.py` 各加一個回傳完整檔案的函式（既有 `load_*` 的回傳值不得改變），接到 `run_trader`、`build_team_inputs`、Finalizer 的選配鍵雙向檢查與 `daily_pipeline.py`。`team_inputs` 的 `schema_version` 不得改變；沒有閘門時簡報與 `team_inputs` 必須逐鍵不變，既有測試不得需要改期望值。依計畫新增測試與文件段落。不得編輯 `config/decision_policy.json`。跑三個驗證指令。不要 commit。
 
 **D**（使用者決定後才可使用）
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節、「D」節與 4.3。使用者的決定是：〈決定〉。只做 D。在 `src/etf_agent/strategy_reflection/service.py` 的 `replay_gate` 回傳值新增 `in_sample` 與 `available_at_overridden_days`，`passed`、`reasons`、`segments` 的計算不得改動；`apply_reflection` 的歷史摘要與 `report.py` 的週報各補一處；`docs/decision-contracts.md` 補一句。先搜尋 `"replay_gate"` 確認沒有欄位白名單會擋新鍵。不重做任何既有回放。依計畫補測試、跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節、「D」節與 4.3。使用者的決定是：〈決定〉。只做 D。在 `src/etf_agent/strategy_reflection/service.py` 的 `replay_gate` 回傳值新增 `in_sample` 與 `available_at_overridden_days`，`passed`、`reasons`、`segments` 的計算不得改動；`apply_reflection` 的歷史摘要與 `report.py` 的週報各補一處；`docs/decision-contracts.md` 補一句。先搜尋 `"replay_gate"` 確認沒有欄位白名單會擋新鍵。不重做任何既有回放。依計畫補測試、跑三個驗證指令。不要 commit。
 
 **E1**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「E1」節，只做 E1。先執行計畫中的 sqlite 指令確認 `source_date` 都以日期開頭。`SnapshotRepository.load_universe` 加選配參數 `cutoff_date`，`data/snapshot.py` 的呼叫處傳入 cutoff 的台北日期。不改資料表結構。依計畫在 `tests/data/` 補四個情境的測試。跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「E1」節，只做 E1。先執行計畫中的 sqlite 指令確認 `source_date` 都以日期開頭。`SnapshotRepository.load_universe` 加選配參數 `cutoff_date`，`data/snapshot.py` 的呼叫處傳入 cutoff 的台北日期。不改資料表結構。依計畫在 `tests/data/` 補四個情境的測試。跑三個驗證指令。不要 commit。
 
 **E2**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「E2」節，只做 E2。在 `src/etf_agent/calibration/prices.py` 的 `ex_rights_symbols` SQL 加 `AND fetched_at <= ?`（參數 `self.as_of`），比照同檔 `trading_days`。在 `tests/calibration/test_calibration.py` 補三個測試（早於、晚於、等於 `as_of`）。跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「E2」節，只做 E2。在 `src/etf_agent/calibration/prices.py` 的 `ex_rights_symbols` SQL 加 `AND fetched_at <= ?`（參數 `self.as_of`），比照同檔 `trading_days`。在 `tests/calibration/test_calibration.py` 補三個測試（早於、晚於、等於 `as_of`）。跑三個驗證指令。不要 commit。
 
 **F**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「F」節，只做 F（C 已完成）。`decision/trader.py` 與 `automation/team_stages.py` 有他人修改，先 `git diff` 看過、不得還原。第一步改文件用語（`AGENTS.md` 與 `docs/decision-contracts.md`）；第二步在交易驗證器加選配參數 `background_texts`，只由 `run_trader` 的即時驗證傳入，Finalizer 與任何重建路徑不得傳入；前次決策的 `invalidation_conditions` 不列入。不傳參數時行為必須與修改前相同。依計畫在 `tests/decision/test_trader.py` 補測試。跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「F」節，只做 F（C 已完成）。`decision/trader.py` 與 `automation/team_stages.py` 有他人修改，先 `git diff` 看過、不得還原。第一步改文件用語（`AGENTS.md` 與 `docs/decision-contracts.md`）；第二步在交易驗證器加選配參數 `background_texts`，只由 `run_trader` 的即時驗證傳入，Finalizer 與任何重建路徑不得傳入；前次決策的 `invalidation_conditions` 不列入。不傳參數時行為必須與修改前相同。依計畫在 `tests/decision/test_trader.py` 補測試。跑三個驗證指令。不要 commit。
 
 **G1**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「G1」節，只做 G1。`DailyDecisionPipeline.run`／`_run` 加關鍵字參數 `require_nav_history: bool = False`；為真、Policy 有 `drawdown_control` 且 `nav_history is None` 時，在任何子 Agent 被呼叫前拋 `DailyPipelineError`。`scripts/run_daily_pipeline.py` 的 `pipeline.run(...)` 傳 `require_nav_history=True`。`evaluation/service.py` 不改。`tests/automation/test_daily_pipeline.py` 有他人修改，只新增測試方法。跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「G1」節，只做 G1。`DailyDecisionPipeline.run`／`_run` 加關鍵字參數 `require_nav_history: bool = False`；為真、Policy 有 `drawdown_control` 且 `nav_history is None` 時，在任何子 Agent 被呼叫前拋 `DailyPipelineError`。`scripts/run_daily_pipeline.py` 的 `pipeline.run(...)` 傳 `require_nav_history=True`。`evaluation/service.py` 不改。`tests/automation/test_daily_pipeline.py` 有他人修改，只新增測試方法。跑三個驗證指令。不要 commit。
 
 **G2**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「G2」節，只做 G2。只加測試、不改程式：在 `tests/competition/test_fallback_dplan.py` 新增測試類別，比對 `src/etf_agent/competition/fallback.py` 的五個常數與 `config/decision_rules.json`（代號去掉 `.TW`／`.TWO` 後比對），並用 `patch.object` 寫一個不一致時會被偵測到的測試。跑三個驗證指令。不要 commit。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「G2」節，只做 G2。只加測試、不改程式：在 `tests/competition/test_fallback_dplan.py` 新增測試類別，比對 `src/etf_agent/competition/fallback.py` 的五個常數與 `config/decision_rules.json`（代號去掉 `.TW`／`.TWO` 後比對），並用 `patch.object` 寫一個不一致時會被偵測到的測試。跑三個驗證指令。不要 commit。
 
 **H**
 
-> 讀 `AGENTS.md`，再讀 `docs/audit_fix_plan.md` 第 1 節與「H」節，只做 H（其他項目都已完成）。只改 `AGENTS.md` 與 `docs/` 下的文件，不改程式、設定、測試。先用計畫中的指令讀出 `config/decision_policy.json` 現值（只讀），以現值為準逐列修正計畫表格列出的不一致；`position_review` 的數值那一句不要動。不刪歷史與回滾樣板路徑。完成後執行計畫「驗收」的三個 grep 與 `git diff --check`、`git diff --stat`。不要 commit。回報核對時的 `policy_id` 與仍保留「尚未開啟」字樣的項目清單。
+> 讀 `AGENTS.md`，再讀 `docs/plans/audit_fix_plan.md` 第 1 節與「H」節，只做 H（其他項目都已完成）。只改 `AGENTS.md` 與 `docs/` 下的文件，不改程式、設定、測試。先用計畫中的指令讀出 `config/decision_policy.json` 現值（只讀），以現值為準逐列修正計畫表格列出的不一致；`position_review` 的數值那一句不要動。不刪歷史與回滾樣板路徑。完成後執行計畫「驗收」的三個 grep 與 `git diff --check`、`git diff --stat`。不要 commit。回報核對時的 `policy_id` 與仍保留「尚未開啟」字樣的項目清單。
 
 ## 6. 完成定義
 

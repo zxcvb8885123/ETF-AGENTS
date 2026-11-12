@@ -104,7 +104,7 @@ Yahoo 缺某天時，用前後 Yahoo 的還原係數換算：
 
 ### 是什麼
 
-上市股每日本益比（PER）、股價淨值比（PBR）、殖利率。設計見 [優質股計畫第 2.6 節](quality_dip_plan.md)；來源核對紀錄見 [2026-11-10 估值來源核對](source_audit/2026-11-10_valuation_sources.md)。
+上市股每日本益比（PER）、股價淨值比（PBR）、殖利率。設計見 [優質股計畫第 2.6 節](plans/quality_dip_plan.md)；來源核對紀錄見 [2026-11-10 估值來源核對](source_audit/2026-11-10_valuation_sources.md)。
 
 ### 怎麼用
 

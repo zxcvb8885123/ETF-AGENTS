@@ -1,6 +1,6 @@
 # 決策流程細節
 
-這份文件說明每日決策「為什麼這樣做」以及幾個關鍵規則的現況。整體流程見[根目錄 README](../README.md#決策流程)，各步驟的完整契約見[每日決策架構](architecture.md)，換股與權重的做法見[配置與輪動](sizing_rotation_v2_design.md)。
+這份文件說明每日決策「為什麼這樣做」以及幾個關鍵規則的現況。整體流程見[根目錄 README](../README.md#每日決策流程)，各步驟的完整契約見[每日決策架構](architecture.md)，換股與權重的做法見[配置與輪動](sizing_rotation_v2_design.md)。
 
 ## 基本原則
 
@@ -44,7 +44,7 @@
 
 權重 = 信心等級乘數 ÷ 波動度的若干次方。次方是 `volatility_exponent`：1 代表完全依波動度反比（舊做法，低波動股權重可到高波動股的 4～5 倍），0 代表同信心等級內等權。目前正式設定為 0。這個值與「單次換股上限」可由策略反思依校準報告微調，版本開關只由人設定。
 
-份額與單股上限：原式只把單股上限當封頂，台積電上限 25% 對份額沒有作用。版本閘門 `position_sizing.limit_scaled_conviction`（`{"version": "v1", "alpha": "0.6"}`，alpha 必填、由人設定，**目前正式設定已開啟**）讓高信心股的份額至少為 alpha × 該股單股上限（再以封頂為限）；原式份額已高於這個下限時照原式；預算足夠時，高信心股不會因為別檔被抬高而少於原式份額。必要份額（原式與下限取大）總和超過預算時，依入選名次填到預算用完，中低信心為 0。`volatility_exponent` 為 0 時，中信心不高於最小的高信心、低信心不高於最小的中信心（例如 2330 為中信心時）；因此分不完的預算留作現金。前提是 `conviction_volatility_v2` 與 `selection_ranking`。公式、預算守恆與封頂見[計劃檔的「α 方案」](limit_aware_conviction_weights_plan.md)。proposal 的 `position_sizing` 區塊只在開啟時記錄 `limit_scaled_conviction`。
+份額與單股上限：原式只把單股上限當封頂，台積電上限 25% 對份額沒有作用。版本閘門 `position_sizing.limit_scaled_conviction`（`{"version": "v1", "alpha": "0.6"}`，alpha 必填、由人設定，**目前正式設定已開啟**）讓高信心股的份額至少為 alpha × 該股單股上限（再以封頂為限）；原式份額已高於這個下限時照原式；預算足夠時，高信心股不會因為別檔被抬高而少於原式份額。必要份額（原式與下限取大）總和超過預算時，依入選名次填到預算用完，中低信心為 0。`volatility_exponent` 為 0 時，中信心不高於最小的高信心、低信心不高於最小的中信心（例如 2330 為中信心時）；因此分不完的預算留作現金。前提是 `conviction_volatility_v2` 與 `selection_ranking`。公式、預算守恆與封頂見[計劃檔的「α 方案」](plans/limit_aware_conviction_weights_plan.md)。proposal 的 `position_sizing` 區塊只在開啟時記錄 `limit_scaled_conviction`。
 
 ### 滿檔換股
 

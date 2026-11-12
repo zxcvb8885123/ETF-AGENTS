@@ -117,7 +117,7 @@
 | --- | --- | --- | --- |
 | `evidence_policy: typed_evidence_v1`、`claim_kind`、`finding_kind` | 證據有種類；個股 claim／finding 必填種類並至少引用一個屬於該股票且對映的證據 | bundle；`decision/input_context.py`（`CLAIM_KINDS`）、`decision/input_validator.py` | — |
 | `fundamental_period_policy: per_symbol_latest_available_v1`、`fundamental_metrics` | 逐檔取截止前最新可得的一季；程式算好的基本面指標存進 `team_inputs` 並整份重算 | bundle；`decision/analysts.py`（`compute_fundamental_metrics`、`validate_fundamental_metrics`）、`decision/input_builder.py` | — |
-| `industry_peer_stats`、`t187ap14`、代碼↔名稱表（`artifacts/data/industry_name_map_latest.json`）、`not_comparable` | 產業比較 C1：證交所／櫃買「各產業 EPS 統計」的每日收集表，以及交易池產業代碼與官方產業名稱的一對一對照；`verified`＝三項損益與官方損益表完全相符，`not_comparable`＝金融類報表口徑不同。只收集與稽核，不進決策 | `data/industry_peer.py`、`cli/industry_peer_collect.py`、`config/industry_peer_sources.json`；[計畫](fundamental_data_gaps_plan.md) | — |
+| `industry_peer_stats`、`t187ap14`、代碼↔名稱表（`artifacts/data/industry_name_map_latest.json`）、`not_comparable` | 產業比較 C1：證交所／櫃買「各產業 EPS 統計」的每日收集表，以及交易池產業代碼與官方產業名稱的一對一對照；`verified`＝三項損益與官方損益表完全相符，`not_comparable`＝金融類報表口徑不同。只收集與稽核，不進決策 | `data/industry_peer.py`、`cli/industry_peer_collect.py`、`config/industry_peer_sources.json`；[計畫](plans/fundamental_data_gaps_plan.md) | — |
 | `shared_input_sha256`、`peer_packet_ids` | 多頭／空頭研究員共同輸入的雜湊；互讀禁止要求 `peer_packet_ids` 為空 | `decision/stance.py` | — |
 | `agent_calls.revision_diff` | 驗證回饋後重試時，前後輸出在意圖／信心／強度／claims 數的差異 | `automation/pipeline_base.py` `output_revision_diff` | — |
 
