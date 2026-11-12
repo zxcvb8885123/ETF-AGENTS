@@ -38,10 +38,13 @@ def analyst_schema(typed: bool = False):
     return _object({"items": {"type": "array", "items": _object(item, list(item))}}, ("items",))
 
 
-def event_analyst_schema(typed: bool = False, direction: bool = False):
-    """``direction``（position_sizing.event_direction）為 True 時每則事件多一個必填列舉 direction；預設 False，Schema 逐位元不變。"""
+def event_analyst_schema(typed: bool = False, direction: bool = False, corroboration_ids=None):
+    """``corroboration_ids`` 給定時，``corroborated_by`` 的值限為本批重大訊息與新聞的 evidence_id（只收窄輸出格式，Validator 不變）；預設 None，Schema 逐位元不變。
+    ``direction``（position_sizing.event_direction）為 True 時每則事件多一個必填列舉 direction；預設 False，Schema 逐位元不變。"""
     event_fields = {"evidence_id": _TEXT, "materiality": {"enum": list(MATERIALITY)}, "summary": _TEXT,
                     "counter_evidence": _strings(), "pending_confirmations": _strings(), "corroborated_by": _strings()}
+    if corroboration_ids is not None:
+        event_fields["corroborated_by"] = {"type": "array", "items": {"enum": sorted(set(corroboration_ids))}}
     if direction:
         from etf_agent.decision.dip_facts import EVENT_DIRECTIONS
 
@@ -357,5 +360,5 @@ _EVENT_RULES = (
     "交件前自查（細則見 SKILL.md 連結的 references）：finding_id 在整份報告（含所有股票）唯一，用「股票代號:f序號」（例如 2330.TW:f1）；"
     "輸入列出的每一則重大訊息與 news（evidence_id 用 news:finmind: 代號）都在該股票的 events 剛好分級一次；"
     "每檔 event_outlook 等於 outlook；counter_evidence 與 pending_confirmations 只依輸入、沒有就給空陣列；"
-    "新聞只憑單一標題不給 high，給 high 時 corroborated_by 要有同一件事的佐證。"
+    "新聞只憑單一標題不給 high，給 high 時 corroborated_by 要有同一件事的佐證；corroborated_by 只能填同一檔股票「其他」重大訊息或 news 的 evidence_id，不可填財報、現金流、profile 或別檔股票的編號（那些寫在 findings）。"
 )
