@@ -172,8 +172,8 @@ def _slim_event_batch(batch_brief: Dict[str, object]) -> Dict[str, object]:
         channels = []
         for channel in row.get("data_availability", []):
             name = channel.get("name") if isinstance(channel, Mapping) else None
-            if isinstance(name, str) and "status" in channel:
-                notes.setdefault(name, channel["status"])
+            if isinstance(name, str) and "status" in channel and notes.setdefault(name, channel["status"]) == channel["status"]:
+                # 只有與頂層說明相同時才省略；同一管道各檔狀態不同時，該檔保留自己的 status。
                 channel = {key: value for key, value in channel.items() if key != "status"}
             channels.append(channel)
         symbols.append({**row, "data_availability": channels} if "data_availability" in row else row)

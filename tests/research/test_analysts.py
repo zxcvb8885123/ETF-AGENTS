@@ -361,9 +361,6 @@ class AnalystTeamTests(unittest.TestCase):
         self.assertEqual((saved["items"][0]["symbol"], saved["items"][0]["outlook"], saved["items"][0]["events"]), ("2317.TW", "unknown", []))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class EventBodyExtractionTests(unittest.TestCase):
     def test_extract_drops_empty_answers_and_keeps_no(self):
@@ -374,6 +371,21 @@ class EventBodyExtractionTests(unittest.TestCase):
         self.assertIn("4.內容:第一行\n第二行", extracted)
         self.assertNotIn("3.", extracted)
         self.assertNotIn("5.", extracted)
+
+    def test_sublist_and_decimal_answers_do_not_split_items(self):
+        from etf_agent.decision.analysts import extract_event_body
+        body = "1.日期:115/11/1\n2.交易相對人:\n1.甲銀行\n2.乙銀行\n3.丙銀行\n3.其他事項:有\n4.金額:5億"
+        extracted = extract_event_body(body)
+        self.assertIn("丙銀行", extracted)
+        decimal = "1.日期:115/11/1\n2.背書保證餘額占淨值之比率:\n9.13\n3.其他:有\n4.金額:5億"
+        self.assertIn("9.13", extract_event_body(decimal))
+
+    def test_none_answer_kept_when_it_means_no_impact(self):
+        from etf_agent.decision.analysts import extract_event_body
+        body = "1.日期:115/11/1\n2.對本公司財務業務之影響程度:無\n3.因應措施:無\n4.金額:5億"
+        extracted = extract_event_body(body)
+        self.assertIn("2.對本公司財務業務之影響程度:無", extracted)
+        self.assertNotIn("3.", extracted)
 
     def test_extract_falls_back_when_not_itemised(self):
         from etf_agent.decision.analysts import extract_event_body
@@ -398,3 +410,7 @@ class EventBodyExtractionTests(unittest.TestCase):
         self.assertNotIn("body_format", row(default))
         self.assertEqual(row(slim)["body_format"], "items_v1")
         self.assertNotIn("戊", unwrap_untrusted_text(row(slim)["body"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

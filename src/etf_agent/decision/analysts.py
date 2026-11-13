@@ -68,6 +68,8 @@ _EVENT_BODY_LIMIT = 800
 _EVENT_SLIM_LIMIT = 1200
 _EVENT_SLIM_QUESTION_CHARS = 24
 _EVENT_SLIM_EMPTY_ANSWERS = frozenset({"", "不適用", "無", "n/a", "na", "none"})
+# 題目含這些字時，答案「無」等同「否／沒有影響」，是判斷重大性的依據，要保留。
+_EVENT_SLIM_KEEP_NONE_QUESTIONS = ("影響", "有無", "情事")
 BODY_FORMAT_ITEMS = "items_v1"
 BODY_FORMAT_TRUNCATED = "truncated_v1"
 _EVENT_EXCERPT_HEAD = 500
@@ -103,7 +105,8 @@ def extract_event_body(body: object) -> Optional[str]:
     expected = 1
     for index, line in enumerate(lines):
         match = re.match(r"(\d{1,2})\.", line)
-        if match and int(match.group(1)) == expected:
+        # 項目行必須在同一行有冒號（題目:答案）；答案裡的子清單（「1.甲銀行」）與小數（「9.13」）沒有冒號，不當成新項目。
+        if match and int(match.group(1)) == expected and ("：" in line or ":" in line):
             starts.append(index)
             expected += 1
     if len(starts) < 3:
@@ -120,8 +123,11 @@ def extract_event_body(body: object) -> Optional[str]:
         if cut < 0:
             pieces.append(item)
             continue
-        question, answer = rest[:cut].replace("\n", ""), rest[cut + 1:].strip()
-        if answer.rstrip("。.").strip().lower() in _EVENT_SLIM_EMPTY_ANSWERS:
+        question, answer = rest[:cut].replace("\r", "").replace("\n", ""), rest[cut + 1:].strip()
+        normalized = answer.rstrip("。.").strip().lower()
+        if normalized in _EVENT_SLIM_EMPTY_ANSWERS and not (
+            normalized == "無" and any(word in question for word in _EVENT_SLIM_KEEP_NONE_QUESTIONS)
+        ):
             continue
         pieces.append("%s.%s:%s" % (number, question[:_EVENT_SLIM_QUESTION_CHARS], answer))
     return "\n".join(pieces)
