@@ -158,6 +158,28 @@ _DIP_ASSESSMENT_RULES = (
 )
 
 
+_EVENT_BODY_FORMAT_NOTE = (
+    "events 的 body 若標 body_format=items_v1，是把公告的「項號.題目:答案」逐項整理過：答案為「不適用／無」或空白的項目已省略（所以項號可能不連續）、"
+    "題目只留前 24 字；answer 為「否」等內容照原樣保留。省略的項目不是資料缺口，不要寫進 data_gaps。body_format=truncated_v1 或沒有標示者是截斷全文。"
+)
+
+
+def _slim_event_batch(batch_brief: Dict[str, object]) -> Dict[str, object]:
+    """事件簡報去重：data_availability 各管道的固定說明文字只放頂層一次，逐檔只留數字與時間。只改呈現，來源列（program_items 與沿用比對）不受影響。"""
+    notes: Dict[str, object] = {}
+    symbols = []
+    for row in batch_brief["symbols"]:
+        channels = []
+        for channel in row.get("data_availability", []):
+            name = channel.get("name") if isinstance(channel, Mapping) else None
+            if isinstance(name, str) and "status" in channel and notes.setdefault(name, channel["status"]) == channel["status"]:
+                # 只有與頂層說明相同時才省略；同一管道各檔狀態不同時，該檔保留自己的 status。
+                channel = {key: value for key, value in channel.items() if key != "status"}
+            channels.append(channel)
+        symbols.append({**row, "data_availability": channels} if "data_availability" in row else row)
+    return {**batch_brief, "symbols": symbols, "data_availability_notes": notes, "event_body_note": _EVENT_BODY_FORMAT_NOTE}
+
+
 def _peer_deny_reads(role: str) -> Tuple[str, ...]:
     peer = "bear" if role == "bull" else "bull"
     # 續跑時 run 目錄可能已有後段產物（含對方論點的 debate、交易與 team_inputs），一併擋掉；不用 ``decision*``，會擋到共同輸入。
@@ -202,6 +224,7 @@ class TeamStagesMixin:
                 bundle, momentum, analyst, metrics, event_market_scope=analyst == "event",
                 technical_gate=self.technical_gate and analyst == "technical",
                 compact_technical=analyst == "technical",
+                slim_event_body=analyst == "event",
             )
             if dip_view is not None and analyst in ("technical", "fundamental"):
                 brief = _with_dip_view(brief, dip_view, analyst)
@@ -293,6 +316,8 @@ class TeamStagesMixin:
                 "batch": {key: batch[key] for key in ("batch_index", "batch_count", "symbols")},
                 "symbols": [entry for entry in brief["symbols"] if entry["symbol"] in members],
             }
+            if analyst == "event":
+                batch_brief = _slim_event_batch(batch_brief)
             if "valuation_background" in brief:
                 # 估值 V2：背景只附本批股票的位置（其餘欄位不變）。
                 batch_brief["valuation_background"] = {

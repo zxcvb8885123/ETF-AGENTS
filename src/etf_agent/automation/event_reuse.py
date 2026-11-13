@@ -19,8 +19,21 @@ ANALYST_REPORT = "analyst_event.json"
 BRIEF_GLOB = "brief_event_b*.json"
 
 
+def _without_channel_status(row: Mapping[str, object]) -> Dict[str, object]:
+    """簡報落地前會把 data_availability 各管道的固定說明 ``status`` 移到頂層（team_stages._slim_event_batch），
+    所以比對兩側都先去掉它；``status`` 由同一管道的筆數欄位決定，筆數不同仍會比對不上。"""
+    data = dict(row)
+    channels = data.get("data_availability")
+    if isinstance(channels, list):
+        data["data_availability"] = [
+            {key: value for key, value in channel.items() if key != "status"} if isinstance(channel, Mapping) else channel
+            for channel in channels
+        ]
+    return data
+
+
 def row_digest(row: Mapping[str, object]) -> str:
-    return canonical_sha256(dict(row))
+    return canonical_sha256(_without_channel_status(row))
 
 
 def _read_json(path: Path) -> Optional[object]:

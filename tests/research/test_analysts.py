@@ -253,7 +253,7 @@ class AnalystBriefTests(unittest.TestCase):
         brief = build_analyst_brief(bundle, MomentumEngine(bundle).run(), "event", event_market_scope=True)
         event = next(item for item in brief["symbols"] if item["symbol"] == "2330.TW")["events"][0]
         self.assertTrue(event["body_truncated"])
-        self.assertEqual(unwrap_untrusted_text(event["body"]), "甲" * 1500)
+        self.assertEqual(unwrap_untrusted_text(event["body"]), "甲" * 800)
         self.assertNotIn("delimiters_escaped", event["body"])
 
     def test_briefs_only_rearrange_existing_inputs(self):
@@ -359,6 +359,57 @@ class AnalystTeamTests(unittest.TestCase):
         self.assertIn("未覆蓋", runner.prompts[1][1])
         self.assertEqual(saved["items"][1]["events"][0]["materiality"], "high")
         self.assertEqual((saved["items"][0]["symbol"], saved["items"][0]["outlook"], saved["items"][0]["events"]), ("2317.TW", "unknown", []))
+
+
+
+class EventBodyExtractionTests(unittest.TestCase):
+    def test_extract_drops_empty_answers_and_keeps_no(self):
+        from etf_agent.decision.analysts import extract_event_body
+        body = "1.日期:115/09/15\n2.是否為關係人交易:否\n3.其他事項:不適用。\n4.內容:\n第一行\n第二行\n5.備註:無"
+        extracted = extract_event_body(body)
+        self.assertIn("2.是否為關係人交易:否", extracted)
+        self.assertIn("4.內容:第一行\n第二行", extracted)
+        self.assertNotIn("3.", extracted)
+        self.assertNotIn("5.", extracted)
+
+    def test_sublist_and_decimal_answers_do_not_split_items(self):
+        from etf_agent.decision.analysts import extract_event_body
+        body = "1.日期:115/11/1\n2.交易相對人:\n1.甲銀行\n2.乙銀行\n3.丙銀行\n3.其他事項:有\n4.金額:5億"
+        extracted = extract_event_body(body)
+        self.assertIn("丙銀行", extracted)
+        decimal = "1.日期:115/11/1\n2.背書保證餘額占淨值之比率:\n9.13\n3.其他:有\n4.金額:5億"
+        self.assertIn("9.13", extract_event_body(decimal))
+
+    def test_none_answer_kept_when_it_means_no_impact(self):
+        from etf_agent.decision.analysts import extract_event_body
+        body = "1.日期:115/11/1\n2.對本公司財務業務之影響程度:無\n3.因應措施:無\n4.金額:5億"
+        extracted = extract_event_body(body)
+        self.assertIn("2.對本公司財務業務之影響程度:無", extracted)
+        self.assertNotIn("3.", extracted)
+
+    def test_extract_falls_back_when_not_itemised(self):
+        from etf_agent.decision.analysts import extract_event_body
+        self.assertIsNone(extract_event_body("公司公告一則自由格式說明文字。"))
+        self.assertIsNone(extract_event_body("1.甲:乙\n2.丙:丁"))
+
+    def test_extract_truncates_long_question_only(self):
+        from etf_agent.decision.analysts import extract_event_body
+        question = "題" * 40
+        extracted = extract_event_body("1.a:x\n2.%s:答案很重要\n3.c:y" % question)
+        self.assertIn("2.%s:答案很重要" % ("題" * 24), extracted)
+
+    def test_default_brief_unchanged_and_slim_adds_body_format(self):
+        bundle = bundle_with_event()
+        bundle["snapshot"]["documents"][0]["body"] = "1.甲:乙\n2.丙:丁\n3.戊:不適用\n4.己:庚"
+        bundle["snapshot_sha256"] = canonical_sha256(bundle["snapshot"])
+        bundle["bundle_sha256"] = decision_bundle_sha256(bundle)
+        momentum = MomentumEngine(bundle).run()
+        default = build_analyst_brief(bundle, momentum, "event", event_market_scope=True)
+        slim = build_analyst_brief(bundle, momentum, "event", event_market_scope=True, slim_event_body=True)
+        row = lambda brief: next(item for item in brief["symbols"] if item["symbol"] == "2330.TW")["events"][0]
+        self.assertNotIn("body_format", row(default))
+        self.assertEqual(row(slim)["body_format"], "items_v1")
+        self.assertNotIn("戊", unwrap_untrusted_text(row(slim)["body"]))
 
 
 if __name__ == "__main__":
