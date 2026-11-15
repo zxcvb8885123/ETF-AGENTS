@@ -76,7 +76,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 由 `decision/position_review.py` 以帳戶成本、同 Snapshot 行情與 policy 的 `position_review` 門檻計算帳面報酬、近 20 日高點回落與警示（`review:<代號>:<旗標>`），Finalizer 重算整份比對；警示有 evidence_id（帳戶與該檔行情）、可引用。
 - 警示不是賣出指令，由交易 Agent 判斷：必須和 claim 一樣在 `adopted_claim_ids` 剛好處理一次、不可否決；`trim`／`exit` 可採納警示取代空頭 claim；`loss_alert` 的持股要 hold／add／no_trade 須同時採納多頭 claim。
 - 風險 Agent 不處理停損停利。
-- 門檻（`loss_alert`、`retrace_alert_20d`、`gain_alert`）為 `null` ＝ 不設死數字：停損停利由交易 Agent 依檢視事實（報酬、近 5／20 日高點回落、選用的持股事實編號 `review:<代號>:position`）自行判斷，減碼／出場可引用該編號當依據；人另設門檻時才出現必須處理的警示。策略反思旁觀者只能在試用觀察期保護下小幅調整門檻（`version` 只由人設定，門檻為 `null` 時不可調）。
+- 門檻（`loss_alert`、`retrace_alert_20d`、`gain_alert`）為 `null` ＝ 不設死數字：停損停利由交易 Agent 依檢視事實（報酬、近 5／20 日高點回落、選用的持股事實編號 `review:<代號>:position`）自行判斷，減碼／出場可引用該編號當依據；人另設門檻時才出現必須處理的警示。門檻與 `version` 全部由人設定，策略反思旁觀者不得提案（2026-11-12 起移出可調範圍）。
 - `position_review.context: "v1"`（版本閘門）：每檔多附相對交易池的 5／20 日報酬（`relative_to_pool_*`，交易池為同 Snapshot 全部有足夠行情的股票等權平均）與最新月營收／財報的可得時間，供交易 Agent 判斷重估條件觸發是個股走弱還是大盤一起走弱；Finalizer 照樣重算比對。
 - 成本在比賽開帳或重建日是當日結算收盤價，不是真實買價。
 - `position_review` v2（版本閘門，2026-11-11 已開啟：`trail_alert` 0.05／0.05、`relative_loss_alert` 0.08／0.04、`stale_alert null`）：新增三個只警示的門檻 `trail_alert{arm_gain,giveback}`（自進場移動停利回吐）、`relative_loss_alert{loss,lag}`（自進場虧損且輸交易池）、`stale_alert{days}`（持有滿日數且仍虧損），全部由人填；每檔多附自進場事實（進場日、持有交易日數、自進場報酬、進場後高點報酬與回落、同期交易池報酬與相對差、`entry_gap`）。基準是進場日收盤（不是成交價、不用 `average_cost`）；持有起點取自 `exposure_rotation.held_since_by_symbol`（Finalizer 以帳本重算），算不出來時事實為 null 並留 `entry_gap`、不出警示。警示仍須剛好處理一次、不可否決，簡報另列 `alerts_to_handle`，驗證回饋列出尚未處理的警示識別碼；`team_inputs` 不升版、沒有新鍵。前提 `exposure_rotation`。
@@ -398,4 +398,4 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - 連續 2 次還原（只計最近一次自動關閉之後的結案）自動關閉自動套用（`config/strategy_reflection.json`）。
 - 試用不會永久卡住：超過 15 個日曆天湊不齊觀察交易日以 `timeout` 結案（變更保留）、套用紀錄與 live 檔不一致以 `orphaned` 結案、還原失敗以 `revert_failed` 結案，三者都標需人工並告警。
 - 被試用還原的旋鈕，簡報會附 `hist.*` 證據、冷卻加倍且不得再往同方向提案；`history.json` 讀改寫有檔案鎖。
-- 持股檢視門檻（`position_review.*`）只能在試用觀察期保護下小幅調整，門檻為 `null` 時不可調。
+- 持股檢視門檻（`position_review.*`）全部由人設定，不在可調範圍（2026-11-12 起）。

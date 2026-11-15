@@ -226,7 +226,7 @@ def agent_task(brief_path: Path) -> AgentTask:
         "樣本不足、統計互相矛盾或看不出方向時，proposals 給空陣列。\n"
         "規則：每則 observations 與 proposals 都必須引用簡報內存在的 evidence_ids；knob 只能是簡報 knobs 列出的路徑；"
         "proposed 是新數值（字串；列舉旋鈕給選項名稱），單次變幅不得超過程式上限（%s；回撤門檻只准調低），"
-        "且離人設定的起點最多偏離 2 個 step；最多 %d 筆提案；position_review.* 一週最多提一個；"
+        "且離人設定的起點最多偏離 2 個 step；最多 %d 筆提案；"
         "不得提出簡報以外的欄位、權重、股數或風控規則。不確定就不要提案。\n"
         "風險方向：簡報 knob_risk_directions 標出每個旋鈕往哪個方向是降風險；只有降風險方向的提案可由程式自動套用，"
         "加風險或方向不明的提案只會封存並標 needs_human、等人決定，所以提加風險方向時必須在 rationale 寫明為何值得人工審。\n"
