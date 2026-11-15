@@ -409,7 +409,7 @@ class GateTests(unittest.TestCase):
         self.assertTrue(rule.human_only)
         policy = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         # 2026-11-12 使用者決定開啟；回滾樣板 config/policy_versions/2026-11-12-before-benchmark-facts.json
-        self.assertEqual(policy["position_sizing"]["benchmark_facts"], {"version": "v1", "max_holdings_age_days": 5})
+        self.assertEqual(policy["position_sizing"]["benchmark_facts"], {"version": "v1", "max_holdings_age_days": 60})
 
 
 class StanceTests(unittest.TestCase):

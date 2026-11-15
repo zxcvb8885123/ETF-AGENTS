@@ -20,3 +20,4 @@
 - `2026-11-12-before-turnover-skip.json`：2026-11-12 開啟 `agent_swap.entry_reserve.turnover_skip` 之前的正式樣板（`policy_id: strategy-2026-11-12-swap-cap-7-1`）。要回滾，刪掉 `position_sizing.agent_swap.entry_reserve.turnover_skip`（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-12-before-cash-stance-brief.json`：2026-11-12 開啟 `position_sizing.cash_stance_brief` 之前的正式樣板（`policy_id: strategy-2026-11-12-turnover-skip-1`）。要回滾，刪掉 `position_sizing.cash_stance_brief`（舊 run 仍讀各自封存的 `policy.json`）。
 - `2026-11-12-before-benchmark-facts.json`：2026-11-12 開啟 `position_sizing.benchmark_facts` 之前的正式樣板（`policy_id: strategy-2026-11-12-cash-stance-brief-1`）。要回滾，刪掉 `position_sizing.benchmark_facts`（舊 run 仍讀各自封存的 `policy.json`）。
+- `2026-11-15-before-benchmark-age-60.json`：2026-11-15 把 `benchmark_facts.max_holdings_age_days` 由 5 改 60 之前的正式樣板（`policy_id: strategy-2026-11-12-benchmark-facts-1`）。要回滾，把該值改回 5。
