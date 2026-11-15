@@ -379,7 +379,7 @@ class BuildInputTests(unittest.TestCase):
         """專案內實際的持股檔與核准檔可被讀取（來源核准、前幾大、權重合理）。"""
         from etf_agent.decision.benchmark_facts import load_benchmark_holdings
         pack = load_benchmark_holdings(ROOT / "data" / "benchmark_holdings.csv", ROOT / "config" / "benchmark_holdings_sources.json",
-                                       "2026-11-13T00:00:00+08:00")
+                                       "2026-11-16T00:00:00+08:00")
         self.assertEqual(pack["status"], "available")
         self.assertEqual(pack["rows"][0]["symbol"], "2330.TW")
         self.assertLessEqual(sum(Decimal(row["weight"]) for row in pack["rows"]), 1)
