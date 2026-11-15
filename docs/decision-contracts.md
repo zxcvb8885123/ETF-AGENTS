@@ -282,7 +282,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 
 ### 反彈參與（`position_sizing.rebound_participation` v1 已開啟；v2 已開啟）
 
-動機、定義、過擬合風險與重放結果見 [plans/rebound_participation_plan.md](plans/rebound_participation_plan.md)。版本閘門，只由人設定，策略反思不得改（`FORBIDDEN_PREFIXES`）；沒有此欄位的舊 Policy／舊 run 逐位元不變。
+動機、定義、過擬合風險與重放結果見 [plans/rebound_participation_v2_plan.md](plans/rebound_participation_v2_plan.md)。版本閘門，只由人設定，策略反思不得改（`FORBIDDEN_PREFIXES`）；沒有此欄位的舊 Policy／舊 run 逐位元不變。
 
 - 前提（缺一 fail-closed 拒絕）：`exposure_rotation.version = v3`、`cash_stance_turn_facts = {version: v1}`、`drawdown_derisk.version = v4`、bundle 為 `typed_evidence_v1`（建 `turn_state` 時檢查）。
 - 欄位（全部由人設定、程式不給預設值）：`version`、`candidate_return`、`candidate_ma5_share`、`confirm_return`、`confirm_ma5_share`、`confirm_new_low_share_max`、`candidate_expiry_days`、`retreat_return`、`retreat_window_days`、`retreat_ma5_share`、`min_coverage`、`by_state`（`candidate`／`confirmed` 各有 `defensive_target`、`max_swaps_per_run`、`min_holding_days`；選填 `defensive_cash_buffer`（兩態皆可，見下「條件式現金放寬」）；`confirmed` 另可選 `neutral_target` 與 `max_turnover_rate`（見下「confirmed 換手上限」））；流程綁入、不得預填的 `effective_state` 與 `cash_loosening`。`by_state` 的檔數不得高於 `rotation.max_swaps_per_run`，confirmed 不得比 candidate 更保守（停止線不降、檔數不減、持有天數不增、現金比例不升）。小動大動分開：candidate 只建議放寬停止線（`max_swaps_per_run` 與 `min_holding_days` 與現行曝險換股相同），只有 confirmed 才放大檔數並取消持有天數限制。

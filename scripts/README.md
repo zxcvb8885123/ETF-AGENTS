@@ -30,7 +30,7 @@
 | `verify_ogd_crosscheck.py` | 驗證已封存的政府開放 CSV／官方 JSON 對照；不改正式來源設定 | 無（`grep` 未發現呼叫者） | 來源稽核時手動 |
 | `repair_pending_tpex_close.py` | 補齊待結算決策成交日的 TPEx 官方原始價量；不改帳本 | 無（README 的疑難排解指示手動執行） | 帳本顯示缺歷史上櫃價量時 |
 | `data_status.py` | 顯示行情、文件與驗證狀態 | `./start.sh status`；`start.sh` 結尾 | 隨時（不需 Docker） |
-| `evaluate_event_brief.py` | 固定封存輸入，另存事件分析師精簡摘要的試跑；不建立 Decision run | 無 | 精簡 brief 的對照實驗（相關背景可參考 `docs/token_reduction_plan.md`） |
+| `evaluate_event_brief.py` | 固定封存輸入，另存事件分析師精簡摘要的試跑；不建立 Decision run | 無 | 精簡 brief 的對照實驗（相關背景可參考 `docs/token_usage.md`） |
 | `evaluate_technical_brief.py` | 同上，針對技術分析師 | 無 | 同上 |
 | `measure_daily_briefs.py` | 只讀量測每日 run 的 Agent brief 與已封存呼叫（bytes，不當 token） | 無 | 同上 |
 

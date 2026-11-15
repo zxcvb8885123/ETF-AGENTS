@@ -26,7 +26,7 @@
 | `--research-model 模型` | Claude 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於多頭／空頭研究員。傳 `inherit` 沿用 `--model`。 |
 | `--analyst-model 模型` | Claude 為 `sonnet`；其他 CLI 沿用 `--model` | 只用於技術／基本面／事件三位分析師，量最大。傳 `inherit` 沿用 `--model`。 |
 | `--max-workers N` | 8 | 同時執行的子 Agent 數（1～8，1 為串行）。只縮短時間，不改決策內容；同時越多越容易撞用量上限。現金姿態與風險審查仍串行。各階段耗時記在 `pipeline.json` 的 `stage_durations`。 |
-| `--technical-gate` ／ `--no-technical-gate` | 開啟 | 趨勢一致的股票，技術資料只附動能、不附逐日歷史，輸入約少一半；資料不足或訊號衝突者仍附完整歷史。見[降 token 說明](token_reduction_plan.md)。 |
+| `--technical-gate` ／ `--no-technical-gate` | 開啟 | 趨勢一致的股票，技術資料只附動能、不附逐日歷史，輸入約少一半；資料不足或訊號衝突者仍附完整歷史。見[降 token 說明](token_usage.md)。 |
 | `--max-budget-usd 金額` | 3 | 單次子 Agent 呼叫的估算用量上限，只適用 Claude CLI。 |
 
 ## 續跑與重跑

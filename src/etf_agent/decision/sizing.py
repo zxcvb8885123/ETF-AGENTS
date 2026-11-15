@@ -171,7 +171,7 @@ HIGH_CONVICTION_CASH_FLOOR_FIELDS = {"version", "floor_ratio"}
 # 2026-11-05 後新增（limit_scaled_conviction 版本閘門，只由人設定）：高信心候選的必要份額為
 # max(原式份額, min(alpha × 單股上限, 封頂))，必要份額總和超過預算時依入選名次填到用完；剩餘預算再依原式
 # 分給 medium／low（volatility_exponent = 0 時不得高於最小的 high／medium，分不完留作現金），
-# 見 docs/plans/limit_aware_conviction_weights_plan.md「α 方案」。alpha 為必要欄位（不在程式寫死預設值）。
+# 見 docs/decision-details.md（份額與單股上限）。alpha 為必要欄位（不在程式寫死預設值）。
 # 前提：method 為 conviction_volatility_v2 且已啟用 selection_ranking。省略此欄位的舊 run 走原式。
 LIMIT_SCALED_CONVICTION = "v1"
 LIMIT_SCALED_CONVICTION_FIELDS = {"version", "alpha"}
@@ -1813,7 +1813,7 @@ def alpha_floor_weights(
     """limit_scaled_conviction v1（α 方案）：高信心候選的份額至少為 max(原式份額, ``floors``)，其餘照原式並受跨等級約束。
 
     ``order`` 必須已依（信心、入選名次、代號）排序；``floors`` 只含 high 的股票（min(α × 單股上限, 封頂)）。
-    公式見 docs/plans/limit_aware_conviction_weights_plan.md「α 方案」：
+    公式見 docs/decision-details.md（份額與單股上限）：
 
     0. ``base`` = 原式（``conviction_weights``）把預算分給全部入選股；每檔 high 的必要份額 r = max(base, floor)。
     1. 沒有 high 被抬高、且（volatility_exponent = 0 時）base 已滿足 high ≥ medium ≥ low：直接回傳 base（逐位同原式）。
