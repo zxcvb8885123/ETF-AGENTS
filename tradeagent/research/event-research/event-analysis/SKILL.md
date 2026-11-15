@@ -57,7 +57,7 @@ description: 主控事件事實、多方、空方與裁決子 Agent，使用同�
   --output artifacts/event_research_validated.json
 ```
 
-需要不同快照或資料庫時，在子命令前加入 `--snapshot PATH --database PATH`。Fact 子 Agent 優先使用整合資料包；多方與空方不重複抓資料。整次研究最多 8 次資料工具呼叫；達上限仍缺關鍵證據時輸出 `pending`。第一版可由 Codex／Claude 的子 Agent 功能執行，不需要專案串接 LLM API。
+需要不同快照或資料庫時，在子命令前加入 `--snapshot PATH --database PATH`。Fact 子 Agent 優先使用整合資料包；多方與空方不重複抓資料。資料工具只抓判定閘門需要的證據；整合資料包與相關事件都查過仍缺關鍵證據時輸出 `pending`，不靠反覆查詢或模型記憶補足。第一版可由 Codex／Claude 的子 Agent 功能執行，不需要專案串接 LLM API。
 
 ## 判定閘門
 

@@ -232,7 +232,7 @@ if [ "$MODE" = "official" ]; then
   if [ "$DAILY_RUN" -eq 1 ] && [ "$DATA_ONLY" -eq 0 ] && ! prices_current official_history; then
     # 正式帳本需當日官方成交金額／股數；全市場端點延遲時只在決策流程補個股原價。
     set +e
-    docker compose run --rm agent python3 scripts/collect_official_history.py >/dev/null
+    docker compose run --rm agent python3 scripts/collect_official_history.py --missing-only >/dev/null
     OFFICIAL_HISTORY_EXIT=$?
     set -e
     if [ "$OFFICIAL_HISTORY_EXIT" -eq 1 ]; then

@@ -703,6 +703,26 @@ class HistoricalProviderTests(unittest.TestCase):
             self.assertEqual(second.batches[0].start_date, "2026-09-10")
             self.assertEqual(second.status, "completed")
 
+    def test_missing_on_end_date_lists_only_symbols_without_target_day_rows(self):
+        universe = [
+            Instrument("2330.TW", "2330", "台積電", "TWSE", "2026-09-14"),
+            Instrument("2317.TW", "2317", "鴻海", "TWSE", "2026-09-14"),
+            Instrument("2454.TW", "2454", "聯發科", "TWSE", "2026-09-14"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            database = MarketDataDatabase(Path(directory) / "test.db")
+            for item in universe:
+                seed_latest_price(database, item, "TWSE_STOCK_DAY_ALL")
+            # 2330 有目標日官方行情；2317 只有前一天（缺目標日）；2454 完全沒有官方歷史（不列入缺檔）。
+            seed_latest_price(database, universe[0], "TWSE_STOCK_DAY", "2026-09-17")
+            seed_latest_price(database, universe[1], "TWSE_STOCK_DAY", "2026-09-16")
+            service = OfficialHistoricalRefreshService(
+                database, OfficialHistoryFixtureProvider(), max_workers=1, retries=0
+            )
+            target_end, missing = service.missing_on_end_date(universe)
+            self.assertEqual(target_end, date(2026, 9, 17))
+            self.assertEqual([item.symbol for item in missing], ["2317.TW"])
+
     def test_official_refresh_reaches_day_reported_by_faster_market(self):
         """TWSE 全市場當日行情晚一天時，仍可依 TPEx 當日公告日補抓上市個股。"""
         universe = [

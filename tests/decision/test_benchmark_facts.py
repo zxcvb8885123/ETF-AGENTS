@@ -379,7 +379,7 @@ class BuildInputTests(unittest.TestCase):
         """專案內實際的持股檔與核准檔可被讀取（來源核准、前幾大、權重合理）。"""
         from etf_agent.decision.benchmark_facts import load_benchmark_holdings
         pack = load_benchmark_holdings(ROOT / "data" / "benchmark_holdings.csv", ROOT / "config" / "benchmark_holdings_sources.json",
-                                       "2026-11-13T00:00:00+08:00")
+                                       "2026-11-16T00:00:00+08:00")
         self.assertEqual(pack["status"], "available")
         self.assertEqual(pack["rows"][0]["symbol"], "2330.TW")
         self.assertLessEqual(sum(Decimal(row["weight"]) for row in pack["rows"]), 1)
@@ -409,7 +409,7 @@ class GateTests(unittest.TestCase):
         self.assertTrue(rule.human_only)
         policy = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         # 2026-11-12 使用者決定開啟；回滾樣板 config/policy_versions/2026-11-12-before-benchmark-facts.json
-        self.assertEqual(policy["position_sizing"]["benchmark_facts"], {"version": "v1", "max_holdings_age_days": 5})
+        self.assertEqual(policy["position_sizing"]["benchmark_facts"], {"version": "v1", "max_holdings_age_days": 60})
 
 
 class StanceTests(unittest.TestCase):

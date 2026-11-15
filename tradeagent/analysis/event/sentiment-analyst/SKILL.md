@@ -50,4 +50,4 @@ description: 處理台股市場情緒資料的逐筆標註、去重聚合與重�
   --output artifacts/market_perception_validated.json
 ```
 
-不同資料包可在子命令前加入 `--bundle PATH`。整次研究最多 8 次工具呼叫；資料不足時停止並輸出 `pending` 或 `unavailable`。
+不同資料包可在子命令前加入 `--bundle PATH`。工具呼叫以完成必要步驟為限，同一份資料不要重複抓；資料不足時輸出 `pending` 或 `unavailable`，不靠反覆查詢補足。在每日決策鏈中只讀主控給的簡報、不另查資料。

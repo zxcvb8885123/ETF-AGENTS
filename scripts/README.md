@@ -14,7 +14,7 @@
 | `init_db.py` | 初始化 SQLite 資料庫 `var/etf_agent.db` | `start.sh`（資料流程第 3 步） | 一般不用 |
 | `collect_latest_prices.py` | 抓 TWSE／TPEx 官方最新價 | `start.sh`（官方最新價步驟） | 行情補抓時 |
 | `collect_history.py` | 以 yfinance 增量更新兩年 TWSE／TPEx 日線 | `start.sh`（Yahoo 日線步驟） | 行情補抓時 |
-| `collect_official_history.py` | 以官方個股月行情補帳本需要的價量並輸出覆蓋報告 | `start.sh`（`daily` 且官方個股價量尚未定案時） | 帳本缺官方價量時 |
+| `collect_official_history.py` | 以官方個股月行情補帳本需要的價量並輸出覆蓋報告 | `start.sh`（`daily` 且官方個股價量尚未定案時，加 `--missing-only`） | 帳本缺官方價量時；`--missing-only` 只重抓目標日缺行情的標的（例如除息日欄位寫「除息」被跳過的那一檔），不重抓全部 |
 | `prices_current.py` | 判斷資料庫是否已有收盤後定案的完整行情；exit 0 表示可略過該行情步驟，1 表示需抓 | `start.sh` 的 `prices_current` 函式 | 不需要 |
 | `collect_twse.py` | 開發模式：只抓 TWSE 最新行情；`--all-listed` 忽略交易池 | `start.sh`（交易池為空時的開發模式） | 一般不用 |
 | `collect_financial_statements.py` | 收集官方財報彙總並輸出固定分母覆蓋報告 | `start.sh`（`auto`／`daily`） | 補特定季度時用 `--fiscal-year`／`--fiscal-quarter` |

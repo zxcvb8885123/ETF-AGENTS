@@ -456,6 +456,29 @@ class OfficialHistoricalRefreshService:
             warnings=tuple(warnings),
         )
 
+    def missing_on_end_date(
+        self, universe: Sequence[Instrument], end: Optional[date] = None
+    ) -> Tuple[date, Tuple[Instrument, ...]]:
+        """傳回目標迄日，以及該日官方個股行情還沒保存的標的（供只補缺檔使用，不改變 refresh 的行為）。"""
+        self.database.initialize()
+        safe_end = self._safe_end_date(universe)
+        target_end = safe_end if end is None else min(end, safe_end)
+        last_dates = self.database.latest_trade_dates_by_symbol(self._historical_sources(universe))
+        sources = {item.symbol: self._historical_source(item) for item in universe}
+        with self.database.connect() as connection:
+            have = {
+                (str(row["symbol"]), str(row["source"]))
+                for row in connection.execute(
+                    "SELECT DISTINCT symbol, source FROM daily_prices WHERE trade_date = ?",
+                    (target_end.isoformat(),),
+                ).fetchall()
+            }
+        missing = tuple(
+            item for item in universe
+            if item.symbol in last_dates and (item.symbol, sources[item.symbol]) not in have
+        )
+        return target_end, missing
+
     def _safe_end_date(self, universe: Sequence[Instrument]) -> date:
         """官方個股月行情可抓到的最後一天：任一市場最新行情端點已公布的最新交易日。"""
         # 即使只補上市個股，也可依較快公布的上櫃全市場端點確認當日已收盤；
