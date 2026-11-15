@@ -4,7 +4,7 @@
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overlap-days", type=int)
     parser.add_argument("--max-workers", type=int)
     parser.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="只重抓目標迄日還缺行情、但先前已有歷史的標的；全部都缺或沒有缺檔時照常完整補抓。",
+    )
+    parser.add_argument(
         "--report",
         type=Path,
         default=ROOT / "artifacts" / "data" / "official_history" / "latest.json",
@@ -63,7 +68,7 @@ def main() -> int:
                 )],
             ),
         )
-        result = OfficialHistoricalRefreshService(
+        service = OfficialHistoricalRefreshService(
             MarketDataDatabase(args.database),
             provider,
             max_workers=int(
@@ -73,20 +78,34 @@ def main() -> int:
             ),
             retries=int(settings["retries"]),
             progress=lambda message: print(message, file=sys.stderr, flush=True),
-        ).refresh(
+        )
+        overlap_days = int(
+            args.overlap_days
+            if args.overlap_days is not None
+            else settings.get("overlap_days", 7)
+        )
+        start = args.start
+        if args.missing_only and start is None:
+            target_end, missing = service.missing_on_end_date(universe, args.end)
+            if 0 < len(missing) < len(universe):
+                print(
+                    "只補缺檔：%s 缺 %d 檔（%s）"
+                    % (target_end.isoformat(), len(missing), ", ".join(item.symbol for item in missing)),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                universe = list(missing)
+                start = target_end - timedelta(days=overlap_days)
+        result = service.refresh(
             universe,
-            start=args.start,
+            start=start,
             end=args.end,
             lookback_years=int(
                 args.lookback_years
                 if args.lookback_years is not None
                 else settings.get("lookback_years", 2)
             ),
-            overlap_days=int(
-                args.overlap_days
-                if args.overlap_days is not None
-                else settings.get("overlap_days", 7)
-            ),
+            overlap_days=overlap_days,
         )
     except Exception as error:
         print("官方歷史行情抓取失敗：%s" % error, file=sys.stderr)
