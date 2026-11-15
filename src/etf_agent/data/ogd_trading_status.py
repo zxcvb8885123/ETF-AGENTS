@@ -94,6 +94,26 @@ def next_trading_session(decision_cutoff: str, closed_dates: Set[str]) -> Dict[s
 
 
 CALENDAR_SOURCE_ID = "TWSE_CALENDAR_OGD"
+# 證交所 OGD 網址換年後只剩新年度；已公布、來自 openapi.twse.com.tw 的舊年度表放在這裡補洞。
+# 只補封存沒有的年度，封存已有的年度一律以封存為準。
+CALENDAR_SUPPLEMENT_DIR = Path(__file__).resolve().parents[3] / "data" / "calendar_supplement"
+
+
+def _calendar_from_facts(facts: List[Dict[str, object]], capture_sha256: str) -> TradingCalendar:
+    covered = {str(f["event_date"])[:4] for f in facts if f.get("kind") == "calendar_event"}
+    extra: List[Dict[str, object]] = []
+    shas: List[str] = []
+    for path in sorted(CALENDAR_SUPPLEMENT_DIR.glob("twse_calendar_*.csv")):
+        raw = path.read_bytes()
+        found, _ = extract_ogd_candidate_facts(CALENDAR_SOURCE_ID, raw, fetched_at="2026-11-12T00:00:00+08:00")
+        years = {str(f["event_date"])[:4] for f in found}
+        if years & covered:
+            continue
+        extra.extend(found)
+        shas.append(hashlib.sha256(raw).hexdigest())
+    if not extra:
+        return TradingCalendar.from_ogd_facts(facts, capture_sha256)
+    return TradingCalendar.from_ogd_facts(list(facts) + extra, canonical_sha256({"capture": capture_sha256, "supplements": shas}))
 
 
 def calendar_from_capture(capture_dir: Path) -> TradingCalendar:
@@ -107,7 +127,7 @@ def calendar_from_capture(capture_dir: Path) -> TradingCalendar:
     if hashlib.sha256(raw).hexdigest() != entry.get("sha256"):
         raise TradingCalendarError("開休市日期表原始檔雜湊不一致：%s" % Path(capture_dir).name)
     facts, _ = extract_ogd_candidate_facts(CALENDAR_SOURCE_ID, raw, fetched_at=str(entry["fetch_finished_at"]))
-    return _with_inferred_closures(TradingCalendar.from_ogd_facts(facts, str(entry["sha256"])), Path(capture_dir))
+    return _with_inferred_closures(_calendar_from_facts(facts, str(entry["sha256"])), Path(capture_dir))
 
 
 def _with_inferred_closures(calendar: TradingCalendar, capture_dir: Path) -> TradingCalendar:
@@ -241,7 +261,7 @@ class OgdTradingStatusMapper:
         if entry is None:
             raise TradingCalendarError("封存缺少開休市日期表：%s" % CALENDAR_SOURCE_ID)
         return _with_inferred_closures(
-            TradingCalendar.from_ogd_facts(self.facts[CALENDAR_SOURCE_ID], str(entry["sha256"])), self.capture_dir)
+            _calendar_from_facts(self.facts[CALENDAR_SOURCE_ID], str(entry["sha256"])), self.capture_dir)
 
     def build(
         self, request: TradingStatusRequest, approvals: Mapping[str, Mapping[str, object]]

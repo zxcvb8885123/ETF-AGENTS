@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-12-cash-stance-brief-1",
-  "available_at": "2026-11-12T16:40:00+08:00",
+  "policy_id": "strategy-2026-11-12-benchmark-facts-1",
+  "available_at": "2026-11-12T18:17:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -68,6 +68,7 @@
     "cash_stance_turn_facts": {"version": "v1"},
     "market_index_facts": {"version": "v1"},
     "exposure_view": {"version": "v2"},
+    "benchmark_facts": {"version": "v1", "max_holdings_age_days": 5},
     "cash_stance_brief": {"version": "v2", "company_events": "high_only", "offense_reference": "omit"},
     "offense": {"version": "v1", "by_view": {"probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.55"}, "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"}, "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"}}, "offense_off_drawdown": "0.12", "thesis_size_cap": {"version": "v1"}, "cash_glide": {"version": "v1"}},
     "quality_dip_facts": {"version": "v1"},

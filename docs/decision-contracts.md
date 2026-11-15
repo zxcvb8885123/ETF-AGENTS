@@ -143,7 +143,7 @@ Decision run 必須另存 `team_inputs`；Finalizer 與所有下游重建驗證�
 - `offense_reference: omit`：簡報的 `offense_facts` 不附 `reference`，提示文字同步拿掉「與一組對照樣本」；`team_inputs.offense_facts` 照舊計算與封存，Finalizer 重算不變。
 - 沒有閘門時簡報的鍵、順序、提示文字與 Schema 與舊版逐位元相同（`tests/decision/test_cash_stance_brief.py` 固定）。
 
-### 0050 基準事實（`position_sizing.benchmark_facts` v1，已開啟，2026-11-12 16:40）
+### 0050 基準事實（`position_sizing.benchmark_facts` v1，已開啟，2026-11-12 18:26）
 
 紀錄工具，不是規則（計畫 3.2）：風險 Agent 看得到「帳戶對 0050 的位置」，但程式不因它改變現金姿態、權重或換股。啟用狀態與開啟、回滾方式見 [status.md](status.md#版本閘門啟用狀態)。
 

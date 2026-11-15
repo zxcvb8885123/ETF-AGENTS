@@ -26,8 +26,11 @@ PRODUCTION_SIZING_GATES = ("limit_scaled_conviction", "cash_ratio_range", "cash_
 
 
 def live_policy_template():
-    """正式樣板原樣（只讀，不改 live 檔）。"""
-    return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+    """正式樣板原樣（只讀，不改 live 檔）；唯一例外：拿掉 benchmark_facts——它要求決策輸入帶 benchmark_input（0050 行情與成分權重檔），
+    管線測試的 fixture 沒有這些資料；benchmark_facts 的行為由 tests/decision/test_benchmark_facts.py 覆蓋。"""
+    value = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+    value["position_sizing"].pop("benchmark_facts", None)
+    return value
 
 
 def live_without_offense():

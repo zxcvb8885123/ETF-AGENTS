@@ -203,7 +203,7 @@ FinMind 個股新聞，含股票代號、標題、原媒體、連結與來源時
 - 補抓：2026-10-23 前資料庫只有 0050 一筆全市場抓取殘留，須執行 `./start.sh benchmark collect` 補抓；`./start.sh daily` 會在帳本結算前補抓。
 - 不污染交易池：基準以「不屬於交易池」的標記保存，交易池驗證、分析用價格與當日價格查詢都只看交易池成員，不會因此多一檔。
 - 時點：比較只採用「抓取時間與收盤都不晚於 as-of」的官方日線版本；補抓的歷史列以實際抓取時間為可得時間，不回填。
-- 用途擴大（2026-11-12 使用者核准）：0050 行情除績效比較外，可作風險 Agent 的背景事實（`position_sizing.benchmark_facts`，已實作、尚未開啟；紀錄用、不可引用、不作交易標的），來源與端點不變。
+- 用途擴大（2026-11-12 使用者核准）：0050 行情除績效比較外，可作風險 Agent 的背景事實（`position_sizing.benchmark_facts`，2026-11-12 已開啟；紀錄用、不可引用、不作交易標的），來源與端點不變。
 - 0050 成分權重（benchmark_facts 的 active_weights 用）：人工抄錄元大投信官網持股權重頁，存 `data/benchmark_holdings.csv`，來源核准在 `config/benchmark_holdings_sources.json`，稽核紀錄見 [2026-11-12_benchmark_holdings.md](source_audit/2026-11-12_benchmark_holdings.md)。該頁使用條款**待確認**，屬使用者自行承擔的判斷；權重會隨股價每日漂移，須由人每週一、四更新，過期超過 `max_holdings_age_days` 即 `unavailable`。
 - 限制：等權基準每檔預算為本金 ÷ 150，整張買不起的股票留現金並列在 `unaffordable_symbols`；基準不計現金股利與配股。
 
