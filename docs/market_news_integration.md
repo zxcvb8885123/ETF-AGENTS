@@ -132,6 +132,8 @@ flowchart LR
 | --- | --- |
 | 中央社財經 RSS | `CNA_FINANCE` |
 | 自由時報財經 RSS | `LTN_BUSINESS` |
+| Yahoo股市 台股新聞 RSS（2026-11-16 核准，見 [來源核對](source_audit/2026-11-16_yahoo_market_news.md)） | `YAHOO_TW_MARKET` |
+| Yahoo股市 美股與國際市場 RSS | `YAHOO_INTL_MARKETS` |
 | 全市場新聞抓取表 | `market_news_captures`（範圍 `TW_STOCK_MARKET`） |
 | 新聞資料包版本 | `market-news-1.0`（含標籤、綜合看法、核准）；`1.1` 另含歷史原頁；`1.2` 允許同一來源多次抓取並去重（每日決策使用），1.0／1.1 仍一來源一份、照舊重建 |
 | 來源使用核對表 | `market_news_source_reviews` |

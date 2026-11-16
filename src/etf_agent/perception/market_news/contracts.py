@@ -11,6 +11,13 @@ SOURCES = {
     'LTN_BUSINESS': {'url': 'https://news.ltn.com.tw/rss/business.xml',
                      'terms_url': 'https://service.ltn.com.tw/RSS',
                      'publisher': '自由時報', 'hosts': {'ec.ltn.com.tw', 'news.ltn.com.tw'}},
+    # Yahoo股市 RSS 只留約 4～5 小時、偶有無標題項目（略過）；條款：個人與非營利、非商業用途免費，須標示「Yahoo股市」。
+    'YAHOO_TW_MARKET': {'url': 'https://tw.stock.yahoo.com/rss?category=tw-market',
+                        'terms_url': 'https://tw.stock.yahoo.com/rss-help',
+                        'publisher': 'Yahoo股市', 'hosts': {'tw.stock.yahoo.com', 'tw.news.yahoo.com'}, 'skip_untitled': True},
+    'YAHOO_INTL_MARKETS': {'url': 'https://tw.stock.yahoo.com/rss?category=intl-markets',
+                           'terms_url': 'https://tw.stock.yahoo.com/rss-help',
+                           'publisher': 'Yahoo股市', 'hosts': {'tw.stock.yahoo.com', 'tw.news.yahoo.com'}, 'skip_untitled': True},
 }
 
 ARCHIVE_SOURCES = {

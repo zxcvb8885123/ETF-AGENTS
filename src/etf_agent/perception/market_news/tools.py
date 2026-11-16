@@ -64,6 +64,7 @@ def prepare(captures, window_start, decision_cutoff, merge=False):
         for row in rows:
             title, link, raw_time = [(row.findtext(key) or '').strip() for key in ('title','link','pubDate')]
             description = row.findtext('description') or ''
+            if not title and SOURCES[source].get('skip_untitled'): continue
             if not title or urlsplit(link).scheme != 'https' or urlsplit(link).hostname not in SOURCES[source]['hosts']:
                 raise MarketNewsError('RSS 新聞標題或原文連結不符')
             try: published = parse_aware_time(parsedate_to_datetime(raw_time).isoformat(),'published_at',error=MarketNewsError)

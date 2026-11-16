@@ -73,5 +73,33 @@ class MergedCaptureTests(unittest.TestCase):
             prepare(bad, START, CUTOFF, merge=True)
 
 
+class YahooSourceTests(unittest.TestCase):
+    def yahoo_capture(self, items_xml):
+        raw = '<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>Yahoo股市</title>' + items_xml + '</channel></rss>'
+        config = SOURCES['YAHOO_TW_MARKET']
+        return {'source': 'YAHOO_TW_MARKET', 'url': config['url'], 'raw_text': raw, 'raw_sha256': canonical_sha256(raw),
+                'available_at': '2026-11-15T03:00:00+00:00', 'status': 'fetched', 'error': ''}
+
+    def test_untitled_yahoo_item_is_skipped_not_fatal(self):
+        xml = ('<item><title/><link>https://tw.news.yahoo.com/a-1.html</link><pubDate>Sat, 14 Nov 2026 02:00:00 GMT</pubDate></item>'
+               '<item><title><![CDATA[費半重挫3.43% 台積電ADR跌]]></title><link>https://tw.stock.yahoo.com/news/b-2.html</link>'
+               '<pubDate>Sat, 14 Nov 2026 03:00:00 GMT</pubDate><description><![CDATA[美股收黑]]></description></item>')
+        prepared = prepare([self.yahoo_capture(xml)], START, CUTOFF, merge=True)
+        self.assertEqual([r['title'] for r in prepared['items']], ['費半重挫3.43% 台積電ADR跌'])
+        self.assertEqual(prepared['items'][0]['publisher'], 'Yahoo股市')
+
+    def test_untitled_item_still_rejected_for_sources_without_skip_flag(self):
+        cna = capture('CNA_FINANCE', [0], '2026-11-15T03:00:00+00:00')
+        raw = cna['raw_text'].replace('CNA_FINANCE新聞0', '')
+        cna = dict(cna, raw_text=raw, raw_sha256=canonical_sha256(raw))
+        with self.assertRaises(MarketNewsError):
+            prepare([cna], START, CUTOFF, merge=True)
+
+    def test_yahoo_link_on_other_host_is_rejected(self):
+        xml = '<item><title>標題</title><link>https://evil.example.com/x.html</link><pubDate>Sat, 14 Nov 2026 02:00:00 GMT</pubDate></item>'
+        with self.assertRaises(MarketNewsError):
+            prepare([self.yahoo_capture(xml)], START, CUTOFF, merge=True)
+
+
 if __name__ == '__main__':
     unittest.main()

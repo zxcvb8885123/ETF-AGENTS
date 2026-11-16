@@ -15,7 +15,7 @@
 | 平日 20:40 | 抓個股新聞 | `com.etf-agents.finmind-news` |
 | 週一至週四、週日 21:00 | 用當天收盤資料做「下一個交易日」的決策與 D-Plan，當作備案 | `com.etf-agents.daily` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
-| 每天 05:30、11:30、17:30、23:30 | 抓全市場新聞 RSS（含週末，避免週末新聞掉出 RSS） | `com.etf-agents.market-news-capture` |
+| 每天每 2 小時（01:30～23:30） | 抓全市場新聞 RSS（含週末；Yahoo 只留 4～5 小時） | `com.etf-agents.market-news-capture` |
 | 週一至週五 07:00 | 用新事件、新聞重做當天的決策，取代昨晚的備案 | `com.etf-agents.daily` |
 | 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證；07:00 重做還在跑時回報「尚在執行」 | `com.etf-agents.dplan-watchdog` |
 | 週五 19:30 | 策略反思週報 | `com.etf-agents.reflection` |
@@ -236,7 +236,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 | `data` | 20:00、06:00 資料更新 | 是 |
 | `finmind-news` | 20:40 個股新聞 | 建議 |
 | `overnight-capture` | 05:05 隔夜市場背景 | 建議 |
-| `market-news-capture` | 每天 05:30、11:30、17:30、23:30 全市場新聞 RSS（含週末） | 建議 |
+| `market-news-capture` | 每 2 小時全市場新聞 RSS（含週末） | 建議 |
 | `dplan-watchdog` | 08:00 看門狗 | 建議 |
 | `backup` | 08:20、23:30 把帳本、決策、D-Plan、設定備份到私人 GitHub 倉庫 `etf-agents-backup` | 建議 |
 | `reflection`、`reflection-apply` | 週五反思週報、週六套用 | 選用 |
