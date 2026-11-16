@@ -108,9 +108,9 @@ class CompanyNewsInputTests(NewsDatabaseCase):
         cutoff = "2026-09-21T13:00:00+00:00"
         snapshot = dict(self.snapshot, decision_cutoff=cutoff)
         before = build_company_news_input(self.path, snapshot)
-        # 沒有新抓取時，最後一批停在 09-20 01:00，前兩晚的新聞都還在視窗內。
+        # 沒有新抓取時，最後一批停在 09-20 01:00（週日，台北 09:00），1.1 視窗放寬為 60 小時，前兩晚的新聞都還在視窗內。
         self.assertEqual(before["latest_fetch_at"], "2026-09-20T01:00:00+00:00")
-        self.assertEqual(len(before["items"]), 3)
+        self.assertEqual(len(before["items"]), 4)
         with sqlite3.connect(self.path) as db:
             # 09-21 晚間重抓：回應全是已存在的內容，候選表不新增；交易池外與截止後的抓取不算。
             self.fetch(db, "2317", "2026-09-21T12:00:00+00:00")

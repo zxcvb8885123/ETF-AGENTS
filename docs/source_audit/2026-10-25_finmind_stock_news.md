@@ -23,7 +23,7 @@
 
 - 只進每日決策的事件分析師（決策資料包 `company_news_input`，`company-news-1.0`；事件報告升為 2.3），不進全市場情緒、不進回測，規則見[事件研究整合](../integrated_event_analysis.md#事件報告-23已核准個股新聞)。
 - 媒體白名單 `company_news_publishers_v1` 依連結網域判斷：udn.com、money.udn.com、ec.ltn.com.tw、stock.ltn.com.tw、news.ltn.com.tw、www.ctee.com.tw、www.chinatimes.com、m.cnyes.com、news.cnyes.com、www.moneydj.com、www.businesstoday.com.tw、finance.ettoday.net、news.tvbs.com.tw、inews.setn.com、www.ttv.com.tw、finance.technews.tw、tw.news.yahoo.com、www.cna.com.tw、www.mirrormedia.mg。CMoney／cmnews 網友貼文、聚財網論壇、富聯網、LINE TODAY、Yahoo股市、券商等不收。
-- 視窗只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；最後一批過舊時輸出空清單，不拿舊聞補。
+- 視窗只取截止前最後一批抓取：(`latest_fetch_at` − 12 小時, cutoff]，且不早於 cutoff − 3 天；最後一批過舊時輸出空清單，不拿舊聞補。2026-11-16 起資料包為 `company-news-1.1`：最後一批落在週日（台北）時視窗放寬為 60 小時（涵蓋週五晚到週日批次），並新增週六、週日 20:40 抓取；1.0 照舊重建。
 - FinMind 來源時間沒有時區，`published_at` 維持 null，`available_at` 用第一次抓到的時間。
 - 資料包內每則 `candidate.license_status` 仍是收集當時寫入的 `unverified`（它屬於內容雜湊，不回頭改寫）；實際是否可用以資料包的 `source_review`（截止前、`approved`）為準，Validator 兩者一起檢查。
 
