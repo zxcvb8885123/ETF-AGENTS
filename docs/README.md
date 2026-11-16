@@ -1,6 +1,6 @@
 # 文件索引
 
-這裡是 `docs/` 的入口。先看「我想知道什麼」，再點進對應文件。這些文件都是現況說明：寫的是系統現在怎麼做、哪些還沒接。計畫與設計紀錄集中在 [plans/](plans/README.md)。
+這裡是 `docs/` 的入口。先看「我想知道什麼」，再點進對應文件。這些文件都是現況說明：寫的是系統現在怎麼做、哪些還沒接。計畫與設計紀錄集中在 [plans/](plans/README.md)，只留尚未做完或仍有參考價值的。
 
 ## 我想知道什麼
 
@@ -29,7 +29,7 @@
 - [architecture.md](architecture.md)：每日決策架構。
 - [decision-details.md](decision-details.md)：決策原則與參賽策略細節。
 - [decision-contracts.md](decision-contracts.md)：每日決策鏈各角色的契約、版本閘門的完整條件、子 Agent 執行器與策略反思的邊界細節；啟用狀態與目前數值見 [status.md](status.md#版本閘門啟用狀態)。
-- [sizing_rotation_v2_design.md](sizing_rotation_v2_design.md)：配置、權重與滿檔換股的現行做法。
+- [sizing_and_rotation.md](sizing_and_rotation.md)：配置、權重與滿檔換股的現行做法。
 - [glossary.md](glossary.md)：決策閘門、欄位與旗標的名稱對照（是什麼、在哪；不寫啟用狀態）。
 - [status.md](status.md)：目前狀態與限制，含版本閘門啟用狀態表。
 - [runtime-artifacts.md](runtime-artifacts.md)：執行時產物資料夾。
@@ -38,7 +38,7 @@
 
 - [operations.md](operations.md)：每日排程、D-Plan、資料包、開新帳戶、策略反思放行、評測、常見問題。
 - [run-options.md](run-options.md)：`./start.sh run` 參數。
-- [token_reduction_plan.md](token_reduction_plan.md)：Token 用量控制的現況。
+- [token_usage.md](token_usage.md)：Token 用量控制的現況。
 - [docker.md](docker.md)：環境安裝與 Docker。
 - [../cli/README.md](../cli/README.md)：命令列單步操作。
 - [../scripts/README.md](../scripts/README.md)：維運與補抓腳本。
@@ -48,11 +48,11 @@
 - [data_sources_inventory.md](data_sources_inventory.md)：資料來源與授權限制。
 - [market_news_integration.md](market_news_integration.md)、[market_news_history.md](market_news_history.md)：全市場新聞的接入與缺日補抓。
 - [market_fear_greed.md](market_fear_greed.md)：台股恐懼貪婪指標。
-- [margin_level_signal_plan.md](margin_level_signal_plan.md)：融資水位訊號（現況說明）。
+- [margin_level_signal.md](margin_level_signal.md)：融資水位訊號（現況說明）。
 - [overnight_market.md](overnight_market.md)：隔夜市場背景。
 - [technical_trend_history.md](technical_trend_history.md)：技術分析的歷史輸入。
 - [fundamental_data_repair.md](fundamental_data_repair.md)：基本面缺口補抓。
-- [fundamental_growth_signal_plan.md](fundamental_growth_signal_plan.md)：基本面成長訊號（現況說明）。
+- [fundamental_growth_signal.md](fundamental_growth_signal.md)：基本面成長訊號（現況說明）。
 - `source_audit/`：來源核對與核准證據，程式與設定會引用，不可刪。
 
 ### 事件與情緒
@@ -66,7 +66,7 @@
 
 ### 計畫與設計紀錄
 
-- [plans/README.md](plans/README.md)：計畫、設計提案與稽核紀錄（各閘門的設計動機、方案比較、重放數字）。這些不是現行行為說明；現行行為以 [status.md](status.md) 與 [decision-contracts.md](decision-contracts.md) 為準。
+- [plans/README.md](plans/README.md)：計畫與設計提案（各閘門的設計動機、方案比較、重放數字）；做完且已併入說明文件的計畫已刪除，看 git 歷史。這些不是現行行為說明；現行行為以 [status.md](status.md) 與 [decision-contracts.md](decision-contracts.md) 為準。
 
 ## 各資料夾的 README
 
@@ -88,13 +88,14 @@
 | 2026-10-22 | 新增本索引、`repository-layout.md`、`modules.md`、`runtime-artifacts.md`；各資料夾與 `src/etf_agent/` 各套件新增 README；根 `README.md` 加上整體架構圖。 |
 | 2026-10-31 | 根 `README.md` 精簡為入口頁；目前狀態、日常操作、`run` 參數、決策流程細節分別移到 `status.md`、`operations.md`、`run-options.md`、`decision-details.md`。 |
 | 2026-11-04 | 文件改寫為白話說明、計畫文件改為現況說明。 |
-| 2026-11-05 | 新增三份配置閘門設計計畫（`plans/cash_buffer_high_conviction_plan.md`、`plans/limit_aware_conviction_weights_plan.md`、`plans/agent_cash_ratio_range_plan.md`），並同步閘門啟用狀態。 |
+| 2026-11-05 | 新增三份配置閘門設計計畫（其中信心權重那份已於 11-15 刪除），並同步閘門啟用狀態。 |
 | 2026-11-08 | 修正閘門啟用狀態、狀態頁「尚未實跑」、樣本門檻 5→10 與策略反思排程說法等過期敘述。 |
 | 2026-11-08 | `architecture.md` 與 `decision-details.md` 的兩份「附錄：名稱對照」合併為 `glossary.md`，兩處附錄改為連結。 |
 | 2026-11-08 | `AGENTS.md` 瘦身為原則與邊界；契約與閘門細節搬到新檔 `decision-contracts.md`，閘門啟用狀態表集中到 `status.md`。 |
 | 2026-11-10 | 索引加入 `plans/agent_autonomy_plan.md`、`plans/agent_nominated_rotation_plan.md`；同步 `agent_swap` v1 影子（已開啟）與已實作未開啟版本的狀態、契約、`team_inputs` 2.9 與名稱對照。 |
-| 2026-11-10 | 同步 `status.md` 閘門表與各計畫的進度敘述（`reentry_cooldown` v2、`drawdown_derisk` v5、現金三個 v2 已開啟）；索引加入 `plans/follow_up_plan.md`。 |
+| 2026-11-10 | 同步 `status.md` 閘門表與各計畫的進度敘述（`reentry_cooldown` v2、`drawdown_derisk` v5、現金三個 v2 已開啟）。 |
 | 2026-11-12 | 計畫、設計提案與稽核文件搬到 `plans/`（含新的 `plans/README.md`），`docs/` 只留說明文件；根 `README.md` 改寫為使用說明。 |
+| 2026-11-15 | 刪除 11 份已完成或過期的計畫（`plans/` 剩 16 份計畫）；`*_plan.md` 的現況說明改名為 `margin_level_signal.md`、`fundamental_growth_signal.md`、`token_usage.md`、`sizing_and_rotation.md`；修正事件範圍、配置說明的過期敘述。 |
 
 ## 維護規則
 

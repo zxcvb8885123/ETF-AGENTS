@@ -171,7 +171,7 @@ HIGH_CONVICTION_CASH_FLOOR_FIELDS = {"version", "floor_ratio"}
 # 2026-11-05 後新增（limit_scaled_conviction 版本閘門，只由人設定）：高信心候選的必要份額為
 # max(原式份額, min(alpha × 單股上限, 封頂))，必要份額總和超過預算時依入選名次填到用完；剩餘預算再依原式
 # 分給 medium／low（volatility_exponent = 0 時不得高於最小的 high／medium，分不完留作現金），
-# 見 docs/plans/limit_aware_conviction_weights_plan.md「α 方案」。alpha 為必要欄位（不在程式寫死預設值）。
+# 見 docs/decision-details.md（份額與單股上限）。alpha 為必要欄位（不在程式寫死預設值）。
 # 前提：method 為 conviction_volatility_v2 且已啟用 selection_ranking。省略此欄位的舊 run 走原式。
 LIMIT_SCALED_CONVICTION = "v1"
 LIMIT_SCALED_CONVICTION_FIELDS = {"version", "alpha"}
@@ -213,7 +213,7 @@ AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 # quality_dip 是優質股第三階段的子閘門（decision/quality_dip_swap.py）：purpose 列舉多一個 quality_dip（前提 agent_swap.exposure）。
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
-    "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add", "entry_reserve",
+    "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add", "entry_reserve", "victim_rules",
 }
 # proceeds_to_add（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：換股成立時，換出者的賣款可流向高信心加碼持股。
 # 換入者因額度被高信心加碼持股占走而沒有買單（無任何縮減旗標），且同一份配置有高信心加碼持股真的買進，該對不取消、換出者照賣，
@@ -224,6 +224,13 @@ PROCEEDS_TO_ADD = {"version": "v1"}
 # 改由風險 Agent 的 exposure_view 決定（keep_defensive 才略過，start_rebuild／rebuild 照常依提名換股）；前提 agent_swap.exposure v2。
 # 省略此欄位的舊 Policy／舊 run 逐位元維持「減碼日整個略過」的原重建行為。
 DERISK_DAY_VIEW = {"version": "v1"}
+# victim_rules（版本閘門，物件，只由人設定）：purpose=thesis 的換出者須第一輪 hold 信心不高於 thesis_max_hold_conviction（low／medium），
+# 持有天數下限改讀 position_review 的 holding_trading_days（交易日，缺值視為不足）；purpose=exposure／quality_dip 的資格不變。
+# 前提 agent_swap v2 與頂層 position_review；省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。見 docs/plans/swap_victim_rules_plan.md。
+VICTIM_RULES_VERSION = "v1"
+VICTIM_RULES_FIELDS = {"version", "thesis_max_hold_conviction", "holding_days_basis"}
+VICTIM_RULES_MAX_HOLD_CONVICTIONS = ("low", "medium")
+VICTIM_RULES_HOLDING_DAYS_BASES = ("trading_days",)
 NOMINATION_REF_FIELDS = {"nomination_id", "sha256", "status"}
 NOMINATION_STATUSES = ("completed", "not_needed", "exhausted", "unavailable")  # 同 swap_nomination.STATUSES（那邊 import 本模組，不能反向）
 AGENT_SWAP_REQUIRED_FIELDS = {"version", "max_swaps_per_run", "min_holding_days"}
@@ -369,6 +376,13 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="換股改由交易 Agent 第二輪提名：v1 影子（配置不讀提名）、v2 正式；頂層 position_review、exposure_rotation=v3、"
              "rebound_participation=v2 與 v2 的互斥（rotation.forced_swap、exposure_rotation.conviction_gap_swap）由 _validate_agent_swap 檢查；"
              "thesis_hint_symbols／verdicts_ref 由 pipeline 綁定（swap_nomination.bind_thesis_hints），重建只讀 Policy；team_inputs 須為 2.9",
+    ),
+    GateRule(
+        "agent_swap.victim_rules",
+        requires=("agent_swap",),
+        note="換出者規則（v1）：purpose=thesis 的換出者第一輪 hold 信心須不高於 thesis_max_hold_conviction（low／medium），持有天數下限改讀 "
+             "position_review 的 holding_trading_days（交易日，缺值 fail-closed 視為不足）；purpose=exposure／quality_dip 的資格不變；"
+             "須 agent_swap v2 與頂層 position_review.version=v2（由 validate_position_sizing 檢查）；team_inputs 不升版、沒有新鍵；形狀與值域由 _validate_agent_swap 檢查，見 docs/plans/swap_victim_rules_plan.md",
     ),
     GateRule(
         "agent_swap.exposure",
@@ -833,6 +847,19 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
             errors.append('%s.proceeds_to_add 必須是 {"version": "v1"}' % prefix)
         if version != AGENT_SWAP_V2:
             errors.append("%s.proceeds_to_add 需要 agent_swap v2（配置才讀提名）" % prefix)
+    if "victim_rules" in gate:
+        rules = gate["victim_rules"]
+        if not isinstance(rules, Mapping) or set(rules) != VICTIM_RULES_FIELDS:
+            errors.append("%s.victim_rules 必須恰好有 %s" % (prefix, "、".join(sorted(VICTIM_RULES_FIELDS))))
+        else:
+            if rules["version"] != VICTIM_RULES_VERSION:
+                errors.append("%s.victim_rules.version 只允許 %s" % (prefix, VICTIM_RULES_VERSION))
+            if rules["thesis_max_hold_conviction"] not in VICTIM_RULES_MAX_HOLD_CONVICTIONS:
+                errors.append("%s.victim_rules.thesis_max_hold_conviction 只允許 %s" % (prefix, "／".join(VICTIM_RULES_MAX_HOLD_CONVICTIONS)))
+            if rules["holding_days_basis"] not in VICTIM_RULES_HOLDING_DAYS_BASES:
+                errors.append("%s.victim_rules.holding_days_basis 只允許 %s" % (prefix, "／".join(VICTIM_RULES_HOLDING_DAYS_BASES)))
+        if version != AGENT_SWAP_V2:
+            errors.append("%s.victim_rules 需要 agent_swap v2（配置才讀提名）" % prefix)
     if "exposure" in gate:
         from .exposure_swap import validate_exposure_swap_gate
         validate_exposure_swap_gate(sizing, errors)
@@ -977,6 +1004,13 @@ def proceeds_to_add_enabled(sizing: object) -> bool:
     """agent_swap.proceeds_to_add 啟用；沒有欄位回 False（原行為）。"""
     swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
     return isinstance(swap, Mapping) and swap.get("proceeds_to_add") == PROCEEDS_TO_ADD
+
+
+def victim_rules_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """``position_sizing.agent_swap.victim_rules`` 閘門；沒有（或 sizing／agent_swap 不是物件）時回 None（原行為）。"""
+    swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    gate = swap.get("victim_rules") if isinstance(swap, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
 
 
 def derisk_day_uses_agent_view(sizing: object) -> bool:
@@ -1577,6 +1611,10 @@ def validate_position_sizing(
         validate_liquidity_fit_gate(policy, errors)
     if "agent_swap" in sizing and "position_review" not in policy:
         errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
+    if victim_rules_gate(sizing) is not None:
+        review = policy.get("position_review")
+        if not isinstance(review, Mapping) or review.get("version") != "v2":
+            errors.append("position_sizing.agent_swap.victim_rules 需要 position_review.version=v2（持有交易日數 holding_trading_days 來自自進場事實）")
     if "cash_ratio_range" in sizing:
         _validate_cash_ratio_range(policy, sizing, errors)
     _validate_rotation(sizing, errors)
@@ -1813,7 +1851,7 @@ def alpha_floor_weights(
     """limit_scaled_conviction v1（α 方案）：高信心候選的份額至少為 max(原式份額, ``floors``)，其餘照原式並受跨等級約束。
 
     ``order`` 必須已依（信心、入選名次、代號）排序；``floors`` 只含 high 的股票（min(α × 單股上限, 封頂)）。
-    公式見 docs/plans/limit_aware_conviction_weights_plan.md「α 方案」：
+    公式見 docs/decision-details.md（份額與單股上限）：
 
     0. ``base`` = 原式（``conviction_weights``）把預算分給全部入選股；每檔 high 的必要份額 r = max(base, floor)。
     1. 沒有 high 被抬高、且（volatility_exponent = 0 時）base 已滿足 high ≥ medium ≥ low：直接回傳 base（逐位同原式）。

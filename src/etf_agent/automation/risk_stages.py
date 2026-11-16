@@ -253,6 +253,21 @@ def _cash_ratio(account: Mapping[str, object]) -> Optional[str]:
     return str((cash / nav).quantize(Decimal("0.0001"))) if nav > 0 else None
 
 
+def review_citable_evidence_ids(bundle: Mapping[str, object], proposal: Mapping[str, object]) -> List[str]:
+    """風險審查可引用的行情 evidence ID：配置後持股，加上本次委託（含全數賣出、已不在配置後持股）的標的。
+
+    只聯集可引用清單（Validator 本來就接受 bundle 內任何 evidence），不動契約；不提供提名理由或交易意圖。"""
+    symbols = {str(item["symbol"]).upper() for item in proposal["allocation_proposal"]["positions"]}
+    symbols |= {
+        str(order["symbol"]).upper() for order in (proposal.get("order_proposal") or {}).get("orders", [])
+        if isinstance(order, Mapping) and order.get("symbol")
+    }
+    return sorted(
+        str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"]
+        if row.get("source_evidence_id") and str(row["symbol"]).upper() in symbols
+    )
+
+
 class RiskStagesMixin:
     """由 ``DailyDecisionPipeline`` 組合；依賴 ``PipelineBase`` 的 save_*、agent_step 與 ``root``。"""
 
@@ -613,11 +628,7 @@ class RiskStagesMixin:
         liquidity = liquidity_exposure(proposal, MomentumEngine(bundle).run())
         # 審查 Agent 只讀提案／情境／Guard，沒有共同輸入；不提供可引用清單時它會編造 artifact ID
         # 而被 Validator 拒絕，正式流程曾要靠第二次重試才通過。
-        held = {str(item["symbol"]).upper() for item in proposal["allocation_proposal"]["positions"]}
-        citable = sorted(
-            str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"]
-            if row.get("source_evidence_id") and str(row["symbol"]).upper() in held
-        )
+        citable = review_citable_evidence_ids(bundle, proposal)
         citable_path = self.save_artifact("review_citable_evidence_r%d" % revision, {"citable_evidence_ids": citable})
         names = {
             name: self.save_artifact("%s_review_input_r%d" % (name, revision), payload)

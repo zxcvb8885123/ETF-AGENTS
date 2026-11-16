@@ -41,7 +41,7 @@
 ## 4. 為什麼「調大檔數」沒用（事實＋推論）
 
 - **`no_eligible_victim` 的來源**（事實，`src/etf_agent/decision/exposure.py:623-626`、`allocation.py:961-971`）：換出者必須是交易 Agent 標 `hold`、信心非 `high`、可交易、持有天數夠，且 beta 低於組合 beta。基準第 10 天，26 檔中 17 檔是模擬換入、4 檔 `add`、1 檔 `trim`，只剩 3 檔 `hold`，它們的 beta（0.89／1.35／1.67）都高於組合 beta 0.857，候選池為空。
-- **結構限制**（推論）：標 `add`／`buy`／`trim` 的持股永遠不是換出者（設計如此，見 [exposure_rotation_plan.md](exposure_rotation_plan.md) 第 6 節）。4 檔低 beta 的 `add` 持股佔 NAV 約 26～31%，加上約 3% 現金，把可達的含現金 beta 封在約 0.87。所以積極下限 1.00（觸發線 0.90）在這個持股結構下達不到，參數怎麼調都一樣。
+- **結構限制**（推論）：標 `add`／`buy`／`trim` 的持股永遠不是換出者（設計如此，見 [decision-contracts.md](../decision-contracts.md)）。4 檔低 beta 的 `add` 持股佔 NAV 約 26～31%，加上約 3% 現金，把可達的含現金 beta 封在約 0.87。所以積極下限 1.00（觸發線 0.90）在這個持股結構下達不到，參數怎麼調都一樣。
 - **3、4 檔比 2 檔差**（推論）：兩種設定 10 天內的 17 對換出／換入名單完全相同；差在第 1 天。4 對配對的賣加買約 30% NAV，撞到 `max_turnover_rate`（0.3）與現金檢查，`allocation.py` 的復原迴圈（約 430 行）逐一取消沒拿到買單的換入者，最後只剩 1 對，釋出的現金依信心權重灌進低 beta 的 `add` 持股，這些之後再也換不出去。是三個閘門（曝險換股、換手限制、信心權重）交互的路徑相依，不是任何單一參數的單調函數。`max_rotation_fraction` 0.10 加 4 檔反而達標（0.904，第 7 天），就是因為它把第 1 天壓回 2 對。
 
 ## 5. 方案與推薦
@@ -89,7 +89,7 @@ v2 欄位：`version`（`v2`）、`beta_window_days`、`beta_target_by_stance`�
 | 驗證與白名單 | `src/etf_agent/decision/exposure.py`：`GATE_REQUIRED_FIELDS`（33 行）、形狀驗證（103 行起，含 `release_margin`／`max_rotation_fraction`／`min_new_conviction` 各段與「下限必須大於 margin」檢查） |
 | 換股配對 | `exposure.py` 的 `exposure_rotation_plan`（537 行起：`cap`、`margin`、`min_tier`、`target`、`fill_pool` 條件）；`allocation.py` 的 `_exposure_rotation`（910 行起，`Fill` 的信心仍要保留） |
 | 設定 | `config/decision_policy.json`（`position_sizing.exposure_rotation`，開啟 v2 才改，見第 9 節） |
-| 文件 | `docs/decision-contracts.md`（曝險換股欄位與規則段）、`docs/status.md`（版本閘門啟用狀態）、`docs/glossary.md`（`exposure_rotation` 列）、`docs/plans/exposure_rotation_plan.md`（加註 v2 取代說明）、`README.md`、`AGENTS.md`（曝險換股段，目前寫 v1） |
+| 文件 | `docs/decision-contracts.md`（曝險換股欄位與規則段）、`docs/status.md`（版本閘門啟用狀態）、`docs/glossary.md`（`exposure_rotation` 列）、`docs/plans/exposure_rotation_v2_plan.md`（加註 v2 取代說明）、`README.md`、`AGENTS.md`（曝險換股段，目前寫 v1） |
 | 測試 | `tests/decision/test_exposure_rotation.py`、`tests/decision/test_exposure_rotation_e2e.py`（v1 測試全保留，另加 v2 版本） |
 
 ## 8. 測試（`unittest.TestCase` 風格）

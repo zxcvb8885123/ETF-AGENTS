@@ -1,6 +1,6 @@
 """反彈參與閘門（``position_sizing.rebound_participation`` v1 版本閘門，只由人設定、策略反思不得改）。
 
-動機與限制見 ``docs/plans/rebound_participation_plan.md``：防守姿態下 beta 很低的持股，在市場快速反彈時幾乎沒有參與；
+動機與限制見 ``docs/plans/rebound_participation_v2_plan.md``：防守姿態下 beta 很低的持股，在市場快速反彈時幾乎沒有參與；
 本閘門在「程式狀態機」與「風險 Agent 的既有列舉」都同意轉向時，放寬曝險換股（防守姿態改用 beta 停止線、
 換股檔數上調、持有天數下調）。整條鏈全部是確定性程式，Agent 不輸出任何數字、不新增欄位：
 

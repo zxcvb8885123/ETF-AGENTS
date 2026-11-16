@@ -27,9 +27,12 @@ PRODUCTION_SIZING_GATES = ("limit_scaled_conviction", "cash_ratio_range", "cash_
 
 def live_policy_template():
     """正式樣板原樣（只讀，不改 live 檔）；唯一例外：拿掉 benchmark_facts——它要求決策輸入帶 benchmark_input（0050 行情與成分權重檔），
-    管線測試的 fixture 沒有這些資料；benchmark_facts 的行為由 tests/decision/test_benchmark_facts.py 覆蓋。"""
+    管線測試的 fixture 沒有這些資料；benchmark_facts 的行為由 tests/decision/test_benchmark_facts.py 覆蓋。
+    另一個例外：拿掉 agent_swap.victim_rules——它改變 purpose=thesis 的換出者資格（第一輪 hold 信心上限、持有交易日數），
+    fixture 的持股檢視沒有 holding_trading_days，會讓提名資格與這些測試要測的功能無關地改變；victim_rules 由 tests/decision/test_swap_victim_rules.py 覆蓋。"""
     value = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
     value["position_sizing"].pop("benchmark_facts", None)
+    value["position_sizing"].get("agent_swap", {}).pop("victim_rules", None)
     return value
 
 
@@ -49,6 +52,7 @@ def live_without_offense():
 def without_stop_exit(value):
     """對照組樣板拿掉 stop_exit 並把 position_review 降回 v1：stop_exit 與 position_review v2 都依賴 exposure_rotation，
     凡是拿掉 exposure_rotation 的對照組必須先降版，否則 Policy 驗證失敗。整條含 v2 與 stop_exit 的鏈由 test_position_review_v2_pipeline／test_stop_exit 覆蓋。"""
+    value["position_sizing"].get("agent_swap", {}).pop("victim_rules", None)  # victim_rules 需要 position_review v2，降版時一併拿掉
     review = value["position_review"]
     review["version"] = "v1"
     for key in ("trail_alert", "relative_loss_alert", "stale_alert"):

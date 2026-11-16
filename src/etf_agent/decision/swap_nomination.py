@@ -59,6 +59,7 @@ from .sizing import (
     cash_grade_grid,
     cash_ratio_gate,
     reentry_blocked_symbols,
+    victim_rules_gate,
 )
 from .trader import REDUCING, claims_by_symbol
 
@@ -101,6 +102,13 @@ CANDIDATE_REASONS = ("not_tradable", "reentry_cooldown", "no_price", "conviction
 VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_bear_basis")
 # agent_swap.exposure 啟用時，持股能否以曝險理由提名（不要求空頭依據）的原因代碼。
 EXPOSURE_VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_exposure_facts", "no_hold_conviction")
+# agent_swap.victim_rules 啟用時 purpose=thesis 的換出者原因代碼：持有天數改算交易日（缺值視為不足）、第一輪 hold 信心不得高於上限。
+THESIS_VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_bear_basis", "hold_conviction_above_cap")
+VICTIM_RULES_NOTE = (
+    "purpose=thesis 的換出者只限第一輪 hold 信心不高於 thesis_max_hold_conviction、且持有交易日數（holding_trading_days）達 min_holding_days "
+    "的持股；這是換出者規則（程式事實），不是賣出指令。若換出的理由是想提高曝險或參與度（例如反彈期把低波動持股換成較積極的股票），"
+    "請改用 purpose=exposure（受曝險上限與 beta 停止線約束），或刪除該對；thesis 只用於這檔自己的論點已弱到只剩低信心的持股。"
+)
 MONEY = Decimal("1")  # 簡報顯示用的整元進位；費稅與成交價公式與配置共用 allocation 的函式
 RATE_QUANTUM = Decimal("0.000001")
 BRIEF_NOTE = (
@@ -295,6 +303,14 @@ def nomination_facts(
     min_days = int(gate["min_holding_days"])
     exposure = {str(item["symbol"]).upper(): item for item in exposure_review.get("items", []) if isinstance(item, Mapping)}
     items = {str(item["symbol"]).upper(): item for item in trade_decision.get("items", []) if isinstance(item, Mapping)}
+    victim_rules = victim_rules_gate(sizing)
+    trading_days: Dict[str, object] = {}
+    if victim_rules is not None:
+        # agent_swap.victim_rules：持有交易日數取自 position_review 的 holding_trading_days（缺值或非整數在下面視為不足，fail-closed）。
+        trading_days = {
+            str(item["symbol"]).upper(): item.get("holding_trading_days")
+            for item in position_review.get("items", []) if isinstance(item, Mapping) and "symbol" in item
+        }
 
     def adopted(symbol: str, wanted: Set[str]) -> List[str]:
         item = items[symbol]
@@ -366,6 +382,24 @@ def nomination_facts(
             "holding_days": days[symbol], "rationale": str(item.get("rationale", "")),
             "basis_ids": basis, "reasons": reasons, "nominable": not reasons,
         }
+        if victim_rules is not None:
+            # purpose=thesis 的資格另列（quality_dip 仍用上面的 reasons／nominable，資格不變）。
+            held_days = trading_days.get(symbol)
+            cap = str(victim_rules["thesis_max_hold_conviction"])
+            conviction = item.get("conviction")
+            thesis_reasons = [
+                code for code, failed in (
+                    ("not_tradable", symbol in untradable),
+                    ("holding_days_short", isinstance(held_days, bool) or not isinstance(held_days, int) or held_days < min_days),
+                    ("no_bear_basis", not basis),
+                    ("hold_conviction_above_cap", conviction not in CONVICTION_LEVELS
+                     or CONVICTION_LEVELS.index(conviction) < CONVICTION_LEVELS.index(cap)),
+                ) if failed
+            ]
+            row.update({
+                "holding_trading_days": held_days if isinstance(held_days, int) and not isinstance(held_days, bool) else None,
+                "thesis_reasons": thesis_reasons, "thesis_nominable": not thesis_reasons,
+            })
         if exposure_gate is not None:
             # purpose=exposure：不要求空頭依據，換出依據是程式算的曝險事實編號；hold 信心必須在三級內（用來決定交代順序）。
             exposure_reasons = [
@@ -409,6 +443,10 @@ def nomination_facts(
     )
     nominable_buys = [row["symbol"] for row in candidates if row["nominable"]]
     nominable_sells = [row["symbol"] for row in victims if row["nominable"]]
+    if victim_rules is not None:
+        # 換出者規則啟用：thesis 的可提名持股改用新規則；quality_dip 的可提名持股（資格不變）仍算可提名持股，才不會漏呼叫。
+        nominable_sells = [
+            row["symbol"] for row in victims if row["thesis_nominable"] or (quality_gate is not None and row["quality_dip_nominable"])]
     exposure_extra: Dict[str, object] = {}
     if exposure_gate is not None:
         exposure_sells = [row["symbol"] for row in victims if row["exposure_nominable"]]
@@ -604,6 +642,7 @@ def swap_nomination_brief(
     facts = nomination_facts(bundle, policy, trade_decision, ranking, debate, position_review, exposure_review, exposure_facts, dip_facts)
     exposure_gate = exposure_swap_gate(policy.get("position_sizing"))
     quality_gate = quality_dip_swap_gate(policy.get("position_sizing"))
+    victim_rules = victim_rules_gate(policy.get("position_sizing"))
     dip_rows = {
         str(item["symbol"]).upper(): item for item in (dip_facts or {}).get("items", []) if isinstance(item, Mapping)  # type: ignore[union-attr]
     } if quality_gate is not None else {}
@@ -661,6 +700,11 @@ def swap_nomination_brief(
                 "down_capture": facts_row.get("down_capture"),
             },
         }
+        if victim_rules is not None:
+            # 換出者規則啟用才多附：thesis 資格改用新規則；沒有閘門時這些鍵都不存在。
+            entry_row["nominable"] = row["thesis_nominable"]
+            entry_row["blocked_reasons"] = row["thesis_reasons"]
+            entry_row["holding_trading_days"] = row["holding_trading_days"]
         if exposure_gate is not None:
             entry_row["exposure_nominable"] = row["exposure_nominable"]
             entry_row["exposure_blocked_reasons"] = row["exposure_reasons"]
@@ -707,6 +751,12 @@ def swap_nomination_brief(
             "note": ENTRY_RESERVE_NOTE + (THESIS_SIZE_CAP_NOTE if thesis_size_cap_enabled(offense_gate(policy.get("position_sizing"))) else ""),
             "max_nominations": facts["pair_cap"], "fill_limit": facts["fill_cap"],
             "size_grades": {"small": "試單：論點成立但你想先小額進場", "medium": "中等份量", "large": "把握最高：你願意用程式允許的最大份量"},
+        }
+    if victim_rules is not None:
+        exposure_block["victim_rules"] = {
+            "note": VICTIM_RULES_NOTE,
+            "thesis_max_hold_conviction": victim_rules["thesis_max_hold_conviction"],
+            "holding_days_basis": victim_rules["holding_days_basis"],
         }
     return {
         **exposure_block,
@@ -780,6 +830,8 @@ class SwapNominationValidator:
         self.prior_tokens = prior_reference_tokens(prior_context)
         # agent_swap.exposure（版本閘門）：有閘門時另需 team_inputs.exposure_facts；沒有閘門時完全不讀。
         self.exposure_gate = exposure_swap_gate(policy.get("position_sizing")) if isinstance(policy, Mapping) else None
+        # agent_swap.victim_rules：purpose=thesis 的換出者資格改用新規則；沒有閘門時完全不讀。
+        self.victim_rules = victim_rules_gate(policy.get("position_sizing")) if isinstance(policy, Mapping) else None
         self.exposure_facts = exposure_facts
         if self.exposure_gate is not None:
             self.prior_tokens = set(self.prior_tokens) | set(exposure_reference_tokens(exposure_facts))
@@ -909,7 +961,7 @@ class SwapNominationValidator:
             if buy == sell:
                 errors.append("%s 換入與換出不得是同一檔：%s" % (prefix, buy))
             self._check_buy(prefix, buy, candidates, items, errors)
-            self._check_sell(prefix, sell, victims, items, errors, purpose == PURPOSE_EXPOSURE)
+            self._check_sell(prefix, sell, victims, items, errors, purpose == PURPOSE_EXPOSURE, purpose == PURPOSE_THESIS and self.victim_rules is not None)
             buys.append(buy)
             sells.append(sell)
             pairs.append((buy, sell))
@@ -1018,16 +1070,25 @@ class SwapNominationValidator:
         elif not row["nominable"]:
             errors.append("%s.buy_symbol %s 不能作為換入股：%s" % (prefix, symbol, "、".join(row["reasons"])))  # type: ignore[arg-type]
 
-    @staticmethod
     def _check_sell(
-        prefix: str, symbol: str, victims: Mapping[str, Mapping[str, object]], items: Mapping[str, Mapping[str, object]],
-        errors: List[str], exposure: bool = False,
+        self, prefix: str, symbol: str, victims: Mapping[str, Mapping[str, object]], items: Mapping[str, Mapping[str, object]],
+        errors: List[str], exposure: bool = False, thesis_rules: bool = False,
     ) -> None:
         row = victims.get(symbol)
         if row is None:
             item = items.get(symbol)
             why = "不在交易池" if item is None else "未持有或第一輪不是 hold（intent=%s）" % item.get("intent")
             errors.append("%s.sell_symbol %s 不能作為換出股：%s" % (prefix, symbol, why))
+        elif thesis_rules:
+            if not row["thesis_nominable"]:
+                reasons = [str(code) for code in row["thesis_reasons"]]  # type: ignore[union-attr]
+                hint = ""
+                if "hold_conviction_above_cap" in reasons or "holding_days_short" in reasons:
+                    hint = (
+                        "。目前規則下 purpose=thesis 只限第一輪 hold 信心不高於上限、且持有交易日數足夠的持股；"
+                        + ("若這一對的理由是搶反彈或提高曝險參與度，可改用 purpose=exposure；" if self.exposure_gate is not None else "")
+                        + "若理由不足以支持，請刪除該對")
+                errors.append("%s.sell_symbol %s 不能作為換出股（purpose=thesis）：%s%s" % (prefix, symbol, "、".join(reasons), hint))
         elif exposure:
             if not row["exposure_nominable"]:
                 errors.append("%s.sell_symbol %s 不能作為曝險換出股：%s" % (prefix, symbol, "、".join(row["exposure_reasons"])))  # type: ignore[arg-type]

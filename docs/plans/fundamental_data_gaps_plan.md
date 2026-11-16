@@ -205,7 +205,7 @@
 - **金鑰**：日誌、警告、manifest 與原始回應存檔不含金鑰值。
 - **舊 run 不變**：沒有新 bundle 欄位的封存 run 重建雜湊不變。
 
-文件同步清單（實作各階段時）：`README.md`、`AGENTS.md`（bundle 版本閘門總則若新增欄位）、`docs/status.md`（資料表與閘門表）、`docs/data_sources_inventory.md`、`docs/fundamental_data_repair.md`、`docs/fundamental_growth_signal_plan.md`、`docs/operations.md`、`docs/docker.md`（金鑰與開關）、`docs/decision-contracts.md`、`docs/glossary.md`、`docs/source_audit/`（新來源核對紀錄）、`docs/plans/quality_dip_plan.md`（第 2.5、2.6 節）；Skill：`fundamental-analyst`、`fundamental-research`。
+文件同步清單（實作各階段時）：`README.md`、`AGENTS.md`（bundle 版本閘門總則若新增欄位）、`docs/status.md`（資料表與閘門表）、`docs/data_sources_inventory.md`、`docs/fundamental_data_repair.md`、`docs/fundamental_growth_signal.md`、`docs/operations.md`、`docs/docker.md`（金鑰與開關）、`docs/decision-contracts.md`、`docs/glossary.md`、`docs/source_audit/`（新來源核對紀錄）、`docs/plans/quality_dip_plan.md`（第 2.5、2.6 節）；Skill：`fundamental-analyst`、`fundamental-research`。
 
 ## 7. 已決定（使用者 2026-11-10 回覆「照建議」）
 

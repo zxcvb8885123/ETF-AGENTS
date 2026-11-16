@@ -191,6 +191,7 @@ class AgentSwapGateTests(unittest.TestCase):
             "derisk_day_view",  # 減碼日改由風險 Agent 的 exposure_view 決定是否換股（版本閘門）
             "proceeds_to_add",  # 換股賣款可流向高信心加碼持股（版本閘門）
             "entry_reserve",  # 換入者先保留預算（階段 3，版本閘門，decision/entry_reserve.py）
+            "victim_rules",  # 換出者規則（thesis 換出者 hold 信心上限與交易日持有天數，版本閘門；test_swap_victim_rules.py）
         })
 
 

@@ -227,4 +227,4 @@
 - [證交所 OpenAPI swagger](https://openapi.twse.com.tw/v1/swagger.json)
 - [櫃買中心 OpenAPI swagger](https://www.tpex.org.tw/openapi/swagger.json)
 - [證交所當日沖銷交易統計頁（只引用說明文字，未擷取資料）](https://www.twse.com.tw/zh/page/trading/exchange/TWTB4U.html)
-- 專案內：[融資水位來源核對](../source_audit/2026-11-04_margin_level_sources.md)、[恐懼貪婪來源核對](../source_audit/2026-10-23_market_fear_greed_sources.md)、[估值來源核對](../source_audit/2026-11-10_valuation_sources.md)、[大盤指數事實計劃](market_index_facts_plan.md)、[版本閘門狀態](../status.md#版本閘門啟用狀態)
+- 專案內：[融資水位來源核對](../source_audit/2026-11-04_margin_level_sources.md)、[恐懼貪婪來源核對](../source_audit/2026-10-23_market_fear_greed_sources.md)、[估值來源核對](../source_audit/2026-11-10_valuation_sources.md)、大盤指數事實計劃（見 [名稱對照](../glossary.md)）、[版本閘門狀態](../status.md#版本閘門啟用狀態)

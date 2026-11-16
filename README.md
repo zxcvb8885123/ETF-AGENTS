@@ -24,17 +24,26 @@ uv python install 3.12
 
 ## 常用指令
 
-| 想做什麼 | 指令 | 會發生什麼 |
-| --- | --- | --- |
-| 看帳戶與績效 | `./start.sh` | 開帳或驗證既有帳戶，啟動唯讀儀表板（含對 0050、150 檔等權買入持有的基準比較） |
-| 補抓基準行情 | `./start.sh benchmark collect` | 補抓基準標的（如 0050）的官方行情，只存行情、不進交易池 |
-| 比較績效 | `./start.sh benchmark compare` | 唯讀計算帳戶對基準的報酬與回撤（口徑見 [benchmark/README.md](src/etf_agent/benchmark/README.md)）；另含對基準的每日上漲／下跌捕捉（純觀察、不進決策） |
-| 回測（買進的股票有沒有贏基準） | `./start.sh backtest` | 只重算已封存的決策、不呼叫 Agent，產生 HTML 並印出路徑；`backtest replay` 換策略設定重算，`backtest report --eval-id 編號` 更新評測報告。僅供參考，不算前瞻證據 |
-| 只更新資料 | `./start.sh auto` | 更新行情、公司事件與財報，顯示資料狀態；不建快照、不動帳本（`data` 是別名） |
-| 更新資料與帳本 | `./start.sh daily` | 驗證來源、更新資料、建立研究快照、結算並準備虛擬帳本；不跑 Agent |
-| 完整每日決策 | `./start.sh run` | 做完 `daily`，再跑分析與決策 Agent，封存中文報告；條件符合時另產生 D-Plan 候選。重跑與還原規則見[日常操作](docs/operations.md#系統每天自己會做的事) |
-| 策略反思 | `./start.sh reflect` | 手動補跑一次反思週報（只封存、不改策略樣板）；`reflect brief`、`reflect history`、`reflect apply-pending …`、`reflect rollback` 等子命令轉給 `cli/strategy_reflection.py`，見[日常操作](docs/operations.md) |
-| 查看資料狀態 | `./start.sh status` | 顯示資料數量、品質問題與最後更新時間；不抓資料、不需 Docker |
+先看最常用的三個：
+
+| 想做什麼 | 指令 |
+| --- | --- |
+| 看帳戶與績效（不抓資料、不跑決策） | `./start.sh` |
+| 跑完整每日決策 | `./start.sh run` |
+| 看資料狀態（不需 Docker） | `./start.sh status` |
+
+其他指令：
+
+| 指令 | 做什麼 |
+| --- | --- |
+| `./start.sh auto` | 只更新行情、公司事件與財報；不建快照、不動帳本（`data` 是別名） |
+| `./start.sh daily` | 更新資料、建研究快照、結算虛擬帳本；不跑 Agent |
+| `./start.sh benchmark collect` | 補抓基準（如 0050）的官方行情，不進交易池 |
+| `./start.sh benchmark compare` | 唯讀比較帳戶與基準的報酬、回撤；口徑見 [benchmark/README.md](src/etf_agent/benchmark/README.md) |
+| `./start.sh backtest` | 只重算已封存的決策、不呼叫 Agent，產生 HTML。僅供參考，不算前瞻證據 |
+| `./start.sh reflect` | 補跑一次策略反思週報（只封存、不改策略）；子命令見[日常操作](docs/operations.md) |
+
+`run` 的重跑與還原規則見[日常操作](docs/operations.md#系統每天自己會做的事)。
 
 第一次跑完整決策前，先用 `./start.sh` 開帳。完整決策預設用已登入的 Claude CLI，也可改用 OpenCode 或 Codex；多空研究員可另外指定，Codex 的多空隔離較弱（見[每日決策架構](docs/architecture.md)）：
 
@@ -66,7 +75,7 @@ uv python install 3.12
 - **分工**：Agent 只提出有證據的解讀、買賣意圖與信心等級；數字（權重、股數、費稅、限制）全由 Python 計算和驗證。
 - **時間一致**：所有輸入都必須是決策截止時間之前「當時已經看得到」的資料，防止偷看未來。
 - **失敗處理**：資料不足或風控不過就停止或明確降級，不填假值。
-- **驗證邊界**：決策與帳本都可由封存獨立重建驗證；日行情同時核對交易日、台北收盤內容時間與可得時間；官方執行價採交易所來源白名單，財報須與來源證據一致；完整決策在呼叫 Agent 前先驗策略及帳本前提，完整評測使用考卷凍結的當時帳本、缺少時提前拒絕（見 [`evaluation/README.md`](src/etf_agent/evaluation/README.md)）；失敗恢復範圍見[日常操作](docs/operations.md)。
+- **可重建驗證**：決策與帳本都能由封存獨立重建；官方執行價只採交易所來源；呼叫 Agent 前先驗策略與帳本前提。失敗恢復範圍見[日常操作](docs/operations.md)，評測規則見 [`evaluation/README.md`](src/etf_agent/evaluation/README.md)。
 
 策略版本與閘門啟用狀態見[目前狀態](docs/status.md#版本閘門啟用狀態)，舊樣板保存在 [`config/policy_versions/`](config/policy_versions/)。完整說明見[每日決策架構](docs/architecture.md)、[決策流程細節](docs/decision-details.md)與[契約與閘門細節](docs/decision-contracts.md)。
 
@@ -99,17 +108,20 @@ flowchart LR
 
 ## 文件
 
-[文件索引](docs/README.md)是所有文件的入口，依主題分組：
+所有文件的入口是[文件索引](docs/README.md)，依「我想知道什麼」查。最常用的：
 
-- **現況與操作**：[目前狀態與限制](docs/status.md)、[日常操作](docs/operations.md)、[run 參數](docs/run-options.md)、[Docker](docs/docker.md)、[CLI 說明](cli/README.md)。
-- **決策與架構**：[每日決策架構](docs/architecture.md)、[決策流程細節](docs/decision-details.md)、[契約與閘門細節](docs/decision-contracts.md)、[配置與輪動](docs/sizing_rotation_v2_design.md)、[名稱對照](docs/glossary.md)。
-- **專案結構**：[資料夾架構](docs/repository-layout.md)、[模組總覽](docs/modules.md)、[執行產物說明](docs/runtime-artifacts.md)。
-- **資料與事件**：[資料來源與授權限制](docs/data_sources_inventory.md)、[事件與市場情緒邊界](docs/event_market_scope.md)、[事件分析整合](docs/integrated_event_analysis.md)、[全市場新聞](docs/market_news_integration.md)、[恐懼貪婪指標](docs/market_fear_greed.md)。
-- **資料夾說明**：[config](config/README.md)、[data](data/README.md)、[game_docs](game_docs/README.md)、[scripts](scripts/README.md)、[tradeagent](tradeagent/README.md)、[tests](tests/README.md)。
-- **開發規則**：[AGENTS.md](AGENTS.md)（原則、邊界與測試要求）。
-- **計畫與設計紀錄**：集中在 [docs/plans/](docs/plans/README.md)，不是現行行為說明。
+| 想知道 | 看這份 |
+| --- | --- |
+| 哪些功能在跑、哪些還沒接 | [目前狀態與限制](docs/status.md) |
+| 每天要做什麼、出事怎麼辦 | [日常操作](docs/operations.md) |
+| 決策怎麼跑 | [每日決策架構](docs/architecture.md) |
+| 某個閘門或旗標是什麼 | [名稱對照](docs/glossary.md) |
+| 資料從哪來、能不能用 | [資料來源與授權限制](docs/data_sources_inventory.md) |
+| 開發規則與測試要求 | [AGENTS.md](AGENTS.md) |
 
-持續整合：每次 push 與 pull request 由 GitHub Actions（`.github/workflows/ci.yml`）在 Python 3.12 執行測試與編譯檢查，說明見 [tests/README.md](tests/README.md)。
+`docs/plans/` 是計畫與設計紀錄，不是現行行為說明。
+
+持續整合：每次 push 與 pull request 由 GitHub Actions 在 Python 3.12 執行測試與編譯檢查，說明見 [tests/README.md](tests/README.md)。
 
 ## 參與專案
 

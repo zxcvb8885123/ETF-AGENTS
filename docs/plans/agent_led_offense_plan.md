@@ -17,7 +17,7 @@
 
 證據等級：所有數字都是以唯讀腳本讀封存檔算的，沒有驗 manifest 與雜湊；一律 `evidence_grade: replay_reference_only`，其中多數只是算術估計，連重放都不是。它們不是對 LLM 的前瞻驗證，只有比賽期間的即時紀錄算證據。
 
-前置閱讀：[`agent_led_sizing_plan.md`](agent_led_sizing_plan.md)、[`agent_led_exposure_plan.md`](agent_led_exposure_plan.md)、[`rebound_participation_plan.md`](rebound_participation_plan.md)、[`rebound_participation_v2_plan.md`](rebound_participation_v2_plan.md)、[`turn_facts_plan.md`](turn_facts_plan.md)、[`quality_dip_plan.md`](quality_dip_plan.md)、[`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)、[`decision-contracts.md`](../decision-contracts.md)。閘門啟用狀態以 [`status.md`](../status.md#版本閘門啟用狀態) 與 `config/decision_policy.json` 為準。
+前置閱讀：[`agent_led_sizing_plan.md`](agent_led_sizing_plan.md)、[`agent_led_exposure_plan.md`](agent_led_exposure_plan.md)、`rebound_participation` v1 計劃（已刪，見 git 歷史）、[`rebound_participation_v2_plan.md`](rebound_participation_v2_plan.md)、`turn_facts_plan.md`（見 [名稱對照](../glossary.md)）、[`quality_dip_plan.md`](quality_dip_plan.md)、[`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)、[`decision-contracts.md`](../decision-contracts.md)。閘門啟用狀態以 [`status.md`](../status.md#版本閘門啟用狀態) 與 `config/decision_policy.json` 為準。
 
 ## 1. 目標與非目標
 
@@ -624,7 +624,7 @@ Policy 驗證（fail-closed）：缺任一必填欄、等級之間不單調、�
 其他參考：
 
 - 來回一趟的費稅與滑價約為成交金額的 0.79%（買 0.1425%、賣 0.1425% 加證交稅 0.3%、滑價各 10 bp）。
-- `rebound_participation` v1 的第二輪重放（[`rebound_participation_plan.md`](rebound_participation_plan.md)）：現金放寬到 0.09、beta 約 0.4 時，假訊號情境相對不動的最差單日 NAV 差為 −2.8%～−4.2%。那次重放走的是現已停用的曝險換股路徑，數字不能直接套用，但量級與上表 0.40 那一列一致。
+- `rebound_participation` v1 的第二輪重放（`rebound_participation` v1 計劃（已刪，見 git 歷史））：現金放寬到 0.09、beta 約 0.4 時，假訊號情境相對不動的最差單日 NAV 差為 −2.8%～−4.2%。那次重放走的是現已停用的曝險換股路徑，數字不能直接套用，但量級與上表 0.40 那一列一致。
 
 ### 7.3 主軸一（抄底）的決策題與建議值
 

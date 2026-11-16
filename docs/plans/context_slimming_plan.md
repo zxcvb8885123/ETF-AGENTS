@@ -5,7 +5,7 @@
 跨日數字取自 `artifacts/daily/` 內 31 個完整 run。所有「預期省多少」都是**估算**，不是實測；回放類結果一律 `replay_reference_only`。
 
 與既有文件的關係：[`event_brief_slimming_plan.md`](event_brief_slimming_plan.md)（首尾節錄已否決、例行公告名單省不到）與
-[`../token_reduction_plan.md`](../token_reduction_plan.md)（驗收關卡）仍有效，本計畫沿用其驗收關卡，不重做已否決的方案。
+[`../token_usage.md`](../token_usage.md)（驗收關卡）仍有效，本計畫沿用其驗收關卡，不重做已否決的方案。
 
 ## 1. 結論先講
 
@@ -215,7 +215,7 @@
 | 2 改變可見範圍 | 4.3、4.4；以乙方式加閘門，預設不開 | 階段 1 的 A/B 通過後才開始；離線項目同上 |
 | 3 逐則沿用 | 4.6，另寫計畫 | 使用者決定後才開始 |
 
-**A/B 回放**（沿用 [`token_reduction_plan.md`](../token_reduction_plan.md) 的驗收關卡；結果另存、不寫進既有 Decision run、標 `replay_reference_only`）：
+**A/B 回放**（沿用 [`token_usage.md`](../token_usage.md) 的驗收關卡；結果另存、不寫進既有 Decision run、標 `replay_reference_only`）：
 
 1. 同一份歷史輸入（同 Snapshot、截止時間、Policy、執行器與模型），跑三臂：舊簡報、舊簡報再跑一次（量模型自己的變異）、瘦身簡報。
 2. 比較：引用保留率（瘦身臂引用的證據是否都屬於該股且種類正確）、驗證退回率（`agent_calls` 的重試次數與 `revision_diff`）、

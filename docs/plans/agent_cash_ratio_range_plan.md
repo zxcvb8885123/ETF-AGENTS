@@ -5,7 +5,7 @@
 姊妹計劃（格式與重放方法沿用）：
 
 - [防守現金緩衝下的高信心買進](cash_buffer_high_conviction_plan.md)：`high_conviction_cash_floor`，已實作，正式設定未開啟。
-- [依單股上限放大的信心權重](limit_aware_conviction_weights_plan.md)：`limit_scaled_conviction`，α 方案，已實作，正式設定已開啟（alpha 0.6）。
+- 依單股上限放大的信心權重（見 [決策細節](../decision-details.md)）：`limit_scaled_conviction`，α 方案，已實作，正式設定已開啟（alpha 0.6）。
 
 三者的關係見第 6 節。
 
