@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 每天（含週末）05:30、11:30、17:30、23:30（主機時區 Asia/Taipei）抓全市場新聞 RSS（中央社、自由時報）。RSS 只留最新幾十則，週末沒人抓就會永久掉出；每次都是新的不可變抓取，只存資料，不碰決策。與其他資料抓取共用資料鎖。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etf-agents.market-news-capture</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/scripts/with_data_lock.py</string>
+    <string>--</string>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/cli/market_news.py</string>
+    <string>capture</string>
+    <string>--database</string>
+    <string>var/etf_agent.db</string>
+    <string>--output-root</string>
+    <string>artifacts/data/market_news</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>Asia/Taipei</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/var/logs/market-news-capture-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/var/logs/market-news-capture-launchd.log</string>
+</dict>
+</plist>
