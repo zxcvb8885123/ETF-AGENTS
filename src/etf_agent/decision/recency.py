@@ -83,7 +83,8 @@ def evidence_recency(bundle: Mapping[str, object], market_evidence_ids: Set[str]
     news_input = bundle.get("market_news_input")
     if isinstance(news_input, Mapping) and isinstance(news_input.get("bundle"), Mapping):
         pack = news_input["bundle"]
-        for item in prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"])["items"]:
+        merged = pack.get("schema_version") == "market-news-1.2"  # 1.2 允許同一來源多次抓取；舊版仍一來源一份
+        for item in prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"], merge=merged)["items"]:
             published = parse_aware_time(item["published_at"], "published_at", error=DecisionToolError)
             times[item["item_id"]] = _time_entry(item["item_id"], "news", published, cutoff, boundary)
     overnight = bundle.get("overnight_market_input")

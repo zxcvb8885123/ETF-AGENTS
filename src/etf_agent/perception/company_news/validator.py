@@ -2,7 +2,7 @@
 from etf_agent.core import canonical_sha256, parse_aware_time
 
 from .contracts import (
-    CANDIDATE_FIELDS, ITEM_FIELDS, PACK_FIELDS, REVIEW_FIELDS, SCHEMA_VERSION, SOURCE, SOURCES,
+    ACCEPTED_SCHEMA_VERSIONS, CANDIDATE_FIELDS, ITEM_FIELDS, PACK_FIELDS, REVIEW_FIELDS, SOURCE, SOURCES,
     WINDOW_DAYS, PUBLISHER_HOSTS, CompanyNewsError, canonical_content_id, check_fields,
     evidence_id, link_host, publisher_policy,
 )
@@ -11,7 +11,7 @@ from .tools import seal, symbol_codes, window_start
 
 def validate_pack(pack, snapshot_id, decision_cutoff, symbols):
     check_fields(pack, PACK_FIELDS, "個股新聞資料包")
-    if pack["schema_version"] != SCHEMA_VERSION or pack["source"] != SOURCE:
+    if pack["schema_version"] not in ACCEPTED_SCHEMA_VERSIONS or pack["source"] != SOURCE:
         raise CompanyNewsError("個股新聞版本或來源不符")
     cutoff = parse_aware_time(decision_cutoff, "decision_cutoff", error=CompanyNewsError)
     if pack["snapshot_id"] != snapshot_id or parse_aware_time(pack["decision_cutoff"], "decision_cutoff", error=CompanyNewsError) != cutoff:
@@ -19,7 +19,7 @@ def validate_pack(pack, snapshot_id, decision_cutoff, symbols):
     latest = pack["latest_fetch_at"]
     if latest is not None and parse_aware_time(latest, "latest_fetch_at", error=CompanyNewsError) > cutoff:
         raise CompanyNewsError("個股新聞最後抓取時間晚於截止時間")
-    if pack["window_days"] != WINDOW_DAYS or pack["window_start"] != window_start(pack["decision_cutoff"], latest):
+    if pack["window_days"] != WINDOW_DAYS or pack["window_start"] != window_start(pack["decision_cutoff"], latest, pack["schema_version"]):
         raise CompanyNewsError("個股新聞查詢視窗不符")
     if pack["publisher_policy"] != publisher_policy():
         raise CompanyNewsError("個股新聞媒體白名單版本不符")

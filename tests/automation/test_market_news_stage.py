@@ -35,7 +35,7 @@ class FakePipeline:
 
 
 def label_all(items, relevance="market"):
-    return {"labels": [{"item_id": i["item_id"], "canonical_content_id": i["canonical_content_id"], "relevance": relevance,
+    return {"labels": [{"item_id": i["item_id"], "relevance": relevance,
                         "stance": "positive", "reason": "測試判讀"} for i in items],
             "synthesis": {"outlook": "positive", "findings": [{"text": "測試市場看法", "evidence_ids": [items[0]["item_id"]]}]}}
 
@@ -69,6 +69,44 @@ class MarketNewsStageTests(unittest.TestCase):
         self.assertEqual(pair["result"]["status"], "unavailable")  # 資料庫沒有核准紀錄。
         self.assertEqual(pair["bundle"]["source_approvals"], [])
         self.assertIn("market_news_result", pipeline.saved)
+
+    def test_captures_in_window_are_merged_into_one_1_2_pack(self):
+        """視窗內兩次抓取合併：較早抓取獨有的新聞（後來被 RSS 擠掉）仍在資料包內，且資料包為 1.2。"""
+        import re
+        from etf_agent.core import canonical_sha256
+        store = ImmutableRunStore(self.captures_root, schema_version="market-news-capture-1.0")
+        early = [dict(c, raw_text=c["raw_text"].replace("/news/0<", "/news/9<").replace("市場新聞0", "市場新聞9")) for c in self.captures]
+        early = [dict(c, raw_sha256=canonical_sha256(c["raw_text"]), available_at="2026-09-29T08:30:00+00:00") for c in early]
+        store.save("market-news-early", {"captures": {"items": early}, "prepared": {"items": []}})
+        store.save("market-news-late", {"captures": {"items": self.captures}, "prepared": {"items": []}})
+        pair = build_daily_market_news(FakePipeline(self.root, label_all), self.snapshot, self.captures_root, self.database)
+        self.assertEqual(pair["bundle"]["schema_version"], "market-news-1.2")
+        self.assertEqual(len(pair["bundle"]["captures"]), 4)
+        self.assertEqual(pair["result"]["item_count"], 8)  # 兩來源各 0、1、2 與較早抓取獨有的 9
+
+    def test_brief_is_slim_and_duplicates_are_merged_then_expanded(self):
+        """給 Agent 的 brief 只有必要欄位；同標題同日的重複內容只給一則，標籤由程式套給其餘項目。"""
+        from etf_agent.core import canonical_sha256
+        dup = []
+        for capture in self.captures:
+            host = "www.cna.com.tw" if capture["source"] == "CNA_FINANCE" else "news.ltn.com.tw"
+            # 兩來源的新聞 0 改成同標題，canonical_content_id 相同（同標題同日）。
+            raw = capture["raw_text"].replace(capture["source"] + "市場新聞0", "同一則重大新聞")
+            dup.append(dict(capture, raw_text=raw, raw_sha256=canonical_sha256(raw)))
+        self.save_captures(dup)
+        seen = {}
+
+        def answer(items):
+            seen["items"] = items
+            return label_all(items)
+
+        pair = build_daily_market_news(FakePipeline(self.root, answer), self.snapshot, self.captures_root, self.database)
+        self.assertEqual(pair["result"]["item_count"], 6)
+        self.assertEqual(len(seen["items"]), 5)  # 6 則裡兩則同內容，只給一則。
+        self.assertEqual(set(seen["items"][0]), {"item_id", "source", "published_at", "title", "summary"})
+        self.assertEqual(len(pair["bundle"]["labels"]), 6)
+        merged = [row for row in pair["bundle"]["labels"]]
+        self.assertEqual(len({row["canonical_content_id"] for row in merged}), 5)
 
     def test_approved_sources_make_result_available(self):
         from etf_agent.core import canonical_sha256

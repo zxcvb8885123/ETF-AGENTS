@@ -1,21 +1,27 @@
 """確定性整理個股新聞：視窗、白名單、去重與封存雜湊。"""
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from etf_agent.core import canonical_sha256, parse_aware_time
 
 from .contracts import (
-    BATCH_HOURS, CANDIDATE_FIELDS, SCHEMA_VERSION, SOURCE, WINDOW_DAYS, CompanyNewsError,
+    BATCH_HOURS, CANDIDATE_FIELDS, SCHEMA_VERSION, SCHEMA_VERSION_V1, SOURCE, WEEKEND_BATCH_HOURS, WINDOW_DAYS, CompanyNewsError,
     PUBLISHER_HOSTS, evidence_id, link_host, outlet, publisher_policy,
 )
 
 
-def window_start(decision_cutoff, latest_fetch_at):
-    """最後一批抓取往前 BATCH_HOURS，且不早於截止前 WINDOW_DAYS；沒有任何抓取時視窗為空（等於截止時間）。"""
+def window_start(decision_cutoff, latest_fetch_at, schema_version=SCHEMA_VERSION_V1):
+    """最後一批抓取往前 BATCH_HOURS，且不早於截止前 WINDOW_DAYS；沒有任何抓取時視窗為空（等於截止時間）。
+
+    1.1 起最後一批落在週日（台北時間）時改往前 WEEKEND_BATCH_HOURS。
+    """
     cutoff = parse_aware_time(decision_cutoff, "decision_cutoff", error=CompanyNewsError)
     if latest_fetch_at is None:
         return cutoff.isoformat()
     latest = parse_aware_time(latest_fetch_at, "latest_fetch_at", error=CompanyNewsError)
-    return max(latest - timedelta(hours=BATCH_HOURS), cutoff - timedelta(days=WINDOW_DAYS)).isoformat()
+    hours = BATCH_HOURS
+    if schema_version != SCHEMA_VERSION_V1 and latest.astimezone(timezone(timedelta(hours=8))).weekday() == 6:
+        hours = WEEKEND_BATCH_HOURS
+    return max(latest - timedelta(hours=hours), cutoff - timedelta(days=WINDOW_DAYS)).isoformat()
 
 
 def latest_fetch(fetch_times, decision_cutoff):
@@ -31,7 +37,7 @@ def symbol_codes(symbols):
     return {str(symbol).upper().split(".")[0]: str(symbol).upper() for symbol in symbols}
 
 
-def build_pack(rows, review, symbols, snapshot_id, decision_cutoff, fetch_times=None):
+def build_pack(rows, review, symbols, snapshot_id, decision_cutoff, fetch_times=None, schema_version=SCHEMA_VERSION):
     """只收視窗內、白名單媒體、交易池內的候選；同股同連結取最早可得的版本。
 
     ``fetch_times`` 是交易池內每次實際抓取的時間（raw_payloads，含空回應與全部重複的回應）；
@@ -43,7 +49,7 @@ def build_pack(rows, review, symbols, snapshot_id, decision_cutoff, fetch_times=
     if fetch_times is None:
         fetch_times = [row["available_at"] for row in rows if str(row["stock_id"]) in codes]
     latest = latest_fetch(fetch_times, decision_cutoff)
-    start_at = window_start(decision_cutoff, latest)
+    start_at = window_start(decision_cutoff, latest, schema_version)
     start = parse_aware_time(start_at, "window_start", error=CompanyNewsError)
     chosen = {}
     for row in rows:
@@ -66,7 +72,7 @@ def build_pack(rows, review, symbols, snapshot_id, decision_cutoff, fetch_times=
     items = sorted((entry[1] for entry in chosen.values()),
                    key=lambda item: (item["symbol"], item["available_at"], item["evidence_id"]))
     return seal({
-        "schema_version": SCHEMA_VERSION, "source": SOURCE, "snapshot_id": snapshot_id,
+        "schema_version": schema_version, "source": SOURCE, "snapshot_id": snapshot_id,
         "decision_cutoff": decision_cutoff, "latest_fetch_at": latest, "window_start": start_at,
         "window_days": WINDOW_DAYS, "publisher_policy": publisher_policy(),
         "source_review": dict(review), "items": items,

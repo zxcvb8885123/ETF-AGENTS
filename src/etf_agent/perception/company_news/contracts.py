@@ -11,7 +11,12 @@ class CompanyNewsError(ValueError):
     """個股新聞未通過來源核准、時間、白名單或完整性檢查。"""
 
 
-SCHEMA_VERSION = "company-news-1.0"
+SCHEMA_VERSION_V1 = "company-news-1.0"
+# 1.1：最後一批抓取落在週日（台北）時視窗放寬為 WEEKEND_BATCH_HOURS，涵蓋週五晚到週日的批次；
+# 週五晚上不做決策，週日 21:00 與週一 07:00 是這些批次第一次被讀到的時機。其他日子與 1.0 相同。
+SCHEMA_VERSION = "company-news-1.1"
+ACCEPTED_SCHEMA_VERSIONS = (SCHEMA_VERSION_V1, SCHEMA_VERSION)
+WEEKEND_BATCH_HOURS = 60
 SOURCE = "FINMIND_NEWS"
 TERMS_URL = "https://finmind.github.io/en/Disclaimer/"
 REVIEW_TABLE = "company_news_source_reviews"

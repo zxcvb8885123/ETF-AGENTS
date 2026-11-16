@@ -25,7 +25,7 @@ flowchart LR
 | 核對重建 | 程式 | 檢查覆蓋、引用、時間與門檻，重建結果 |
 | 接入 | 程式 | 把資料與結果交給事件分析師，並重跑輸入驗證 |
 
-- 決策跑的時候，取截止前最後一份抓取，查詢視窗為截止前 3 天（涵蓋週末）。
+- 決策跑的時候，取查詢視窗（截止前 4 天，涵蓋三天連假；2026-11-16 由 3 天改為 4 天，視窗自帶於資料包，舊 run 不受影響）內、截止前所有完整保存的抓取，合併後依新聞識別去重（同一則保留最早取得時間），資料包為 `market-news-1.2`。RSS 只留最新數十則，單看最後一份會漏掉週末新聞；每天含週末的抓取排程見 `scripts/launchd/com.etf-agents.market-news-capture.plist.template`。給標註 Agent 的 brief 只有編號、來源、發布時間、標題、摘要（連結、內容識別碼、取得時間由程式保存與校正，Agent 不必輸出識別碼），同標題同日的重複內容只給第一則、標籤由程式套給其餘項目；2026-11-16 實測字元量約為完整項目的 45%。標籤仍須覆蓋合併後全部項目，則數變多時標註成本跟著增加（2026-11-16 實測視窗內 12 次抓取合併後約 168 則，單看最後一份是 60 則）。
 - 新聞步驟失敗只會記錄錯誤，市場情緒改用[恐懼貪婪指標](market_fear_greed.md)，不中止每日流程。
 - 全市場情緒每次決策只輸出一次，不需要第四位分析師。
 - 程式在 `src/etf_agent/perception/market_news/`，每日串接在 `src/etf_agent/automation/market_news_stage.py`。
@@ -132,8 +132,10 @@ flowchart LR
 | --- | --- |
 | 中央社財經 RSS | `CNA_FINANCE` |
 | 自由時報財經 RSS | `LTN_BUSINESS` |
+| Yahoo股市 台股新聞 RSS（2026-11-16 核准，見 [來源核對](source_audit/2026-11-16_yahoo_market_news.md)） | `YAHOO_TW_MARKET` |
+| Yahoo股市 美股與國際市場 RSS | `YAHOO_INTL_MARKETS` |
 | 全市場新聞抓取表 | `market_news_captures`（範圍 `TW_STOCK_MARKET`） |
-| 新聞資料包版本 | `market-news-1.0`（含標籤、綜合看法、核准）；`1.1` 另含歷史原頁 |
+| 新聞資料包版本 | `market-news-1.0`（含標籤、綜合看法、核准）；`1.1` 另含歷史原頁；`1.2` 允許同一來源多次抓取並去重（每日決策使用），1.0／1.1 仍一來源一份、照舊重建 |
 | 來源使用核對表 | `market_news_source_reviews` |
 | 個股新聞核對表 | `company_news_source_reviews` |
 | 逐則標籤欄位 | `relevance`（`market`／`company`／`unrelated`／`ambiguous`）、`stance`（`positive`／`negative`／`neutral`／`mixed`） |

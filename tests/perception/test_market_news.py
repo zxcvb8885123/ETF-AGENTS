@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 from etf_agent.core import canonical_sha256
 from etf_agent.perception.market_news import seal,prepare,evaluate,validate_pair,attach_market_news
-from etf_agent.perception.market_news.contracts import SOURCES,MarketNewsError
+from etf_agent.perception.market_news.contracts import SOURCES as ALL_SOURCES,MarketNewsError
+# 契約測試固定用最初的兩個 RSS 來源，新增來源不改變既有斷言的篇數與媒體數。
+SOURCES={k:ALL_SOURCES[k] for k in ('CNA_FINANCE','LTN_BUSINESS')}
 from etf_agent.perception.market_news.repository import MarketNewsRepository
 from etf_agent.decision.analysts import seal_event_market_report,report_envelope,AnalystReportValidator
 from etf_agent.decision.contracts import DecisionInputValidator

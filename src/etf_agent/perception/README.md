@@ -37,7 +37,7 @@ FinMind 個股新聞只進事件分析師的公司事件通道，不得代表全
 | --- | --- | --- |
 | `__init__.py` | 匯出公開介面 | `CompanyNewsError`、`EVIDENCE_PREFIX`、`PUBLISHER_HOSTS`、`PUBLISHER_POLICY_VERSION`、`SOURCE`、`build_pack`、`news_by_symbol`、`news_outlets`、`validate_pack`、`approved_review`、`build_company_news_input`、`record_source_review` |
 | `contracts.py` | 來源（`FINMIND_NEWS`）、核對表 `company_news_source_reviews`、媒體白名單 `company_news_publishers_v1`、視窗常數、evidence ID 與欄位白名單 | `CompanyNewsError`、`publisher_policy`、`evidence_id` |
-| `tools.py` | 取截止前最後一批抓取（`service.py` 由 `raw_payloads` 讀實際抓取時間）、計算視窗（`latest_fetch_at` − 12 小時，不早於 cutoff − 3 天）、白名單過濾、依 (symbol, canonical content ID) 去重並封裝 `company-news-1.0` | `build_pack`、`news_by_symbol`、`news_outlets`、`window_start` |
+| `tools.py` | 取截止前最後一批抓取（`service.py` 由 `raw_payloads` 讀實際抓取時間）、計算視窗（`latest_fetch_at` − 12 小時，不早於 cutoff − 3 天）、白名單過濾、依 (symbol, canonical content ID) 去重並封裝 `company-news-1.1`（1.0 照舊重建；1.1 起最後一批在週日時視窗放寬為 60 小時） | `build_pack`、`news_by_symbol`、`news_outlets`、`window_start` |
 | `validator.py` | 重算內容雜湊並重驗白名單、視窗、核准早於 cutoff、代號在交易池內與不重複 | `validate_pack` |
 | `service.py` | 抓 FinMind 規範頁原文保存核對（與全市場新聞分表）、查截止時的核准、由資料庫建立決策輸入 | `record_source_review`、`approved_review`、`build_company_news_input` |
 

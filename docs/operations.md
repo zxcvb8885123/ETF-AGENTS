@@ -12,9 +12,10 @@
 | 平日 20:00、06:00（同一資料排程內） | 去年同期補抓：官方最新期別尚無去年同期文件的股票才逐檔呼叫 FinMind，通過核對才寫入；`PRIOR_REPAIR=0` 關閉，`PRIOR_REPAIR_MAX`（預設 60）為每輪檔數上限；摘要與失敗原因在 `artifacts/data/fundamental_prior_repair_latest.json`，失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 產業比較資料 C1：收集 t187ap14（上市、上櫃）、與官方損益表逐檔核對；只收集與稽核、不進決策；`INDUSTRY_PEER=0` 關閉；摘要在 `artifacts/data/industry_peer_latest.json`，部分來源失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 估值資料 V1：證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 逐檔核對、不可變保存；只收集與稽核、不進決策；`VALUATION_COLLECT=0` 關閉；失敗只在日誌留警告，不影響資料狀態與決策；需 `FINMIND_TOKEN`，沒有時只保存官方原始回應；run 在 `artifacts/valuation_collection/` | `com.etf-agents.data` |
-| 平日 20:40 | 抓個股新聞 | `com.etf-agents.finmind-news` |
+| 每天 20:40（含週六日） | 抓個股新聞 | `com.etf-agents.finmind-news` |
 | 週一至週四、週日 21:00 | 用當天收盤資料做「下一個交易日」的決策與 D-Plan，當作備案 | `com.etf-agents.daily` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
+| 每天每 2 小時（01:30～23:30） | 抓全市場新聞 RSS（含週末；Yahoo 只留 4～5 小時） | `com.etf-agents.market-news-capture` |
 | 週一至週五 07:00 | 用新事件、新聞重做當天的決策，取代昨晚的備案 | `com.etf-agents.daily` |
 | 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證；07:00 重做還在跑時回報「尚在執行」 | `com.etf-agents.dplan-watchdog` |
 | 週五 19:30 | 策略反思週報 | `com.etf-agents.reflection` |
@@ -235,6 +236,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 | `data` | 20:00、06:00 資料更新 | 是 |
 | `finmind-news` | 20:40 個股新聞 | 建議 |
 | `overnight-capture` | 05:05 隔夜市場背景 | 建議 |
+| `market-news-capture` | 每 2 小時全市場新聞 RSS（含週末） | 建議 |
 | `dplan-watchdog` | 08:00 看門狗 | 建議 |
 | `backup` | 08:20、23:30 把帳本、決策、D-Plan、設定備份到私人 GitHub 倉庫 `etf-agents-backup` | 建議 |
 | `reflection`、`reflection-apply` | 週五反思週報、週六套用 | 選用 |

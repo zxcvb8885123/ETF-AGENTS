@@ -112,13 +112,33 @@ def latest_market_captures(output_root, decision_cutoff):
     return best[1] if best else None
 
 
-def build_market_news_pack(captures, snapshot_id, decision_cutoff, window_start, labels, synthesis, database_path=None):
+def window_market_captures(output_root, decision_cutoff, window_start):
+    """查詢視窗內、截止前所有完整保存的 RSS 抓取（資料包 1.2 用）；依取得時間與來源排序，沒有則回傳 None。"""
+    import json
+    cutoff = parse_aware_time(decision_cutoff, 'decision_cutoff', error=MarketNewsError)
+    start = parse_aware_time(window_start, 'window_start', error=MarketNewsError)
+    store = ImmutableRunStore(Path(output_root), schema_version='market-news-capture-1.0', error=MarketNewsError)
+    root = Path(output_root)
+    rows = []
+    for manifest in sorted(set(root.glob('market-news-*/manifest.json')) | set(root.glob('*/market-news-*/manifest.json'))):
+        store.verify(manifest.parent.name)
+        items = json.loads((manifest.parent / 'captures.json').read_text(encoding='utf-8'))['items']
+        times = [parse_aware_time(c['available_at'], 'available_at', error=MarketNewsError) for c in items]
+        # 整次抓取都在截止前才算數；取得時間早於視窗起點的抓取不可能含視窗內新聞。
+        if not items or max(times) > cutoff:
+            continue
+        rows.extend((t, c['source'], c) for t, c in zip(times, items) if t >= start)
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return [row[2] for row in rows] or None
+
+
+def build_market_news_pack(captures, snapshot_id, decision_cutoff, window_start, labels, synthesis, database_path=None, schema_version='market-news-1.1'):
     """以完整標籤、綜合判讀與截止前已保存的來源核對組成 1.1 資料包；不改寫任何標籤或結論。"""
     approvals = []
     if database_path is not None:
         from .repository import MarketNewsRepository
         sources = {capture['source'] for capture in captures}
         approvals = [row for row in MarketNewsRepository(database_path).load_source_reviews(decision_cutoff) if row['source'] in sources]
-    return seal({'schema_version':'market-news-1.1','snapshot_id':snapshot_id,'decision_cutoff':decision_cutoff,
+    return seal({'schema_version':schema_version,'snapshot_id':snapshot_id,'decision_cutoff':decision_cutoff,
                  'window_start':window_start,'captures':list(captures),'labels':list(labels),'synthesis':dict(synthesis),
                  'source_approvals':approvals})
