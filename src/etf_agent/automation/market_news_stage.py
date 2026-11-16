@@ -10,13 +10,14 @@ from typing import Dict, Optional
 
 from etf_agent.core import UNTRUSTED_TEXT_NOTICE, canonical_sha256, parse_aware_time, wrap_untrusted_text
 from etf_agent.perception.market_news import (
-    MarketNewsError, build_market_news_pack, evaluate, latest_market_captures, prepare,
+    MarketNewsError, build_market_news_pack, evaluate, prepare, window_market_captures,
 )
 
 from .agent_runner import AgentTask, _object
 
 # 涵蓋週末與連假前最後幾天的新聞；RSS 本身只保留最近項目。
 WINDOW_DAYS = 3
+SCHEMA_VERSION = "market-news-1.2"
 
 
 def _restore_content_ids(labels, items):
@@ -33,12 +34,13 @@ def _restore_content_ids(labels, items):
 def build_daily_market_news(pipeline, snapshot, captures_root, database_path) -> Optional[Dict[str, object]]:
     """回傳 {bundle, result} 成對輸入；截止前沒有任何抓取時回傳 None，市場情緒改由恐懼貪婪指標判斷。"""
     cutoff = snapshot["decision_cutoff"]
-    captures = latest_market_captures(captures_root, cutoff)
+    window_start = (parse_aware_time(cutoff, "decision_cutoff") - timedelta(days=WINDOW_DAYS)).isoformat()
+    # 資料包 1.2：視窗內每次抓取合併（RSS 只留最新數十則，單看最後一份會漏掉週末新聞）。
+    captures = window_market_captures(captures_root, cutoff, window_start)
     if captures is None:
         pipeline.log("[新聞] 截止前沒有全市場新聞抓取，市場情緒改用恐懼貪婪指標")
         return None
-    window_start = (parse_aware_time(cutoff, "decision_cutoff") - timedelta(days=WINDOW_DAYS)).isoformat()
-    prepared = prepare(captures, window_start, cutoff)
+    prepared = prepare(captures, window_start, cutoff, merge=True)
     items = prepared["items"]
     if items:
         name = "market_news_labels_" + canonical_sha256({"items": items, "cutoff": cutoff})[:20]
@@ -64,7 +66,7 @@ def build_daily_market_news(pipeline, snapshot, captures_root, database_path) ->
         def validate(output):
             try:
                 evaluate(build_market_news_pack(captures, snapshot["snapshot_id"], cutoff, window_start,
-                                                _restore_content_ids(output.get("labels", []), items), output.get("synthesis", {}), database_path))
+                                                _restore_content_ids(output.get("labels", []), items), output.get("synthesis", {}), database_path, SCHEMA_VERSION))
                 return []
             except (MarketNewsError, KeyError, TypeError) as error:
                 return [str(error)]
@@ -84,7 +86,7 @@ def build_daily_market_news(pipeline, snapshot, captures_root, database_path) ->
         labels, synthesis = _restore_content_ids(output["labels"], items), output["synthesis"]
     else:
         labels, synthesis = [], {"outlook": "unknown", "findings": []}
-    pack = build_market_news_pack(captures, snapshot["snapshot_id"], cutoff, window_start, labels, synthesis, database_path)
+    pack = build_market_news_pack(captures, snapshot["snapshot_id"], cutoff, window_start, labels, synthesis, database_path, SCHEMA_VERSION)
     result = evaluate(pack)
     pipeline.save_artifact("market_news_bundle", pack)
     pipeline.save_artifact("market_news_result", result)

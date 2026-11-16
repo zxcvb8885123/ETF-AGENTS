@@ -10,12 +10,14 @@ CAPTURE_FIELDS = {'source','url','raw_text','raw_sha256','available_at','status'
 LABEL_FIELDS = {'item_id','canonical_content_id','relevance','stance','reason'}
 PACK_FIELDS = {'schema_version','snapshot_id','decision_cutoff','window_start','captures','labels','synthesis','source_approvals','content_sha256'}
 
-def prepare(captures, window_start, decision_cutoff):
+def prepare(captures, window_start, decision_cutoff, merge=False):
+    """merge=True（資料包 1.2）允許同一來源有多次抓取，依 item_id 去重並保留最早取得時間；其餘版本維持一來源一份。"""
     if not isinstance(captures, list): raise MarketNewsError('RSS 原始回應必須是陣列')
     start = parse_aware_time(window_start,'window_start',error=MarketNewsError)
     cutoff = parse_aware_time(decision_cutoff,'decision_cutoff',error=MarketNewsError)
     if start > cutoff: raise MarketNewsError('查詢開始時間晚於截止時間')
     items, gaps, seen_sources = [], [], set()
+    fetched_sources = {c.get('source') for c in captures if isinstance(c, dict) and c.get('status') == 'fetched'}
     for capture in captures:
         check_fields(capture, CAPTURE_FIELDS, 'RSS 原始回應')
         source = capture['source']
@@ -28,13 +30,14 @@ def prepare(captures, window_start, decision_cutoff):
             source_key = source
         else:
             raise MarketNewsError('新聞來源不符')
-        if source_key in seen_sources: raise MarketNewsError('新聞來源回應重複')
+        if source_key in seen_sources and not merge: raise MarketNewsError('新聞來源回應重複')
         seen_sources.add(source_key)
         available = parse_aware_time(capture['available_at'],'available_at',error=MarketNewsError)
         if available > cutoff: raise MarketNewsError('RSS 取得時間晚於截止時間')
         if not isinstance(capture['raw_text'], str) or capture['raw_sha256'] != canonical_sha256(capture['raw_text']): raise MarketNewsError('RSS 原始內容遭修改')
         if capture['status'] == 'failed':
-            gaps.append(NEWS_SOURCES[source]['publisher'] + '來源擷取失敗：' + capture['url']); continue
+            if not merge or source not in fetched_sources: gaps.append(NEWS_SOURCES[source]['publisher'] + '來源擷取失敗：' + capture['url'])
+            continue
         if capture['status'] != 'fetched': raise MarketNewsError('RSS 取得狀態無效')
         if source in ARCHIVE_SOURCES:
             from etf_agent.perception.news_preparation import extract_news_metadata
@@ -76,14 +79,21 @@ def prepare(captures, window_start, decision_cutoff):
                           'publisher':SOURCES[source]['publisher'],'title':title,'summary':summary,'link':link,
                           'published_at':published.isoformat(),'available_at':capture['available_at'],
                           'content_extent':'rss_title_and_summary'})
+    if merge:
+        earliest = {}
+        for row in items:
+            kept = earliest.get(row['item_id'])
+            if kept is None or parse_aware_time(row['available_at'],'available_at',error=MarketNewsError) < parse_aware_time(kept['available_at'],'available_at',error=MarketNewsError):
+                earliest[row['item_id']] = row
+        items = list(earliest.values())
     ids = [row['item_id'] for row in items]
     if len(ids) != len(set(ids)): raise MarketNewsError('RSS 含重複新聞識別，需先修正來源')
     return {'items':items,'data_gaps':gaps,'decision_cutoff':decision_cutoff,'window_start':window_start,
-            'coverage':'本次 RSS 與指定歷史目錄原頁在查詢視窗內的全部取得項目；取得範圍由來源及查詢紀錄界定。'}
+            'coverage':('查詢視窗內每次 RSS 抓取合併、依新聞識別去重後的全部項目；取得範圍由來源及抓取紀錄界定。' if merge else '本次 RSS 與指定歷史目錄原頁在查詢視窗內的全部取得項目；取得範圍由來源及查詢紀錄界定。')}
 
 def evaluate(pack):
     check_fields(pack, PACK_FIELDS, '市場新聞資料包')
-    if pack['schema_version'] not in {'market-news-1.0', 'market-news-1.1'} or not isinstance(pack['snapshot_id'],str) or not pack['snapshot_id']:
+    if pack['schema_version'] not in {'market-news-1.0', 'market-news-1.1', 'market-news-1.2'} or not isinstance(pack['snapshot_id'],str) or not pack['snapshot_id']:
         raise MarketNewsError('市場新聞資料包身分無效')
     if seal(pack) != pack: raise MarketNewsError('市場新聞資料包雜湊不符')
     if not isinstance(pack['labels'], list) or not isinstance(pack['source_approvals'], list):
@@ -91,7 +101,7 @@ def evaluate(pack):
     legacy = pack['schema_version'] == 'market-news-1.0'
     if legacy and any(c.get('source') in ARCHIVE_SOURCES for c in pack['captures']):
         raise MarketNewsError('歷史原頁接入需要資料包格式 1.1')
-    prepared = prepare(pack['captures'],pack['window_start'],pack['decision_cutoff'])
+    prepared = prepare(pack['captures'],pack['window_start'],pack['decision_cutoff'],merge=pack['schema_version']=='market-news-1.2')
     items = {r['item_id']:r for r in prepared['items']}
     labels, groups = {}, {}
     for row in pack['labels']:

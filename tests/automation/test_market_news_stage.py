@@ -70,6 +70,20 @@ class MarketNewsStageTests(unittest.TestCase):
         self.assertEqual(pair["bundle"]["source_approvals"], [])
         self.assertIn("market_news_result", pipeline.saved)
 
+    def test_captures_in_window_are_merged_into_one_1_2_pack(self):
+        """視窗內兩次抓取合併：較早抓取獨有的新聞（後來被 RSS 擠掉）仍在資料包內，且資料包為 1.2。"""
+        import re
+        from etf_agent.core import canonical_sha256
+        store = ImmutableRunStore(self.captures_root, schema_version="market-news-capture-1.0")
+        early = [dict(c, raw_text=c["raw_text"].replace("/news/0<", "/news/9<").replace("市場新聞0", "市場新聞9")) for c in self.captures]
+        early = [dict(c, raw_sha256=canonical_sha256(c["raw_text"]), available_at="2026-09-29T08:30:00+00:00") for c in early]
+        store.save("market-news-early", {"captures": {"items": early}, "prepared": {"items": []}})
+        store.save("market-news-late", {"captures": {"items": self.captures}, "prepared": {"items": []}})
+        pair = build_daily_market_news(FakePipeline(self.root, label_all), self.snapshot, self.captures_root, self.database)
+        self.assertEqual(pair["bundle"]["schema_version"], "market-news-1.2")
+        self.assertEqual(len(pair["bundle"]["captures"]), 4)
+        self.assertEqual(pair["result"]["item_count"], 8)  # 兩來源各 0、1、2 與較早抓取獨有的 9
+
     def test_approved_sources_make_result_available(self):
         from etf_agent.core import canonical_sha256
         from etf_agent.perception.market_news.repository import MarketNewsRepository
