@@ -11,7 +11,7 @@ from etf_agent.perception.market_news.contracts import NEWS_SOURCES
 def main():
     parser=argparse.ArgumentParser(description='補抓全市場新聞或接入完整標籤與研究結論')
     sub=parser.add_subparsers(dest='action',required=True)
-    capture=sub.add_parser('capture'); capture.add_argument('--window-start',help='預設為現在往前 3 天（涵蓋週末）')
+    capture=sub.add_parser('capture'); capture.add_argument('--window-start',help='預設為現在往前 4 天（涵蓋三天連假）')
     capture.add_argument('--output-root',type=Path,required=True)
     capture.add_argument('--database',type=Path)
     history=sub.add_parser('backfill'); history.add_argument('--start-date',required=True); history.add_argument('--end-date',required=True)
@@ -27,7 +27,7 @@ def main():
     args=parser.parse_args()
     if args.action=='capture':
         from datetime import datetime, timedelta, timezone
-        window_start=args.window_start or (datetime.now(timezone.utc)-timedelta(days=3)).isoformat()
+        window_start=args.window_start or (datetime.now(timezone.utc)-timedelta(days=4)).isoformat()
         output=capture_market_news(args.output_root,window_start,database_path=args.database)
     elif args.action=='review':
         output=record_source_reviews(args.database,args.source or sorted(NEWS_SOURCES),args.status,args.evidence)

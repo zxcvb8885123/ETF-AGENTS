@@ -15,8 +15,8 @@ from etf_agent.perception.market_news import (
 
 from .agent_runner import AgentTask, _object
 
-# 涵蓋週末與連假前最後幾天的新聞；RSS 本身只保留最近項目。
-WINDOW_DAYS = 3
+# 涵蓋三天連假（例如週五到週一）前最後幾天的新聞；RSS 本身只保留最近項目，所以另有每 2 小時的抓取排程把新聞存下來。
+WINDOW_DAYS = 4
 SCHEMA_VERSION = "market-news-1.2"
 
 
