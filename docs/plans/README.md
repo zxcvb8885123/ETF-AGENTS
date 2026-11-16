@@ -23,6 +23,7 @@
 | [rebound_participation_v2_plan.md](rebound_participation_v2_plan.md) | 反彈參與 v2：程式只整理事實、由風險 Agent 決定 | 已開啟 |
 | [agent_autonomy_plan.md](agent_autonomy_plan.md) | 把策略裁量還給 Agent 的分階段計畫（再進場冷卻、回撤減碼順序、現金分配等） | 各階段已實作，開啟狀態見 status.md |
 | [agent_nominated_rotation_plan.md](agent_nominated_rotation_plan.md) | 換股改由交易 Agent 提名（`agent_swap`） | v2 已開啟 |
+| [swap_victim_rules_plan.md](swap_victim_rules_plan.md) | 換出者規則（`agent_swap.victim_rules`）：續抱又被換出的矛盾 | 僅計畫，未實作 |
 | [agent_led_exposure_plan.md](agent_led_exposure_plan.md) | 市場轉向時的持股曝險由 Agent 判斷（`exposure_view`、`agent_swap.exposure`） | 已開啟 |
 | [agent_led_sizing_plan.md](agent_led_sizing_plan.md) | 換股組數、份量與賣誰由 Agent 主導、人只設硬上限 | 設計計畫；實作部分見 status.md（`entry_reserve`、`quality_dip` v3／v4） |
 | [agent_led_offense_plan.md](agent_led_offense_plan.md) | 連跌後逢低布局與轉向後進攻（`offense`、`entry_reserve`、`quality_dip` v4） | 已開啟 |
