@@ -1,6 +1,6 @@
 # 換股換出者規則（`agent_swap.victim_rules`）：計畫
 
-狀態（2026-11-16）：**僅計畫，尚未實作、尚未開啟。** 依據是 2026-11-16 一次唯讀調查（行號為分支 `163-` 工作區）。本檔不改任何現行行為；開啟與否、數值都由人決定。
+狀態（2026-11-16）：**已實作並於 2026-11-16 開啟**（`policy_id strategy-2026-11-16-victim-rules-1`，回滾樣板 `config/policy_versions/2026-11-16-before-victim-rules.json`）。 人已決定：`thesis_max_hold_conviction=low`、`holding_days_basis=trading_days`、`min_holding_days` 維持 5、風險 Agent 補賣單行情要做（不需閘門，已隨實作生效）；以下第 6 節「未動手」為計畫時的描述，實作範圍以程式為準：`exposure`／`quality_dip` 資格不變（只 `purpose=thesis` 改交易日）、測試在 `tests/decision/test_swap_victim_rules.py`。 依據是 2026-11-16 一次唯讀調查（行號為分支 `163-` 工作區）。
 
 ## 1. 問題
 

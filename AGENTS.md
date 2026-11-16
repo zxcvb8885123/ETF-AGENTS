@@ -75,6 +75,7 @@
 - 強制換股是每週論點檢視結論唯一影響配置之處：名單由 pipeline 綁進 Policy，重建只讀 Policy，且須有交易 Agent 本次採納的該股空頭 claim。
 - **版本閘門啟用狀態**：唯一出處與目前數值是 [`docs/status.md`](docs/status.md#版本閘門啟用狀態)（依 `config/decision_policy.json` 核對），每次政策切換的回滾樣板在 `config/policy_versions/`。本檔不再逐項列舉，以免與 status.md 不一致。判斷時只記住下列跨項事實：
   - `agent_swap` v2 已開啟：換股只依交易 Agent 的提名，程式的曝險換股步驟已停用（提案帶 `EXPOSURE_ROTATION_SKIPPED:agent_swap`），`rotation.forced_swap` 與 `exposure_rotation.conviction_gap_swap` 已移除。
+  - `agent_swap.victim_rules` v1 已開啟（2026-11-16，thesis 換出者的 hold 信心上限 low 與交易日持有天數），見 status／contracts；風險 Agent 的可引用行情清單已含本次委託標的（不需閘門、不動契約）。
   - 純紀錄、不改配置的閘門（`cash_stance_turn_facts`、`market_index_facts`、`exposure_view`、`quality_dip_facts`、`quality_dip_assessment`、`event_direction`、`benchmark_facts`）：背景事實 `citable=false`、不可引用。
   - **已實作、尚未開啟**：`valuation_facts`（估值 V2）、`position_sizing.stop_exit`（程式兜底硬停損，使用者決定不開）、`high_conviction_cash_floor`（且與 `cash_ratio_range` 互斥）。把它們的行為當成現行行為是錯的。
   - 所有版本閘門只由人設定、策略反思不得改；Agent 不輸出數字，數值一律由人填。
