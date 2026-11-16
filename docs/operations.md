@@ -356,6 +356,6 @@ tail -n 3 var/logs/backup.log
 
 ## 事件分析結果重用（省用量）
 
-每天晚上與早上各跑一次完整決策，兩次之間大多數股票的事件資料相同。`scripts/run_daily_pipeline.py` 預設開啟 `--event-reuse`：同一交易日資料夾內，前一次 run 的事件簡報列與本次**逐檔完全相同**（含重大訊息、新聞、財務脈絡、資料可得狀態）的股票，沿用前一次已通過驗證的事件分析，並以本次 bundle 與 Validator 重驗；驗不過就整批不重用。任何一欄不同都照舊交給 Agent。實測 2026-11-11 兩次 run 約 83～90／146 檔相同，約佔事件量 45%。紀錄在 run 目錄的 `event_reuse.json`；`--no-event-reuse` 可關閉。實作見 `src/etf_agent/automation/event_reuse.py`。
+每天晚上與早上各跑一次完整決策，兩次之間大多數股票的事件資料相同。`scripts/run_daily_pipeline.py` 預設開啟 `--event-reuse`：同一交易日資料夾內，前一次 run 的事件簡報列與本次**逐檔完全相同**（含重大訊息、新聞、財務脈絡；不含 `data_availability` 的儲存筆數與取得時間，那只是庫存紀錄）的股票，沿用前一次已通過驗證的事件分析，並以本次 bundle 與 Validator 重驗；驗不過就整批不重用。任何一欄不同都照舊交給 Agent。實測 2026-11-11 兩次 run 約 83～90／146 檔相同，約佔事件量 45%。紀錄在 run 目錄的 `event_reuse.json`；`--no-event-reuse` 可關閉。實作見 `src/etf_agent/automation/event_reuse.py`。
 
 全市場新聞標註也受同一個開關控制：前一個已完成 run（跨日期資料夾、名稱排序在前）的 `market_news_bundle.json` 中，`item_id` 與 `canonical_content_id` 都相同且欄位合法的逐則標籤由程式沿用，Agent 只標新項目並重寫 `synthesis`（沿用的市場相關項目以 `already_labeled_market_items` 附給它引用）；合併後仍整份重建並驗證全量覆蓋。沿用來源記在 run 目錄的 `market_news_label_reuse.json`。實測 11/16 22:20 → 23:01 有 418／429 則可沿用。實作見 `src/etf_agent/automation/market_news_stage.py`。
