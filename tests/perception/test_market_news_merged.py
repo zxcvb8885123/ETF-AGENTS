@@ -73,6 +73,22 @@ class MergedCaptureTests(unittest.TestCase):
             prepare(bad, START, CUTOFF, merge=True)
 
 
+class RecencyWithMergedPackTests(unittest.TestCase):
+    def test_evidence_recency_accepts_1_2_pack_with_duplicate_source_captures(self):
+        """回歸：2026-11-16 決策鏈因 evidence_recency 以舊規則重建 1.2 資料包，報「新聞來源回應重複」而失敗。"""
+        from etf_agent.decision.recency import evidence_recency
+        captures = []
+        for source in sorted(SOURCES):
+            captures.append(capture(source, [0, 1], '2026-11-14T03:00:00+00:00'))
+            captures.append(capture(source, [1, 2], '2026-11-15T03:00:00+00:00'))
+        pack = merged_pack(captures)
+        bundle = {'decision_cutoff': CUTOFF, 'snapshot': {'latest_trade_date': '2026-11-13'}, 'market_news_input': {'bundle': pack}}
+        ids = {row['item_id'] for row in prepare(captures, START, CUTOFF, merge=True)['items']}
+        table = evidence_recency(bundle, ids)
+        listed = {entry['evidence_id'] for bucket in table['buckets'].values() for entry in bucket}
+        self.assertEqual(listed, ids)
+
+
 class YahooSourceTests(unittest.TestCase):
     def yahoo_capture(self, items_xml):
         raw = '<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>Yahoo股市</title>' + items_xml + '</channel></rss>'
