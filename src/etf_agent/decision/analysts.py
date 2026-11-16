@@ -280,6 +280,18 @@ def _event_entry(document: Mapping[str, object], slim: bool) -> Dict[str, object
     return entry
 
 
+
+_TREND_SUMMARY_DROP = ("schema_version", "snapshot_id", "decision_cutoff", "bundle_hash", "source_series_sha256",
+                       "ma_decimal_places", "limitations", "sampling", "content_sha256")
+
+
+def _slim_trend_summary(summary: Mapping[str, object]) -> Dict[str, object]:
+    """給 Agent 看的摘要去掉每檔重複的雜湊與 Snapshot 識別、每列的 available_at；判斷用的價格、均線、量與 evidence_ids 全留。"""
+    slim = {key: value for key, value in summary.items() if key not in _TREND_SUMMARY_DROP}
+    slim["rows"] = [{key: value for key, value in row.items() if key != "available_at"} for row in summary["rows"]]
+    slim["note"] = "rows 是抽樣錨點（固定錨點、收盤最高最低、最大量、最近 5 筆），不是連續日線；observation_count 為完整歷史筆數。"
+    return slim
+
 def build_analyst_brief(
     bundle: Mapping[str, object],
     momentum: Mapping[str, object],
@@ -328,7 +340,7 @@ def build_analyst_brief(
                     "note": "趨勢一致，未附逐日歷史；判斷請依 momentum 欄位，不要引用未提供的歷史走勢。",
                 }
             else:
-                entry["trend_history"] = (trend_tools.summary_for_symbol(symbol) if compact_technical
+                entry["trend_history"] = (_slim_trend_summary(trend_tools.summary_for_symbol(symbol)) if compact_technical
                                           else trend_tools.for_symbol(symbol))
         elif analyst == "fundamental":
             metrics = metrics_by_symbol.get(symbol, {})

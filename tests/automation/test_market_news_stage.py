@@ -14,6 +14,7 @@ class FakePipeline:
 
     def __init__(self, root, answer):
         self.root, self.answer, self.saved, self.logs, self.tasks = root, answer, {}, [], []
+        self.run_dir, self.event_reuse = root, False
 
     def log(self, message):
         self.logs.append(message)
@@ -107,6 +108,56 @@ class MarketNewsStageTests(unittest.TestCase):
         self.assertEqual(len(pair["bundle"]["labels"]), 6)
         merged = [row for row in pair["bundle"]["labels"]]
         self.assertEqual(len({row["canonical_content_id"] for row in merged}), 5)
+
+    def test_previous_labels_are_reused_and_agent_labels_only_new_items(self):
+        """前一個 run 已標好的項目由程式沿用，Agent 只標新項目；合併後仍全量覆蓋、市場項目可被 synthesis 引用。"""
+        self.save_captures(self.captures)
+        day = self.root / "daily" / "2026-09-29"
+        first_dir, second_dir = day / "daily-20260929-070000", day / "daily-20260929-210000"
+        first_dir.mkdir(parents=True), second_dir.mkdir(parents=True)
+        first = FakePipeline(first_dir, label_all)
+        first.run_dir = first_dir
+        build_daily_market_news(first, self.snapshot, self.captures_root, self.database)
+        old = json.loads((first_dir / "market_news_bundle.json").read_text(encoding="utf-8"))
+        # 前一個 run 刪掉一則標籤，模擬「本次才出現的新項目」。
+        dropped = old["labels"][0]["item_id"]
+        old["labels"] = [row for row in old["labels"] if row["item_id"] != dropped]
+        (first_dir / "market_news_bundle.json").write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+        seen = {}
+
+        def answer(items):
+            seen["items"] = items
+            return {"labels": [{"item_id": i["item_id"], "relevance": "market", "stance": "positive", "reason": "新項目"} for i in items],
+                    "synthesis": {"outlook": "positive", "findings": [{"text": "引用舊項目", "evidence_ids": [old["labels"][0]["item_id"]]}]}}
+
+        second = FakePipeline(second_dir, answer)
+        second.run_dir, second.event_reuse = second_dir, True
+        pair = build_daily_market_news(second, self.snapshot, self.captures_root, self.database)
+        self.assertEqual([row["item_id"] for row in seen["items"]], [dropped])
+        self.assertEqual(pair["result"]["item_count"], 6)
+        self.assertEqual(len(pair["bundle"]["labels"]), 6)
+        self.assertEqual(second.saved["market_news_label_reuse"]["source_run"], first_dir.name)
+        brief = json.loads((second_dir / next(n for n in second.saved if n.startswith("brief_market_news_labels_")).__add__(".json")).read_text(encoding="utf-8"))
+        self.assertTrue(brief["already_labeled_market_items"])
+
+    def test_reuse_is_off_without_switch_and_ignores_corrupt_previous_bundle(self):
+        self.save_captures(self.captures)
+        day = self.root / "daily" / "2026-09-29"
+        first_dir, second_dir = day / "daily-20260929-070000", day / "daily-20260929-210000"
+        first_dir.mkdir(parents=True), second_dir.mkdir(parents=True)
+        (first_dir / "market_news_bundle.json").write_text("{壞掉", encoding="utf-8")
+        seen = {}
+
+        def answer(items):
+            seen["n"] = len(items)
+            return label_all(items)
+
+        second = FakePipeline(second_dir, answer)
+        second.run_dir, second.event_reuse = second_dir, True
+        build_daily_market_news(second, self.snapshot, self.captures_root, self.database)
+        self.assertEqual(seen["n"], 6)
+        self.assertNotIn("market_news_label_reuse", second.saved)
+
 
     def test_approved_sources_make_result_available(self):
         from etf_agent.core import canonical_sha256
