@@ -519,10 +519,10 @@ def resumable_research_agent_cli(run_dir: Path) -> str:
     return previous.get("research_agent_cli") or previous.get("agent_cli", "claude")
 
 
-def make_agent_runner(cli: str, model, max_budget_usd=None):
-    """依 CLI 名稱建立子 Agent 執行器。"""
+def make_agent_runner(cli: str, model, max_budget_usd=None, read_max_output_tokens=None):
+    """依 CLI 名稱建立子 Agent 執行器。``read_max_output_tokens`` 只對 Claude 有效（一次讀完簡報）。"""
     if cli == "claude":
-        return ClaudeAgentRunner(ROOT, model=model, max_budget_usd=max_budget_usd or 3.0)
+        return ClaudeAgentRunner(ROOT, model=model, max_budget_usd=max_budget_usd or 3.0, read_max_output_tokens=read_max_output_tokens)
     if cli == "codex":
         return CodexAgentRunner(ROOT, model=model)
     return OpenCodeAgentRunner(ROOT, model=model)
@@ -912,6 +912,11 @@ def main() -> int:
         help="事件分析沿用的跨日範圍：最多回看幾個日曆日（預設 4，以該檔最後一次真正交給 Agent 判斷的 run 起算）；0 表示只沿用同一交易日前一次 run",
     )
     parser.add_argument(
+        "--read-max-output-tokens", type=int, default=200000,
+        help="Claude 子 Agent 讀簡報時單次 Read 的 token 上限（CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS，預設 200000，讓簡報一次讀完而不是分頁重讀，"
+             "可少約六到八成的快取讀取 token，簡報內容不變）；0 維持 Claude 預設分頁；環境變數已自行設定時不覆蓋",
+    )
+    parser.add_argument(
         "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
         help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
     )
@@ -1076,6 +1081,7 @@ def _main(args) -> int:
     original_start = previous_summary["started_at"] if resumable is not None else now.isoformat()
     summary = {"run_id": run_id, "started_at": original_start, "status": "running", "planned_decision_run_id": decision_run_id, "agent_cli": args.agent_cli,
                "research_agent_cli": args.research_agent_cli,
+               "read_max_output_tokens": args.read_max_output_tokens if args.read_max_output_tokens > 0 else None,
                "research_isolation": "staged_outputs" if args.research_agent_cli == "codex" else "deny_reads", "market_news": "disabled" if args.no_market_news else "enabled"}
     if resumable is not None:
         summary["resumed_at"] = now.isoformat()
@@ -1191,10 +1197,11 @@ def _main(args) -> int:
 
         log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s%s）" % (
             args.agent_cli, "" if args.research_agent_cli == args.agent_cli else "，多空研究員經 %s" % args.research_agent_cli))
-        agent_runner = make_agent_runner(args.agent_cli, args.model, args.max_budget_usd)
-        analyst_runner = make_agent_runner(args.agent_cli, args.analyst_model, args.max_budget_usd) if args.analyst_model else None
+        read_max = args.read_max_output_tokens if args.read_max_output_tokens > 0 else None
+        agent_runner = make_agent_runner(args.agent_cli, args.model, args.max_budget_usd, read_max)
+        analyst_runner = make_agent_runner(args.agent_cli, args.analyst_model, args.max_budget_usd, read_max) if args.analyst_model else None
         # 研究員 CLI 與主 CLI 不同時一律另建（沒指定模型就用該 CLI 的預設）；相同時只在指定模型時另建。
-        research_runner = (make_agent_runner(args.research_agent_cli, args.research_model, args.max_budget_usd)
+        research_runner = (make_agent_runner(args.research_agent_cli, args.research_model, args.max_budget_usd, read_max)
                            if args.research_model or args.research_agent_cli != args.agent_cli else None)
         def build_pipeline(resume):
             return DailyDecisionPipeline(
