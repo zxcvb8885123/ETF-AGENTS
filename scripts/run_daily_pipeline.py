@@ -12,6 +12,7 @@ try:
     import fcntl
 except ImportError:  # Windows 以 msvcrt 鎖定同一執行鎖。
     fcntl = None
+import http.client
 import json
 import math
 import os
@@ -1126,7 +1127,7 @@ def _main(args) -> int:
                     summary["trading_status_capture_error"] = "重試後仍未完整抓到：%s" % capture.get("reason", capture.get("status"))
                     log("交易狀態封存重試後仍不完整，改用 cutoff 前最新的成功封存")
                     notify("ETF Agent 每日決策", "交易狀態資料重試後仍抓不完整，沿用舊資料（可能被拒絕）")
-            except (OSError, ValueError, json.JSONDecodeError) as error:
+            except (OSError, http.client.HTTPException, ValueError, json.JSONDecodeError) as error:
                 summary["trading_status_capture_error"] = str(error)
                 log("交易狀態封存失敗，改用 cutoff 前最新的成功封存：%s" % error)
             # 記下重跑前的待成交決策與 Snapshot；本次若取代它卻沒產生新 D-Plan，結束時還原。
