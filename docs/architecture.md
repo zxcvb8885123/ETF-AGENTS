@@ -56,7 +56,7 @@
 - 目前（2026-11-10 起）是 **v1 影子期**：提名被封存並由 Finalizer 重建驗證，配置完全不讀提名；唯讀統計用 `cli/calibration.py shadow-swap`。
 - v2（2026-11-10 20:10 已開啟）才讓程式依提名換股：換出者標 `exit`、旗標 `AGENT_SWAP`／`AGENT_SWAP_FILL`，不可行的對由程式取消（`AGENT_SWAP_CANCELLED:<原因>`），換出者不賣。
 
-`agent_swap.exposure`（v2 已開啟）讓提名每對多 `purpose`，v2 依風險 Agent 的 `exposure_view` 取用曝險配對（見[曝險計畫](plans/agent_led_exposure_plan.md)）。`agent_swap.quality_dip`（優質股第三階段，現行 v4 已開啟）讓 `purpose` 多一個 `quality_dip`，5c 另讀 `dip_facts` 驗結構，v2 配置時另加對數、買進權重、買進不超過賣款與轉向跡象的上限（見[優質股計畫](plans/quality_dip_plan.md#104-第三階段實作紀錄2026-11-10第七版)）。
+`agent_swap.exposure`（v2 已開啟）讓提名每對多 `purpose`，v2 依風險 Agent 的 `exposure_view` 取用曝險配對（見[曝險計畫](plans/agent_led_exposure_plan.md)）。`agent_swap.quality_dip`（優質股第三階段，現行 v4 已開啟）讓 `purpose` 多一個 `quality_dip`，5c 另讀 `dip_facts` 驗結構，v2 配置時另加對數、買進權重、買進不超過賣款與轉向跡象的上限（見[優質股計畫](plans/quality_dip_plan.md#104-第三階段實作紀錄2026-11-10第七版)）。另有兩個已實作、尚未開啟的子閘門：`agent_swap.earmark`（換股賣款專款專用，賣款只給同一對換入者，不流向其他加碼）與 `agent_swap.victim_bear_claim`（換出者須有交易 Agent 本次採納的該股空頭 claim），啟用狀態見 [status](status.md#版本閘門啟用狀態)。
 
 設計見[換股提名計畫](plans/agent_nominated_rotation_plan.md)，契約見[決策鏈契約](decision-contracts.md#換股提名agent_swap)。
 

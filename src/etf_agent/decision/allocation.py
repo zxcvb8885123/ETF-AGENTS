@@ -35,7 +35,7 @@ from .sizing import (
     HELD_WEIGHT_BUDGET, HIGH_CONVICTION_CASH_PRIORITY,
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
-    conviction_weights, derisk_day_uses_agent_view, proceeds_to_add_enabled, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
+    conviction_weights, derisk_day_uses_agent_view, earmark_gate, proceeds_to_add_enabled, victim_bear_claim_enabled, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
     agent_swap_binding, high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, release_order_binding,
     slot_recycle_enabled, validate_position_sizing,
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
@@ -312,11 +312,55 @@ class AllocationOrderEngine:
         self._liquidity_caps_cache: Optional[Dict[str, int]] = None  # liquidity_fit v2：每個 _run 重算一次
         self._reserved_shares: Dict[str, int] = {}  # entry_reserve：本次重算中換入者先保留的買進股數（只在 _run 內有值）
         self._proceeds_accepted: Set[str] = set()  # proceeds_to_add：本次重算中接受「賣款流向加碼持股」的換入者（只在 _run_exposure 迴圈內有值）
+        # agent_swap v2：本次重算成交的換股對 (換入, 換出)，依提名先後（只在 _run 內有值；只有 earmark 閘門會讀它，不進任何輸出）。
+        self._swap_pairs: List[Tuple[str, str]] = []
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
         self._beta_model: Optional[BetaModel] = None
         self._stop_plan: Optional[StopExitPlan] = None  # stop_exit：觸發判定只由 bundle 與 Policy 決定，整個引擎生命週期只算一次
         self._stop_applied: Set[str] = set()  # stop_exit：本次重算中實際被程式強制出場的持股（只在 _run 內有值）
+
+    def _earmark_active(self) -> Optional[Mapping[str, object]]:
+        """``agent_swap.earmark``（換股賣款專款專用，版本閘門）今天是否套用：沒有閘門回 None（逐位元維持原行為）；
+        ``scope=all`` 每天套用；``scope=defensive`` 只在綁定的現金姿態為 defensive 時套用，姿態尚未綁定即拋錯（不猜成非防守）。"""
+        sizing = self.policy.get("position_sizing")
+        gate = earmark_gate(sizing)
+        if gate is None or gate["scope"] == "all":
+            return gate
+        stance = sizing.get("cash_stance")  # type: ignore[union-attr]
+        if stance not in ("aggressive", "neutral", "defensive"):
+            raise DecisionToolError("agent_swap.earmark scope=defensive 需要已綁定的 position_sizing.cash_stance")
+        return gate if stance == "defensive" else None
+
+    def _earmark_cancel(self, body: Mapping[str, object], gate: Mapping[str, object]) -> Optional[Tuple[str, str]]:
+        """``agent_swap.earmark`` 收斂後的兩個整組取消條件，一次只取消一組（復原迴圈重跑，取消集合只增不減所以必定收斂）：
+
+        1. 換入者買到的股數低於 entry_reserve 保留股數 × ``min_fill_ratio``（買不夠）：取消清單中最後一組（``earmark_underfill``）。
+        2. 期末現金比例達競賽上限（``cash_weight_ceiling``）：取消剩餘專款（換出者賣款淨額 − 換入者買進含費金額）最多的一組，
+           同值取清單較後者（``earmark_cash_ceiling``）；只挑剩餘專款大於 0 的組（取消後現金必定下降），沒有就不處理，
+           交給既有的 cash_ceiling_fix（留住 exit）或 Guard。
+        回傳 (換入者, 原因) 或 None。"""
+        orders = body["order_proposal"]["orders"]  # type: ignore[index]
+        bought = {str(order["symbol"]): int(order["shares"]) for order in orders if order["side"] == "buy"}
+        ratio = decimal_value(gate["min_fill_ratio"], "agent_swap.earmark.min_fill_ratio")
+        under = [
+            buy for buy, _ in self._swap_pairs
+            if buy in self._reserved_shares and Decimal(bought.get(buy, 0)) < Decimal(self._reserved_shares[buy]) * ratio
+        ]
+        if under:
+            return under[-1], "earmark_underfill"
+        ceiling = decimal_value(self.policy["cash_weight_ceiling"], "cash_weight_ceiling")
+        if decimal_value(body["allocation_proposal"]["cash_weight"], "cash_weight") < ceiling:  # type: ignore[index]
+            return None
+        net = {(str(order["symbol"]), str(order["side"])): decimal_value(order["net_cash_impact"], "net_cash_impact") for order in orders}
+        leftovers = [
+            (net.get((sell, "sell"), Decimal(0)) + net.get((buy, "buy"), Decimal(0)), index, buy)
+            for index, (buy, sell) in enumerate(self._swap_pairs)
+        ]
+        positive = [row for row in leftovers if row[0] > 0]
+        if not positive:
+            return None
+        return max(positive)[2], "earmark_cash_ceiling"
 
     def _stop_exits(self) -> StopExitPlan:
         """stop_exit（版本閘門）的觸發判定；沒有閘門回空計畫、完全不呼叫持股檢視計算（舊 Policy 逐位元維持舊行為）。"""
@@ -552,6 +596,13 @@ class AllocationOrderEngine:
                     self._proceeds_accepted |= new_accepted
                     continue
                 agent_unfilled = agent_unfilled - self._proceeds_accepted
+            earmark = self._earmark_active() if agent_gated and not unfilled and not agent_unfilled else None
+            if earmark is not None:
+                # agent_swap.earmark：其他取消都收斂後，再檢查買不夠與現金上限（一次取消一組、換出者不賣）；沒有閘門時不經過這裡。
+                pick = self._earmark_cancel(body, earmark)
+                if pick is not None:
+                    agent_cancelled[pick[0]] = pick[1]
+                    continue
             if not unfilled and not agent_unfilled:
                 return body
             excluded_fills |= unfilled
@@ -584,6 +635,7 @@ class AllocationOrderEngine:
         ``agent_cancelled`` 是 agent_swap v2 復原迴圈取消的換入者與原因（只有 v2 才傳）。"""
         excluded = {value.upper() for value in (excluded_symbols or set())}
         self._reserved_shares = {}
+        self._swap_pairs = []
         self._liquidity_caps_cache = None
         effective = self._effective_policy(overrides or {})
         intents = {
@@ -817,7 +869,7 @@ class AllocationOrderEngine:
                 targets = self._agent_swap(
                     targets, swap_binding, current, active_symbols, target_shares, order_intents, intents, kept_exits,
                     untradable, marked_nav, max_positions, effective, bool(derisk_flags), agent_cancelled or {},
-                    active_share_dropped or {}, excluded, constraint_flags, quality_fills, assessments,
+                    active_share_dropped or {}, excluded, constraint_flags, quality_fills, assessments, adopted_bear,
                 )
             if exposure_rotation_gate(self.policy.get("position_sizing")) is not None:
                 # exposure_rotation（版本閘門）：forced_swap 之後、買單配置之前換股；沒有閘門的舊 run 不經過這裡。
@@ -1119,6 +1171,7 @@ class AllocationOrderEngine:
         flags: List[Dict[str, object]],
         quality_fills: Optional[Dict[str, Tuple[str, Decimal]]] = None,
         assessments: Optional[Mapping[str, object]] = None,
+        adopted_bear: Optional[Set[str]] = None,
     ) -> Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]:
         """換股改由交易 Agent 提名（``position_sizing.agent_swap`` v2，版本閘門；docs/plans/agent_nominated_rotation_plan.md 2.6 B 段）。
 
@@ -1133,7 +1186,10 @@ class AllocationOrderEngine:
         成交的對：換出者賣單由程式標 ``exit``＋``AGENT_SWAP``、換入者 ``AGENT_SWAP_FILL``，交易 Agent 的意圖不改寫。
         取消的對留 ``AGENT_SWAP_CANCELLED:<原因>``（symbol 為換入者）；換出者一律不賣，所以不會只賣不買。
         復原迴圈（``_run_exposure``）取消的換入者、Active Share 或風險審查排除的換入者、被留住的換出者都由同一規則處理。
-        只減少成交的對數，不會換成別的持股或別的新股。"""
+        只減少成交的對數，不會換成別的持股或別的新股。
+
+        ``agent_swap.victim_bear_claim``（版本閘門）：換出者必須在 ``adopted_bear``（本次交易 Agent 採納了該股 bear- claim 的代號）內，
+        否則取消該對（``victim_no_bear_claim``，換出者不賣）；適用全部 purpose，在對數上限之前檢查，所以被取消的對不佔上限。"""
         pairs, status = binding
         portfolio = SKIP_PORTFOLIO_SYMBOL
 
@@ -1227,6 +1283,7 @@ class AllocationOrderEngine:
         candidate_set = set(ordered)
         needed: List[Tuple[str, str]] = []
         reserve_gate_on = entry_reserve_gate(self.policy.get("position_sizing")) is not None
+        bear_gate = victim_bear_claim_enabled(self.policy.get("position_sizing"))
         for buy, sell in pairs:
             if buy in cancelled:
                 cancel(buy, sell, cancelled[buy])
@@ -1252,6 +1309,9 @@ class AllocationOrderEngine:
                 and sell in self.prices and sell not in untradable
             ):
                 cancel(buy, sell, "victim_unavailable")
+            elif bear_gate and sell.upper() not in (adopted_bear or set()):
+                # victim_bear_claim：換出必須有獨立的弱化理由（本次已採納的該股空頭 claim），不能只為了換入別檔而賣。
+                cancel(buy, sell, "victim_no_bear_claim")
             else:
                 needed.append((buy, sell))
         if exposure_pairs:
@@ -1366,6 +1426,7 @@ class AllocationOrderEngine:
         for buy, sell in needed[len(accepted):]:
             cancel(buy, sell, "swap_cap")
         for buy, sell in accepted:
+            self._swap_pairs.append((buy, sell))
             if buy in reserve_plan:
                 self._reserved_shares[buy] = reserve_plan[buy][0]
             target_shares[sell] = 0
@@ -2721,12 +2782,22 @@ class AllocationOrderEngine:
           另計入現金需求，避免跳空開高讓主辦方整批作廢。
         - ``cash_buffer_floor``：見 ``_cash_floor``。
         - ``high_conviction_cash_floor``：high 買單的下限改為軟下限（``_cash_floor``），動用到一般下限以下時
-          記 RISK_CASH_SOFT_FLOOR；``floor_disabled`` 時不套用。"""
+          記 RISK_CASH_SOFT_FLOOR；``floor_disabled`` 時不套用。
+        - ``agent_swap.earmark``（換股賣款專款專用）：成交換股對的換出者賣款淨額從一般可用現金移出、記在同一對換入者名下；
+          換入者排在全部買單之前（不分信心），每筆買進含跳空預留先用自己的專款，不足的部分才用一般現金（仍須保住現金下限），
+          用不完的專款留作現金、不流向其他買單。交易 Agent 自己的 exit／trim 賣款與其他賣單不受影響，照舊進一般現金。"""
         sells = [item for item in orders if item["side"] == "sell"]
         buys = [item for item in orders if item["side"] == "buy"]
         available = starting_cash
         if effective["reuse_sell_proceeds"]:
             available += sum(decimal_value(item["net_cash_impact"], "net_cash_impact") for item in sells)
+        earmark_left: Dict[str, Decimal] = {}
+        if self._swap_pairs and effective["reuse_sell_proceeds"] and self._earmark_active() is not None:
+            proceeds_of = {str(item["symbol"]): decimal_value(item["net_cash_impact"], "net_cash_impact") for item in sells}
+            for buy_symbol, sell_symbol in self._swap_pairs:
+                if sell_symbol in proceeds_of:
+                    earmark_left[buy_symbol] = proceeds_of[sell_symbol]
+                    available -= proceeds_of[sell_symbol]
         buffer = self._cash_floor(nav, starting_cash, effective, floor_disabled=floor_disabled)
         # high_conviction_cash_floor（版本閘門）：high 買單改用軟下限；減碼日（floor_disabled）不套用。
         soft_ratio = None if floor_disabled else effective.get("high_conviction_floor_ratio")
@@ -2761,6 +2832,9 @@ class AllocationOrderEngine:
             )
             # cash_fit_order=v2 不取消零頭，effective 沒有最低成交比例（cancel_dust 為 False 時不會讀它）。
             min_fill_ratio: Decimal = effective.get("cash_fit_min_fill_ratio", Decimal("0"))  # type: ignore[assignment]
+        if earmark_left:
+            # earmark：有專款的換入者排在全部買單之前（穩定排序，其間維持原順序）；沒有閘門時 earmark_left 為空，順序不變。
+            buys = sorted(buys, key=lambda item: 0 if str(item["symbol"]) in earmark_left else 1)
         cancel_dust = cash_fit_cancels_dust(effective)
         held = {symbol for symbol, shares in (current or {}).items() if int(shares) > 0}
         fitted = list(sells)
@@ -2777,7 +2851,8 @@ class AllocationOrderEngine:
             turnover_clipped = False
             priority_blocked = False
             is_high = all_tiers.get(str(item["symbol"])) == "high"
-            if blocks_after_high and high_cash_clipped and not is_high and str(item["symbol"]) not in held:
+            earmarked = str(item["symbol"]) in earmark_left
+            if blocks_after_high and high_cash_clipped and not is_high and str(item["symbol"]) not in held and not earmarked:
                 # 高信心買單已被現金縮減：剩下的現金全部留給它，未持有的中、低信心新股不得動用；
                 # 已持有股票的加碼不受影響（本來就是持股，加碼只看自己的信心）。
                 candidate = {}
@@ -2788,7 +2863,12 @@ class AllocationOrderEngine:
             while candidate and int(candidate["shares"]) > 0:
                 cost = -decimal_value(candidate["net_cash_impact"], "net_cash_impact")
                 gross = decimal_value(candidate["gross_amount"], "gross_amount")
-                if reserve_rate is None:
+                if earmarked:
+                    # earmark：買進含跳空預留先用本對的專款，超出的部分才取自一般現金，且一般現金扣掉已累計的跳空預留後仍須保住下限。
+                    rate = reserve_rate or Decimal("0")
+                    general_head = available - buy_total * rate - item_buffer
+                    cash_ok = cost * (1 + rate) - earmark_left[str(item["symbol"])] <= max(Decimal("0"), general_head)
+                elif reserve_rate is None:
                     cash_ok = available - cost >= item_buffer
                 else:
                     cash_ok = available - cost - (buy_total + cost) * reserve_rate >= item_buffer
@@ -2822,7 +2902,16 @@ class AllocationOrderEngine:
                 })
                 candidate = {}
                 dust_cancelled = True
-            if candidate:
+            if candidate and earmarked:
+                # earmark：本筆消耗（買進含費＋跳空預留）先扣專款、不足再扣一般現金；跳空預留已含在消耗內，所以不累計進 buy_total。
+                # 期末現金＝一般現金餘額＋全部跳空預留＋剩餘專款，仍不低於「下限＋全部買單 × 跳空預留率」。
+                fitted.append(candidate)
+                need = -decimal_value(candidate["net_cash_impact"], "net_cash_impact") * (1 + (reserve_rate or Decimal("0")))
+                use = min(need, earmark_left[str(item["symbol"])])
+                earmark_left[str(item["symbol"])] -= use
+                available -= need - use
+                turnover_used += decimal_value(candidate["gross_amount"], "gross_amount")
+            elif candidate:
                 headroom_before = available - buy_total * (reserve_rate or Decimal("0"))
                 fitted.append(candidate)
                 available += decimal_value(candidate["net_cash_impact"], "net_cash_impact")
