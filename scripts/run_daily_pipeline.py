@@ -908,6 +908,10 @@ def main() -> int:
         help="同一交易日前一次 run 中，事件簡報逐檔完全相同的股票直接沿用已驗證的事件分析（預設開啟；--no-event-reuse 全部重新交給 Agent）",
     )
     parser.add_argument(
+        "--event-reuse-max-days", type=int, default=4,
+        help="事件分析沿用的跨日範圍：最多回看幾個日曆日（預設 4，以該檔最後一次真正交給 Agent 判斷的 run 起算）；0 表示只沿用同一交易日前一次 run",
+    )
+    parser.add_argument(
         "--technical-gate", action=argparse.BooleanOptionalAction, default=True,
         help="趨勢一致的股票技術 brief 只附 momentum、不附逐日歷史（預設開啟；--no-technical-gate 改回全部附完整歷史）",
     )
@@ -1203,6 +1207,7 @@ def _main(args) -> int:
                 research_runner=research_runner,
                 technical_gate=args.technical_gate,
                 event_reuse=args.event_reuse,
+                event_reuse_max_days=args.event_reuse_max_days if args.event_reuse_max_days > 0 else None,
                 max_workers=args.max_workers,
                 # 子 Agent 暫時性失敗（逾時、非零結束、輸出不是 JSON）再試一次，但不拖過目標時段的交件期限。
                 retry_deadline=session_deadline(session),

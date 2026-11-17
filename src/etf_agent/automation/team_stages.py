@@ -284,18 +284,37 @@ class TeamStagesMixin:
         self, bundle: Mapping[str, object], brief: Mapping[str, object], agent_symbols: Sequence[str], event_direction: bool,
     ) -> List[Dict[str, object]]:
         """同一交易日前一次 run 中輸入逐檔完全相同的事件分析項目；以本次 bundle 與 Validator 重驗，驗不過整批不重用。"""
-        source, items = reusable_event_items(self.run_dir, {row["symbol"]: row for row in brief["symbols"]}, agent_symbols)
+        max_days = getattr(self, "event_reuse_max_days", None)
+        source, items = reusable_event_items(
+            self.run_dir, {row["symbol"]: row for row in brief["symbols"]}, agent_symbols, cross_day_max_days=max_days,
+        )
         if not items:
             return []
-        report = seal_event_market_report(bundle, brief["report_envelope"], items)
-        errors = AnalystReportValidator(
-            bundle, "event", symbols=sorted(item["symbol"] for item in items), require_event_direction=event_direction,
-        ).validate(report)
+
+        def validate(rows: List[Dict[str, object]]) -> List[str]:
+            report = seal_event_market_report(bundle, brief["report_envelope"], rows)
+            return AnalystReportValidator(
+                bundle, "event", symbols=sorted(item["symbol"] for item in rows), require_event_direction=event_direction,
+            ).validate(report)
+
+        errors = validate(items)
+        if errors and max_days is not None:
+            # 跨日沿用：驗不過時逐檔重驗，只丟掉驗不過的那幾檔，其餘仍沿用（同日沿用維持整批不沿用）。
+            kept = [item for item in items if not validate([item])]
+            self.log("  [事件重用] 跨日沿用 %d 檔中 %d 檔在本次資料上驗證失敗，這些檔重新交給 Agent" % (len(items), len(items) - len(kept)))
+            items = kept
+            errors = validate(items) if items else []
         if errors:
             self.log("  [事件重用] 前一次 %s 的結果在本次資料上驗證失敗（%s），全部重新交給 Agent" % (source, "；".join(errors[:2])))
             return []
+        if not items:
+            return []
         self.log("  [事件重用] 沿用 %s 的事件分析 %d 檔（輸入逐檔完全相同、已用本次資料重驗），其餘交給 Agent" % (source, len(items)))
-        self.save_artifact("event_reuse", {"source_run": source, "symbols": sorted(item["symbol"] for item in items)})
+        record = {"source_run": source, "symbols": sorted(item["symbol"] for item in items)}
+        if max_days is not None:
+            record["scope"] = "cross_day"
+            record["max_days"] = max_days
+        self.save_artifact("event_reuse", record)
         return items
 
     def _analyst_batch_jobs(
