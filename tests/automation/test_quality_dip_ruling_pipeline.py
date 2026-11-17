@@ -38,6 +38,8 @@ def live_like_template(version):
     if version == "v4":  # 正式設定原樣（v4＋ladder＋oversold，exposure_view v2）：只套 fixture 需要的調整
         return value
     sizing["agent_swap"].pop("entry_reserve", None)  # 對照組沒有份量格：提名不填 size（entry_reserve 只由 v4 正式設定樣板涵蓋）
+    sizing["agent_swap"].pop("earmark", None)  # earmark 依賴 entry_reserve，要一併拿掉
+    sizing["agent_swap"].pop("victim_bear_claim", None)
     sizing["agent_swap"]["quality_dip"].pop("ladder", None)  # 正式設定是 v4；v3／v2 對照組要明確降版，ladder 只用於 v4
     sizing["agent_swap"]["quality_dip"]["min_turn_assessment"] = "turn_unconfirmed"  # no_turn_evidence 只有 v4＋ladder 才允許
     sizing["exposure_view"] = {"version": "v1"}  # 對照組維持舊簡報（v2 的簡報文字是正式設定的行為，由 v4 測試涵蓋）

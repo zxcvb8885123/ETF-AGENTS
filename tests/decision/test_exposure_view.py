@@ -302,6 +302,7 @@ class ReplayTests(unittest.TestCase):
         plain["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("quality_dip", None)  # 依賴 exposure 子閘門，要先於它拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("exposure", None)  # 子閘門依賴 exposure_view，要一併拿掉
+        plain["position_sizing"].get("agent_swap", {}).pop("earmark", None)  # 它依賴 entry_reserve，要先於 entry_reserve 拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("entry_reserve", None)  # 它依賴 agent_swap.exposure，要先於 exposure 拿掉
         plain["position_sizing"].get("agent_swap", {}).pop("derisk_day_view", None)  # 它依賴 agent_swap.exposure v2，同樣要拿掉
         gated = copy.deepcopy(plain)

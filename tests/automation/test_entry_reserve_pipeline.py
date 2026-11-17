@@ -28,6 +28,8 @@ def template_reserve():
     sizing = value["position_sizing"]
     sizing["agent_swap"]["quality_dip"].pop("ruling_ref", None)
     sizing["agent_swap"].pop("quality_dip", None)  # 純 entry_reserve：quality_dip 另有自己的 size，這裡不並存
+    sizing["agent_swap"].pop("earmark", None)  # 2026-11-17 正式設定已開 earmark／victim_bear_claim；這組測試只驗 entry_reserve 本身
+    sizing["agent_swap"].pop("victim_bear_claim", None)
     sizing.pop("quality_dip_facts", None)
     sizing.pop("quality_dip_assessment", None)
     sizing.pop("event_direction", None)
