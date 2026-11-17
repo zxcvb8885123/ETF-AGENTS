@@ -56,14 +56,17 @@ class EventReuseTests(unittest.TestCase):
         self.assertEqual(source, "daily-20261110-210000")
         self.assertEqual([item["symbol"] for item in items], ["2330.TW"])
 
-    def test_status_text_moved_to_top_level_does_not_break_matching(self):
-        stored = {"symbol": "2330.TW", "data_availability": [{"name": "material_events", "stored_rows": 1}]}
+    def test_data_availability_difference_does_not_block_matching(self):
+        """data_availability 只是儲存筆數與取得時間，不同仍沿用；事件或新聞欄位不同則不沿用。"""
+        stored = {"symbol": "2330.TW", "events": [], "news": [], "data_availability": [{"name": "material_events", "stored_rows": 1}]}
         write_run(self.day, "daily-20261110-210000", [stored])
-        current = {"symbol": "2330.TW", "data_availability": [{"name": "material_events", "stored_rows": 1, "status": "已取得"}]}
-        _, items = reusable_event_items(self.current(), {"2330.TW": current}, ["2330.TW"])
+        more_rows = dict(stored, data_availability=[{"name": "material_events", "stored_rows": 2, "status": "已取得"}])
+        _, items = reusable_event_items(self.current(), {"2330.TW": more_rows}, ["2330.TW"])
         self.assertEqual(len(items), 1)
-        changed = {"symbol": "2330.TW", "data_availability": [{"name": "material_events", "stored_rows": 2, "status": "已取得"}]}
-        self.assertEqual(reusable_event_items(self.current(), {"2330.TW": changed}, ["2330.TW"])[1], [])
+        new_event = dict(stored, events=[{"title": "新重大訊息"}])
+        self.assertEqual(reusable_event_items(self.current(), {"2330.TW": new_event}, ["2330.TW"])[1], [])
+        new_news = dict(stored, news=[{"title": "新新聞"}])
+        self.assertEqual(reusable_event_items(self.current(), {"2330.TW": new_news}, ["2330.TW"])[1], [])
 
     def test_only_candidates_are_considered(self):
         write_run(self.day, "daily-20261110-210000", [row("2330.TW"), row("2317.TW")])

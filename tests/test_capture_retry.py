@@ -1,3 +1,4 @@
+import http.client
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -43,6 +44,9 @@ class CaptureRetryTest(unittest.TestCase):
 
     def test_exception_counts_as_failure(self):
         self.assertEqual(self._run([OSError("down"), OK])["run_id"], "r")
+
+    def test_incomplete_read_counts_as_failure(self):
+        self.assertEqual(self._run([http.client.IncompleteRead(b""), OK])["run_id"], "r")
 
     def test_gives_up_at_stop_time(self):
         result = self._run([BAD] * 20, stop_hours=1)

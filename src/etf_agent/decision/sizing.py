@@ -214,7 +214,20 @@ AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
     "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add", "entry_reserve", "victim_rules",
+    "earmark", "victim_bear_claim",
 }
+# earmark（版本閘門，物件，只由人設定，已實作、尚未開啟）：換股賣款專款專用。成交的換股對中，換出者的賣款淨額只給同一對的換入者，
+# 不進一般可用現金（不流向其他加碼或新股），換入者用不完的留作現金；換入者買到的股數低於保留股數 × min_fill_ratio 時整組取消
+# （AGENT_SWAP_CANCELLED:earmark_underfill，換出者不賣）；期末現金比例達競賽上限時，取消剩餘專款最多的一組（earmark_cash_ceiling）。
+# scope=all 每天套用；scope=defensive 只在綁定的現金姿態為 defensive 時套用。前提 agent_swap v2、agent_swap.entry_reserve、
+# reuse_sell_proceeds=true；與 proceeds_to_add、high_conviction_cash_floor 互斥。省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。
+EARMARK_VERSION = "v1"
+EARMARK_FIELDS = {"version", "min_fill_ratio", "scope"}
+EARMARK_SCOPES = ("all", "defensive")
+# victim_bear_claim（版本閘門，物件 {"version": "v1"}，只由人設定，已實作、尚未開啟）：換出者必須有交易 Agent 本次已採納的該股空頭 claim
+# （adopted_claim_ids 含 bear- 開頭，claim 屬於該股由 TradeDecisionValidator 保證）；沒有即取消該對（AGENT_SWAP_CANCELLED:victim_no_bear_claim，
+# 換出者不賣）。適用全部 purpose（thesis／exposure／quality_dip）；只在配置層檢查，不改提名驗證與簡報。前提 agent_swap v2。
+VICTIM_BEAR_CLAIM = {"version": "v1"}
 # proceeds_to_add（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：換股成立時，換出者的賣款可流向高信心加碼持股。
 # 換入者因額度被高信心加碼持股占走而沒有買單（無任何縮減旗標），且同一份配置有高信心加碼持股真的買進，該對不取消、換出者照賣，
 # 換入者改標 AGENT_SWAP_PROCEEDS_TO_ADD；沒有高信心加碼持股買進時仍照舊取消（不會只賣不買）。前提 agent_swap v2；
@@ -383,6 +396,20 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         note="換出者規則（v1）：purpose=thesis 的換出者第一輪 hold 信心須不高於 thesis_max_hold_conviction（low／medium），持有天數下限改讀 "
              "position_review 的 holding_trading_days（交易日，缺值 fail-closed 視為不足）；purpose=exposure／quality_dip 的資格不變；"
              "須 agent_swap v2 與頂層 position_review.version=v2（由 validate_position_sizing 檢查）；team_inputs 不升版、沒有新鍵；形狀與值域由 _validate_agent_swap 檢查，見 docs/plans/swap_victim_rules_plan.md",
+    ),
+    GateRule(
+        "agent_swap.earmark",
+        requires=("agent_swap", "agent_swap.entry_reserve"),
+        note="換股賣款專款專用（v1）：換出者賣款只給同一對換入者、用不完留作現金；買到的股數低於保留股數 × min_fill_ratio 整組取消"
+             "（earmark_underfill），期末現金達上限時取消剩餘專款最多的一組（earmark_cash_ceiling）；scope all／defensive；"
+             "須 agent_swap v2、reuse_sell_proceeds=true，與 proceeds_to_add、high_conviction_cash_floor 互斥（由 _validate_agent_swap 與 "
+             "validate_position_sizing 檢查）；team_inputs 不升版、沒有新鍵",
+    ),
+    GateRule(
+        "agent_swap.victim_bear_claim",
+        requires=("agent_swap",),
+        note="換出者須有交易 Agent 本次已採納的該股空頭 claim（v1），否則取消該對（victim_no_bear_claim，換出者不賣）；適用全部 purpose、"
+             "只在配置層檢查；須 agent_swap v2（由 _validate_agent_swap 檢查）；team_inputs 不升版、沒有新鍵",
     ),
     GateRule(
         "agent_swap.exposure",
@@ -860,6 +887,27 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
                 errors.append("%s.victim_rules.holding_days_basis 只允許 %s" % (prefix, "／".join(VICTIM_RULES_HOLDING_DAYS_BASES)))
         if version != AGENT_SWAP_V2:
             errors.append("%s.victim_rules 需要 agent_swap v2（配置才讀提名）" % prefix)
+    if "earmark" in gate:
+        earmark = gate["earmark"]
+        if not isinstance(earmark, Mapping) or set(earmark) != EARMARK_FIELDS:
+            errors.append("%s.earmark 必須恰好有 %s（全部由人填，程式不提供預設值）" % (prefix, "、".join(sorted(EARMARK_FIELDS))))
+        else:
+            if earmark["version"] != EARMARK_VERSION:
+                errors.append("%s.earmark.version 只允許 %s" % (prefix, EARMARK_VERSION))
+            _ratio_in_open_unit(earmark["min_fill_ratio"], "%s.earmark.min_fill_ratio" % prefix, errors, allow_one=True)
+            if earmark["scope"] not in EARMARK_SCOPES:
+                errors.append("%s.earmark.scope 只允許 %s" % (prefix, "／".join(EARMARK_SCOPES)))
+        if version != AGENT_SWAP_V2:
+            errors.append("%s.earmark 需要 agent_swap v2（配置才讀提名）" % prefix)
+        if "proceeds_to_add" in gate:
+            errors.append("%s.earmark 不得與 %s.proceeds_to_add 同時啟用（專款專用不讓賣款流向加碼持股）" % (prefix, prefix))
+        if "high_conviction_cash_floor" in sizing:
+            errors.append("%s.earmark 不得與 position_sizing.high_conviction_cash_floor 同時啟用（軟下限的動用量口徑未與專款合併）" % prefix)
+    if "victim_bear_claim" in gate:
+        if gate["victim_bear_claim"] != VICTIM_BEAR_CLAIM:
+            errors.append('%s.victim_bear_claim 必須是 {"version": "v1"}' % prefix)
+        if version != AGENT_SWAP_V2:
+            errors.append("%s.victim_bear_claim 需要 agent_swap v2（配置才讀提名）" % prefix)
     if "exposure" in gate:
         from .exposure_swap import validate_exposure_swap_gate
         validate_exposure_swap_gate(sizing, errors)
@@ -1011,6 +1059,19 @@ def victim_rules_gate(sizing: object) -> Optional[Mapping[str, object]]:
     swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
     gate = swap.get("victim_rules") if isinstance(swap, Mapping) else None
     return gate if isinstance(gate, Mapping) else None
+
+
+def earmark_gate(sizing: object) -> Optional[Mapping[str, object]]:
+    """``position_sizing.agent_swap.earmark``（換股賣款專款專用）閘門；沒有（或 sizing／agent_swap 不是物件）時回 None（原行為）。"""
+    swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    gate = swap.get("earmark") if isinstance(swap, Mapping) else None
+    return gate if isinstance(gate, Mapping) else None
+
+
+def victim_bear_claim_enabled(sizing: object) -> bool:
+    """``position_sizing.agent_swap.victim_bear_claim`` 啟用（換出者須有本次採納的該股空頭 claim）；沒有欄位回 False（原行為）。"""
+    swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    return isinstance(swap, Mapping) and swap.get("victim_bear_claim") == VICTIM_BEAR_CLAIM
 
 
 def derisk_day_uses_agent_view(sizing: object) -> bool:
@@ -1615,6 +1676,9 @@ def validate_position_sizing(
         review = policy.get("position_review")
         if not isinstance(review, Mapping) or review.get("version") != "v2":
             errors.append("position_sizing.agent_swap.victim_rules 需要 position_review.version=v2（持有交易日數 holding_trading_days 來自自進場事實）")
+    if earmark_gate(sizing) is not None and "reuse_sell_proceeds" in policy and policy["reuse_sell_proceeds"] is not True:
+        # 樣板階段還沒綁 rules 的 reuse_sell_proceeds；配置引擎的 DecisionPolicyValidator 一定要求它是布林值，所以在配置前必定檢查到。
+        errors.append("position_sizing.agent_swap.earmark 需要 reuse_sell_proceeds=true（賣款當日不可用時沒有專款可分）")
     if "cash_ratio_range" in sizing:
         _validate_cash_ratio_range(policy, sizing, errors)
     _validate_rotation(sizing, errors)

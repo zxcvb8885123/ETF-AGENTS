@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import http.client
 import io
 import json
 import shutil
@@ -93,7 +94,7 @@ def capture_ogd_candidates(
                 "raw_path": str(raw_path),
                 "available_at_verified": False,
             })
-        except (OSError, UnicodeError, ValueError, csv.Error) as error:
+        except (OSError, http.client.HTTPException, UnicodeError, ValueError, csv.Error) as error:
             raw_path = run_dir / (source_id + ".csv")
             results.append({
                 "source_id": source_id,
@@ -142,7 +143,7 @@ def capture_with_retry(
         attempt += 1
         try:
             last = capture()
-        except (OSError, ValueError) as error:
+        except (OSError, http.client.HTTPException, ValueError) as error:
             last = {"status": "failed", "sources": [], "reason": str(error)}
         if last.get("status") == "captured_candidate_only":
             if attempt > 1:

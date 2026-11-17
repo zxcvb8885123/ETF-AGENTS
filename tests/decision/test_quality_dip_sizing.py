@@ -923,7 +923,7 @@ class ProductionTemplateTests(unittest.TestCase):
         self.assertEqual(sizing["offense"], {
             "version": "v1",
             "by_view": {
-                "probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 3, "max_size": "medium", "beta_stop": "0.55"},
+                "probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 2, "max_size": "medium", "beta_stop": "0.40"},  # 2026-11-17 21:10 probe-defensive-1
                 "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 4, "max_size": "large", "beta_stop": "0.55"},
                 "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 5, "max_size": "large", "beta_stop": "0.70"},
             },
@@ -931,7 +931,7 @@ class ProductionTemplateTests(unittest.TestCase):
             "thesis_size_cap": {"version": "v1"},  # 2026-11-11 offense-ext-1（回滾樣板 2026-11-11-before-offense-extensions.json）
             "cash_glide": {"version": "v1"},
         })
-        self.assertEqual(sizing["agent_swap"]["exposure"]["max_pairs_by_view"], {"probe": 3, "start_rebuild": 4, "rebuild": 5})
+        self.assertEqual(sizing["agent_swap"]["exposure"]["max_pairs_by_view"], {"probe": 2, "start_rebuild": 4, "rebuild": 5})
         for row in sizing["rebound_participation"]["by_state"].values():
             self.assertNotIn("defensive_cash_buffer", row)  # 與 offense 互斥
         self.assertEqual([e for e in errors_for(sizing) if ("offense" in e or "max_pairs_by_view" in e) and "drawdown_control" not in e], [])  # 回撤線由完整 Policy 驗證（test_offense）

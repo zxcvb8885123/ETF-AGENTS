@@ -57,6 +57,18 @@ class TechnicalTrendHistoryTests(unittest.TestCase):
         tampered["content_sha256"] = canonical_sha256({key: value for key, value in tampered.items() if key != "content_sha256"})
         self.assertTrue(TechnicalTrendHistoryValidator(bundle).validate_summary(tampered, "2330.TW"))
 
+    def test_compact_brief_drops_only_repeated_metadata(self):
+        bundle = decision_bundle()
+        summary = TechnicalTrendHistoryTools(bundle).summary_for_symbol("2330.TW")
+        brief = build_analyst_brief(bundle, {"items": []}, "technical", compact_technical=True)
+        slim = next(r for r in brief["symbols"] if r["symbol"] == "2330.TW")["trend_history"]
+        for key in ("snapshot_id", "bundle_hash", "source_series_sha256", "content_sha256", "limitations"):
+            self.assertNotIn(key, slim)
+        self.assertTrue(all("available_at" not in row for row in slim["rows"]))
+        self.assertEqual(slim["evidence_ids"], summary["evidence_ids"])
+        self.assertEqual(slim["observation_count"], summary["observation_count"])
+        self.assertEqual([{k: v for k, v in row.items() if k != "available_at"} for row in summary["rows"]], slim["rows"])
+
     def test_rejects_modified_paths_even_with_resealed_hash_and_foreign_symbol(self):
         bundle = decision_bundle()
         history = TechnicalTrendHistoryTools(bundle).for_symbol("2330.TW")

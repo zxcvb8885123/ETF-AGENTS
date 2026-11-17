@@ -3,7 +3,7 @@
 每天會跑兩次完整決策（晚上與早上）。同一個目標交易日的前一次 run 已經為「輸入完全相同」的股票產生並通過驗證的事件分析結果，
 再叫一次 Agent 只是重複花費。這裡由程式做確定性比對：
 
-- 逐檔比對本次事件簡報列（含重大訊息、新聞、財務脈絡、資料可得狀態）與前一次簡報列的內容雜湊，完全相同才算同輸入。
+- 逐檔比對本次事件簡報列（含重大訊息、新聞、財務脈絡；不含 ``data_availability`` 的儲存筆數與時間）與前一次簡報列的內容雜湊，完全相同才算同輸入。
 - 只沿用前一次 ``analyst_event.json`` 內該檔已通過驗證的項目；呼叫端還會用本次 bundle 與 Validator 重驗，驗不過就整批不重用。
 - 任何一欄不同（例如隔夜出現新重大訊息）都照舊交給 Agent；找不到前一次 run 或檔案毀損一律不重用，不填假值。
 """
@@ -19,21 +19,14 @@ ANALYST_REPORT = "analyst_event.json"
 BRIEF_GLOB = "brief_event_b*.json"
 
 
-def _without_channel_status(row: Mapping[str, object]) -> Dict[str, object]:
-    """簡報落地前會把 data_availability 各管道的固定說明 ``status`` 移到頂層（team_stages._slim_event_batch），
-    所以比對兩側都先去掉它；``status`` 由同一管道的筆數欄位決定，筆數不同仍會比對不上。"""
-    data = dict(row)
-    channels = data.get("data_availability")
-    if isinstance(channels, list):
-        data["data_availability"] = [
-            {key: value for key, value in channel.items() if key != "status"} if isinstance(channel, Mapping) else channel
-            for channel in channels
-        ]
-    return data
+def _without_availability(row: Mapping[str, object]) -> Dict[str, object]:
+    """比對時不看 ``data_availability``：它只是資料庫的儲存筆數與最早、最晚取得時間，隔夜多抓一筆就會不同，
+    但事件與新聞本身在 ``events``／``news`` 欄位，那些仍逐項比對；任何事件或新聞欄位不同都照舊不沿用。"""
+    return {key: value for key, value in row.items() if key != "data_availability"}
 
 
 def row_digest(row: Mapping[str, object]) -> str:
-    return canonical_sha256(_without_channel_status(row))
+    return canonical_sha256(_without_availability(row))
 
 
 def _read_json(path: Path) -> Optional[object]:
