@@ -101,8 +101,29 @@ def _pre_rebase_costs(runs: List[Mapping[str, object]]) -> Dict[str, Decimal]:
     return {}
 
 
+SECTOR_NAMES = {
+    "01": "水泥", "02": "食品", "03": "塑膠", "04": "紡織纖維", "05": "電機機械", "06": "電器電纜",
+    "08": "玻璃陶瓷", "09": "造紙", "10": "鋼鐵", "11": "橡膠", "12": "汽車", "14": "建材營造",
+    "15": "航運", "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨", "20": "其他", "21": "化學",
+    "22": "生技醫療", "23": "油電燃氣", "24": "半導體", "25": "電腦及週邊", "26": "光電",
+    "27": "通信網路", "28": "電子零組件", "29": "電子通路", "30": "資訊服務", "31": "其他電子",
+    "32": "文化創意", "35": "綠能環保", "36": "數位雲端", "37": "運動休閒", "38": "居家生活",
+}
+SECTOR_FILE = Path(__file__).resolve().parents[3] / "data" / "sector_classification.json"
+
+
+def _sector_names() -> Dict[str, str]:
+    """代號 -> 產業名稱；讀不到分類檔就回空表（頁面顯示「未分類」，不補假值）。"""
+    try:
+        raw = json.loads(SECTOR_FILE.read_text(encoding="utf-8")).get("sector_by_symbol", {})
+    except (OSError, ValueError):
+        return {}
+    return {str(sym): SECTOR_NAMES.get(str(code).split(":")[-1], str(code)) for sym, code in raw.items()}
+
+
 def _positions(state: Mapping[str, object], cost_overrides: Optional[Mapping[str, Decimal]] = None) -> List[Dict[str, object]]:
     rows = []
+    sectors = _sector_names()
     for row in state.get("positions", []):
         shares = int(row["shares"])
         cost = _dec(row["cost_basis"], "%s.cost_basis" % row["symbol"])
@@ -113,7 +134,7 @@ def _positions(state: Mapping[str, object], cost_overrides: Optional[Mapping[str
         cost_value = cost * shares
         pnl = market_value - cost_value if market_value is not None else None
         rows.append({
-            "symbol": row["symbol"], "shares": shares, "lots": shares // 1000,
+            "symbol": row["symbol"], "sector": sectors.get(str(row["symbol"]), "未分類"), "shares": shares, "lots": shares // 1000,
             "average_cost": _money(cost), "price": _money(price) if price is not None else None,
             "cost_value": _money(cost_value),
             "market_value": _money(market_value) if market_value is not None else None,

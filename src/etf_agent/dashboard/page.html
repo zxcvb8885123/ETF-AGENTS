@@ -78,6 +78,10 @@
     <div class="scroll" id="pending"></div>
   </section>
   <section class="card">
+    <h2>持股分類（依市值，現金另列）</h2>
+    <div id="sector-pie"></div>
+  </section>
+  <section class="card">
     <h2>目前持倉</h2>
     <div class="scroll" id="positions"></div>
   </section>
@@ -282,6 +286,32 @@ const POSITION_COLUMNS = [
   ["unrealized_return", null, true],
 ];
 let positionSort = { key: null, dir: -1 };
+const PIE_COLORS = ["#3a63d8", "#e08a00", "#7a3fc9", "#16915a", "#d4343c", "#0aa5b5", "#b5479a", "#8a8f3a", "#5b6b8c", "#c9742c", "#2e8b8b", "#9a5fd0", "#6b7385"];
+function renderSectorPie(d) {
+  const el = document.getElementById("sector-pie");
+  const sums = {};
+  d.positions.forEach(p => { if (p.market_value != null) sums[p.sector || "未分類"] = (sums[p.sector || "未分類"] || 0) + Number(p.market_value); });
+  if (d.cash != null && Number(d.cash) > 0) sums["現金"] = Number(d.cash);
+  const items = Object.entries(sums).sort((a, b) => b[1] - a[1]);
+  const total = items.reduce((t, i) => t + i[1], 0);
+  if (!items.length || total <= 0) { el.innerHTML = '<div class="empty">目前沒有可畫的持股。</div>'; return; }
+  const R = 90, C = 100;
+  let acc = 0;
+  const slices = items.map(([name, v], i) => {
+    const color = name === "現金" ? "var(--muted)" : PIE_COLORS[i % PIE_COLORS.length];
+    const a0 = acc / total * 2 * Math.PI; acc += v; const a1 = acc / total * 2 * Math.PI;
+    const share = v / total;
+    const path = items.length === 1
+      ? `<circle cx="${C}" cy="${C}" r="${R}" fill="${color}"/>`
+      : `<path d="M${C} ${C} L${(C + R * Math.sin(a0)).toFixed(2)} ${(C - R * Math.cos(a0)).toFixed(2)} A${R} ${R} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${(C + R * Math.sin(a1)).toFixed(2)} ${(C - R * Math.cos(a1)).toFixed(2)} Z" fill="${color}" stroke="var(--card)" stroke-width="1.5"><title>${esc(name)} ${(share * 100).toFixed(1)}%・${money(v)} 元</title></path>`;
+    return { path, name, v, share, color };
+  });
+  el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:center">
+    <svg width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="持股分類圓餅圖">${slices.map(s => s.path).join("")}</svg>
+    <table style="width:auto"><tr><th style="text-align:left">分類</th><th>市值</th><th>占比</th></tr>
+    ${slices.map(s => `<tr><td style="text-align:left"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${s.color};margin-right:6px"></span>${esc(s.name)}</td><td>${money(s.v)}</td><td>${(s.share * 100).toFixed(1)}%</td></tr>`).join("")}</table></div>`;
+}
+
 function renderPositions(d) {
   const el = document.getElementById("positions");
   if (!d.positions.length) { el.innerHTML = '<div class="empty">目前空倉。</div>'; return; }
@@ -337,6 +367,7 @@ function render(d) {
   lastPerformance = d;
   renderChart(d.history, lastBenchmarks ? lastBenchmarks.benchmarks : null);
   renderTrades(d);
+  renderSectorPie(d);
   renderPositions(d);
   document.getElementById("history").innerHTML = `<table>
     <tr><th>交易日</th><th>類型</th><th>NAV</th><th>當日帳面損益</th><th>當日報酬（帳面，${UNIT()}）</th><th>累積報酬（${UNIT()}）</th></tr>

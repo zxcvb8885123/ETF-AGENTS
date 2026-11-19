@@ -9,7 +9,7 @@
 | `__init__.py` | 匯出績效彙整 | `PerformanceError`、`build_performance_summary` |
 | `performance.py` | 讀 `VirtualAccountRepository` 已封存狀態，彙整績效摘要；斷鏈或驗證失敗直接拋錯 | `PerformanceError`、`build_performance_summary` |
 | `app.py` | FastAPI 應用：`/` 回傳 `page.html`，`/api/performance` 回傳帳戶 JSON，`/api/benchmarks` 回傳基準比較 JSON（由 `etf_agent.benchmark` 計算） | `create_app` |
-| `page.html` | 儀表板靜態頁面（非 Python）：KPI、NAV 走勢（帳戶實線、基準虛線）、與基準比較表、買賣紀錄、持倉、每日紀錄 | — |
+| `page.html` | 儀表板靜態頁面（非 Python）：KPI、NAV 走勢（帳戶實線、基準虛線）、與基準比較表、買賣紀錄、持股分類圓餅圖（依市值，現金另列）、持倉、每日紀錄 | — |
 
 ## 對外介面
 
@@ -29,6 +29,7 @@
 
 ## 規則與邊界
 
+- 持股分類來自 `data/sector_classification.json`（TWSE／TPEX 公司基本資料的產業別），讀不到或查無該檔顯示「未分類」，不補假值。
 - 唯讀：不更新資料、不執行決策、不修改帳本。
 - 數值必須是有限 Decimal，否則 `PerformanceError`。
 - 帳本鏈驗證失敗時不顯示部分結果。
