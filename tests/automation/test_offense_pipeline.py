@@ -43,6 +43,7 @@ def template_offense():
     for row in sizing["rebound_participation"]["by_state"].values():
         row.pop("defensive_cash_buffer", None)
     sizing["agent_swap"]["exposure"]["max_pairs_by_view"] = {"probe": 2, "start_rebuild": 4, "rebuild": 5}
+    sizing["agent_swap"]["max_swaps_per_run"] = 7  # 這些測試假設的換股上限（正式設定已降為 3）
     sizing["agent_swap"]["entry_reserve"]["max_entry_weight"] = "0.2"  # fixture 的價格下 0.06 買不到一張；只放測試樣板
     sizing["offense"] = copy.deepcopy(OFFENSE)
     return value
@@ -54,6 +55,7 @@ def template_without_offense():
     sizing.pop("offense", None)
     sizing.pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
     sizing["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
+    sizing["agent_swap"]["max_swaps_per_run"] = 7  # 這些測試假設的換股上限（正式設定已降為 3）
     return value
 
 
@@ -351,6 +353,7 @@ class ReplayAndGateKeyTests(unittest.TestCase):
         del plain["position_sizing"]["offense"]
         plain["position_sizing"].pop("cash_stance_brief", None)  # offense_reference: omit 需要 offense；回放兩者都略過
         plain["position_sizing"]["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
+        plain["position_sizing"]["agent_swap"]["max_swaps_per_run"] = 7  # 這些測試假設的換股上限（正式設定已降為 3）
         plain_policy, plain_notes = helper.replay(plain)
         policy, notes = helper.replay(gated)
         self.assertEqual(notes["offense"], "ignored_in_replay")
