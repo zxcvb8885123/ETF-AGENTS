@@ -211,6 +211,16 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 
 見[參數說明](run-options.md)的「續跑與重跑」。
 
+**重跑規則（2026-11-17 使用者決定，省用量）**：每次另開新 run 約多花 $10～12 的估計用量（技術、基本面、多空、交易全部重做；事件與新聞標註會沿用），續跑則只補沒完成的階段。
+
+1. 每天只靠排程的兩次：21:00 做隔天備案、07:00 用隔夜事件與新聞重做。除此之外不手動另開新 run。
+2. run 失敗時先看原因（`pipeline.json` 的 `final_status`、`var/logs/daily-<日期>.log`）。資料問題沒修好就重跑，只會再失敗一次。
+3. 能續跑就續跑：`./start.sh run --resume`（不帶編號＝今天最近一個未完成的 run）。只有續跑也失敗，或該 run 不能續跑（已還原成重做前狀態等，見參數說明）時，才用 `--force` 另開新 run。
+4. 已經有 approved 的決策、之後沒有新的重大資訊時，不再手動重跑一次「確認」。
+5. 不要用會產生不同目標交易日資料夾的參數手動跑，否則事件沿用找不到前一次 run。
+
+這是人工操作規則，程式沒有強制；依據見 [`plans/token_efficiency_plan.md`](plans/token_efficiency_plan.md) 第 4.2 節。
+
 ## 開新帳戶（比賽第一天）
 
 測試期的帳本帶著測試持股，比賽第一天要開全新帳戶，舊帳戶保留不刪：
@@ -357,5 +367,7 @@ tail -n 3 var/logs/backup.log
 ## 事件分析結果重用（省用量）
 
 每天晚上與早上各跑一次完整決策，兩次之間大多數股票的事件資料相同。`scripts/run_daily_pipeline.py` 預設開啟 `--event-reuse`：同一交易日資料夾內，前一次 run 的事件簡報列與本次**逐檔完全相同**（含重大訊息、新聞、財務脈絡；不含 `data_availability` 的儲存筆數與取得時間，那只是庫存紀錄）的股票，沿用前一次已通過驗證的事件分析，並以本次 bundle 與 Validator 重驗；驗不過就整批不重用。任何一欄不同都照舊交給 Agent。實測 2026-11-11 兩次 run 約 83～90／146 檔相同，約佔事件量 45%。紀錄在 run 目錄的 `event_reuse.json`；`--no-event-reuse` 可關閉。實作見 `src/etf_agent/automation/event_reuse.py`。
+
+**跨日沿用（2026-11-17 起，`--event-reuse-max-days`，預設 4；0 只沿用同一交易日）**：改成逐檔沿鏈往前找「該檔最後一次真正交給 Agent 判斷」的 run（可跨交易日資料夾、只認有 `analyst_event.json` 的 run）。中間某次 run 若沿用了該檔（記在 `event_reuse.json` 的 `symbols`）就繼續往前；若中間某次 run 既沒有該檔簡報列也不是沿用（例如當時沒有事件、由程式輸出 `unknown`），立刻停止、不沿用。回看天數以原始判斷的 run 資料夾日期起算，超過不沿用。比對規則與重驗不變；驗不過時跨日模式改為逐檔重驗、只丟驗不過的那幾檔，同日模式維持整批不沿用。`analyst_event.json` 形狀與 `team_inputs` 不變，舊 run 重建不受影響。`event_reuse.json` 多記 `scope: cross_day` 與 `max_days`。實測以 11/18 那次 run 的簡報回推：112／149 檔可沿用（原只能沿用 0 檔）。限制：沿用會固定一次抽樣結果（同輸入重判時 high 一致率只有約 68.5%）；單則公告沿用與縮短回溯期見 `docs/plans/event_analyst_token_reduction_plan.md`（尚未實作）。
 
 全市場新聞標註也受同一個開關控制：前一個已完成 run（跨日期資料夾、名稱排序在前）的 `market_news_bundle.json` 中，`item_id` 與 `canonical_content_id` 都相同且欄位合法的逐則標籤由程式沿用，Agent 只標新項目並重寫 `synthesis`（沿用的市場相關項目以 `already_labeled_market_items` 附給它引用）；合併後仍整份重建並驗證全量覆蓋。沿用來源記在 run 目錄的 `market_news_label_reuse.json`。實測 11/16 22:20 → 23:01 有 418／429 則可沿用。實作見 `src/etf_agent/automation/market_news_stage.py`。

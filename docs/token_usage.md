@@ -49,6 +49,7 @@
 | `--technical-gate`／`--no-technical-gate` | 開啟 | 技術面閘門開關 |
 | `--analyst-model` | Claude CLI 為 `sonnet` | 只用於技術／基本面／事件分析師；`inherit` 沿用 `--model`；Codex、OpenCode 未指定時沿用 `--model` |
 | `--model` | 所選 CLI 的設定 | 多空、交易、現金姿態使用 |
+| `--read-max-output-tokens` | 200000（0 維持 Claude 預設分頁） | 只對 Claude runner：以 `CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS` 放寬單次 Read 的 token 上限，讓簡報一次讀完而不是分頁重讀（每多讀一頁就把前面全部再讀一次，快取讀取約占 token 總數一半）。簡報內容與雜湊不變；使用者已自行設定該環境變數時不覆蓋；值記在 `pipeline.json` 的 `read_max_output_tokens`。2026-11-17 實測：235 KB 簡報一次讀完、2 回合、答對；超過 256 KB（270 KB）的簡報 Read 仍拒絕整檔，Agent 退回讀前幾十行（與開啟前相同行為，不是新問題）。省多少只對 token 總數有把握（實驗讀取少約 75%），金額約 1.5%；Max 額度如何計權官方沒寫，要以每個 run 前後的 Max 百分比對照。見 `docs/plans/token_efficiency_plan.md` 第 4.1 節 |
 
 ## 怎麼量測
 

@@ -287,12 +287,16 @@ class ClaudeAgentRunner:
         model: Optional[str] = None,
         max_budget_usd: float = 3.0,
         timeout_seconds: int = 1800,
+        read_max_output_tokens: Optional[int] = None,
     ):
         self.project_root = project_root
         self.executable = executable
         self.model = model
         self.max_budget_usd = max_budget_usd
         self.timeout_seconds = timeout_seconds
+        # 一次讀完簡報：Read 工具預設單次約回 2.1 萬 token，簡報被切成數頁，每頁都要把前面內容再讀一次（快取讀取約占 token 總數一半）。
+        # 填整數時，以環境變數 CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS 放寬單次上限；None 維持原行為。只影響讀取方式，簡報內容不變。
+        self.read_max_output_tokens = read_max_output_tokens
 
     def run(self, task: AgentTask, run_dir: Path) -> AgentCall:
         command = [
@@ -311,8 +315,9 @@ class ClaudeAgentRunner:
             command += ["--model", self.model]
         trace_path = self.project_root / "var" / "logs" / "agent_trace" / run_dir.name / ("%s.jsonl" % task.name)
         try:
+            extra = {"read_max_output_tokens": self.read_max_output_tokens} if self.read_max_output_tokens else {}
             completed = _run_claude_streaming(
-                command, self.project_root, self.timeout_seconds, trace_path, self.project_root,
+                command, self.project_root, self.timeout_seconds, trace_path, self.project_root, **extra,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise TransientAgentError("%s Agent 執行失敗：%s" % (task.name, error)) from error
@@ -376,6 +381,7 @@ def _trace_summary(event: Mapping[str, object], elapsed: float) -> Dict[str, obj
 
 def _run_claude_streaming(
     command: Sequence[str], cwd: Path, timeout: int, trace_path: Path, project_root: Path,
+    read_max_output_tokens: Optional[int] = None,
 ) -> "subprocess.CompletedProcess[str]":
     """以串流模式執行 ``claude -p``，邊跑邊把事件摘要寫進 ``trace_path``（本機除錯用，失敗不影響流程）。
 
@@ -398,6 +404,8 @@ def _run_claude_streaming(
     # 使用者已自行設定時不覆蓋。
     env = dict(os.environ)
     env.setdefault("CLAUDE_CODE_PROMPT_CACHE_TTL", "5m")
+    if read_max_output_tokens:
+        env.setdefault("CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS", str(int(read_max_output_tokens)))  # 使用者已自行設定時不覆蓋
     process = subprocess.Popen(
         list(command), cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
     )

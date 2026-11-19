@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -362,6 +363,52 @@ class SensitiveReadTests(unittest.TestCase):
             self.assertEqual(rows[1]["tools"], [{"name": "Read", "file": "/x/brief.json", "path": None}])
             self.assertEqual(rows[2]["rate_limit_info"], {"status": "allowed"})
             self.assertEqual(list(run_dir.iterdir()), [])
+
+    def _stream_env(self, runner_kwargs, environ_overrides=None):
+        """跑一次假的 claude 串流，回傳子程序拿到的環境變數。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake_claude.py"
+            script.write_text(
+                "import json\n"
+                "print(json.dumps({'type':'result','subtype':'success','is_error':False,'structured_output':{'items':[]},'total_cost_usd':0.1}))\n",
+                encoding="utf-8",
+            )
+            seen = {}
+            original = subprocess.Popen
+
+            def fake_popen(command, **kwargs):
+                seen["env"] = kwargs.get("env")
+                return original([sys.executable, str(script)], **kwargs)
+
+            run_dir = root / "run-1"
+            run_dir.mkdir()
+            environ = {key: value for key, value in os.environ.items() if key != "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"}
+            environ.update(environ_overrides or {})
+            with patch.dict(os.environ, environ, clear=True), \
+                    patch("etf_agent.automation.agent_runner.subprocess.Popen", side_effect=fake_popen):
+                call = ClaudeAgentRunner(root, **runner_kwargs).run(self.task, run_dir)
+            self.assertEqual(call.output, {"items": []})
+            return seen["env"]
+
+    def test_read_whole_brief_is_off_by_default(self):
+        env = self._stream_env({})
+        self.assertNotIn("CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS", env)
+        self.assertEqual(env["CLAUDE_CODE_PROMPT_CACHE_TTL"], "5m")
+
+    def test_read_whole_brief_sets_the_read_limit_environment_variable(self):
+        env = self._stream_env({"read_max_output_tokens": 200000})
+        self.assertEqual(env["CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"], "200000")
+        self.assertEqual(env["CLAUDE_CODE_PROMPT_CACHE_TTL"], "5m")
+
+    def test_a_read_limit_the_user_already_set_is_not_overridden(self):
+        env = self._stream_env({"read_max_output_tokens": 200000}, {"CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "50000"})
+        self.assertEqual(env["CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"], "50000")
+
+    def test_zero_or_none_keeps_the_default_paging(self):
+        for value in (None, 0):
+            with self.subTest(value=value):
+                self.assertNotIn("CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS", self._stream_env({"read_max_output_tokens": value}))
 
     def test_claude_stream_without_result_event_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:

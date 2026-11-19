@@ -44,6 +44,7 @@ def with_offense(mutate=None):
     for row in sizing["rebound_participation"]["by_state"].values():
         row.pop("defensive_cash_buffer", None)
     sizing["agent_swap"]["exposure"]["max_pairs_by_view"] = {"probe": 2, "start_rebuild": 4, "rebuild": 5}
+    sizing["agent_swap"]["max_swaps_per_run"] = 7  # 這些測試假設的換股上限（正式設定已降為 3）
     sizing["offense"] = copy.deepcopy(OFFENSE)
     if mutate:
         mutate(policy)
@@ -68,6 +69,7 @@ class GateTests(unittest.TestCase):
         legacy["position_sizing"].pop("offense", None)  # 正式設定已開 offense：舊 Policy 以拿掉它的版本代表
         legacy["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         legacy["position_sizing"]["agent_swap"]["exposure"]["max_pairs_by_view"] = {"start_rebuild": 3, "rebuild": 5}
+        legacy["position_sizing"]["agent_swap"]["max_swaps_per_run"] = 7  # 這些測試假設的換股上限（正式設定已降為 3）
         self.assertIsNone(offense_gate(legacy["position_sizing"]))
         self.assertEqual(offense_errors(legacy), [])
 
