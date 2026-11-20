@@ -16,6 +16,7 @@ from etf_agent.decision import (
     DecisionToolError,
     MomentumEngine,
     StancePacketValidator,
+    build_analyst_brief,
     build_stance_brief,
     canonical_sha256,
     decision_bundle_sha256,
@@ -134,6 +135,30 @@ class EvidenceKindContextTests(unittest.TestCase):
         errors = []
         context.validate_evidence([ACCOUNT_ID], "2330.TW", "x", errors)
         self.assertEqual(errors, [])
+
+
+class AnalystBriefEvidenceKindsTests(unittest.TestCase):
+    def test_typed_brief_lists_only_own_symbol_evidence_kinds(self):
+        bundle = typed_bundle()
+        momentum = MomentumEngine(bundle).run()
+        event = build_analyst_brief(bundle, momentum, "event", event_market_scope=True)
+        rows = {row["symbol"]: row for row in event["symbols"]}
+        self.assertEqual(rows["2330.TW"]["evidence_kinds"].get(EVENT_ID), "material_event")
+        for row in event["symbols"]:
+            owners = DecisionContext(bundle).evidence_symbols
+            for evidence_id in row.get("evidence_kinds", {}):
+                self.assertEqual(owners[evidence_id], row["symbol"])
+        technical = build_analyst_brief(bundle, momentum, "technical")
+        tech_rows = {row["symbol"]: row for row in technical["symbols"]}
+        self.assertEqual(tech_rows["2330.TW"]["evidence_kinds"].get("price-2330"), "price")
+        self.assertNotIn(EVENT_ID, tech_rows["2330.TW"]["evidence_kinds"])
+
+    def test_legacy_brief_has_no_evidence_kinds(self):
+        bundle = bundle_with_event()
+        momentum = MomentumEngine(bundle).run()
+        for analyst in ("technical", "fundamental", "event"):
+            brief = build_analyst_brief(bundle, momentum, analyst, event_market_scope=analyst == "event")
+            self.assertTrue(all("evidence_kinds" not in row for row in brief["symbols"]), analyst)
 
 
 class TypedStanceTests(unittest.TestCase):

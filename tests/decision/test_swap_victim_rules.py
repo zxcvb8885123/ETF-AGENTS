@@ -1,4 +1,4 @@
-"""換股換出者規則（position_sizing.agent_swap.victim_rules）：docs/plans/swap_victim_rules_plan.md 第 5、6 節。
+"""換股換出者規則（position_sizing.agent_swap.victim_rules）：git 歷史中的 docs/plans/swap_victim_rules_plan.md 第 5、6 節。
 
 覆蓋：Policy 驗證（形狀、值域、前提、人專用）、事實與簡報（thesis 資格改用 hold 信心上限與交易日、缺值 fail-closed、
 exposure／quality_dip 資格不變、沒有閘門時逐鍵不變）、Validator 回饋（中性、並列兩種修法）、Finalizer 走同一個 Validator、

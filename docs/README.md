@@ -92,7 +92,7 @@
 | 2026-11-08 | 修正閘門啟用狀態、狀態頁「尚未實跑」、樣本門檻 5→10 與策略反思排程說法等過期敘述。 |
 | 2026-11-08 | `architecture.md` 與 `decision-details.md` 的兩份「附錄：名稱對照」合併為 `glossary.md`，兩處附錄改為連結。 |
 | 2026-11-08 | `AGENTS.md` 瘦身為原則與邊界；契約與閘門細節搬到新檔 `decision-contracts.md`，閘門啟用狀態表集中到 `status.md`。 |
-| 2026-11-10 | 索引加入 `plans/agent_autonomy_plan.md`、`plans/agent_nominated_rotation_plan.md`；同步 `agent_swap` v1 影子（已開啟）與已實作未開啟版本的狀態、契約、`team_inputs` 2.9 與名稱對照。 |
+| 2026-11-10 | 索引加入 `agent_autonomy_plan（已移除，見 git 歷史）`、`agent_nominated_rotation_plan（已移除，見 git 歷史）`；同步 `agent_swap` v1 影子（已開啟）與已實作未開啟版本的狀態、契約、`team_inputs` 2.9 與名稱對照。 |
 | 2026-11-10 | 同步 `status.md` 閘門表與各計畫的進度敘述（`reentry_cooldown` v2、`drawdown_derisk` v5、現金三個 v2 已開啟）。 |
 | 2026-11-12 | 計畫、設計提案與稽核文件搬到 `plans/`（含新的 `plans/README.md`），`docs/` 只留說明文件；根 `README.md` 改寫為使用說明。 |
 | 2026-11-15 | 刪除 11 份已完成或過期的計畫（`plans/` 剩 16 份計畫）；`*_plan.md` 的現況說明改名為 `margin_level_signal.md`、`fundamental_growth_signal.md`、`token_usage.md`、`sizing_and_rotation.md`；修正事件範圍、配置說明的過期敘述。 |

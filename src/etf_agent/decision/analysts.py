@@ -292,6 +292,21 @@ def _slim_trend_summary(summary: Mapping[str, object]) -> Dict[str, object]:
     slim["note"] = "rows 是抽樣錨點（固定錨點、收盤最高最低、最大量、最近 5 筆），不是連續日線；observation_count 為完整歷史筆數。"
     return slim
 
+def _own_evidence_kinds(entry: object, symbol: str, context: DecisionContext) -> Dict[str, str]:
+    """收集摘要內出現的、屬於該股票的證據編號，回傳（編號 → 程式判定的證據種類）。"""
+    found: Dict[str, str] = {}
+    stack = [entry]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, Mapping):
+            stack.extend(node.values())
+        elif isinstance(node, (list, tuple)):
+            stack.extend(node)
+        elif isinstance(node, str) and context.evidence_symbols.get(node) == symbol and node in context.evidence_kinds:
+            found[node] = context.evidence_kinds[node]
+    return dict(sorted(found.items()))
+
+
 def build_analyst_brief(
     bundle: Mapping[str, object],
     momentum: Mapping[str, object],
@@ -320,6 +335,8 @@ def build_analyst_brief(
     financial_by_symbol = event_financial_context(bundle) if analyst == "event" else {}
     cash_flow_by_symbol = cash_flow_context(bundle) if analyst == "fundamental" else {}
     trend_tools = TechnicalTrendHistoryTools(bundle) if analyst == "technical" else None
+    # typed_evidence_v1：每檔附程式判定的證據種類對照（只列本檔摘要內出現的證據），分析師宣告 finding_kind 時據此選編號；舊 bundle 不附。
+    kind_context = DecisionContext(bundle) if bundle.get("evidence_policy") is not None else None
     symbols: List[Dict[str, object]] = []
     for symbol in _symbols(bundle):
         entry: Dict[str, object] = {"symbol": symbol}
@@ -440,6 +457,10 @@ def build_analyst_brief(
             if news is not None:
                 # 只有標題與媒體；可得時間是第一次抓取時間，FinMind 來源時間沒有時區，不當發布時間。
                 entry["news"] = [{**row, "title": wrap_untrusted_text(row.get("title"))} for row in news.get(symbol, [])]
+        if kind_context is not None:
+            kinds = _own_evidence_kinds(entry, symbol, kind_context)
+            if kinds:
+                entry["evidence_kinds"] = kinds
         symbols.append(entry)
     brief = {
         "analyst": analyst,

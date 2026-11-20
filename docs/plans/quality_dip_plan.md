@@ -515,7 +515,7 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 
 ### 10.3 第三階段修訂：改走換股提名（使用者 2026-11-10 選 A；尚未實作）
 
-第 4.2 節的 `quality_dip_swap`（程式依條件配對換股）**不再建**。理由：[Agent 主導曝險計畫](agent_led_exposure_plan.md)與[自主權計畫](agent_autonomy_plan.md)已決定「換誰」改由交易 Agent 在 `agent_swap` 第二輪提名，不另開程式配對路徑。新的做法（設計，未實作）：
+第 4.2 節的 `quality_dip_swap`（程式依條件配對換股）**不再建**。理由：Agent 主導曝險計畫（計畫已移除，見 git 歷史）與自主權計畫（計畫已移除，見 git 歷史）已決定「換誰」改由交易 Agent 在 `agent_swap` 第二輪提名，不另開程式配對路徑。新的做法（設計，未實作）：
 
 - 優質股換股是提名配對的一種用途：沿用 `agent_swap` 的有序配對清單；與曝險階段 2 的 `purpose` 欄位合用同一個列舉（例如新增 `quality_dip`），**不另開欄位**，兩個計畫的列舉要一起定。
 - 買進側依據仍須是新股已採納的多頭論點；候選標示與 `dip_assessment` 只是簡報背景，不是依據。第 4.2 節第 4～7 項（無新壞事、非價格多頭 claim、`turn_assessment` 至少 `turn_unconfirmed`、可交易且不在冷卻）改成提名 Validator 與配置前置的結構檢查（程式只驗結構，不判斷理由好壞）；超跌候選預設排除的規則與 `oversold` 區塊照第 4.2 節。
@@ -566,7 +566,7 @@ V1 與第一階段（價格事實）互不相依，可以並行。官方端點�
 4. **已知限制（重建）**：事實為 unavailable 且沒有選到 run（例如 `NO_VALUATION_RUN`）時，Finalizer 不釘住 run、重新挑選；若事後才存進一個時間不晚於 cutoff 的 run，之後重新驗證這份決策會被拒絕。另外，決策重建從此依賴估值資料夾：刪掉或搬走舊 run，引用它的決策重建會被拒絕。驗證端（`competition/dplan.py`、`decision_delivery/provider.py` 等）沒有傳決策庫路徑時推不出估值資料夾，閘門開啟後會一律拒絕；正式流程 `scripts/run_daily_pipeline.py` 傳的是 `artifacts/decisions`，推得的位置就是 `cli/valuation_collect.py` 寫入的 `artifacts/valuation_collection`。
 5. **分析師文字沒有加識別碼檢查**：分析報告的驗證（含辯論驗證）看不到 Policy，加閘門依賴的檢查會牽動舊報告驗證；因為背景沒有任何可引用的編號，這裡維持不加，靠 Skill 規則。
 
-> **第四版後續（2026-11-11）**：組數與份量改由交易 Agent 提、風險 Agent 裁決的設計與實作紀錄見 [`quality_dip_agent_sizing_plan.md`](quality_dip_agent_sizing_plan.md)（`agent_swap.quality_dip` v3，已實作、尚未開啟）。
+> **第四版後續（2026-11-11）**：組數與份量改由交易 Agent 提、風險 Agent 裁決的設計與實作紀錄見 `quality_dip_agent_sizing_plan（已移除，見 git 歷史）`（計畫已移除，見 git 歷史）（`agent_swap.quality_dip` v3，已實作、尚未開啟）。
 
 ### 10.6 V3 需要人決定的事（2026-11-10，第七版；本次未實作）
 
