@@ -605,6 +605,7 @@ class ReplayTests(unittest.TestCase):
                 plain["position_sizing"].pop("agent_swap", None)  # 依賴 exposure_rotation，要先於它拿掉
                 plain["position_sizing"].pop("exposure_view", None)  # 同上
                 plain["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
+                plain["position_sizing"].pop("high_risk_cap", None)  # 前提 exposure_rotation，同上
                 plain["position_sizing"].pop("exposure_rotation", None)  # 正式樣板已開啟；「沒有閘門」的對照組要先拿掉
                 plain_policy, plain_notes = self.replay(plain)
                 self.assertNotIn("exposure_rotation", plain_notes)
@@ -658,7 +659,7 @@ class ReplayTests(unittest.TestCase):
              "stance_raised_to_floor", "selection_ranking_applied", "breadth_unavailable", "cash_buffer_rate", "drawdown",
              "cash_grade", "cash_stance_recency", "cash_stance_turn_facts", "exposure_rotation", "rebound_participation", "agent_swap", "exposure_view",
              "quality_dip_facts", "quality_dip_assessment", "event_direction", "drawdown_derisk_v5", "agent_swap.quality_dip",
-             "position_review_v2"},  # 正式樣板已開這些閘門，回放各標一次略過（position_review v2 當 v1 回放；正式設定沒有 stop_exit）
+             "position_review_v2", "high_risk_cap"},  # 正式樣板已開這些閘門，回放各標一次略過（position_review v2 當 v1 回放；正式設定沒有 stop_exit）
         )
 
     def test_replay_still_rejects_a_malformed_gate_or_missing_prerequisite(self):

@@ -899,7 +899,8 @@ class ProductionTemplateTests(unittest.TestCase):
             "min_pool_drawdown": "0.08", "max_dip_exposure": "0.12", "max_tranches": 8,
             "min_days_between_tranches": 2, "pause_after_further_drop": "0.05", "exposure_basis": "quality_dip_fills"})  # 2026-11-11 offense-ext-1
         self.assertEqual(sizing["exposure_view"], {"version": "v2"})
-        self.assertEqual(gate["min_turn_assessment"], "no_turn_evidence")  # 使用者要連跌無轉向跡象時也能抄底（回檔深度由 ladder 把關）
+        # 2026-11-22 使用者由 no_turn_evidence 改 turn_confirmed：撿便宜要等風險 Agent 說確定轉向才買。
+        self.assertEqual(gate["min_turn_assessment"], "turn_confirmed")
         for field in ("ruling_ref", "rulings", "ladder_state", "turn_assessment"):  # pipeline 綁定欄位，正式樣板人不填
             self.assertNotIn(field, gate)
         self.assertEqual({key: gate[key] for key in ("max_swaps_per_run", "max_entry_weight")}, {"max_swaps_per_run": 2, "max_entry_weight": "0.06"})

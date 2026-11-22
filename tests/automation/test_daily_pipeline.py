@@ -965,6 +965,7 @@ class LiveTemplatePipelineTests(unittest.TestCase):
         template["position_sizing"].pop("exposure_view")  # 前提含 exposure_rotation 與 cash_stance_turn_facts；整條鏈由 test_exposure_view 覆蓋
         template["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         template["position_sizing"].pop("exposure_rotation")
+        template["position_sizing"].pop("high_risk_cap", None)  # 前提 exposure_rotation；配置層由 test_high_risk_cap 覆蓋
         high_trade = copy.deepcopy(TRADE)
         high_trade["items"][0]["conviction"] = "high"
         stance = dict(STANCE, cash_grade="middle")

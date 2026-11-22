@@ -34,7 +34,7 @@
 | [day_trading_chips_facts_plan.md](day_trading_chips_facts_plan.md) | 當沖籌碼背景事實（2026-11-15） | 只有計劃，未實作 |
 | [market_regime_front_plan.md](market_regime_front_plan.md) | 大盤姿態前置並影響選股（`market_posture`） | 設計草案，未實作 |
 | [market_regime_research_report.md](market_regime_research_report.md) | 大盤多空判斷的證據與決策報告 | 報告，未改程式 |
-| [risk_bucket_cap_plan.md](risk_bucket_cap_plan.md) | 高風險股上限（`high_risk_cap`）執行版 | 計畫，未實作 |
+| [risk_bucket_cap_plan.md](risk_bucket_cap_plan.md) | 高風險股上限（`high_risk_cap`）執行版 | 已實作，2026-11-22 以 `enforce`、`scope defensive` 開啟 |
 | [research_improvement_and_paper_plan.md](research_improvement_and_paper_plan.md) | 文獻對照、專案改進與論文計畫 | 計畫，未實作 |
 | [token_cost_reduction_plan.md](token_cost_reduction_plan.md) | 每日決策 token／美元成本降低 | 草案，部分項目（事件跨日沿用）已實作 |
 | [token_efficiency_plan.md](token_efficiency_plan.md) | token 花費地圖、壓縮與向量索引（RAG）評估：每日鏈不用 RAG | 草案 |

@@ -388,6 +388,10 @@ class Scenario1111Tests(unittest.TestCase):
         # 情境回歸只比 ladder 曝險計法：明確移除 offense 的兩個選配子欄位（正式設定已開，但它們的 anchor 旗標需要前次 run，這裡沒有）。
         for field in ("thesis_size_cap", "cash_glide"):
             template["position_sizing"]["offense"].pop(field, None)
+        # 情境回歸只比 ladder 曝險計法：正式設定 2026-11-22 起撿便宜要 turn_confirmed、並開 high_risk_cap，
+        # 這裡固定回 11-11 當時的 no_turn_evidence 並拿掉 high_risk_cap（兩者另有 test_quality_dip_sizing／test_high_risk_cap 覆蓋）。
+        template["position_sizing"]["agent_swap"]["quality_dip"]["min_turn_assessment"] = "no_turn_evidence"
+        template["position_sizing"].pop("high_risk_cap", None)
         if fills_only:
             ladder["exposure_basis"] = "quality_dip_fills"
         policy = copy.deepcopy(self.old)

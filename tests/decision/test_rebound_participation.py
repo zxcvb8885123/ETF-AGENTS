@@ -621,6 +621,7 @@ class BriefAndReplayTests(unittest.TestCase):
         template["position_sizing"].pop("exposure_view", None)  # 依賴 exposure_rotation，同上
         template["position_sizing"].pop("cash_stance_brief", None)  # 前提閘門被拿掉時，依賴它們的簡報閘門一併拿掉
         template["position_sizing"].pop("rebound_participation", None)
+        template["position_sizing"].pop("high_risk_cap", None)  # 前提 exposure_rotation，要先拿掉
         template["position_sizing"].pop("exposure_rotation", None)
         _, plain_notes = bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])
         self.assertNotIn("rebound_participation", plain_notes)
