@@ -519,6 +519,15 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "不影響 team_inputs（自訂檢查在 liquidity_fit.validate_liquidity_fit_gate）",
     ),
     GateRule(
+        "high_risk_cap",
+        requires=("exposure_rotation",),
+        note="高風險股上限（v1）：beta（exposure_rotation.beta_window_days）或 ATR14 占比達人填門檻、或任一缺值即為高風險；"
+             "成交後高風險股總權重不超過 max_high_risk_weight、當天新買進的高風險股不超過 max_new_high_risk_entries 檔；"
+             "只縮買單（含換股換入者，取消原因 high_risk_cap、換出者不賣）、不賣持股、不改寫交易 Agent 意圖，旗標 RISK_HIGH_RISK_CAP；"
+             "現金上限與最少檔數優先（HIGH_RISK_CAP_RELAXED）；mode=record 只留 HIGH_RISK_CAP_RECORD、配置不變；"
+             "不影響 team_inputs（自訂檢查在 high_risk_cap.validate_high_risk_cap_gate）",
+    ),
+    GateRule(
         "revision_bounds",
         note="風險修正動作的數值界線（v1）：reduce_max_stock_weight／reduce_turnover_limit 的 value 不得低於人填的下限、須為 step 的整數倍"
              "（自訂檢查在 validate_revision_bounds_gate，驗證在 RiskReviewValidator._validate_action）；這是「Agent 不輸出數字」的已知例外，"
@@ -1670,6 +1679,9 @@ def validate_position_sizing(
     if "liquidity_fit" in sizing:
         from .liquidity_fit import validate_liquidity_fit_gate
         validate_liquidity_fit_gate(policy, errors)
+    if "high_risk_cap" in sizing:
+        from .high_risk_cap import validate_high_risk_cap_gate
+        validate_high_risk_cap_gate(policy, errors)
     if "agent_swap" in sizing and "position_review" not in policy:
         errors.append("position_sizing.agent_swap 必須與 position_review 同時存在（換出者的依據來自持股檢視）")
     if victim_rules_gate(sizing) is not None:

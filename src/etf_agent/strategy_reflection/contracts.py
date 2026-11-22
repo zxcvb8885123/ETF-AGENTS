@@ -193,6 +193,8 @@ FORBIDDEN_PREFIXES = (
     # 風險修正動作的數值下限與步距：放寬或收緊都是改變風控界線，只由人設定。
     "revision_bounds",
     "liquidity_fit",
+    # 高風險股上限（beta／ATR 門檻、總權重與每日新進檔數、record／enforce）：放寬或收緊都是改變風控路徑，只由人設定。
+    "high_risk_cap",
 )
 
 
