@@ -320,6 +320,12 @@ def bind_replay_policy(
                 key: value for key, value in base["position_review"].items() if key in ("loss_alert", "retrace_alert_20d", "gain_alert", "context")
             } | {"version": "v1"}
             base["content_sha256"] = decision_policy_sha256(base)
+        # high_risk_cap（高風險股上限）以 exposure_rotation 為前提（beta 視窗），回放略過 exposure_rotation，所以先移除它並標一次；
+        # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
+        high_risk_ignored = isinstance(base.get("position_sizing"), Mapping) and "high_risk_cap" in base["position_sizing"]
+        if high_risk_ignored:
+            base["position_sizing"] = {key: value for key, value in base["position_sizing"].items() if key != "high_risk_cap"}
+            base["content_sha256"] = decision_policy_sha256(base)
         # exposure_rotation 需要封存 run 沒有的 hold 信心與帳本持有天數：樣板有閘門時回放略過它（不換股），
         # 沒有閘門的舊回放 notes 與 policy 逐位元不變。
         exposure_ignored = isinstance(base.get("position_sizing"), Mapping) and "exposure_rotation" in base["position_sizing"]
@@ -366,6 +372,8 @@ def bind_replay_policy(
         notes["position_review_v2"] = "replayed_as_v1"
     if exposure_ignored:
         notes["exposure_rotation"] = "ignored_in_replay"
+    if high_risk_ignored:
+        notes["high_risk_cap"] = "ignored_in_replay"
     if rebound_ignored:
         notes["rebound_participation"] = "ignored_in_replay"
     if swap_ignored:
