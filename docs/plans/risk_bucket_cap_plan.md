@@ -1,6 +1,8 @@
 # 高風險股上限（`position_sizing.high_risk_cap`）：實作計畫
 
-狀態：**計畫，尚未實作**（2026-11-17）。使用者已同意方向「做高風險股上限」，細節數字待確認。不 commit、不改程式，直到使用者說開始。
+狀態：**已實作，2026-11-22 17:50 以 `record` 開啟、18:30 改 `enforce`**（使用者決定，與撿便宜 `min_turn_assessment turn_confirmed` 同批，避免撿便宜空出的換股名額被高 beta 換股補上）。使用者要求「何時踩煞車由 Agent 判斷」，所以多了 `scope`：`defensive` 只在風險 Agent 本次現金姿態為 defensive 時作用；正式數值 beta 1.0、ATR 8%、上限 30%（現有高風險持股約 24%，15% 會變成完全禁買）、每日新進 1 檔。撿便宜（quality_dip）換入者不受本閘門限制、權重仍計入（使用者決定：兩個閘門各管各的）。實作與計畫的差異：不另存 `risk_bucket_facts`（Finalizer 與 ProposalValidator 以同一份 Policy 整份重跑配置引擎，旗標就是紀錄）；換股的換入者在換股試算前依提名先後先佔新進名額（避免復原迴圈砍過頭）；縮減釋出的現金不再分配；現金上限與最少檔數優先時停止縮減。現行行為以 `docs/status.md` 與 `docs/decision-contracts.md` 為準。
+
+（以下為 2026-11-17 的原計畫內容。）
 
 本檔是 [`market_regime_front_plan.md`](market_regime_front_plan.md) 階段 1 的精簡執行版；證據與取捨見該檔與 [`market_regime_research_report.md`](market_regime_research_report.md)。
 
