@@ -42,6 +42,10 @@ from .sizing import (
     reentry_cooldown_hint_only, reentry_hint_id,
 )
 from .liquidity_fit import liquidity_fit_limit, liquidity_fit_upstream
+from .high_risk_cap import (
+    HIGH_RISK_CAP_CANCEL_REASON, HIGH_RISK_CAP_CODE, HIGH_RISK_CAP_RECORD_CODE, HIGH_RISK_CAP_RELAXED_CODE,
+    HIGH_RISK_CAP_STATUS_CODE, high_risk_cap_gate,
+)
 from .entry_reserve import entry_reserve_gate, pair_sizes, reserve_weight, swap_priority_enabled, turnover_skip_enabled
 from .exposure_swap import PURPOSE_EXPOSURE, exposure_swap_binding
 from .offense import capped_size, offense_bound, thesis_size_cap_active
@@ -64,6 +68,8 @@ AGENT_SWAP_UNFILLED_REASONS = {
     "RISK_STOCK_WEIGHT": "stock_weight", "RISK_SECTOR_WEIGHT": "sector_fit", "TURNOVER_LIMIT": "turnover",
     # agent_swap.quality_dip v2：買進權重上限或「買進不超過換出賣款」把換入者縮到不足一張（沒有閘門的 run 不會出現）。
     "RISK_QUALITY_DIP_ENTRY": "quality_dip_entry",
+    # high_risk_cap：高風險股上限把換入者縮到不足一張（沒有閘門的 run 不會出現）。
+    HIGH_RISK_CAP_CODE: HIGH_RISK_CAP_CANCEL_REASON,
 }
 QUALITY_DIP_ENTRY_CODE = "RISK_QUALITY_DIP_ENTRY"
 OVERSOLD_ASSESSMENT = "oversold_cause_unclear"
@@ -314,6 +320,8 @@ class AllocationOrderEngine:
         self._proceeds_accepted: Set[str] = set()  # proceeds_to_add：本次重算中接受「賣款流向加碼持股」的換入者（只在 _run_exposure 迴圈內有值）
         # agent_swap v2：本次重算成交的換股對 (換入, 換出)，依提名先後（只在 _run 內有值；只有 earmark 閘門會讀它，不進任何輸出）。
         self._swap_pairs: List[Tuple[str, str]] = []
+        # high_risk_cap record 模式：本次重算中「若開啟會在換股試算前取消」的配對（只在 _run 內有值，只寫進 record 旗標）。
+        self._high_risk_record_pairs: List[Tuple[str, str]] = []
         self._volatility: Optional[Dict[str, Decimal]] = None
         self._returns: Optional[Dict[str, Decimal]] = None
         self._beta_model: Optional[BetaModel] = None
@@ -636,6 +644,7 @@ class AllocationOrderEngine:
         excluded = {value.upper() for value in (excluded_symbols or set())}
         self._reserved_shares = {}
         self._swap_pairs = []
+        self._high_risk_record_pairs = []
         self._liquidity_caps_cache = None
         effective = self._effective_policy(overrides or {})
         intents = {
@@ -954,6 +963,9 @@ class AllocationOrderEngine:
         constraint_flags.extend(turnover_flags)
         orders, projected_cash, liquidity_flags = self._fit_liquidity(orders, projected_cash, effective)
         constraint_flags.extend(liquidity_flags)
+        # high_risk_cap（版本閘門）：最後一道只縮買單的上限；沒有閘門時原樣返回（逐位元不變）。
+        orders, projected_cash, high_risk_flags = self._fit_high_risk(current, orders, projected_cash, effective)
+        constraint_flags.extend(high_risk_flags)
         final_shares = dict(current)
         for order in orders:
             sign = 1 if order["side"] == "buy" else -1
@@ -1314,6 +1326,8 @@ class AllocationOrderEngine:
                 cancel(buy, sell, "victim_no_bear_claim")
             else:
                 needed.append((buy, sell))
+        # high_risk_cap（版本閘門）enforce：高風險換入者依提名先後先佔新進名額，起點已超上限時全部取消；沒有閘門時原樣返回。
+        needed = self._high_risk_swap_filter(needed, target_shares, marked_nav, cancel)
         if exposure_pairs:
             # 每次最多取用 max_pairs_by_view 對映的 exposure 對數（人設的硬上限）；超過的從清單尾端取消，高信心配對排在尾端所以最先被捨棄。
             used, kept_pairs = 0, []
@@ -2570,6 +2584,259 @@ class AllocationOrderEngine:
             })
         fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
         return fitted, cash, sorted(flags, key=lambda item: str(item["symbol"]))
+
+    def _high_risk_rules(
+        self,
+    ) -> Optional[Tuple[Mapping[str, object], Callable[[str], bool], Callable[[str], str]]]:
+        """``high_risk_cap`` 的風險桶判定（閘門物件、是否高風險、描述文字）；沒有閘門、或 ``scope=defensive`` 而本次姿態不是
+        defensive 時回 None。缺 beta 或 ATR 一律高風險。"""
+        sizing = self.policy.get("position_sizing")
+        gate = high_risk_cap_gate(sizing)
+        if gate is None:
+            return None
+        if gate["scope"] == "defensive":
+            # 只在風險 Agent 本次說 defensive 時踩煞車；姿態未綁定即拋錯（不猜成非防守），非 defensive 當天整個閘門不作用。
+            stance = sizing.get("cash_stance")  # type: ignore[union-attr]
+            if stance not in ("aggressive", "neutral", "defensive"):
+                raise DecisionToolError("high_risk_cap scope=defensive 需要已綁定的 position_sizing.cash_stance")
+            if stance != "defensive":
+                return None
+        exposure_gate = exposure_rotation_gate(sizing)
+        if exposure_gate is None:
+            raise DecisionToolError("position_sizing.high_risk_cap 需要 exposure_rotation（beta 視窗）")
+        model = self._exposure_beta_model(exposure_gate)
+        atr = self._atr_pct()
+        high = gate["high"]
+        beta_min = decimal_value(high["beta_at_least"], "high_risk_cap.high.beta_at_least")  # type: ignore[index]
+        atr_min = decimal_value(high["atr_pct_at_least"], "high_risk_cap.high.atr_pct_at_least")  # type: ignore[index]
+
+        def is_high(symbol: str) -> bool:
+            beta, value = model.beta(symbol), atr.get(symbol)
+            return beta is None or value is None or beta >= beta_min or value >= atr_min
+
+        def describe(symbol: str) -> str:
+            beta, value = model.beta(symbol), atr.get(symbol)
+            return "beta %s、ATR14 %s" % (
+                "缺值" if beta is None else format(beta, ".2f"), "缺值" if value is None else format(value, ".1%"))
+
+        return gate, is_high, describe
+
+    def _high_risk_exempt_buys(self) -> Set[str]:
+        """``high_risk_cap`` 不管的買進：今天提名中 ``purpose=quality_dip``（撿便宜）配對的換入者。撿便宜有自己的抄底曝險、
+        批數與再跌暫停上限（``agent_swap.quality_dip.ladder``），兩個閘門各管各的（使用者決定，2026-11-22）。它們不被取消、
+        不被縮、不佔新進名額，但成交後的權重仍計入高風險股總權重。"""
+        sizing = self.policy.get("position_sizing")
+        swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+        pairs = swap.get("nominated_pairs") if isinstance(swap, Mapping) else None
+        return {
+            str(pair["buy_symbol"]).upper() for pair in pairs or []
+            if isinstance(pair, Mapping) and pair.get("purpose") == PURPOSE_QUALITY_DIP
+        }
+
+    def _high_risk_swap_filter(
+        self,
+        needed: List[Tuple[str, str]],
+        target_shares: Mapping[str, int],
+        marked_nav: Decimal,
+        cancel: Callable[[str, str, str], None],
+    ) -> List[Tuple[str, str]]:
+        """``high_risk_cap`` enforce：換股試算前，依提名先後先決定高風險換入者能不能用（只取消、不補挑）。
+
+        起點高風險股權重（目前持股依本次目標股數、cutoff 價格）已達上限時，取消全部高風險換入者；否則依提名先後只留前
+        ``max_new_high_risk_entries`` 組，其後的高風險換入者取消（``high_risk_cap``，換出者不賣）。在這裡先決定，換股復原迴圈
+        才不會因一輪輪補進後面的配對而砍過頭；成交後的權重上限仍由 ``_fit_high_risk`` 把關。record 模式只把會取消的配對記進
+        ``_high_risk_record_pairs``（寫進 record 旗標）、不取消；沒有閘門時原樣返回。"""
+        rules = self._high_risk_rules()
+        if rules is None:
+            return needed
+        gate, is_high, _ = rules
+        exempt = self._high_risk_exempt_buys()
+        record = gate["mode"] != "enforce"
+        cap = decimal_value(gate["max_high_risk_weight"], "high_risk_cap.max_high_risk_weight")
+        start = sum(
+            (Decimal(int(count)) * self.prices[symbol] for symbol, count in target_shares.items()
+             if int(count) > 0 and symbol in self.prices and is_high(symbol)),
+            Decimal(0),
+        ) / marked_nav
+        allowed = 0 if start >= cap else int(gate["max_new_high_risk_entries"])  # type: ignore[arg-type]
+        kept: List[Tuple[str, str]] = []
+        used = 0
+        for buy, sell in needed:
+            if is_high(buy) and buy not in exempt:
+                if used >= allowed:
+                    if record:
+                        self._high_risk_record_pairs.append((buy, sell))  # record：只記下、不取消
+                    else:
+                        cancel(buy, sell, HIGH_RISK_CAP_CANCEL_REASON)
+                        continue
+                else:
+                    used += 1
+            kept.append((buy, sell))
+        return kept
+
+    def _fit_high_risk(
+        self,
+        current: Mapping[str, int],
+        orders: List[Dict[str, object]],
+        cash: Decimal,
+        effective: Mapping[str, object],
+    ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
+        """``high_risk_cap``（版本閘門）：成交後高風險股總權重與當天新進高風險股檔數的上限，只縮買單。
+
+        高風險：beta 達門檻、或 ATR14 占比達門檻、或任一缺值。先依優先序（信心、名次、代號）只留前
+        ``max_new_high_risk_entries`` 檔新進高風險股，其餘取消；再由優先序最低的高風險買單開始縮（向下取整張），
+        直到成交後高風險股權重不超過 ``max_high_risk_weight`` 或沒有可縮的買單。縮減會讓期末現金達競賽上限、
+        或讓持股少於 ``min_positions`` 時，該筆停止縮減並留 ``HIGH_RISK_CAP_RELAXED:<原因>``。
+        ``mode=record`` 不改訂單，只留一個 PORTFOLIO 旗標寫下若開啟會怎麼縮。沒有閘門的舊 run 原樣返回。"""
+        sizing = self.policy.get("position_sizing")
+        rules = self._high_risk_rules()
+        if rules is None:
+            return orders, cash, []
+        gate, is_high, describe = rules
+        beta_min = decimal_value(gate["high"]["beta_at_least"], "high_risk_cap.high.beta_at_least")  # type: ignore[index]
+        atr_min = decimal_value(gate["high"]["atr_pct_at_least"], "high_risk_cap.high.atr_pct_at_least")  # type: ignore[index]
+        cap = decimal_value(gate["max_high_risk_weight"], "high_risk_cap.max_high_risk_weight")
+        max_new = int(gate["max_new_high_risk_entries"])  # type: ignore[arg-type]
+        enforce = gate["mode"] == "enforce"
+        ceiling = decimal_value(self.policy["cash_weight_ceiling"], "cash_weight_ceiling")
+        min_positions = int(self.policy["min_positions"])
+        lot = int(effective["lot_size"])
+        swap_buys = {buy for buy, _ in self._swap_pairs}
+
+        def price(symbol: str) -> Decimal:
+            return self.prices[symbol].quantize(PRICE, rounding=ROUND_HALF_UP)
+
+        shares = {symbol: int(count) for symbol, count in current.items()}
+        for order in orders:
+            symbol = str(order["symbol"])
+            shares[symbol] = shares.get(symbol, 0) + (1 if order["side"] == "buy" else -1) * int(order["shares"])
+        exempt = self._high_risk_exempt_buys()
+        # 撿便宜（quality_dip）換入者不縮、不佔新進名額，但權重仍計入 high_value()。
+        buys = {
+            str(order["symbol"]): order for order in orders
+            if order["side"] == "buy" and is_high(str(order["symbol"])) and str(order["symbol"]) not in exempt
+        }
+        exempt_bought = sorted(
+            str(order["symbol"]) for order in orders
+            if order["side"] == "buy" and str(order["symbol"]) in exempt and is_high(str(order["symbol"])))
+        planned = {symbol: int(order["shares"]) for symbol, order in buys.items()}
+        net = {symbol: decimal_value(order["net_cash_impact"], "net_cash_impact") for symbol, order in buys.items()}
+        sim_cash = cash
+
+        def nav() -> Decimal:
+            return sim_cash + sum((Decimal(count) * price(symbol) for symbol, count in shares.items() if count > 0), Decimal(0))
+
+        def high_value() -> Decimal:
+            return sum((Decimal(count) * price(symbol) for symbol, count in shares.items() if count > 0 and is_high(symbol)), Decimal(0))
+
+        tiers = (sizing or {}).get("conviction_by_symbol") or {}  # type: ignore[union-attr]
+        ranks = (sizing or {}).get("rank_by_symbol") or {}  # type: ignore[union-attr]
+
+        def priority(symbol: str) -> Tuple[object, ...]:
+            tier = tiers.get(symbol) if isinstance(tiers, Mapping) else None
+            rank = ranks.get(symbol) if isinstance(ranks, Mapping) else None
+            return (
+                # 換股成交的換入者已在換股階段依提名先後佔用新進名額（_high_risk_swap_filter），排在一般買單之前。
+                0 if symbol in swap_buys else 1,
+                CONVICTION_LEVELS.index(tier) if tier in CONVICTION_LEVELS else len(CONVICTION_LEVELS),
+                rank if isinstance(rank, int) and not isinstance(rank, bool) else 10 ** 9,
+                symbol,
+            )
+
+        reasons: Dict[str, str] = {}
+        relaxed: Dict[str, str] = {}
+        before_weight = high_value() / nav()
+
+        def shrink(symbol: str, target: int, reason: str) -> None:
+            """把 symbol 的買單縮到 target 股（整張）；現金上限與最少檔數優先。"""
+            nonlocal sim_cash
+            target = max(0, min(target, planned[symbol]))
+            while target < planned[symbol]:
+                new_net = self._order(symbol, "buy", target, str(buys[symbol]["intent"]), effective)["net_cash_impact"] if target else "0"
+                delta = decimal_value(new_net, "net_cash_impact") - net[symbol]  # type: ignore[arg-type]
+                removed = planned[symbol] - target
+                held_after = shares[symbol] - removed
+                positions_after = sum(1 for sym, count in shares.items() if (count if sym != symbol else held_after) > 0)
+                if held_after <= 0 and positions_after < min_positions:
+                    relaxed[symbol] = "min_positions"
+                    target += lot
+                    continue
+                cash_after = sim_cash + delta
+                nav_after = cash_after + sum(
+                    (Decimal(count if sym != symbol else held_after) * price(sym) for sym, count in shares.items()
+                     if (count if sym != symbol else held_after) > 0), Decimal(0))
+                if cash_after >= ceiling * nav_after:
+                    relaxed[symbol] = "cash_ceiling"
+                    target += lot
+                    continue
+                sim_cash = cash_after
+                shares[symbol] = held_after
+                net[symbol] = decimal_value(new_net, "net_cash_impact")  # type: ignore[arg-type]
+                planned[symbol] = target
+                reasons[symbol] = reason
+                return
+
+        new_entries = sorted((symbol for symbol in buys if int(current.get(symbol, 0)) <= 0), key=priority)
+        for symbol in new_entries[max_new:]:
+            shrink(symbol, 0, "當天新買進的高風險股已達 %d 檔上限（依信心、名次、代號保留前 %d 檔）" % (max_new, max_new))
+        for symbol in sorted(buys, key=priority, reverse=True):
+            if planned[symbol] <= 0:
+                continue
+            excess = high_value() - cap * nav()
+            if excess <= 0:
+                break
+            cut_lots = int((excess / (price(symbol) * lot)).to_integral_value(rounding=ROUND_CEILING))
+            shrink(symbol, planned[symbol] - cut_lots * lot, "成交後高風險股總權重將超過 %s 上限（由優先序最低的高風險買單先縮）" % format(cap, ".0%"))
+        after_weight = high_value() / nav()
+        original = {str(order["symbol"]): int(order["shares"]) for order in orders if order["side"] == "buy"}
+        changes = [
+            "%s %d→%d 股（%s）" % (symbol, original[symbol], planned[symbol], describe(symbol))
+            for symbol in sorted(reasons)
+        ]
+        summary = "高風險門檻 beta≥%s 或 ATR14≥%s（缺值視為高風險）；成交後高風險股權重 %s，上限 %s，當天新進上限 %d 檔" % (
+            format(beta_min, "f"), format(atr_min, ".1%"), format(before_weight, ".2%"), format(cap, ".0%"), max_new)
+        if exempt_bought:
+            summary += "；撿便宜（quality_dip）換入者不受本閘門限制、權重仍計入：" + "、".join(
+                "%s（%s）" % (symbol, describe(symbol)) for symbol in exempt_bought)
+        if not enforce:
+            detail = summary + "；record 模式不改訂單；" + (
+                "若開啟會縮：" + "、".join(changes) + "，高風險股權重變為 %s" % format(after_weight, ".2%") if changes else "若開啟不會縮任何買單")
+            if self._high_risk_record_pairs:
+                detail += "；若開啟，換股試算前會取消：" + "、".join(
+                    "買 %s／賣 %s（%s）" % (buy, sell, describe(buy)) for buy, sell in self._high_risk_record_pairs)
+            if relaxed:
+                detail += "；硬規則優先而停止縮減：" + "、".join("%s（%s）" % item for item in sorted(relaxed.items()))
+            return orders, cash, [{"symbol": SKIP_PORTFOLIO_SYMBOL, "code": HIGH_RISK_CAP_RECORD_CODE, "detail": detail}]
+        flags: List[Dict[str, object]] = [{
+            "symbol": SKIP_PORTFOLIO_SYMBOL, "code": HIGH_RISK_CAP_STATUS_CODE,
+            "detail": summary + "；縮減後 %s" % format(after_weight, ".2%"),
+        }]
+        fitted: List[Dict[str, object]] = []
+        cash_out = cash
+        for order in orders:
+            symbol = str(order["symbol"])
+            if order["side"] != "buy" or symbol not in reasons:
+                fitted.append(order)
+                continue
+            cash_out -= decimal_value(order["net_cash_impact"], "net_cash_impact")
+            if planned[symbol] > 0:
+                replacement = self._order(symbol, "buy", planned[symbol], str(order["intent"]), effective)
+                fitted.append(replacement)
+                cash_out += decimal_value(replacement["net_cash_impact"], "net_cash_impact")
+            flags.append({
+                "symbol": symbol, "code": HIGH_RISK_CAP_CODE,
+                "detail": "高風險股（%s）：%s；買進股數由 %d 降為 %d（向下取整張%s，交易 Agent 的意圖未被改寫）" % (
+                    describe(symbol), reasons[symbol], original[symbol], planned[symbol],
+                    "，不足一張取消該筆；換股的換入者取消時換出者不賣" if planned[symbol] == 0 else ""),
+            })
+        for symbol, reason in sorted(relaxed.items()):
+            flags.append({
+                "symbol": symbol, "code": "%s:%s" % (HIGH_RISK_CAP_RELAXED_CODE, reason),
+                "detail": "高風險股上限要求再縮，但%s優先：停止縮減（交易 Agent 的意圖未被改寫）" % (
+                    "期末現金將達競賽上限" if reason == "cash_ceiling" else "持股將少於最少檔數"),
+            })
+        fitted.sort(key=lambda item: (0 if item["side"] == "sell" else 1, item["symbol"]))
+        return fitted, cash_out, flags
 
     def _drawdown_derisk(
         self,
