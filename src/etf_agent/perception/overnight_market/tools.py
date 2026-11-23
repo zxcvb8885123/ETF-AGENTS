@@ -257,6 +257,7 @@ NIGHT_ROW_FIELDS = {"SymbolID", "CDate", "CTime", "CLastPrice", "CRefPrice", "CT
 _NIGHT_CONTRACT = re.compile(r"TXF[A-L]\d-M")
 NIGHT_END = time(5, 0)
 NIGHT_LAST_QUOTE = time(5, 5)
+NIGHT_OPEN = time(15, 0)
 
 
 def parse_night(raw):
@@ -293,12 +294,21 @@ def _night_component(raw, fetched_at, start, cutoff, cdate_is_open_day=False):
         quote_time = datetime.strptime(row["CTime"], "%H%M%S").time()
     except ValueError:
         return None, None, "台指期夜盤報價時間無法解析"
-    if cdate_is_open_day and quote_time <= NIGHT_LAST_QUOTE:
-        # 1.3：CDate 是夜盤開盤那天；午夜後（05:05 以前）的報價實際發生在次一日曆日，夜盤也在次一日 05:00 結束。
-        quote_day = quote_day + timedelta(days=1)
-    quote_at = datetime.combine(quote_day, quote_time, tzinfo=TAIPEI)
-    ended = datetime.combine(quote_day, NIGHT_END, tzinfo=TAIPEI)
-    if quote_time > NIGHT_LAST_QUOTE or quote_at > fetched_at or ended > fetched_at:
+    if cdate_is_open_day:
+        # 1.3：CDate 是夜盤開盤那天，夜盤一律在次一日 05:00 結束。最後成交可能在午夜前（例如漲停鎖死、午夜後沒有成交），
+        # 15:00 之後的報價屬開盤當天，00:00–05:05 的報價屬次一日；其他時段（日盤）不是夜盤報價。
+        ended = datetime.combine(quote_day + timedelta(days=1), NIGHT_END, tzinfo=TAIPEI)
+        if quote_time <= NIGHT_LAST_QUOTE:
+            quote_day = quote_day + timedelta(days=1)
+        elif quote_time < NIGHT_OPEN:
+            return None, None, "台指期夜盤尚未結束或最新報價不在夜盤時段（夜盤台北 05:00 結束）"
+        quote_at = datetime.combine(quote_day, quote_time, tzinfo=TAIPEI)
+        in_session = True
+    else:
+        quote_at = datetime.combine(quote_day, quote_time, tzinfo=TAIPEI)
+        ended = datetime.combine(quote_day, NIGHT_END, tzinfo=TAIPEI)
+        in_session = quote_time <= NIGHT_LAST_QUOTE
+    if not in_session or quote_at > fetched_at or ended > fetched_at:
         return None, None, "台指期夜盤尚未結束或最新報價不在夜盤時段（夜盤台北 05:00 結束）"
     if not start < ended.astimezone(timezone.utc) <= cutoff:
         return None, None, "台指期夜盤結束時間不在本次視窗內"
@@ -306,7 +316,8 @@ def _night_component(raw, fetched_at, start, cutoff, cdate_is_open_day=False):
     detail = {"contract": row["SymbolID"], "last": decimal_string(last), "reference_settlement": decimal_string(ref),
               "change_pct": decimal_string(change), "quote_time": quote_at.astimezone(timezone.utc).isoformat(),
               "volume": int(row["CTotalVolume"])}
-    component = {"as_of": quote_day.isoformat(), "sessions": [quote_day.isoformat()],
+    session_day = ended.date()  # 夜盤結束那天（午夜前最後成交時也以結束日計）；1.2 以前與 quote_day 相同
+    component = {"as_of": session_day.isoformat(), "sessions": [session_day.isoformat()],
                  "session_end": ended.astimezone(timezone.utc).isoformat(), "change_pct": decimal_string(change),
                  "cumulative_change_pct": decimal_string(change), "percentile_20d": None}
     return component, detail, None

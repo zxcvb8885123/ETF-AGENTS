@@ -676,7 +676,8 @@ class OvernightV13NightDateTests(unittest.TestCase):
         self.assertIn("台指期夜盤結束時間不在本次視窗內", result["data_gaps"])
 
     def test_unfinished_or_stale_night_is_still_refused(self):
-        for row in (dict(NIGHT_ROWS[0], CDate="20260920", CTime="205900"),  # 週日晚上的報價：夜盤尚未結束
+        for row in (dict(NIGHT_ROWS[0], CDate="20260921", CTime="205900"),  # 週一晚上的報價：晚於抓取、夜盤尚未結束
+                    dict(NIGHT_ROWS[0], CDate="20260918", CTime="080000"),  # 早上 05:05–15:00 不是夜盤報價
                     dict(NIGHT_ROWS[0], CDate="20260921", CTime="045958"),  # 依 1.3 口徑在週二 05:00 才結束，晚於抓取
                     dict(NIGHT_ROWS[0], CDate="20260917", CTime="045958"),  # 週五 05:00 結束，早於台股收盤
                     dict(NIGHT_ROWS[0], CTime="090500")):                    # 日盤報價
@@ -684,6 +685,18 @@ class OvernightV13NightDateTests(unittest.TestCase):
             self.assertEqual(by_symbol(result)[NIGHT_SYMBOL]["status"], "unavailable", row)
             self.assertIsNone(result["night_session"])
             self.assertEqual(result["status"], "available")  # 夜盤失敗只降級
+
+    def test_last_trade_before_midnight_still_counts_after_session_end(self):
+        # 漲停鎖死時，成交量最大合約的最後成交可能在午夜前；夜盤仍在次一日 05:00 結束，抓取在那之後就算可用。
+        for ctime, quote_time in (("235900", "2026-09-18T15:59:00+00:00"), ("150100", "2026-09-18T07:01:00+00:00"),
+                                  ("045959", "2026-09-18T20:59:59+00:00")):
+            row = dict(REAL_NIGHT_ROW, CTime=ctime)
+            result = pair_v13(v11_captures(night=night_capture([row])))["result"]
+            night = by_symbol(result)[NIGHT_SYMBOL]
+            self.assertEqual(night["status"], "available", ctime)
+            self.assertEqual(night["session_end"], "2026-09-18T21:00:00+00:00")
+            self.assertEqual(night["as_of"], "2026-09-19")
+            self.assertEqual(result["night_session"]["quote_time"], quote_time)
 
     def test_tampered_result_is_rejected_by_validate_pair(self):
         pair = pair_v13(v11_captures(night=night_capture([REAL_NIGHT_ROW])))
