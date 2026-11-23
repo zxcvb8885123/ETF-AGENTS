@@ -41,17 +41,33 @@ def load_approvals(path):
 
 
 def latest_captures(output_root, decision_cutoff):
-    """截止前最後一次完整保存的抓取；全部 available_at 都必須不晚於截止時間。"""
+    """逐標的取截止前（available_at 不晚於截止）最新一次「成功」抓取；某標的截止前從未成功時退回該標的最新一次失敗紀錄（留下缺口）。
+
+    原先只取最新一次整份抓取，07:00 這次 TAIFEX 失敗會把 05:05 已抓到的夜盤丟掉。回傳順序依最新一次整份抓取的標的順序；
+    資料包內存的是各標的原始 capture，重建不讀這個函式，舊資料包不受影響。截止前沒有任何抓取回傳 None。"""
     cutoff = parse_aware_time(decision_cutoff, "decision_cutoff", error=OvernightMarketError)
-    store, best = _store(output_root), None
+    store = _store(output_root)
+    runs = []  # (最新 available_at, items)
     for manifest in sorted(Path(output_root).glob("*/overnight-*/manifest.json")):
         run_id = manifest.parent.name
         store.verify(run_id)
         items = json.loads((manifest.parent / "captures.json").read_text(encoding="utf-8"))["items"]
-        latest = max(parse_aware_time(c["available_at"], "available_at", error=OvernightMarketError) for c in items)
-        if latest <= cutoff and (best is None or latest > best[0]):
-            best = (latest, items)
-    return best[1] if best else None
+        usable = [c for c in items if parse_aware_time(c["available_at"], "available_at", error=OvernightMarketError) <= cutoff]
+        if usable:
+            runs.append((max(parse_aware_time(c["available_at"], "available_at", error=OvernightMarketError) for c in usable), usable))
+    if not runs:
+        return None
+    runs.sort(key=lambda row: row[0])
+    best = {}  # symbol -> (成功優先, available_at, capture)
+    for _, items in runs:
+        for capture in items:
+            at = parse_aware_time(capture["available_at"], "available_at", error=OvernightMarketError)
+            key = (capture["status"] == "fetched", at)
+            if capture["symbol"] not in best or key >= best[capture["symbol"]][0]:
+                best[capture["symbol"]] = (key, capture)
+    order = [c["symbol"] for c in runs[-1][1]]
+    order += sorted(set(best) - set(order))
+    return [best[symbol][1] for symbol in order if symbol in best]
 
 
 def build_overnight_market_input(output_root, approvals_path, snapshot_id, decision_cutoff, latest_trade_date):

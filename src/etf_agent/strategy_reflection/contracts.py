@@ -178,6 +178,8 @@ FORBIDDEN_PREFIXES = (
     "exposure_rotation", "hold_conviction_by_symbol",
     # 新增：名額回收（LOT_SIZE 候選釋出新增名額），切換程式路徑，只由人設定。
     "slot_recycle",
+    # 2026-11-24 新增：受限持股續抱、卡住的 high 不壓 medium／low、預算先扣跳空預留、現金緩衝改已交割＋未交割口徑，切換程式路徑，只由人設定。
+    "restricted_hold", "pinned_high_ceiling", "gap_reserve_budget", "cash_basis",
     # 反彈參與閘門：程式狀態與風險 Agent 列舉雙鑰匙放寬曝險換股，切換程式路徑，只由人設定（含綁定的 effective_state）。
     "rebound_participation",
     # 換股改由交易 Agent 提名：版本、對數上限、最短持有天數與綁定的 thesis_hint_symbols／verdicts_ref，切換程式路徑，只由人設定。

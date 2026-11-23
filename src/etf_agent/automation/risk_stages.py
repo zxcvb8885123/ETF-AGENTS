@@ -324,7 +324,10 @@ class RiskStagesMixin:
             {str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"] if row.get("source_evidence_id")}
         )
         # 隔夜市場背景只在決策輸入有附時才進 brief 與提示詞，沒有附的舊流程維持原樣。
-        overnight = overnight_market_channel(bundle)
+        overnight = overnight_market_channel(bundle, keep_available_night=night_rally_gate is not None)
+        if night_rally_gate is not None:  # v3：回撤下限優先，下限高於 aggressive 時不要求 aggressive（v1／v2 原物件）
+            from etf_agent.decision.night_rally import with_drawdown_floor
+            night_rally_gate = with_drawdown_floor(night_rally_gate, (drawdown_control or {}).get("stance_floor"))
         context = DecisionContext(bundle)
         typed = context.evidence_policy is not None
         regime = momentum.get("regime_assessment")
@@ -475,7 +478,7 @@ class RiskStagesMixin:
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
-            + ((NIGHT_RALLY_V2_PROMPT if night_rally_gate.get("version") == "v2" else NIGHT_RALLY_PROMPT)
+            + ((NIGHT_RALLY_V2_PROMPT if night_rally_gate.get("version") in ("v2", "v3") else NIGHT_RALLY_PROMPT)
                if night_rally_gate is not None else "")
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
             + (

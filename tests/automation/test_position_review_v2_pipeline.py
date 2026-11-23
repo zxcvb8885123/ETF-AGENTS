@@ -58,14 +58,14 @@ def template_v2():
 class V2Harness3(Harness3):
     """與 Harness3 同一個世界，只是帳本歷史換成進場日落在行情視窗內的版本。"""
 
-    def run(self, runner, resume=False, **kwargs):
+    def run(self, runner, resume=False, run_extra=None, **kwargs):
         world = self.world
         pipeline = DailyDecisionPipeline(
             ROOT, world.run_dir, runner, world.repository, log=lambda _: None, resume=resume, sleep=lambda _: None, **kwargs)
         result = pipeline.run(
             world.paths["snapshot"], world.paths["account"], world.paths["trading_status"], world.paths["rules"],
             world.paths["database"], world.paths["template"], world.paths["sectors"], "decision-fixture",
-            nav_history=NAV, holdings_history=HOLDINGS,
+            nav_history=NAV, holdings_history=HOLDINGS, **(run_extra or {}),
         )
         return result, pipeline
 
@@ -321,7 +321,7 @@ class ProductionTemplateTests(unittest.TestCase):
              "relative_loss_alert": {"loss": "0.08", "lag": "0.04"}, "stale_alert": None, "context": "v1"},
         )
         self.assertNotIn("stop_exit", live["position_sizing"])
-        self.assertEqual(live["policy_id"], "strategy-2026-11-24-agent-judgment-1")
+        self.assertEqual(live["policy_id"], "strategy-2026-11-24-review-fixes-1")
         self.assertIn("exposure_rotation", live["position_sizing"])  # position_review v2 的前提
 
     def test_a_run_on_the_untouched_live_gates_completes_and_rebuilds_clean(self):
@@ -349,3 +349,42 @@ class ProductionTemplateTests(unittest.TestCase):
             self.assertEqual(art["policy"]["position_review"], self.live()["position_review"])
             self.assertIn("stop_exit", art["policy"]["position_sizing"])
             self.assertEqual(harness.rebuild_errors(art), [])
+
+    def test_the_live_gates_with_a_night_rally_of_9_percent_pass_under_night_rally_v3(self):
+        """正式閘門組合（night_rally_override v3、cash_ratio_range、exposure_view v2、offense 等）下，夜盤 +9% 時
+        風險 Agent 選 aggressive 並引用夜盤證據，整條鏈 completed、Finalizer 重建乾淨；不引用或選 neutral 則被擋。"""
+        from etf_agent.decision import MARKET_REGIME_EVIDENCE_ID
+        from test_night_rally_pipeline import _overnight_with_night
+        from test_quality_dip_ruling_pipeline import stance as live_stance
+        value = live_like_template("v4")
+        self.assertEqual(value["position_sizing"]["night_rally_override"], self.live()["position_sizing"]["night_rally_override"])
+        self.assertEqual(value["position_sizing"]["night_rally_override"]["version"], "v3")
+        with tempfile.TemporaryDirectory() as directory:
+            harness = V2Harness3(Path(directory), template=value)
+            overnight = _overnight_with_night(directory, harness.world, "9")
+            from etf_agent.perception.overnight_market import build_overnight_market_input
+            snap = harness.world.snapshot
+            pair = build_overnight_market_input(overnight[0], overnight[1], snap["snapshot_id"], snap["decision_cutoff"], "2026-09-18")
+            night = [row for row in pair["result"]["components"] if row["symbol"] == "TXF_NIGHT"][0]
+            self.assertEqual(night["status"], "available", pair["result"]["data_gaps"])
+            kwargs = {"overnight_root": overnight[0], "overnight_approvals_path": overnight[1]}
+            neutral = harness.run(FakeRunner(_live_outputs([live_stance()] * 4)), run_extra=kwargs)[0]
+            self.assertEqual(neutral.status, "failed")
+            self.assertIn("night_rally_override v3", " ".join(neutral.errors))
+        with tempfile.TemporaryDirectory() as directory:
+            harness = V2Harness3(Path(directory), template=live_like_template("v4"))
+            overnight = _overnight_with_night(directory, harness.world, "9")
+            aggressive = dict(live_stance(), level="aggressive", exposure_view="start_rebuild", turn_assessment="turn_unconfirmed", rationale="夜盤大漲達人設門檻，依規則改為進攻。",
+                              evidence_ids=[night["evidence_id"], MARKET_REGIME_EVIDENCE_ID])
+            result, _ = harness.run(FakeRunner(_live_outputs([aggressive])),
+                                    run_extra={"overnight_root": overnight[0], "overnight_approvals_path": overnight[1]})
+            self.assertEqual(result.status, "completed", result.errors)
+            art = harness.artifacts()
+            self.assertEqual(art["team_inputs"]["cash_stance"]["level"], "aggressive")
+            self.assertEqual(harness.rebuild_errors(art), [])
+
+
+def _live_outputs(stances):
+    from test_quality_dip_ruling_pipeline import NOMINATION, THESIS_PAIR, outputs
+    pair = dict(THESIS_PAIR, size="large")
+    return outputs(dict(NOMINATION, nominations=[pair], lower_conviction_review=[]), cash_stance=stances)

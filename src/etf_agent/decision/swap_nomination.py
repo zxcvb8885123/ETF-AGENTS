@@ -55,10 +55,12 @@ from .dip_facts import DIP_FACTS_KEY, dip_reference_tokens
 from .selection_ranking import rank_by_symbol
 from .sizing import (
     CONVICTION_LEVELS,
+    agent_swap_fill_cap,
     allowed_cash_grades,
     cash_grade_grid,
     cash_ratio_gate,
     reentry_blocked_symbols,
+    victim_bear_claim_enabled,
     victim_rules_gate,
 )
 from .trader import REDUCING, claims_by_symbol
@@ -104,6 +106,14 @@ VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_bear_basis")
 EXPOSURE_VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_exposure_facts", "no_hold_conviction")
 # agent_swap.victim_rules 啟用時 purpose=thesis 的換出者原因代碼：持有天數改算交易日（缺值視為不足）、第一輪 hold 信心不得高於上限。
 THESIS_VICTIM_REASONS = ("not_tradable", "holding_days_short", "no_bear_basis", "hold_conviction_above_cap")
+# agent_swap.victim_bear_claim 啟用時：任何目的（thesis／exposure／quality_dip）的換出者都必須有本次已採納的該股空頭 claim（bear-），
+# 持股檢視警示（review:）與持股事實（position:）不算；配置端沒有它即取消該對（victim_no_bear_claim），提名端同步列為不可提名原因。
+NO_ADOPTED_BEAR_CLAIM = "no_adopted_bear_claim"
+VICTIM_BEAR_CLAIM_NOTE = (
+    "本次 Policy 要求：不論 purpose 是 thesis、exposure 或 quality_dip，換出者都必須有你在第一輪已採納的該股空頭論點（bear- 開頭的 claim）；"
+    "只有持股檢視警示（review:）、持股事實（position:）或曝險事實（review:<代號>:exposure）不算，沒有已採納空頭論點的持股在 blocked_reasons 會列 "
+    "no_adopted_bear_claim，不可提名（提名了程式也會取消該對、換出者不賣）。"
+)
 VICTIM_RULES_NOTE = (
     "purpose=thesis 的換出者只限第一輪 hold 信心不高於 thesis_max_hold_conviction、且持有交易日數（holding_trading_days）達 min_holding_days "
     "的持股；這是換出者規則（程式事實），不是賣出指令。若換出的理由是想提高曝險或參與度（例如反彈期把低波動持股換成較積極的股票），"
@@ -304,6 +314,7 @@ def nomination_facts(
     exposure = {str(item["symbol"]).upper(): item for item in exposure_review.get("items", []) if isinstance(item, Mapping)}
     items = {str(item["symbol"]).upper(): item for item in trade_decision.get("items", []) if isinstance(item, Mapping)}
     victim_rules = victim_rules_gate(sizing)
+    bear_gate = victim_bear_claim_enabled(sizing)
     trading_days: Dict[str, object] = {}
     if victim_rules is not None:
         # agent_swap.victim_rules：持有交易日數取自 position_review 的 holding_trading_days（缺值或非整數在下面視為不足，fail-closed）。
@@ -369,11 +380,14 @@ def nomination_facts(
         if item is None or item.get("intent") != "hold":
             continue
         basis = adopted(symbol, {"bear", "review", "position"})
+        # victim_bear_claim：換出資格改要「已採納的該股 bear- claim」（review／position 不算）；沒有閘門時與舊版逐位元相同。
+        bear_basis = adopted(symbol, {"bear"}) if bear_gate else basis
+        no_basis_code = NO_ADOPTED_BEAR_CLAIM if bear_gate else "no_bear_basis"
         reasons = [
             code for code, failed in (
                 ("not_tradable", symbol in untradable),
                 ("holding_days_short", days[symbol] < min_days),
-                ("no_bear_basis", not basis),
+                (no_basis_code, not bear_basis),
             ) if failed
         ]
         facts = exposure.get(symbol, {})
@@ -391,7 +405,7 @@ def nomination_facts(
                 code for code, failed in (
                     ("not_tradable", symbol in untradable),
                     ("holding_days_short", isinstance(held_days, bool) or not isinstance(held_days, int) or held_days < min_days),
-                    ("no_bear_basis", not basis),
+                    (no_basis_code, not bear_basis),
                     ("hold_conviction_above_cap", conviction not in CONVICTION_LEVELS
                      or CONVICTION_LEVELS.index(conviction) < CONVICTION_LEVELS.index(cap)),
                 ) if failed
@@ -408,6 +422,7 @@ def nomination_facts(
                     ("holding_days_short", days[symbol] < min_days),
                     ("no_exposure_facts", symbol not in exposure_basis),
                     ("no_hold_conviction", item.get("conviction") not in CONVICTION_LEVELS),
+                    (NO_ADOPTED_BEAR_CLAIM, bear_gate and not bear_basis),
                 ) if failed
             ]
             row.update({
@@ -430,7 +445,7 @@ def nomination_facts(
     narrowest = min(int(value) for value in breadth.values()) if isinstance(breadth, Mapping) and breadth else max_positions
     target = max(min(narrowest, max_positions), min_positions)
     free_slots = max(0, target - len(held))
-    pair_cap = min(int(gate["max_swaps_per_run"]), max(0, int(rotation["max_swaps_per_run"]) - len(exits)))
+    pair_cap = agent_swap_fill_cap(sizing, len(exits))  # 與配置端共用同一算式（沒有 swap_fit 的舊 Policy 配置端不套 rotation 上限，見 sizing）
     reserve_extra: Dict[str, object] = {}
     reserve_gate = entry_reserve_gate(sizing)
     if reserve_gate is not None:
@@ -760,7 +775,7 @@ def swap_nomination_brief(
         }
     return {
         **exposure_block,
-        "note": BRIEF_NOTE,
+        "note": BRIEF_NOTE + (VICTIM_BEAR_CLAIM_NOTE if victim_bear_claim_enabled(policy.get("position_sizing")) else ""),
         "pair_limit": facts["pair_cap"],
         "min_new_conviction": facts["min_new_conviction"],
         "min_holding_days": facts["min_holding_days"],

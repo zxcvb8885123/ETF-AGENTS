@@ -738,9 +738,11 @@ class ScriptedRunner:
     def __init__(self, script):
         self.script = list(script)
         self.calls = 0
+        self.time_limits = []
 
     def run(self, task, run_dir):
         self.calls += 1
+        self.time_limits.append(task.time_limit_seconds)
         step = self.script.pop(0)
         if isinstance(step, BaseException):
             raise step
@@ -809,9 +811,9 @@ class TransientRetryTests(unittest.TestCase):
         self.assertEqual(pipeline.calls, [])
 
     def test_retry_respects_deadline_and_can_be_disabled(self):
-        soon = datetime.now(timezone(timedelta(hours=8))) + timedelta(seconds=5)
+        soon = datetime.now(timezone(timedelta(hours=8))) + timedelta(seconds=400)
         runner = ScriptedRunner([TransientAgentError("逾時"), {"items": []}])
-        pipeline = self.pipeline(runner, retry_deadline=soon)
+        pipeline = self.pipeline(runner, retry_deadline=soon, retry_delay_seconds=450)
         with self.assertRaisesRegex(TransientAgentError, "交件期限"):
             pipeline.agent_step(self.task, dict, lambda _: [])
         self.assertEqual(runner.calls, 1)
@@ -830,6 +832,31 @@ class TransientRetryTests(unittest.TestCase):
             self.pipeline(runner, retry_deadline=datetime(2026, 10, 23, 8, 55))
         with self.assertRaises(ValueError):
             self.pipeline(runner, transient_retries=-1)
+
+    def test_agent_timeout_is_capped_by_remaining_time_to_deadline(self):
+        deadline = datetime.now(timezone(timedelta(hours=8))) + timedelta(seconds=900)
+        runner = ScriptedRunner([{"items": []}])
+        self.pipeline(runner, retry_deadline=deadline).agent_step(self.task, dict, lambda _: [])
+        self.assertEqual(runner.calls, 1)
+        self.assertTrue(600 < runner.time_limits[0] <= 720)  # 900 秒減 180 秒安全邊際
+
+    def test_no_deadline_means_no_time_limit(self):
+        runner = ScriptedRunner([{"items": []}])
+        self.pipeline(runner).agent_step(self.task, dict, lambda _: [])
+        self.assertEqual(runner.time_limits, [None])
+
+    def test_first_call_is_not_started_when_deadline_is_too_close(self):
+        soon = datetime.now(timezone(timedelta(hours=8))) + timedelta(seconds=200)
+        runner = ScriptedRunner([{"items": []}])
+        with self.assertRaisesRegex(TransientAgentError, "交件期限"):
+            self.pipeline(runner, retry_deadline=soon).agent_step(self.task, dict, lambda _: [])
+        self.assertEqual(runner.calls, 0)
+
+    def test_effective_timeout_takes_the_smaller_value(self):
+        from etf_agent.automation.agent_runner import effective_timeout
+        self.assertEqual(effective_timeout(1800, self.task), 1800)
+        self.assertEqual(effective_timeout(1800, AgentTask("x", "p", {}, time_limit_seconds=300.5)), 300.5)
+        self.assertEqual(effective_timeout(100, AgentTask("x", "p", {}, time_limit_seconds=300)), 100)
 
     def test_parallel_failure_elsewhere_stops_retry(self):
         runner = ScriptedRunner([TransientAgentError("逾時"), {"items": []}])

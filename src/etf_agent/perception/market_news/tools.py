@@ -1,22 +1,27 @@
 """重建 RSS 全量輸入及自由整合的研究結論，無新聞篇數投票。"""
 import re
 import xml.etree.ElementTree as ET
+from datetime import timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 from etf_agent.core import canonical_sha256, parse_aware_time
 from .contracts import MarketNewsError, SOURCES, ARCHIVE_SOURCES, NEWS_SOURCES, seal, check_fields
 
+TAIPEI = timezone(timedelta(hours=8))
 CAPTURE_FIELDS = {'source','url','raw_text','raw_sha256','available_at','status','error'}
 LABEL_FIELDS = {'item_id','canonical_content_id','relevance','stance','reason'}
 PACK_FIELDS = {'schema_version','snapshot_id','decision_cutoff','window_start','captures','labels','synthesis','source_approvals','content_sha256'}
 
-def prepare(captures, window_start, decision_cutoff, merge=False):
-    """merge=True（資料包 1.2）允許同一來源有多次抓取，依 item_id 去重並保留最早取得時間；其餘版本維持一來源一份。"""
+def prepare(captures, window_start, decision_cutoff, merge=False, lenient=False):
+    """merge=True（資料包 1.2）允許同一來源有多次抓取，依 item_id 去重並保留最早取得時間；其餘版本維持一來源一份。
+
+    lenient=True（資料包 1.3，含 merge 行為）：RSS 單則的發布時間無法解析或晚於取得時間時只丟該則並記入 ``item_gaps``
+    （不擋整包、不影響可用判斷），canonical_content_id 的日期改用台北日期；其餘版本維持原行為（整包拒絕、依發布時間自身時區的日期）。"""
     if not isinstance(captures, list): raise MarketNewsError('RSS 原始回應必須是陣列')
     start = parse_aware_time(window_start,'window_start',error=MarketNewsError)
     cutoff = parse_aware_time(decision_cutoff,'decision_cutoff',error=MarketNewsError)
     if start > cutoff: raise MarketNewsError('查詢開始時間晚於截止時間')
-    items, gaps, seen_sources = [], [], set()
+    items, gaps, item_gaps, seen_sources = [], [], [], set()
     fetched_sources = {c.get('source') for c in captures if isinstance(c, dict) and c.get('status') == 'fetched'}
     for capture in captures:
         check_fields(capture, CAPTURE_FIELDS, 'RSS 原始回應')
@@ -68,13 +73,23 @@ def prepare(captures, window_start, decision_cutoff, merge=False):
             if not title or urlsplit(link).scheme != 'https' or urlsplit(link).hostname not in SOURCES[source]['hosts']:
                 raise MarketNewsError('RSS 新聞標題或原文連結不符')
             try: published = parse_aware_time(parsedate_to_datetime(raw_time).isoformat(),'published_at',error=MarketNewsError)
-            except (ValueError, TypeError) as exc: raise MarketNewsError('RSS 發布時間缺少時區或格式錯誤') from exc
-            if published > available: raise MarketNewsError('RSS 新聞發布時間晚於取得時間')
+            except (ValueError, TypeError, MarketNewsError) as exc:
+                if lenient:
+                    item_gaps.append(NEWS_SOURCES[source]['publisher'] + '有一則新聞發布時間缺少時區或格式錯誤，已略過：' + title[:40])
+                    continue
+                if isinstance(exc, MarketNewsError): raise
+                raise MarketNewsError('RSS 發布時間缺少時區或格式錯誤') from exc
+            if published > available:
+                if lenient:
+                    item_gaps.append(NEWS_SOURCES[source]['publisher'] + '有一則新聞發布時間晚於取得時間，已略過：' + title[:40])
+                    continue
+                raise MarketNewsError('RSS 新聞發布時間晚於取得時間')
             if not start <= published <= cutoff: continue
             # 只用 RSS 文字；去 HTML 後仍保存原始 RSS，摘要不冒充全文。
             summary = re.sub('<[^>]+>', '', description).strip()
             normalized = re.sub(r'\s+', '', title)
-            content_id = canonical_sha256({'title':normalized,'day':published.date().isoformat()})
+            day = (published.astimezone(TAIPEI) if lenient else published).date().isoformat()
+            content_id = canonical_sha256({'title':normalized,'day':day})
             item_id = 'market-news:' + canonical_sha256({'source':source,'link':link})[:24]
             items.append({'item_id':item_id,'canonical_content_id':content_id,'source':source,
                           'publisher':SOURCES[source]['publisher'],'title':title,'summary':summary,'link':link,
@@ -89,12 +104,12 @@ def prepare(captures, window_start, decision_cutoff, merge=False):
         items = list(earliest.values())
     ids = [row['item_id'] for row in items]
     if len(ids) != len(set(ids)): raise MarketNewsError('RSS 含重複新聞識別，需先修正來源')
-    return {'items':items,'data_gaps':gaps,'decision_cutoff':decision_cutoff,'window_start':window_start,
+    return {**({'item_gaps':item_gaps} if lenient else {}),'items':items,'data_gaps':gaps,'decision_cutoff':decision_cutoff,'window_start':window_start,
             'coverage':('查詢視窗內每次 RSS 抓取合併、依新聞識別去重後的全部項目；取得範圍由來源及抓取紀錄界定。' if merge else '本次 RSS 與指定歷史目錄原頁在查詢視窗內的全部取得項目；取得範圍由來源及查詢紀錄界定。')}
 
 def evaluate(pack):
     check_fields(pack, PACK_FIELDS, '市場新聞資料包')
-    if pack['schema_version'] not in {'market-news-1.0', 'market-news-1.1', 'market-news-1.2'} or not isinstance(pack['snapshot_id'],str) or not pack['snapshot_id']:
+    if pack['schema_version'] not in {'market-news-1.0', 'market-news-1.1', 'market-news-1.2', 'market-news-1.3'} or not isinstance(pack['snapshot_id'],str) or not pack['snapshot_id']:
         raise MarketNewsError('市場新聞資料包身分無效')
     if seal(pack) != pack: raise MarketNewsError('市場新聞資料包雜湊不符')
     if not isinstance(pack['labels'], list) or not isinstance(pack['source_approvals'], list):
@@ -102,7 +117,7 @@ def evaluate(pack):
     legacy = pack['schema_version'] == 'market-news-1.0'
     if legacy and any(c.get('source') in ARCHIVE_SOURCES for c in pack['captures']):
         raise MarketNewsError('歷史原頁接入需要資料包格式 1.1')
-    prepared = prepare(pack['captures'],pack['window_start'],pack['decision_cutoff'],merge=pack['schema_version']=='market-news-1.2')
+    prepared = prepare(pack['captures'],pack['window_start'],pack['decision_cutoff'],merge=pack['schema_version'] in {'market-news-1.2', 'market-news-1.3'}, lenient=pack['schema_version']=='market-news-1.3')
     items = {r['item_id']:r for r in prepared['items']}
     labels, groups = {}, {}
     for row in pack['labels']:
@@ -140,7 +155,7 @@ def evaluate(pack):
         approvals[row['source']]=row
     unique = {items[k]['canonical_content_id'] for k in relevant}
     sources = {items[k]['source'] for k in relevant}
-    gaps = list(prepared['data_gaps'])
+    gaps = list(prepared['data_gaps']) + list(prepared.get('item_gaps', []))
     for source in sorted(sources):
         if approvals.get(source,{}).get('license_status') != 'approved':
             if legacy:

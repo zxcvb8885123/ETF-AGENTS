@@ -250,6 +250,15 @@ class AgentTask:
     stage_isolated: bool = False
     # 整個目錄拒讀（相對專案根目錄，例如 ``artifacts/reports``）；Claude／OpenCode 強制，Codex 與 deny_reads 同樣只能靠研究階段暫存。
     deny_read_directories: Sequence[str] = ()
+    # 距交件期限的剩餘秒數上限（由 PipelineBase 依 retry_deadline 算出）；None 只用 runner 自己的逾時。
+    # 執行器逾時取兩者較小者，避免單次呼叫（預設 1800 秒）跨過交件期限。
+    time_limit_seconds: Optional[float] = None
+
+
+def effective_timeout(timeout_seconds: float, task: "AgentTask") -> float:
+    """runner 逾時與任務時間上限取較小者。"""
+    limit = task.time_limit_seconds
+    return timeout_seconds if limit is None else max(1.0, min(float(timeout_seconds), float(limit)))
 
 
 @dataclass
@@ -317,7 +326,7 @@ class ClaudeAgentRunner:
         try:
             extra = {"read_max_output_tokens": self.read_max_output_tokens} if self.read_max_output_tokens else {}
             completed = _run_claude_streaming(
-                command, self.project_root, self.timeout_seconds, trace_path, self.project_root, **extra,
+                command, self.project_root, effective_timeout(self.timeout_seconds, task), trace_path, self.project_root, **extra,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise TransientAgentError("%s Agent 執行失敗：%s" % (task.name, error)) from error
@@ -530,7 +539,7 @@ class CodexAgentRunner:
             try:
                 completed = subprocess.run(
                     command, input=task.prompt, cwd=self.project_root,
-                    capture_output=True, text=True, timeout=self.timeout_seconds, check=False,
+                    capture_output=True, text=True, timeout=effective_timeout(self.timeout_seconds, task), check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as error:
                 raise TransientAgentError("%s Codex Agent 執行失敗：%s" % (task.name, error)) from error
@@ -597,7 +606,7 @@ class OpenCodeAgentRunner:
         ]
         try:
             completed = subprocess.run(command, cwd=self.project_root, env=env,
-                                       capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
+                                       capture_output=True, text=True, timeout=effective_timeout(self.timeout_seconds, task), check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise TransientAgentError("%s OpenCode Agent 執行失敗：%s" % (task.name, error)) from error
         if completed.returncode != 0:

@@ -392,6 +392,7 @@ class ReplayTests(unittest.TestCase):
                 sizing["agent_swap"].pop("earmark", None)  # 同理：earmark 依賴 entry_reserve 與 agent_swap v2
                 sizing["agent_swap"].pop("victim_bear_claim", None)  # 同理：它需要 agent_swap v2
                 sizing["agent_swap"].pop("entry_reserve", None)  # 同理：它只允許 agent_swap v2
+                sizing["agent_swap"].pop("swap_fit", None)  # 同理：它需要 agent_swap v2
             return bind_replay_policy(template, bundle, archived, intent, debate, dict(LEGACY_STANCE), [])
 
         v1_policy, v1_notes = replay("v1")

@@ -10,7 +10,7 @@ from etf_agent.core import untrusted_value
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
 from .rebound import lifted_turnover_rate
-from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate, revision_bounds_gate
+from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate, restricted_hold_enabled, revision_bounds_gate
 from .contracts import (
     DECISION_SCHEMA_VERSION,
     DecisionContext,
@@ -370,11 +370,17 @@ class CompetitionGuardV2:
         default_limit = decimal_value(self.policy["max_stock_weight"], "max_stock_weight")
         special = self.policy.get("special_weight_limits", {})
         violations = []
+        # position_sizing.restricted_hold（版本閘門）：續抱、受限（不可交易）、本次沒有買進的持股無法由程式減碼，
+        # 漲價超限屬比賽辦法的 5 交易日調整期，Guard 容忍並記為 carried；有買進或可交易的股票仍是硬性違規。舊 run 沒有閘門，照舊。
+        restricted_hold = restricted_hold_enabled(self.policy.get("position_sizing") or {})
+        carried_restricted = not_tradable_among(carried_symbols) if restricted_hold else set()
+        carried_over = []
         for symbol, weight in weights.items():
             limit = decimal_value(special.get(symbol, default_limit), "weight_limit") if isinstance(special, Mapping) else default_limit
             if weight > limit:
-                violations.append({"symbol": symbol, "actual": _rate(weight), "limit": _rate(limit)})
-        self._check(checks, "STOCK_WEIGHT", not violations, violations)
+                item = {"symbol": symbol, "actual": _rate(weight), "limit": _rate(limit)}
+                (carried_over if symbol in carried_restricted else violations).append(item)
+        self._check(checks, "STOCK_WEIGHT", not violations, {"violations": violations, "carried": carried_over} if restricted_hold else violations)
         sector_by_symbol = {
             str(symbol).upper(): str(sector)
             for symbol, sector in self.policy.get("sector_by_symbol", {}).items()
@@ -434,7 +440,7 @@ class CompetitionGuardV2:
             stock_violations = []
             for symbol, weight in scenario_weights.items():
                 limit = decimal_value(special.get(symbol, default_limit), "weight_limit") if isinstance(special, Mapping) else default_limit
-                if weight > limit:
+                if weight > limit and symbol not in carried_restricted:
                     stock_violations.append(symbol)
             scenario_sector: Dict[str, Decimal] = {}
             for symbol, weight in scenario_weights.items():

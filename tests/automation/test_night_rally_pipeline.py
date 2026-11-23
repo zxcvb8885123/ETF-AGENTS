@@ -165,9 +165,9 @@ class NightRallyV2Tests(NightRallyPipelineTests):
 
 
 class NightRallyGateShapeTests(unittest.TestCase):
-    def test_v1_and_v2_are_accepted_and_other_versions_refused(self):
+    def test_v1_v2_and_v3_are_accepted_and_other_versions_refused(self):
         from etf_agent.decision.night_rally import validate_night_rally_override_gate
-        for version, ok in (("v1", True), ("v2", True), ("v3", False)):
+        for version, ok in (("v1", True), ("v2", True), ("v3", True), ("v4", False)):
             errors = []
             validate_night_rally_override_gate({"night_rally_override": dict(GATE, version=version)}, errors)
             self.assertEqual(errors == [], ok, (version, errors))

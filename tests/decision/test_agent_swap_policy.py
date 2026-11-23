@@ -194,6 +194,7 @@ class AgentSwapGateTests(unittest.TestCase):
             "victim_rules",  # 換出者規則（thesis 換出者 hold 信心上限與交易日持有天數，版本閘門；test_swap_victim_rules.py）
             "earmark",  # 換股賣款專款專用（版本閘門，已實作、尚未開啟；test_swap_earmark.py）
             "victim_bear_claim",  # 換出者須有本次採納的該股空頭 claim（版本閘門，已實作、尚未開啟；test_swap_earmark.py）
+            "swap_fit",  # 成交上限與可行性試算對齊提名端（版本閘門；test_swap_fit.py）
         })
 
 

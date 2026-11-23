@@ -515,6 +515,27 @@ class ProviderServiceTests(unittest.TestCase):
             with self.assertRaises(OvernightMarketError):
                 build_overnight_market_input(root, approval_path, SNAPSHOT_ID, MONDAY_CUTOFF, LATEST_TRADE_DATE)
 
+    def test_latest_captures_take_each_symbol_from_its_latest_successful_capture(self):
+        """07:00 這次 TAIFEX 失敗時，05:05 已抓到的夜盤不能被丟掉；其餘標的取較新那次。"""
+        from etf_agent.perception.overnight_market.service import latest_captures
+        good = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["-0.01"]), lambda: NIGHT_ROWS)
+
+        def broken_night():
+            raise ValueError("期交所無回應")
+        bad = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["-0.02"]), broken_night)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "overnight"
+            capture_overnight_market(root, good, datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc))
+            capture_overnight_market(root, bad, datetime(2026, 9, 21, 0, 10, tzinfo=timezone.utc))
+            rows = {c["symbol"]: c for c in latest_captures(root, MONDAY_CUTOFF)}
+            self.assertEqual(rows[NIGHT_SYMBOL]["status"], "fetched")
+            self.assertEqual(rows[NIGHT_SYMBOL]["available_at"], "2026-09-21T00:00:00+00:00")
+            self.assertEqual(rows["^GSPC"]["available_at"], "2026-09-21T00:10:00+00:00")  # 較新的成功抓取
+            self.assertEqual(len(rows), 9)
+            # 截止早於第二次抓取：只用第一次
+            earlier = {c["symbol"]: c for c in latest_captures(root, "2026-09-21T00:05:00+00:00")}
+            self.assertEqual(earlier["^GSPC"]["available_at"], "2026-09-21T00:00:00+00:00")
+
     def test_missing_approval_file_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             provider = OvernightProvider(lambda symbol, start, end: make_bars(date(2026, 9, 18), ["0"]), lambda: NIGHT_ROWS)
