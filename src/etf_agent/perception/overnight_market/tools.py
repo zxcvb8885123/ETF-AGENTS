@@ -1,7 +1,7 @@
 """由原始日線確定性重建隔夜市場背景；不呼叫模型、不補值。"""
 import json
 import re
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -11,7 +11,7 @@ from etf_agent.perception.market_fear_greed.tools import percentile
 from .contracts import (
     AGREEMENT_MIN_TOTAL, AGREEMENT_RATIO, APPROVAL_FIELDS, CAPTURE_FIELDS, DIRECTION_DEADBAND, MAIN_SYMBOLS,
     MIXED_MIN_ABS, NEGATIVE_AT_OR_BELOW, NIGHT_NAME, NIGHT_SYMBOL, OUTLOOK_LABELS, PACK_FIELDS, PACK_VERSION,
-    PACK_VERSION_V11, PACK_VERSION_V12, PERCENTILE_WINDOW, PERCENTILE_WINDOW_V12, RESULT_VERSION_V12, SIGNAL_VERSION_V12, POSITIVE_AT_OR_ABOVE, PROXY_SYMBOLS, RESULT_VERSION, RESULT_VERSION_V11,
+    PACK_VERSION_V11, PACK_VERSION_V12, PACK_VERSION_V13, PERCENTILE_WINDOW, PERCENTILE_WINDOW_V12, RESULT_VERSION_V12, RESULT_VERSION_V13, SIGNAL_VERSION_V12, SIGNAL_VERSION_V13, POSITIVE_AT_OR_ABOVE, PROXY_SYMBOLS, RESULT_VERSION, RESULT_VERSION_V11,
     SIGNAL_VERSION, SIGNAL_VERSION_V11, SOURCE_ID, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, TAIFEX_SOURCE_ID,
     OvernightMarketError, check_fields, seal,
 )
@@ -234,8 +234,10 @@ def _evaluate_v10(pack):
 
 
 def evaluate(pack):
-    """依資料包版本重建結果：1.0 維持原行為（舊封存逐位元相同），1.1 加入日韓、VIX 與台指期夜盤。"""
+    """依資料包版本重建結果：1.0 維持原行為（舊封存逐位元相同），1.1 加入日韓、VIX 與台指期夜盤，1.3 修正夜盤日期口徑。"""
     check_fields(pack, PACK_FIELDS, "隔夜市場資料包")
+    if pack["schema_version"] == PACK_VERSION_V13:
+        return _evaluate_v11(pack, v12=True, v13=True)
     if pack["schema_version"] == PACK_VERSION_V12:
         return _evaluate_v11(pack, v12=True)
     if pack["schema_version"] == PACK_VERSION_V11:
@@ -267,7 +269,7 @@ def parse_night(raw):
     return payload["rows"]
 
 
-def _night_component(raw, fetched_at, start, cutoff):
+def _night_component(raw, fetched_at, start, cutoff, cdate_is_open_day=False):
     """台指期近月（月合約中成交量最大者）盤後最後價相對前一日日盤結算價；夜盤尚未結束或報價不在夜盤時段就不可用。
 
     夜盤台北 05:00 結束、08:45 日盤才開：抓取時間在夜盤結束之後，且報價時間不晚於 05:05（仍是夜盤的最後報價）才算完成。"""
@@ -291,6 +293,9 @@ def _night_component(raw, fetched_at, start, cutoff):
         quote_time = datetime.strptime(row["CTime"], "%H%M%S").time()
     except ValueError:
         return None, None, "台指期夜盤報價時間無法解析"
+    if cdate_is_open_day and quote_time <= NIGHT_LAST_QUOTE:
+        # 1.3：CDate 是夜盤開盤那天；午夜後（05:05 以前）的報價實際發生在次一日曆日，夜盤也在次一日 05:00 結束。
+        quote_day = quote_day + timedelta(days=1)
     quote_at = datetime.combine(quote_day, quote_time, tzinfo=TAIPEI)
     ended = datetime.combine(quote_day, NIGHT_END, tzinfo=TAIPEI)
     if quote_time > NIGHT_LAST_QUOTE or quote_at > fetched_at or ended > fetched_at:
@@ -342,7 +347,7 @@ def _check_url_v11(source, symbol, url):
         raise OvernightMarketError("不支援的來源或標的")
 
 
-def _evaluate_v11(pack, v12=False):
+def _evaluate_v11(pack, v12=False, v13=False):
     if not isinstance(pack["snapshot_id"], str) or not pack["snapshot_id"]:
         raise OvernightMarketError("隔夜市場資料包身分無效")
     if seal(pack) != pack:
@@ -381,7 +386,7 @@ def _evaluate_v11(pack, v12=False):
                 if not night_approved:
                     gaps.append("%s 尚未核准使用，夜盤不進正式結果。" % SOURCES[TAIFEX_SOURCE_ID]["name"])
                     continue
-                row, night_detail, reason = _night_component(capture["raw_text"], fetched_at, start, cutoff)
+                row, night_detail, reason = _night_component(capture["raw_text"], fetched_at, start, cutoff, cdate_is_open_day=v13)
             else:
                 row, reason = _component(symbol, parse_bars(capture["raw_text"], symbol), fetched_at, start, cutoff,
                                          _yahoo_end(symbol), PERCENTILE_WINDOW_V12 if v12 else PERCENTILE_WINDOW)
@@ -435,12 +440,12 @@ def _evaluate_v11(pack, v12=False):
                  for row in shown]
         findings.append({
             "text": "隔夜市場背景（%s）：主訊號（^SOX 與 ^GSPC 累計漲跌幅平均）%s%%，判讀「%s」；方向一致性 %s（上 %d、下 %d、持平 %d）；%s。僅為隔夜背景。" % (
-                SIGNAL_VERSION_V12 if v12 else SIGNAL_VERSION_V11, decimal_string(signal), OUTLOOK_LABELS[outlook], agreement["label"],
+                SIGNAL_VERSION_V13 if v13 else SIGNAL_VERSION_V12 if v12 else SIGNAL_VERSION_V11, decimal_string(signal), OUTLOOK_LABELS[outlook], agreement["label"],
                 agreement["up"], agreement["down"], agreement["flat"], "、".join(parts)),
             "evidence_ids": [row["evidence_id"] for row in shown]})
     return seal({
-        "schema_version": RESULT_VERSION_V12 if v12 else RESULT_VERSION_V11,
-        "signal_version": SIGNAL_VERSION_V12 if v12 else SIGNAL_VERSION_V11,
+        "schema_version": RESULT_VERSION_V13 if v13 else RESULT_VERSION_V12 if v12 else RESULT_VERSION_V11,
+        "signal_version": SIGNAL_VERSION_V13 if v13 else SIGNAL_VERSION_V12 if v12 else SIGNAL_VERSION_V11,
         "snapshot_id": pack["snapshot_id"], "decision_cutoff": pack["decision_cutoff"],
         "input_sha256": pack["content_sha256"], "status": status, "outlook": outlook,
         "signal_pct": decimal_string(signal) if signal is not None else None,

@@ -195,6 +195,8 @@ FORBIDDEN_PREFIXES = (
     "liquidity_fit",
     # 高風險股上限（beta／ATR 門檻、總權重與每日新進檔數、record／enforce）：放寬或收緊都是改變風控路徑，只由人設定。
     "high_risk_cap",
+    # 夜盤大漲放行進攻（門檻百分比）：改變現金姿態護欄，只由人設定。
+    "night_rally_override",
 )
 
 

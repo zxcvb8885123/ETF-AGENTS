@@ -39,6 +39,7 @@ from etf_agent.decision.allocation import DecisionPolicyValidator
 from etf_agent.decision.benchmark_facts import benchmark_facts_gate, build_benchmark_facts
 from etf_agent.decision.cash_ratio import bind_cash_ratio_anchor
 from etf_agent.decision.exposure import bind_holding_days, build_exposure_review, exposure_rotation_gate
+from etf_agent.decision.night_rally import night_rally_override_gate
 from etf_agent.decision.rebound import build_turn_state, rebound_gate
 from etf_agent.decision.dip_facts import build_dip_facts, event_direction_gate, quality_dip_assessment_gate, quality_dip_facts_gate
 from etf_agent.decision.exposure_facts import build_exposure_facts, exposure_view_agent_led, exposure_view_gate
@@ -546,7 +547,9 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                                               "offense_facts": offense_facts} if offense_facts is not None else {}),
                                           **({"cash_stance_brief_gate": cash_stance_brief_gate(base_policy.get("position_sizing"))}
                                              if cash_stance_brief_gate(base_policy.get("position_sizing")) is not None else {}),
-                                          **({"benchmark_facts": benchmark_facts} if benchmark_facts is not None else {}))
+                                          **({"benchmark_facts": benchmark_facts} if benchmark_facts is not None else {}),
+                                          **({"night_rally_gate": night_rally_override_gate(base_policy.get("position_sizing"))}
+                                             if night_rally_override_gate(base_policy.get("position_sizing")) is not None else {}))
         policy = apply_trade_decision(base_policy, trade, stance, bundle, debate, prior_context)
         if ranking is not None:
             policy = apply_selection_ranking(policy, ranking)

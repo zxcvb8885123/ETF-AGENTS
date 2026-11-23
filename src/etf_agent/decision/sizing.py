@@ -460,6 +460,12 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "前提 evidence_policy=typed_evidence_v1 在重建現金姿態時檢查；與 cash_stance_recency、cash_ratio_range 可獨立開關",
     ),
     GateRule(
+        "night_rally_override",
+        note="夜盤大漲放行進攻（v1，2026-11-23）：全市場情緒 negative 時原不得 aggressive；台指期夜盤（overnight-market 1.3 起可用）漲幅"
+             "不低於人填 min_night_change_pct、且現金姿態引用夜盤 evidence_id 時放行；即時驗證與 Finalizer 同用 night_rally.night_rally_allows_aggressive，"
+             "條件只讀封存的隔夜資料包；不新增 Agent 輸出欄位、team_inputs 不升版；沒有欄位時逐位元不變",
+    ),
+    GateRule(
         "market_index_facts",
         note="風險 Agent 簡報附 market_index_facts（證交所加權指數收盤、漲跌、近 5／20 日報酬與離高點回檔，紀錄用、不可引用）；"
              "不新增 Agent 輸出欄位、不影響配置，所以 Finalizer 不需重算；與其他現金姿態閘門可獨立開關",
@@ -600,8 +606,12 @@ def validate_cash_stance(
     exposure_facts: Optional[Mapping[str, object]] = None,
     offense_gate: Optional[Mapping[str, object]] = None,
     offense_facts: Optional[Mapping[str, object]] = None,
+    night_rally_gate: Optional[Mapping[str, object]] = None,
 ) -> None:
     """現金姿態：level 三選一、理由與共同輸入中存在的證據。
+
+    ``night_rally_gate`` 是 position_sizing.night_rally_override 閘門物件；為 None 時護欄與舊版逐位元相同。
+    有閘門時，台指期夜盤漲幅達人填門檻且姿態引用夜盤證據，全市場情緒 negative 也放行 aggressive（night_rally.py）。
 
     ``exposure_view_gate`` 是 exposure_view 閘門物件；為 None 時欄位白名單與舊版完全相同（出現 exposure_view 即拒絕）。
     有閘門時必須是 typed_evidence_v1，``exposure_view`` 必填、非 keep_defensive 須引用市場層級證據，理由不得寫出背景識別碼
@@ -703,8 +713,12 @@ def validate_cash_stance(
             "個股行情證據只能作補充" % prefix
         )
     sentiment = context.market_sentiment or {}
+    night_rally_ok = False
+    if night_rally_gate is not None and stance.get("level") == "aggressive":
+        from .night_rally import night_rally_allows_aggressive
+        night_rally_ok = night_rally_allows_aggressive(night_rally_gate, context.bundle, evidence)
     if (stance.get("level") == "aggressive" and sentiment.get("status") == "available"
-            and sentiment.get("outlook") == "negative"):
+            and sentiment.get("outlook") == "negative" and not night_rally_ok):
         errors.append(
             "%s 全市場情緒為 negative 時，aggressive 未通過一致性護欄；請改為 neutral 或 defensive，"
             "並在 rationale 說明判斷依據" % prefix
@@ -799,6 +813,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
     if "cash_stance_turn_facts" in sizing:
         from .turn_facts import validate_cash_stance_turn_facts_gate
         validate_cash_stance_turn_facts_gate(sizing, errors)
+    if "night_rally_override" in sizing:
+        from .night_rally import validate_night_rally_override_gate
+        validate_night_rally_override_gate(sizing, errors)
     if "market_index_facts" in sizing:
         from .market_index import validate_market_index_facts_gate
         validate_market_index_facts_gate(sizing, errors)

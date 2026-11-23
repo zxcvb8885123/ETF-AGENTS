@@ -33,6 +33,7 @@ from .offense import (
 )
 from .decline_depth import build_ladder_state
 from .quality_dip_swap import bind_quality_dip_ladder_state, bind_quality_dip_turn, quality_dip_ladder_gate, quality_dip_swap_gate
+from .night_rally import night_rally_override_gate
 from .sizing import CASH_STANCES, CONVICTION_LEVELS, POSITION_BREADTHS, cash_ratio_gate, validate_cash_stance
 from .stance import STANCE_SCHEMA_VERSION
 
@@ -357,6 +358,7 @@ def apply_trade_decision(
         turn_facts_gate=cash_stance_turn_facts_gate(policy.get("position_sizing") or {}),
         exposure_view_gate=exposure_view_gate(policy.get("position_sizing") or {}),
         **({"offense_gate": offense_policy_gate, "offense_facts": offense_facts} if offense_policy_gate is not None else {}),
+        night_rally_gate=night_rally_override_gate(policy.get("position_sizing") or {}),
     )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))

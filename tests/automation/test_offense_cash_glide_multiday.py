@@ -35,7 +35,7 @@ from test_market_fear_greed import approvals, captures
 from test_offense_pipeline import FearGreedHarness, probe_outputs
 from test_quality_dip_ruling_pipeline import live_like_template, team_outputs
 from test_swap_nomination_pipeline import HOLDINGS, NAV, ROOT
-from test_offense import with_drawdown_brakes
+from test_offense import with_drawdown_brakes, with_pre_offense_grid
 
 # 逐日 cutoff：第 1 天是 fixture 原本的週日早上（目標時段週一），之後每天收盤後（目標時段為下一個交易日）。
 C1, C2, C3, C4 = (
@@ -48,7 +48,7 @@ LOW_CASH = {"cash": "1000000", "settled_cash": "1000000", "nav": "9200000", "sha
 
 def live_template(glide=True):
     """正式設定原樣；只在記憶體內調 fixture 需要的 entry_reserve.max_entry_weight（glide=False 時另拿掉 cash_glide 當對照組）。"""
-    value = with_drawdown_brakes(live_like_template("v4"))  # 回撤煞車用改前快照的門檻（正式設定 2026-11-23 起碰不到）
+    value = with_pre_offense_grid(with_drawdown_brakes(live_like_template("v4")))  # 現金格點等用 2026-11-23 改進攻前的快照  # 回撤煞車用改前快照的門檻（正式設定 2026-11-23 起碰不到）
     value["position_sizing"]["agent_swap"]["entry_reserve"]["max_entry_weight"] = "0.2"
     if not glide:
         value["position_sizing"]["offense"].pop("cash_glide")
