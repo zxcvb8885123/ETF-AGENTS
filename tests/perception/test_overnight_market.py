@@ -15,7 +15,7 @@ from etf_agent.perception.overnight_market import (
     capture_overnight_market, evaluate, validate_pair,
 )
 from etf_agent.perception.overnight_market.contracts import (
-    NIGHT_SYMBOL, PACK_VERSION, PACK_VERSION_V11, PACK_VERSION_V12, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, seal,
+    NIGHT_SYMBOL, PACK_VERSION, PACK_VERSION_V11, PACK_VERSION_V12, PACK_VERSION_V13, SOURCES, SYMBOLS, SYMBOLS_V11, TAIFEX_QUOTE_URL, seal,
 )
 from etf_agent.perception.overnight_market.provider import chart_url, raw_text
 from etf_agent.perception.overnight_market.tools import session_end, window_start
@@ -642,3 +642,69 @@ class ReportLineTests(unittest.TestCase):
         value = pack(snapshot_id=base["snapshot_id"], cutoff=base["decision_cutoff"], rows=rows, source_approvals=approvals("unverified"))
         attached = attach_overnight_market(base, {"bundle": value, "result": evaluate(value)})
         self.assertIn("資料不足", _overnight_line(overnight_market_channel(attached)))
+
+
+def pair_v13(rows=None, cutoff=MONDAY_CUTOFF, version=PACK_VERSION_V13):
+    value = seal({"schema_version": version, "snapshot_id": SNAPSHOT_ID, "decision_cutoff": cutoff,
+                  "latest_trade_date": LATEST_TRADE_DATE, "captures": rows if rows is not None else v11_captures(),
+                  "source_approvals": approvals()})
+    return {"bundle": value, "result": evaluate(value)}
+
+
+# 期交所 MIS 實際的日期口徑：CDate 是夜盤「開盤那天」。週五 15:00 開、週六 05:00 收的夜盤，週一早上仍顯示 CDate=週五、CTime 045959
+# （2026-11-23 05:05 的真實抓取：CDate 20261120、CTime 045959；2026-11-20 05:05：CDate 20261119）。
+REAL_NIGHT_ROW = dict(NIGHT_ROWS[0], CDate="20260918", CTime="045959")
+
+
+class OvernightV13NightDateTests(unittest.TestCase):
+    def test_real_mis_row_is_available_and_ends_the_next_calendar_day(self):
+        result = pair_v13(v11_captures(night=night_capture([REAL_NIGHT_ROW])))["result"]
+        night = by_symbol(result)[NIGHT_SYMBOL]
+        self.assertEqual(result["schema_version"], "overnight-market-result-1.3")
+        self.assertEqual(result["signal_version"], "overnight-v1.3")
+        self.assertEqual(night["status"], "available")
+        self.assertEqual(night["session_end"], "2026-09-18T21:00:00+00:00")  # 週六 05:00 台北
+        self.assertEqual(night["as_of"], "2026-09-19")
+        self.assertEqual(result["night_session"]["change_pct"], "2.17")
+        self.assertEqual(result["night_session"]["quote_time"], "2026-09-18T20:59:59+00:00")
+        self.assertTrue(night["evidence_id"].startswith("overnight:TAIFEX_MIS:TXF_NIGHT:"))
+
+    def test_same_row_under_1_2_stays_unavailable_for_old_archives(self):
+        # 1.2 把 CDate 當收盤日（舊封存的原重建行為，逐位元不變）：結束時間早於台股收盤，判為不在視窗內。
+        result = pair_v13(v11_captures(night=night_capture([REAL_NIGHT_ROW])), version=PACK_VERSION_V12)["result"]
+        self.assertEqual(by_symbol(result)[NIGHT_SYMBOL]["status"], "unavailable")
+        self.assertIn("台指期夜盤結束時間不在本次視窗內", result["data_gaps"])
+
+    def test_unfinished_or_stale_night_is_still_refused(self):
+        for row in (dict(NIGHT_ROWS[0], CDate="20260921", CTime="205900"),  # 週一晚上的報價：晚於抓取、夜盤尚未結束
+                    dict(NIGHT_ROWS[0], CDate="20260918", CTime="080000"),  # 早上 05:05–15:00 不是夜盤報價
+                    dict(NIGHT_ROWS[0], CDate="20260921", CTime="045958"),  # 依 1.3 口徑在週二 05:00 才結束，晚於抓取
+                    dict(NIGHT_ROWS[0], CDate="20260917", CTime="045958"),  # 週五 05:00 結束，早於台股收盤
+                    dict(NIGHT_ROWS[0], CTime="090500")):                    # 日盤報價
+            result = pair_v13(v11_captures(night=night_capture([row])))["result"]
+            self.assertEqual(by_symbol(result)[NIGHT_SYMBOL]["status"], "unavailable", row)
+            self.assertIsNone(result["night_session"])
+            self.assertEqual(result["status"], "available")  # 夜盤失敗只降級
+
+    def test_last_trade_before_midnight_still_counts_after_session_end(self):
+        # 漲停鎖死時，成交量最大合約的最後成交可能在午夜前；夜盤仍在次一日 05:00 結束，抓取在那之後就算可用。
+        for ctime, quote_time in (("235900", "2026-09-18T15:59:00+00:00"), ("150100", "2026-09-18T07:01:00+00:00"),
+                                  ("045959", "2026-09-18T20:59:59+00:00")):
+            row = dict(REAL_NIGHT_ROW, CTime=ctime)
+            result = pair_v13(v11_captures(night=night_capture([row])))["result"]
+            night = by_symbol(result)[NIGHT_SYMBOL]
+            self.assertEqual(night["status"], "available", ctime)
+            self.assertEqual(night["session_end"], "2026-09-18T21:00:00+00:00")
+            self.assertEqual(night["as_of"], "2026-09-19")
+            self.assertEqual(result["night_session"]["quote_time"], quote_time)
+
+    def test_tampered_result_is_rejected_by_validate_pair(self):
+        pair = pair_v13(v11_captures(night=night_capture([REAL_NIGHT_ROW])))
+        pair["result"] = dict(pair["result"], night_session=None)
+        with self.assertRaises(OvernightMarketError):
+            validate_pair(pair, SNAPSHOT_ID, MONDAY_CUTOFF, LATEST_TRADE_DATE)
+
+    def test_service_builds_1_3_packs(self):
+        import inspect
+        from etf_agent.perception.overnight_market import service
+        self.assertIn("PACK_VERSION_V13", inspect.getsource(service.build_overnight_market_input))

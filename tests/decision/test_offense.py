@@ -34,8 +34,38 @@ OFFENSE = {
 }
 
 
+# 2026-11-23 使用者把正式設定的回撤煞車改成碰不到的門檻（drawdown_control 0.97／0.99、offense_off_drawdown 0.50）；
+# 測回撤煞車行為的測試改用改前快照的數值，其餘欄位仍是正式設定原樣。
+BRAKE_SNAPSHOT = ROOT / "config" / "policy_versions" / "2026-11-23-before-drawdown-brake-off.json"
+
+
+def with_drawdown_brakes(policy):
+    snapshot = json.loads(BRAKE_SNAPSHOT.read_text(encoding="utf-8"))
+    policy["drawdown_control"] = dict(snapshot["drawdown_control"])
+    policy["position_sizing"]["offense"]["offense_off_drawdown"] = snapshot["position_sizing"]["offense"]["offense_off_drawdown"]
+    return policy
+
+
+# 2026-11-23 晚間使用者把正式設定改成進攻（現金格點整組下移、換股 6 組、換入上限 0.09、流動性 0.25、高風險新進 3 檔、
+# offense 各級現金與曝險配對數）；依舊數值設計的情境測試改用改前快照的這些欄位，其餘仍是正式設定原樣。
+OFFENSE_GRID_SNAPSHOT = ROOT / "config" / "policy_versions" / "2026-11-23-before-offense-grid.json"
+
+
+def with_pre_offense_grid(policy):
+    snapshot = json.loads(OFFENSE_GRID_SNAPSHOT.read_text(encoding="utf-8"))["position_sizing"]
+    sizing = policy["position_sizing"]
+    sizing["cash_ratio_range"]["grid"] = copy.deepcopy(snapshot["cash_ratio_range"]["grid"])
+    sizing["offense"]["by_view"] = copy.deepcopy(snapshot["offense"]["by_view"])
+    sizing["agent_swap"]["max_swaps_per_run"] = snapshot["agent_swap"]["max_swaps_per_run"]
+    sizing["agent_swap"]["exposure"]["max_pairs_by_view"] = dict(snapshot["agent_swap"]["exposure"]["max_pairs_by_view"])
+    sizing["agent_swap"]["entry_reserve"]["max_entry_weight"] = snapshot["agent_swap"]["entry_reserve"]["max_entry_weight"]
+    sizing["liquidity_fit"] = dict(snapshot["liquidity_fit"])
+    sizing["high_risk_cap"] = copy.deepcopy(snapshot["high_risk_cap"])
+    return policy
+
+
 def live():
-    return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+    return with_pre_offense_grid(with_drawdown_brakes(json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))))
 
 
 def with_offense(mutate=None):

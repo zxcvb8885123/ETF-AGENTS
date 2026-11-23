@@ -70,6 +70,13 @@ SYMBOLS_V11 = dict(SYMBOLS, **{
 PACK_VERSION_V12 = "overnight-market-1.2"
 RESULT_VERSION_V12 = "overnight-market-result-1.2"
 SIGNAL_VERSION_V12 = "overnight-v1.2"
+# overnight-market-1.3：同 1.2，只修正台指期夜盤的日期口徑。期交所 MIS 的 ``CDate`` 是該夜盤「開盤那天」的日期
+# （例如週四晚上 15:00 開、週五 05:00 收的夜盤，CDate 是週四；週五晚上的夜盤到週一早上仍顯示週五），
+# 1.2 把它當成收盤日，結束時間永遠早於台股收盤、每天都判為「不在本次視窗內」。1.3 改以 CDate 次一日曆日 05:00 為結束時間。
+# 1.2 以前的資料包維持原重建行為（舊封存逐位元相同）。
+PACK_VERSION_V13 = "overnight-market-1.3"
+RESULT_VERSION_V13 = "overnight-market-result-1.3"
+SIGNAL_VERSION_V13 = "overnight-v1.3"
 LOOKBACK_CALENDAR_DAYS_V12 = 420
 PERCENTILE_WINDOW_V12 = 250
 NIGHT_SYMBOL = "TXF_NIGHT"

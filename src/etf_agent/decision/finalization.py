@@ -44,6 +44,7 @@ from .exposure_facts import EXPOSURE_FACTS_KEY, exposure_view_gate, validate_exp
 from .reentry_cooldown import recent_exit_symbols
 from .release_order import RELEASE_ORDER_KEY, validate_team_release_order
 from .held_weight_facts import HELD_WEIGHT_FACTS_KEY, validate_held_weight_facts
+from .night_rally import night_rally_override_gate
 from .sizing import (
     cash_ratio_gate, cash_ratio_selection_check, drawdown_derisk_v5, held_weight_facts_gate, reentry_cooldown_agent_only,
     reentry_hint_symbols, validate_cash_stance,
@@ -654,6 +655,7 @@ class DecisionFinalizer:
             exposure_view_gate=view_gate,
             exposure_facts=team.get(EXPOSURE_FACTS_KEY) if view_gate is not None else None,
             **({"offense_gate": offense_policy_gate, "offense_facts": team.get(OFFENSE_FACTS_KEY)} if offense_policy_gate is not None else {}),
+            night_rally_gate=night_rally_override_gate(sizing),
         )
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]

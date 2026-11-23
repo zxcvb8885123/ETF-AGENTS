@@ -31,7 +31,7 @@
 - bundle 帶 `evidence_policy: typed_evidence_v1`（新 bundle 預設）時：
   - claim 填 `claim_kind`、分析師 finding 填 `finding_kind`（price／financial／revenue／material_event／news）；程式依來源判定證據種類並核對對映。
   - 至少一個證據必須屬於該股票；市場層級與帳戶證據只能作補充，市場層級證據不能單獨撐起個股主張。
-  - 風險 Agent 現金姿態至少引用一個市場層級證據、全市場情緒 negative 時不得 `aggressive`；風險 Agent 的 brief 不附交易 Agent 的意圖與信心統計。
+  - 風險 Agent 現金姿態至少引用一個市場層級證據、全市場情緒 negative 時不得 `aggressive`（例外：`position_sizing.night_rally_override` v1 開啟時，同一決策輸入的台指期夜盤 `TXF_NIGHT` 可用、`change_pct` 不低於人填 `min_night_change_pct`，且姿態引用該夜盤 `evidence_id`，即時驗證與 Finalizer 同用 `decision/night_rally.py` 重算後放行；沒有欄位時逐位元不變）；風險 Agent 的 brief 不附交易 Agent 的意圖與信心統計。
   - 驗證失敗的重試回饋用中性措辭，並列「降級」與「補依據」兩種修法；重試差異記在 `agent_calls.revision_diff`。
   - 沒有此欄位的舊 bundle／舊 run 維持原驗證。
 - 基本面期別逐檔（`fundamental_period_policy`）：`team_inputs` 2.6 = 2.5 加程式計算的 `fundamental_metrics`，Finalizer 以 `validate_fundamental_metrics` 整份重算比對。

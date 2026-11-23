@@ -368,7 +368,10 @@ class Scenario1111Tests(unittest.TestCase):
         load = lambda name: json.loads((ARCHIVE / ("%s.json" % name)).read_text(encoding="utf-8"))
         cls.bundle, cls.old, cls.intent, cls.debate, cls.team = (
             load("decision_input"), load("policy"), load("intent"), load("debate"), load("team_inputs"))
-        cls.template = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+        from test_offense import with_pre_offense_grid
+
+        # 封存的 11-11 現金格點與 2026-11-23 晚間改進攻後的 offense 各級現金不相容；offense 等欄位改用改進攻前的快照。
+        cls.template = with_pre_offense_grid(json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8")))
         sizing = cls.template.get("position_sizing", {})
         quality = (sizing.get("agent_swap") or {}).get("quality_dip") or {}
         if quality.get("version") != "v4" or "offense" not in sizing:

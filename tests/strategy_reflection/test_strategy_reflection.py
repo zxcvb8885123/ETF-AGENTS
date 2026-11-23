@@ -146,10 +146,13 @@ class KnobTests(Fixture):
         """正式樣板已啟用：反思員必須看得到這兩個旋鈕才可能依校準報告調整。"""
         values = current_knobs(self.template)
         self.assertEqual(values["volatility_exponent"], "0")
-        self.assertEqual(values["rotation.max_swaps_per_run"], "7")
+        self.assertEqual(values["rotation.max_swaps_per_run"], "10")
 
     def test_drawdown_can_only_tighten(self):
-        self.assertEqual(check_proposal("drawdown_control.neutral_at", "0.04", self.template, self.rules)["proposed"], "0.04")
+        # 正式設定 2026-11-23 起回撤門檻碰不到（0.97）；這裡用改前快照的 0.05 測「只能收緊、單次一步」。
+        snapshot = json.loads((ROOT / "config" / "policy_versions" / "2026-11-23-before-drawdown-brake-off.json").read_text(encoding="utf-8"))
+        template = dict(self.template, drawdown_control=snapshot["drawdown_control"])
+        self.assertEqual(check_proposal("drawdown_control.neutral_at", "0.04", template, self.rules)["proposed"], "0.04")
 
     def test_ordering_violation_is_rejected_by_policy_rules(self):
         with self.assertRaises(ReflectionError):

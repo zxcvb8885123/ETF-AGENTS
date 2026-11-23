@@ -48,6 +48,20 @@ TYPED_STANCE_PROMPT = (
 )
 
 
+NIGHT_RALLY_PROMPT = (
+    "摘要含 night_rally_override：全市場情緒 negative 時，若台指期夜盤漲幅不低於 min_night_change_pct，"
+    "且 evidence_ids 引用 night_evidence_id，程式放行 aggressive；是否選仍由你判斷，見 cash-stance.md「night_rally_override」節。"
+)
+
+
+NIGHT_RALLY_V2_PROMPT = (
+    "摘要含 night_rally_override（v2，人設規則）：aggressive_required=true 時現金姿態必須是 aggressive，"
+    "evidence_ids 必須引用 night_evidence_id，曝險等級（若摘要要求）不要選 keep_defensive；本條優先於上方「全市場情緒 negative 時姿態為 neutral 或 defensive」。"
+    "aggressive_required=false 時同 v1。"
+    "見 cash-stance.md「night_rally_override」節。"
+)
+
+
 SOFT_FLOOR_PROMPT = (
     "摘要含 high_conviction_cash_floor_by_stance（各姿態的高信心現金下限），把該姿態的實際現金落點寫進 rationale，"
     "見 cash-stance.md 對應節。"
@@ -293,6 +307,7 @@ class RiskStagesMixin:
         offense_facts: Optional[Mapping[str, object]] = None,
         cash_stance_brief_gate: Optional[Mapping[str, object]] = None,
         benchmark_facts: Optional[Mapping[str, object]] = None,
+        night_rally_gate: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
         """風險 Agent 依市場層級摘要給現金姿態與持股廣度；分布與計數由程式統計，回撤下限由程式強制。
 
@@ -414,6 +429,10 @@ class RiskStagesMixin:
                     "citable_evidence_ids": sorted(set(price_evidence) | context.market_evidence_ids)} if typed else {}),
             }
         # cash_stance_brief（版本閘門）：公司事件改摘要、必讀欄位重排；沒有閘門時簡報與舊版逐鍵相同。
+        if night_rally_gate is not None:
+            # night_rally_override（版本閘門）：說明夜盤大漲時的放行條件（背景、不可引用）；沒有閘門時簡報逐鍵不變。
+            from etf_agent.decision.night_rally import night_rally_brief
+            brief_body["night_rally_override"] = night_rally_brief(night_rally_gate, bundle)
         if cash_stance_brief_gate is not None:
             brief_body = reorder_brief(brief_body, company_events_summary(analyst_reports["event"].get("items", [])))
         brief_path = self.save_brief("brief_cash_stance", brief_body)
@@ -426,6 +445,7 @@ class RiskStagesMixin:
                 recency_gate=cash_stance_recency, turn_facts_gate=cash_stance_turn_facts,
                 exposure_view_gate=exposure_view_gate, exposure_facts=exposure_facts,
                 **({"offense_gate": offense_gate, "offense_facts": offense_facts} if offense_gate is not None else {}),
+                night_rally_gate=night_rally_gate,
             )
             if breadth_targets and isinstance(stance, Mapping) and "breadth" not in stance:
                 errors.append("cash_stance.breadth 必須是 %s" % "／".join(POSITION_BREADTHS))
@@ -455,6 +475,8 @@ class RiskStagesMixin:
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
+            + ((NIGHT_RALLY_V2_PROMPT if night_rally_gate.get("version") == "v2" else NIGHT_RALLY_PROMPT)
+               if night_rally_gate is not None else "")
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
             + (
                 (TURN_FACTS_PROMPT_AGENT_LED if agent_led else TURN_FACTS_PROMPT)
