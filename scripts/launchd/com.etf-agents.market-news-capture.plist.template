@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- 每天（含週末）每 2 小時（01:30、03:30…23:30，主機時區 Asia/Taipei）抓全市場新聞 RSS（中央社、自由時報、Yahoo股市）。RSS 只留最新幾十則（Yahoo 只約 4～5 小時），週末沒人抓就會永久掉出；每次都是新的不可變抓取，只存資料，不碰決策。與其他資料抓取共用資料鎖。 -->
+<!-- 每天（含週末）每 2 小時（01:30、03:30…23:30，另加 07:10 供 07:20 決策讀到最新新聞，主機時區 Asia/Taipei）抓全市場新聞 RSS（中央社、自由時報、Yahoo股市）。RSS 只留最新幾十則（Yahoo 只約 4～5 小時），週末沒人抓就會永久掉出；每次都是新的不可變抓取，只存資料，不碰決策。與其他資料抓取共用資料鎖。 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -30,6 +30,7 @@
     <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>30</integer></dict>
     <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
     <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>10</integer></dict>
     <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
     <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
     <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>30</integer></dict>
