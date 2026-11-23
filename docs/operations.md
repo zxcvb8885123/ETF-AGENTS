@@ -8,19 +8,19 @@
 
 | 時間 | 做什麼 | 排程名稱 |
 | --- | --- | --- |
-| 平日 20:00、06:00 | 更新行情、月營收、重大訊息、財報等資料；06:00 先抓好 FinMind 財報，07:20 決策只重抓輕量的事件與新聞資料 | `com.etf-agents.data` |
+| 平日 20:00、06:00 | 更新行情、月營收、重大訊息、財報等資料；06:00 先抓好 FinMind 財報，07:00 決策只重抓輕量的事件與新聞資料 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 去年同期補抓：官方最新期別尚無去年同期文件的股票才逐檔呼叫 FinMind，通過核對才寫入；`PRIOR_REPAIR=0` 關閉，`PRIOR_REPAIR_MAX`（預設 60）為每輪檔數上限；摘要與失敗原因在 `artifacts/data/fundamental_prior_repair_latest.json`，失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 產業比較資料 C1：收集 t187ap14（上市、上櫃）、與官方損益表逐檔核對；只收集與稽核、不進決策；`INDUSTRY_PEER=0` 關閉；摘要在 `artifacts/data/industry_peer_latest.json`，部分來源失敗只讓資料狀態標為部分完成 | `com.etf-agents.data` |
 | 平日 20:00、06:00（同一資料排程內） | 估值資料 V1：證交所 `BWIBBU_ALL` 與 FinMind `TaiwanStockPER` 逐檔核對、不可變保存；只收集與稽核、不進決策；`VALUATION_COLLECT=0` 關閉；失敗只在日誌留警告，不影響資料狀態與決策；需 `FINMIND_TOKEN`，沒有時只保存官方原始回應；run 在 `artifacts/valuation_collection/` | `com.etf-agents.data` |
 | 每天 20:40（含週六日） | 抓個股新聞 | `com.etf-agents.finmind-news` |
 | 每天 05:05 | 抓隔夜市場背景（美股、日韓、VIX、台指期夜盤） | `com.etf-agents.overnight-capture` |
-| 每天每 2 小時（01:30～23:30），另加 07:10 | 抓全市場新聞 RSS（含週末；Yahoo 只留 4～5 小時；07:10 那次讓 07:20 決策讀到早上的新聞） | `com.etf-agents.market-news-capture` |
-| 週一至週五 07:20 | 做當天的決策與 D-Plan（2026-11-23 起只跑早上這次，晚上 21:00 備案已停用） | `com.etf-agents.daily` |
-| 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證；07:20 重做還在跑時回報「尚在執行」 | `com.etf-agents.dplan-watchdog` |
+| 每天每 2 小時（01:30～23:30），另加 06:50 | 抓全市場新聞 RSS（含週末；Yahoo 只留 4～5 小時；06:50 那次讓 07:00 決策讀到早上的新聞） | `com.etf-agents.market-news-capture` |
+| 週一至週五 07:00 | 做當天的決策與 D-Plan（2026-11-23 起只跑早上這次，晚上 21:00 備案已停用） | `com.etf-agents.daily` |
+| 週一至週五 08:00 | 看門狗：檢查今天該交的 D-Plan 在不在、有沒有通過驗證；07:00 重做還在跑時回報「尚在執行」 | `com.etf-agents.dplan-watchdog` |
 | 週五 19:30 | 策略反思週報 | `com.etf-agents.reflection` |
 | 週六 10:00 | 套用週報裡通過驗證的策略調整 | `com.etf-agents.reflection-apply` |
 
-交件期限是每個交易日 08:55。每天只在早上 07:20 做一次決策；早上失敗時沒有晚上的備案可還原，程式在比賽前提滿足時產生「持股全部續抱、無委託」的備援 D-Plan（不自動上傳）。要恢復晚上備案，把 21:00 排程加回 `com.etf-agents.daily`。
+交件期限是每個交易日 08:55。每天只在早上 07:00 做一次決策；早上失敗時沒有晚上的備案可還原，程式在比賽前提滿足時產生「持股全部續抱、無委託」的備援 D-Plan（不自動上傳）。要恢復晚上備案，把 21:00 排程加回 `com.etf-agents.daily`。
 
 同一時間只會有一個每日流程在跑；抓資料另有一把鎖，等不到鎖（預設 30 分鐘）就停止並通知。
 
@@ -32,8 +32,8 @@
 
 ## 每天你要做的事
 
-1. **晚上 19:00 後、隔天 07:20 前：下載資料包。** 主辦方約 19:00 產生隔天的資料包（DataPack，內含現金、持股、前日委託結果），到參賽者後台「文件繳交」頁下載，放進 `var/datapack/`（檔名不限，不進 git）。沒放，07:20 對帳過不了，就不會有 D-Plan。
-2. **早上 08:00 後：看結果。** 看門狗（08:00）會跳本機通知；通知寫 `dplan_pending` 代表 07:20 重做還沒跑完，請自己看最後幾行：
+1. **晚上 19:00 後、隔天 07:00 前：下載資料包。** 主辦方約 19:00 產生隔天的資料包（DataPack，內含現金、持股、前日委託結果），到參賽者後台「文件繳交」頁下載，放進 `var/datapack/`（檔名不限，不進 git）。沒放，07:00 對帳過不了，就不會有 D-Plan。
+2. **早上 08:00 後：看結果。** 看門狗（08:00）會跳本機通知；通知寫 `dplan_pending` 代表 07:00 重做還沒跑完，請自己看最後幾行：
 
    ```bash
    tail -n 5 var/logs/daily_status.log
@@ -47,7 +47,7 @@
 
    這個指令會檢查同隊同日、賣出沒超過持股、每檔持股都有交代。系統只產生候選檔，**絕不自動上傳**。
 
-4. **如果你先手動跑並上傳了，07:20 又重做成功**，主檔會換成新的一份，請重新上傳，否則帳本記的是新決策、交出去的是舊的，隔天對帳會對不上。
+4. **如果你先手動跑並上傳了，07:00 又重做成功**，主檔會換成新的一份，請重新上傳，否則帳本記的是新決策、交出去的是舊的，隔天對帳會對不上。
 
 5. **每個決策日：看換股影子與意圖落地率（唯讀、不花 Agent 用量）。** 兩個報告都標 `evidence_grade: replay_reference_only`，只說明「當時發生了什麼」，不是績效，也不設目標：
 
@@ -72,7 +72,7 @@
 2026-11-03T07:31:02+08:00	run_type=morning	status=approved	trade_date=2026-11-03	run_id=daily-20261103-070000	detail=<D-Plan 路徑>
 ```
 
-- `run_type`：`morning` 是 07:20 重做、`evening` 是晚間手動 run（21:00 排程已停用）、`watchdog` 是 08:00 看門狗。
+- `run_type`：`morning` 是 07:00 重做、`evening` 是晚間手動 run（21:00 排程已停用）、`watchdog` 是 08:00 看門狗。
 - `status` 的意思：
 
 | status | 意思 | 你要做 |
@@ -94,7 +94,7 @@ osascript -e 'display notification "測試" with title "ETF Agent"'
 
 ### 看門狗的結果
 
-`scripts/check_dplan_ready.py` 只讀檔，不跑 Agent、不上傳、不改任何檔案。狀態不是 `dplan_ready` 時發通知。平日排 08:00 一次：07:20 重做慢的日子會跑到 08:00 之後，此時昨晚的主檔還在，看門狗先探測每日流程鎖 `artifacts/daily/.lock` 是否仍被持有（鎖檔跑完不會刪，所以看的是有沒有人握著鎖，不是檔案在不在），仍被持有就回報 `dplan_pending`，不把昨晚那份報成可交；此時沒有下一次檢查，請自己看 `daily_status.log`。
+`scripts/check_dplan_ready.py` 只讀檔，不跑 Agent、不上傳、不改任何檔案。狀態不是 `dplan_ready` 時發通知。平日排 08:00 一次：07:00 重做慢的日子會跑到 08:00 之後，此時昨晚的主檔還在，看門狗先探測每日流程鎖 `artifacts/daily/.lock` 是否仍被持有（鎖檔跑完不會刪，所以看的是有沒有人握著鎖，不是檔案在不在），仍被持有就回報 `dplan_pending`，不把昨晚那份報成可交；此時沒有下一次檢查，請自己看 `daily_status.log`。
 
 | 狀態 | 意思 | 結束碼 |
 | --- | --- | --- |
@@ -119,7 +119,7 @@ osascript -e 'display notification "測試" with title "ETF Agent"'
 
 ### 早上重做失敗
 
-07:20 重做沒產生新的 D-Plan（失敗、被擋、決策被拒，或跑完已過 08:55），程式會自動把帳本、昨晚的決策與 Snapshot 還原成重做前的狀態，通知會寫「已還原重跑前的備案決策」。重做建立的帳本狀態移到 `artifacts/ledger/<account_id>/rolled_back/`，不刪除。
+07:00 重做沒產生新的 D-Plan（失敗、被擋、決策被拒，或跑完已過 08:55），程式會自動把帳本、昨晚的決策與 Snapshot 還原成重做前的狀態，通知會寫「已還原重跑前的備案決策」。重做建立的帳本狀態移到 `artifacts/ledger/<account_id>/rolled_back/`，不刪除。
 
 1. **上傳原本的 D-Plan 主檔**，它和帳本對得上。`artifacts/latest/latest.md` 仍是重做那次的報告或失敗診斷，上傳時以 D-Plan 主檔為準。
 2. 該 run 不能 `--resume`。還想重做的話，08:30 前執行 `./start.sh run --force`（整條重跑約 20 分鐘）。
@@ -212,7 +212,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 
 **重跑規則（2026-11-17 使用者決定，省用量）**：每次另開新 run 約多花 $10～12 的估計用量（技術、基本面、多空、交易全部重做；事件與新聞標註會沿用），續跑則只補沒完成的階段。
 
-1. 每天只靠排程的一次：07:20 用隔夜事件與新聞做決策。除此之外不手動另開新 run。
+1. 每天只靠排程的一次：07:00 用隔夜事件與新聞做決策。除此之外不手動另開新 run。
 2. run 失敗時先看原因（`pipeline.json` 的 `final_status`、`var/logs/daily-<日期>.log`）。資料問題沒修好就重跑，只會再失敗一次。
 3. 能續跑就續跑：`./start.sh run --resume`（不帶編號＝今天最近一個未完成的 run）。只有續跑也失敗，或該 run 不能續跑（已還原成重做前狀態等，見參數說明）時，才用 `--force` 另開新 run。
 4. 已經有 approved 的決策、之後沒有新的重大資訊時，不再手動重跑一次「確認」。
@@ -241,7 +241,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 
 | 樣板 | 用途 | 必要 |
 | --- | --- | --- |
-| `daily` | 每日決策（平日 07:20） | 是 |
+| `daily` | 每日決策（平日 07:00） | 是 |
 | `data` | 20:00、06:00 資料更新 | 是 |
 | `finmind-news` | 20:40 個股新聞 | 建議 |
 | `overnight-capture` | 05:05 隔夜市場背景 | 建議 |
