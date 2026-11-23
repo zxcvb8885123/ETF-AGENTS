@@ -234,3 +234,68 @@ class MarketNewsStageTests(unittest.TestCase):
 
         with self.assertRaisesRegex(DailyPipelineError, "不存在|覆蓋"):
             build_daily_market_news(FakePipeline(self.root, unknown), self.snapshot, self.captures_root, self.database)
+
+
+class MarketNewsBatchLabelTests(unittest.TestCase):
+    """待標項目超過 LABEL_BATCH_SIZE 時分批標註，每批仍須全量覆蓋；最後一個任務只寫 synthesis。"""
+
+    def setUp(self):
+        from unittest.mock import patch
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.captures_root = self.root / "market_news"
+        self.database = self.root / "news.db"
+        self.snapshot = {"snapshot_id": "snap", "decision_cutoff": "2026-09-29T10:00:00+00:00"}
+        store = ImmutableRunStore(self.captures_root, schema_version="market-news-capture-1.0")
+        store.save("market-news-test", {"captures": {"items": pack()["captures"]}, "prepared": {"items": []}})
+        batch_size = patch("etf_agent.automation.market_news_stage.LABEL_BATCH_SIZE", 2)
+        batch_size.start()
+        self.addCleanup(batch_size.stop)
+        self.labeled = []
+
+    def answer(self, items):
+        if items:
+            self.labeled.append([row["item_id"] for row in items])
+            return {"labels": [{"item_id": i["item_id"], "relevance": "market", "stance": "positive", "reason": "測試判讀"} for i in items]}
+        return {"labels": [], "synthesis": {"outlook": "positive",
+                                            "findings": [{"text": "測試市場看法", "evidence_ids": [self.labeled[0][0]]}]}}
+
+    def test_many_items_are_labeled_in_batches_then_synthesized_once(self):
+        pipeline = FakePipeline(self.root, self.answer)
+        pair = build_daily_market_news(pipeline, self.snapshot, self.captures_root, self.database)
+        names = [task.name for task in pipeline.tasks]
+        self.assertEqual(len(names), 4)  # 6 則、每批 2 則：3 批標註＋1 個 synthesis
+        self.assertTrue(all("_batch0%d" % index in names[index] for index in range(3)))
+        self.assertNotIn("_batch", names[3])
+        self.assertEqual(sorted(sum(self.labeled, [])), sorted(row["item_id"] for row in pair["bundle"]["labels"]))
+        self.assertEqual(len(pair["bundle"]["labels"]), 6)
+        self.assertEqual(pair["result"]["item_count"], 6)
+        brief = json.loads((self.root / next(n for n in pipeline.saved if n.startswith("brief_market_news_labels_") and "_batch" not in n).__add__(".json")).read_text(encoding="utf-8"))
+        self.assertEqual(brief["items"], [])
+        self.assertEqual(len(brief["already_labeled_market_items"]), 6)
+        self.assertNotIn("market_news_label_reuse", pipeline.saved)  # 沒有沿用前次標籤
+
+    def test_a_batch_that_skips_an_item_is_rejected(self):
+        def lazy(items):
+            answer = self.answer(items)
+            if items:
+                answer["labels"] = answer["labels"][:-1]
+            return answer
+
+        with self.assertRaisesRegex(DailyPipelineError, "漏標"):
+            build_daily_market_news(FakePipeline(self.root, lazy), self.snapshot, self.captures_root, self.database)
+
+    def test_a_batch_that_labels_another_batch_item_is_rejected(self):
+        def stray(items):
+            answer = self.answer(items)
+            if items:
+                answer["labels"].append(dict(answer["labels"][0], item_id="market-news:別批"))
+            return answer
+
+        with self.assertRaisesRegex(DailyPipelineError, "不在本批"):
+            build_daily_market_news(FakePipeline(self.root, stray), self.snapshot, self.captures_root, self.database)
+
+    def test_an_empty_batch_answer_is_rejected(self):
+        with self.assertRaisesRegex(DailyPipelineError, "漏標"):
+            build_daily_market_news(FakePipeline(self.root, lambda items: {"labels": []}), self.snapshot, self.captures_root, self.database)
