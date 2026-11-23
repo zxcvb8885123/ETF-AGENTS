@@ -34,8 +34,20 @@ OFFENSE = {
 }
 
 
+# 2026-11-23 使用者把正式設定的回撤煞車改成碰不到的門檻（drawdown_control 0.97／0.99、offense_off_drawdown 0.50）；
+# 測回撤煞車行為的測試改用改前快照的數值，其餘欄位仍是正式設定原樣。
+BRAKE_SNAPSHOT = ROOT / "config" / "policy_versions" / "2026-11-23-before-drawdown-brake-off.json"
+
+
+def with_drawdown_brakes(policy):
+    snapshot = json.loads(BRAKE_SNAPSHOT.read_text(encoding="utf-8"))
+    policy["drawdown_control"] = dict(snapshot["drawdown_control"])
+    policy["position_sizing"]["offense"]["offense_off_drawdown"] = snapshot["position_sizing"]["offense"]["offense_off_drawdown"]
+    return policy
+
+
 def live():
-    return json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
+    return with_drawdown_brakes(json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8")))
 
 
 def with_offense(mutate=None):

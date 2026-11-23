@@ -928,7 +928,7 @@ class ProductionTemplateTests(unittest.TestCase):
                 "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 3, "max_size": "large", "beta_stop": "0.55"},
                 "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 3, "max_size": "large", "beta_stop": "0.70"},
             },
-            "offense_off_drawdown": "0.12",
+            "offense_off_drawdown": "0.50",  # 2026-11-23 由 0.12 改（回撤煞車實質關閉，回滾樣板 2026-11-23-before-drawdown-brake-off.json）
             "thesis_size_cap": {"version": "v1"},  # 2026-11-11 offense-ext-1（回滾樣板 2026-11-11-before-offense-extensions.json）
             "cash_glide": {"version": "v1"},
         })

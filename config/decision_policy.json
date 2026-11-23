@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-22-high-risk-cap-enforce-1",
-  "available_at": "2026-11-22T18:30:00+08:00",
+  "policy_id": "strategy-2026-11-23-drawdown-brake-off-1",
+  "available_at": "2026-11-23T22:25:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -13,10 +13,10 @@
   "liquidity_fill_rate": "1",
   "max_revisions": 3,
   "drawdown_control": {
-    "neutral_at": "0.05",
-    "defensive_at": "0.15",
-    "release_neutral_below": "0.03",
-    "release_defensive_below": "0.11"
+    "neutral_at": "0.97",
+    "defensive_at": "0.99",
+    "release_neutral_below": "0.96",
+    "release_defensive_below": "0.98"
   },
   "position_review": {
     "version": "v2",
@@ -70,7 +70,7 @@
     "exposure_view": {"version": "v2"},
     "benchmark_facts": {"version": "v1", "max_holdings_age_days": 60},
     "cash_stance_brief": {"version": "v2", "company_events": "high_only", "offense_reference": "omit"},
-    "offense": {"version": "v1", "by_view": {"probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 2, "max_size": "medium", "beta_stop": "0.40"}, "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 3, "max_size": "large", "beta_stop": "0.55"}, "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 3, "max_size": "large", "beta_stop": "0.70"}}, "offense_off_drawdown": "0.12", "thesis_size_cap": {"version": "v1"}, "cash_glide": {"version": "v1"}},
+    "offense": {"version": "v1", "by_view": {"probe": {"defensive_cash_buffer": "0.10", "max_exposure_pairs": 2, "max_size": "medium", "beta_stop": "0.40"}, "start_rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 3, "max_size": "large", "beta_stop": "0.55"}, "rebuild": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 3, "max_size": "large", "beta_stop": "0.70"}}, "offense_off_drawdown": "0.50", "thesis_size_cap": {"version": "v1"}, "cash_glide": {"version": "v1"}},
     "quality_dip_facts": {"version": "v1"},
     "quality_dip_assessment": {"version": "v1"},
     "event_direction": {"version": "v1"},
