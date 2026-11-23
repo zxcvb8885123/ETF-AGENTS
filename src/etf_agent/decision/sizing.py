@@ -612,6 +612,7 @@ def validate_cash_stance(
 
     ``night_rally_gate`` 是 position_sizing.night_rally_override 閘門物件；為 None 時護欄與舊版逐位元相同。
     有閘門時，台指期夜盤漲幅達人填門檻且姿態引用夜盤證據，全市場情緒 negative 也放行 aggressive（night_rally.py）。
+    v2 另要求：夜盤可用且漲幅達門檻時姿態必須 aggressive 並引用夜盤證據（未照做即報錯，不改寫姿態）。
 
     ``exposure_view_gate`` 是 exposure_view 閘門物件；為 None 時欄位白名單與舊版完全相同（出現 exposure_view 即拒絕）。
     有閘門時必須是 typed_evidence_v1，``exposure_view`` 必填、非 keep_defensive 須引用市場層級證據，理由不得寫出背景識別碼
@@ -717,6 +718,9 @@ def validate_cash_stance(
     if night_rally_gate is not None and stance.get("level") == "aggressive":
         from .night_rally import night_rally_allows_aggressive
         night_rally_ok = night_rally_allows_aggressive(night_rally_gate, context.bundle, evidence)
+    if night_rally_gate is not None and night_rally_gate.get("version") == "v2":
+        from .night_rally import validate_night_rally_requirement
+        validate_night_rally_requirement(night_rally_gate, context.bundle, stance, prefix, errors)
     if (stance.get("level") == "aggressive" and sentiment.get("status") == "available"
             and sentiment.get("outlook") == "negative" and not night_rally_ok):
         errors.append(

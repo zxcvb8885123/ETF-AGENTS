@@ -48,9 +48,9 @@ def _overnight_with_night(directory, world, change="9"):
     return root, approval_path
 
 
-def _with_gate(world):
+def _with_gate(world, version="v1"):
     template = json.loads(world.paths["template"].read_text(encoding="utf-8"))
-    template["position_sizing"]["night_rally_override"] = dict(GATE)
+    template["position_sizing"]["night_rally_override"] = dict(GATE, version=version)
     world.paths["template"].write_text(json.dumps(template, ensure_ascii=False), encoding="utf-8")
 
 
@@ -60,10 +60,10 @@ class NightRallyPipelineTests(unittest.TestCase):
         self.addCleanup(self._dir.cleanup)
         self.directory = self._dir.name
 
-    def world(self, gate=True, change="9"):
+    def world(self, gate=True, change="9", version="v1"):
         world = PipelineWorld(Path(self.directory), approved_status=True)
         if gate:
-            _with_gate(world)
+            _with_gate(world, version)
         overnight = _overnight_with_night(self.directory, world, change)
         fear_greed = _negative_fear_greed(self.directory, world)
         return world, overnight, fear_greed
@@ -121,6 +121,61 @@ class NightRallyPipelineTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
         self.assertNotIn("night_rally_override", brief)
+
+
+class NightRallyV2Tests(NightRallyPipelineTests):
+    """v2：夜盤漲幅達門檻時「要求」aggressive 並引用夜盤證據；未達門檻或夜盤不可用時同 v1、不強制。"""
+
+    def test_neutral_is_refused_when_the_night_rally_reaches_the_threshold(self):
+        world, overnight, fear_greed = self.world(version="v2")
+        self.night_id(world, overnight)
+        result = world.run(FakeRunner(team_outputs(cash_stance=[dict(STANCE)] * 4)), fear_greed=fear_greed, overnight=overnight)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("night_rally_override v2", " ".join(result.errors))
+
+    def test_aggressive_without_citing_the_night_is_refused(self):
+        world, overnight, fear_greed = self.world(version="v2")
+        self.night_id(world, overnight)
+        stance = dict(STANCE, level="aggressive")
+        result = world.run(FakeRunner(team_outputs(cash_stance=[stance] * 4)), fear_greed=fear_greed, overnight=overnight)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("night_rally_override v2", " ".join(result.errors))
+
+    def test_revision_to_aggressive_passes_and_the_brief_says_required(self):
+        world, overnight, fear_greed = self.world(version="v2")
+        night = self.night_id(world, overnight)
+        aggressive = dict(STANCE, level="aggressive", rationale="夜盤大漲達人設門檻，依規則改為進攻。",
+                          evidence_ids=[night, MARKET_REGIME_EVIDENCE_ID])
+        result = world.run(FakeRunner(team_outputs(cash_stance=[dict(STANCE), aggressive])), fear_greed=fear_greed, overnight=overnight)
+        self.assertEqual(result.status, "completed", result.errors)
+        brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
+        self.assertEqual(brief["night_rally_override"]["version"], "v2")
+        self.assertTrue(brief["night_rally_override"]["aggressive_required"])
+        team = json.loads((world.run_dir / "team_inputs.json").read_text(encoding="utf-8"))
+        self.assertEqual(team["cash_stance"]["level"], "aggressive")
+        DecisionRepository(world.repository).verify("decision-fixture")
+
+    def test_below_threshold_does_not_force_aggressive(self):
+        world, overnight, fear_greed = self.world(change="3", version="v2")
+        self.night_id(world, overnight)
+        result = world.run(FakeRunner(team_outputs(cash_stance=[dict(STANCE)])), fear_greed=fear_greed, overnight=overnight)
+        self.assertEqual(result.status, "completed", result.errors)
+        brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
+        self.assertFalse(brief["night_rally_override"]["aggressive_required"])
+
+
+class NightRallyGateShapeTests(unittest.TestCase):
+    def test_v1_and_v2_are_accepted_and_other_versions_refused(self):
+        from etf_agent.decision.night_rally import validate_night_rally_override_gate
+        for version, ok in (("v1", True), ("v2", True), ("v3", False)):
+            errors = []
+            validate_night_rally_override_gate({"night_rally_override": dict(GATE, version=version)}, errors)
+            self.assertEqual(errors == [], ok, (version, errors))
+
+    def test_unavailable_night_never_forces(self):
+        from etf_agent.decision.night_rally import night_rally_required_evidence
+        self.assertIsNone(night_rally_required_evidence(dict(GATE, version="v2"), {}))
+        self.assertIsNone(night_rally_required_evidence(dict(GATE, version="v1"), {}))
 
 
 if __name__ == "__main__":

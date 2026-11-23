@@ -54,6 +54,14 @@ NIGHT_RALLY_PROMPT = (
 )
 
 
+NIGHT_RALLY_V2_PROMPT = (
+    "摘要含 night_rally_override（v2，人設規則）：aggressive_required=true 時現金姿態必須是 aggressive，"
+    "evidence_ids 必須引用 night_evidence_id，曝險等級（若摘要要求）不要選 keep_defensive；本條優先於上方「全市場情緒 negative 時姿態為 neutral 或 defensive」。"
+    "aggressive_required=false 時同 v1。"
+    "見 cash-stance.md「night_rally_override」節。"
+)
+
+
 SOFT_FLOOR_PROMPT = (
     "摘要含 high_conviction_cash_floor_by_stance（各姿態的高信心現金下限），把該姿態的實際現金落點寫進 rationale，"
     "見 cash-stance.md 對應節。"
@@ -467,7 +475,8 @@ class RiskStagesMixin:
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
                TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
-            + (NIGHT_RALLY_PROMPT if night_rally_gate is not None else "")
+            + ((NIGHT_RALLY_V2_PROMPT if night_rally_gate.get("version") == "v2" else NIGHT_RALLY_PROMPT)
+               if night_rally_gate is not None else "")
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
             + (
                 (TURN_FACTS_PROMPT_AGENT_LED if agent_led else TURN_FACTS_PROMPT)

@@ -146,7 +146,7 @@ class KnobTests(Fixture):
         """正式樣板已啟用：反思員必須看得到這兩個旋鈕才可能依校準報告調整。"""
         values = current_knobs(self.template)
         self.assertEqual(values["volatility_exponent"], "0")
-        self.assertEqual(values["rotation.max_swaps_per_run"], "7")
+        self.assertEqual(values["rotation.max_swaps_per_run"], "10")
 
     def test_drawdown_can_only_tighten(self):
         # 正式設定 2026-11-23 起回撤門檻碰不到（0.97）；這裡用改前快照的 0.05 測「只能收緊、單次一步」。

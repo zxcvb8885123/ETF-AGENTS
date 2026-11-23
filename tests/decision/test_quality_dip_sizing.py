@@ -900,7 +900,7 @@ class ProductionTemplateTests(unittest.TestCase):
             "min_days_between_tranches": 2, "pause_after_further_drop": "0.05", "exposure_basis": "quality_dip_fills"})  # 2026-11-11 offense-ext-1
         self.assertEqual(sizing["exposure_view"], {"version": "v2"})
         # 2026-11-22 使用者由 no_turn_evidence 改 turn_confirmed：撿便宜要等風險 Agent 說確定轉向才買。
-        self.assertEqual(gate["min_turn_assessment"], "turn_confirmed")
+        self.assertEqual(gate["min_turn_assessment"], "no_turn_evidence")  # 2026-11-24 由 turn_confirmed 改回（使用者決定交給 Agent 判斷）
         for field in ("ruling_ref", "rulings", "ladder_state", "turn_assessment"):  # pipeline 綁定欄位，正式樣板人不填
             self.assertNotIn(field, gate)
         self.assertEqual({key: gate[key] for key in ("max_swaps_per_run", "max_entry_weight")}, {"max_swaps_per_run": 2, "max_entry_weight": "0.06"})
@@ -912,7 +912,7 @@ class ProductionTemplateTests(unittest.TestCase):
         live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         swap = live["position_sizing"]["agent_swap"]
         self.assertEqual(swap["entry_reserve"], {"version": "v1", "max_entry_weight": "0.09",  # 2026-11-23 晚間由 0.06 改（回滾樣板 2026-11-23-before-offense-grid.json）
-                                          "max_nominations": 8, "swap_priority": {"version": "v1"},
+                                          "max_nominations": 20, "swap_priority": {"version": "v1"},
                                          "turnover_skip": {"version": "v1"}})
         self.assertLessEqual(swap["max_swaps_per_run"], swap["entry_reserve"]["max_nominations"])
         self.assertEqual([e for e in errors_for(live["position_sizing"]) if "entry_reserve" in e], [])
@@ -926,15 +926,15 @@ class ProductionTemplateTests(unittest.TestCase):
             "version": "v1",
             "by_view": {
                 # 2026-11-23 晚間改進攻：現金 0.10/0.08/0.08→0.08/0.06/0.05、配對數 2/3/3→3/5/6（回滾樣板 2026-11-23-before-offense-grid.json）
-                "probe": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 6, "max_size": "large", "beta_stop": "0.70"},
-                "start_rebuild": {"defensive_cash_buffer": "0.06", "max_exposure_pairs": 6, "max_size": "large", "beta_stop": "0.70"},
-                "rebuild": {"defensive_cash_buffer": "0.05", "max_exposure_pairs": 6, "max_size": "large", "beta_stop": "0.70"},
+                "probe": {"defensive_cash_buffer": "0.08", "max_exposure_pairs": 10, "max_size": "large", "beta_stop": "0.90"},
+                "start_rebuild": {"defensive_cash_buffer": "0.06", "max_exposure_pairs": 10, "max_size": "large", "beta_stop": "0.90"},
+                "rebuild": {"defensive_cash_buffer": "0.05", "max_exposure_pairs": 10, "max_size": "large", "beta_stop": "0.90"},
             },
             "offense_off_drawdown": "0.50",  # 2026-11-23 由 0.12 改（回撤煞車實質關閉，回滾樣板 2026-11-23-before-drawdown-brake-off.json）
             "thesis_size_cap": {"version": "v1"},  # 2026-11-11 offense-ext-1（回滾樣板 2026-11-11-before-offense-extensions.json）
             "cash_glide": {"version": "v1"},
         })
-        self.assertEqual(sizing["agent_swap"]["exposure"]["max_pairs_by_view"], {"probe": 6, "start_rebuild": 6, "rebuild": 6})
+        self.assertEqual(sizing["agent_swap"]["exposure"]["max_pairs_by_view"], {"probe": 10, "start_rebuild": 10, "rebuild": 10})
         for row in sizing["rebound_participation"]["by_state"].values():
             self.assertNotIn("defensive_cash_buffer", row)  # 與 offense 互斥
         self.assertEqual([e for e in errors_for(sizing) if ("offense" in e or "max_pairs_by_view" in e) and "drawdown_control" not in e], [])  # 回撤線由完整 Policy 驗證（test_offense）

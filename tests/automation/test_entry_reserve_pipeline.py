@@ -20,7 +20,7 @@ from test_quality_dip_ruling_pipeline import THESIS_PAIR, Harness3, live_like_te
 from test_swap_nomination_pipeline import NOMINATION, outputs
 from test_quality_dip_ruling_pipeline import stance
 
-RESERVE = {"version": "v1", "max_entry_weight": "0.1", "max_nominations": 8}  # 正式設定的成交上限是 5，清單上限須不小於它
+RESERVE = {"version": "v1", "max_entry_weight": "0.1", "max_nominations": 10}  # 清單上限須不小於正式設定的成交上限（2026-11-24 起 10）
 
 
 def template_reserve():
