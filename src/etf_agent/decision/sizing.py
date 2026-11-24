@@ -726,13 +726,13 @@ def validate_cash_stance(
             stance, evidence, context.market_evidence_ids, exposure_facts, prefix, errors, allow_probe=offense_gate is not None)
     if offense_gate is not None:
         from .exposure_facts import exposure_reference_tokens
-        from .offense import non_news_market_ids, offense_reference_tokens, validate_offense_stance
+        from .offense import agent_view_turn_enabled, non_news_market_ids, offense_reference_tokens, validate_offense_stance
         tokens = [*offense_reference_tokens(offense_facts), *exposure_reference_tokens(exposure_facts)]
         if cash_ratio_range is not None:
             tokens.extend(anchor_reference_tokens(cash_ratio_range, prior_context))
         validate_offense_stance(
             stance, evidence, context.market_evidence_ids, non_news_market_ids(context.bundle, context.overnight_evidence_ids),
-            offense_facts, tokens, prefix, errors)
+            offense_facts, tokens, prefix, errors, view_turn_match=not agent_view_turn_enabled(offense_gate))
     if "benchmark_input" in context.bundle and isinstance(stance.get("rationale"), str):
         # benchmark_facts（版本閘門，決策輸入有 benchmark_input 才檢查）：背景不是證據，理由不得寫出區塊鍵名。
         from .benchmark_facts import benchmark_reference_tokens
@@ -749,6 +749,10 @@ def validate_cash_stance(
     if night_rally_gate is not None and stance.get("level") == "aggressive":
         from .night_rally import night_rally_allows_aggressive
         night_rally_ok = night_rally_allows_aggressive(night_rally_gate, context.bundle, evidence)
+    if night_rally_gate is not None:
+        # night_rally_override v4：情緒 negative 不再擋 aggressive（姿態由風險 Agent 判斷）；v1～v3 與沒有閘門時不經過。
+        from .night_rally import sentiment_guard_lifted
+        night_rally_ok = night_rally_ok or sentiment_guard_lifted(night_rally_gate)
     if night_rally_gate is not None and night_rally_gate.get("version") in ("v2", "v3"):
         from .night_rally import validate_night_rally_requirement
         validate_night_rally_requirement(night_rally_gate, context.bundle, stance, prefix, errors)

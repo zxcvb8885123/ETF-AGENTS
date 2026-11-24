@@ -277,7 +277,8 @@ class LiveConfigTests(unittest.TestCase):
         # 2026-11-16：開啟 agent_swap.victim_rules（policy_id strategy-2026-11-16-victim-rules-1；回滾樣板 2026-11-16-before-victim-rules.json）。
         root = Path(__file__).resolve().parents[2]
         live = json.loads((root / "config" / "decision_policy.json").read_text(encoding="utf-8"))
-        self.assertEqual(victim_rules_gate(live["position_sizing"]), RULES)
+        # 2026-11-24 11:30（strategy-2026-11-24-agent-free-1）：thesis 換出者的 hold 信心上限 low→medium（使用者決定換股交給 Agent）。
+        self.assertEqual(victim_rules_gate(live["position_sizing"]), dict(RULES, thesis_max_hold_conviction="medium"))
         self.assertEqual(live["position_review"]["version"], "v2")
         policy = copy.deepcopy(live)
         policy.setdefault("cash_weight_ceiling", "0.5")  # 正式檔沒有這個欄位（由 pipeline 依 rules 綁定），驗證需要一個數值

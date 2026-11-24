@@ -321,7 +321,7 @@ class ProductionTemplateTests(unittest.TestCase):
              "relative_loss_alert": {"loss": "0.08", "lag": "0.04"}, "stale_alert": None, "context": "v1"},
         )
         self.assertNotIn("stop_exit", live["position_sizing"])
-        self.assertEqual(live["policy_id"], "strategy-2026-11-24-review-fixes-1")
+        self.assertEqual(live["policy_id"], "strategy-2026-11-24-agent-free-2")
         self.assertIn("exposure_rotation", live["position_sizing"])  # position_review v2 的前提
 
     def test_a_run_on_the_untouched_live_gates_completes_and_rebuilds_clean(self):
@@ -356,9 +356,9 @@ class ProductionTemplateTests(unittest.TestCase):
         from etf_agent.decision import MARKET_REGIME_EVIDENCE_ID
         from test_night_rally_pipeline import _overnight_with_night
         from test_quality_dip_ruling_pipeline import stance as live_stance
-        value = live_like_template("v4")
-        self.assertEqual(value["position_sizing"]["night_rally_override"], self.live()["position_sizing"]["night_rally_override"])
-        self.assertEqual(value["position_sizing"]["night_rally_override"]["version"], "v3")
+        # 2026-11-24 正式設定改為 v4（strategy-2026-11-24-agent-free-2）；此測試保留 v3 的整鏈驗證，模板改為明確指定 v3。
+        self.assertEqual(self.live()["position_sizing"]["night_rally_override"]["version"], "v4")
+        value = with_night_rally_v3(live_like_template("v4"))
         with tempfile.TemporaryDirectory() as directory:
             harness = V2Harness3(Path(directory), template=value)
             overnight = _overnight_with_night(directory, harness.world, "9")
@@ -372,7 +372,7 @@ class ProductionTemplateTests(unittest.TestCase):
             self.assertEqual(neutral.status, "failed")
             self.assertIn("night_rally_override v3", " ".join(neutral.errors))
         with tempfile.TemporaryDirectory() as directory:
-            harness = V2Harness3(Path(directory), template=live_like_template("v4"))
+            harness = V2Harness3(Path(directory), template=with_night_rally_v3(live_like_template("v4")))
             overnight = _overnight_with_night(directory, harness.world, "9")
             aggressive = dict(live_stance(), level="aggressive", exposure_view="start_rebuild", turn_assessment="turn_unconfirmed", rationale="夜盤大漲達人設門檻，依規則改為進攻。",
                               evidence_ids=[night["evidence_id"], MARKET_REGIME_EVIDENCE_ID])
@@ -382,6 +382,11 @@ class ProductionTemplateTests(unittest.TestCase):
             art = harness.artifacts()
             self.assertEqual(art["team_inputs"]["cash_stance"]["level"], "aggressive")
             self.assertEqual(harness.rebuild_errors(art), [])
+
+
+def with_night_rally_v3(value):
+    value["position_sizing"]["night_rally_override"] = {"version": "v3", "min_night_change_pct": "5"}
+    return value
 
 
 def _live_outputs(stances):
