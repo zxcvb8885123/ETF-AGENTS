@@ -107,29 +107,46 @@ class FallbackPreconditionTests(unittest.TestCase):
         self.assertAlmostEqual(float(result["metrics"]["cash_ratio"]), 0.10, delta=0.001)
         self.assertEqual(result["warnings"], [])
 
-    def test_position_count_outside_20_30_fails(self):
+    def test_position_count_outside_20_30_only_warns(self):
         for count in (19, 31):
             account, snapshot, datapack = world(positions=count)
             result = self.check(account, snapshot, datapack)
-            self.assertFalse(result["ok"])
-            self.assertTrue(any("檔" in item and "20–30" in item for item in result["failures"]), result["failures"])
+            self.assertTrue(result["ok"], result["failures"])
+            self.assertTrue(any("警告" in item and "20–30" in item for item in result["warnings"]), result["warnings"])
 
-    def test_cash_ratio_at_or_above_25_percent_fails(self):
+    def test_cash_ratio_at_or_above_25_percent_only_warns(self):
         account, snapshot, datapack = world(cash_ratio=Decimal("0.25"))
         result = self.check(account, snapshot, datapack)
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("現金比" in item for item in result["failures"]))
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertTrue(any("警告" in item and "現金比" in item and "C12" in item for item in result["warnings"]))
+        self.assertTrue(result["metrics"]["cash_range_mismatch"])
 
-    def test_single_stock_cap_uses_25_for_2330_and_10_for_others(self):
+    def test_cash_ratio_inside_range_has_no_mismatch_flag(self):
+        self.assertFalse(self.check()["metrics"]["cash_range_mismatch"])
+
+    def test_single_stock_cap_uses_25_for_2330_and_10_for_others_as_warnings(self):
         ok_account, ok_snapshot, ok_datapack = world(weights={"2330": "0.249", "1000": "0.099"})
         result = self.check(ok_account, ok_snapshot, ok_datapack)
         self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["warnings"], [])
         account, snapshot, datapack = world(weights={"2330": "0.251"})
         result = self.check(account, snapshot, datapack)
-        self.assertTrue(any("2330" in item and "25%" in item for item in result["failures"]), result["failures"])
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertTrue(any("2330" in item and "25%" in item and "註 3" in item for item in result["warnings"]), result["warnings"])
         account, snapshot, datapack = world(weights={"2330": "0.05", "1000": "0.101"})
         result = self.check(account, snapshot, datapack)
-        self.assertTrue(any("1000" in item and "10%" in item for item in result["failures"]), result["failures"])
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertTrue(any("1000" in item and "10%" in item for item in result["warnings"]), result["warnings"])
+
+    def test_over_limit_world_still_builds_a_valid_plan_with_cash_range_clamped(self):
+        account, snapshot, datapack = world(cash_ratio=Decimal("0.30"), weights={"2330": "0.251"})
+        plan = build_fallback_plan(
+            team_id=TEAM, trade_date=TRADE_DATE, account=account, snapshot=snapshot, datapack=datapack,
+            reason="pipeline_failed", detail="x", started_at="2026-10-23T07:00:00+08:00",
+            completed_at="2026-10-23T08:00:00+08:00", code_version="git:test")
+        self.assertEqual(DPlanValidator().validate(plan), [])
+        self.assertEqual(plan["market_view"]["posture"]["target_cash_pct_range"], [0.24, 0.25])
+        self.assertEqual(plan["orders"], [])
 
     def test_requires_matched_datapack_with_same_team_and_date(self):
         for datapack in ({"status": "skipped"}, {"status": "mismatch"}, {}):
@@ -398,3 +415,76 @@ class FallbackHardRuleConsistencyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FallbackFromDataPackOnlyTests(unittest.TestCase):
+    """帳本對不上也能只依 DataPack 持股產生備援。"""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.account, self.snapshot, self.datapack = world()
+        (self.root / "config").mkdir(parents=True)
+        (self.root / "data").mkdir()
+        self.profile_path = self.root / "config" / "competition_profile.json"
+        self.profile_path.write_text(json.dumps(profile()), encoding="utf-8")
+        self.snapshot_path = self.root / "snapshot.json"
+        self.snapshot_path.write_text(json.dumps(self.snapshot), encoding="utf-8")
+        (self.root / "data" / "official_universe.csv").write_text(
+            "symbol,market\n" + "".join("%s,TWSE\n" % ticker for ticker in tickers()), encoding="utf-8")
+        self.pack_dir = self.root / "var" / "datapack"
+        self.pack_dir.mkdir(parents=True)
+        self.write_pack()
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def write_pack(self, **overrides):
+        d = self.datapack
+        holdings = [{"code": t, "shares": shares, "receivable_shares": 0, "close_price": float(d["close_prices"][t + ".TW"]),
+                     "tradable_weight": None} for t, shares in sorted(d["sellable_shares"].items())]
+        pack = {
+            "schema_version": "3.0", "doc_type": "DataPack", "team_id": TEAM, "trade_date": TRADE_DATE,
+            "as_of_date": "2026-10-22", "generated_at": "2026-10-22T19:05:00+08:00", "missing": [],
+            "prev_day_orders": {"outcome": "none", "void_reasons": [], "excluded_codes": []},
+            "account": {"cash": float(d["cash"]["datapack"]), "cash_ratio_tradable": None, "nav_tradable": float(d["nav_tradable"]),
+                        "aum": float(d["nav_tradable"]), "receivable_cash": 0.0, "holdings_count": len(holdings)},
+            "holdings": holdings, "compliance": {"violations": 0, "notices": 0, "incidents": []},
+        }
+        pack.update(overrides)
+        (self.pack_dir / "pack.json").write_text(json.dumps(pack), encoding="utf-8")
+
+    def generate(self, now=NOW, **kwargs):
+        with patch.object(DPlanExportService, "code_version", return_value="git:test"):
+            return FallbackDPlanService(self.root).generate_from_datapack(
+                daily_run=daily_run(None), datapack_dir=self.pack_dir, snapshot_path=self.snapshot_path,
+                profile_path=self.profile_path, account_id="acct", reason="pipeline_failed", detail="帳本對不上", now=now, **kwargs)
+
+    def test_generates_without_any_ledger_account_snapshot(self):
+        result = self.generate()
+        self.assertEqual(result["status"], "fallback", result)
+        self.assertEqual((result["source"], result["fallback"], result["uploaded"]), ("datapack_only", True, False))
+        run = load_fallback_run(self.root, result["run_id"])
+        self.assertFalse(run["decision"]["ledger_reconciled"])
+        self.assertFalse(run["decision"]["agent_generated"])
+        self.assertEqual(run["dplan"]["orders"], [])
+        self.assertEqual(len(run["dplan"]["no_trade_decisions"]), 28)
+        self.assertEqual(DPlanValidator().validate(run["dplan"]), [])
+
+    def test_over_limit_cash_and_count_still_generate_with_warnings(self):
+        self.account, self.snapshot, self.datapack = world(positions=19, cash_ratio=Decimal("0.30"), weights={"2330": "0.26"})
+        self.snapshot_path.write_text(json.dumps(self.snapshot), encoding="utf-8")
+        self.write_pack()
+        result = self.generate()
+        self.assertEqual(result["status"], "fallback", result)
+        self.assertTrue(any("2330" in w for w in result["warnings"]))
+        self.assertTrue(any("現金比" in w for w in result["warnings"]))
+        self.assertTrue(any("20–30" in w for w in result["warnings"]))
+
+    def test_fails_closed_without_settled_holdings_or_wrong_team(self):
+        self.write_pack(missing=["prev_settlement"], account=None, holdings=None, as_of_date=None)
+        result = self.generate()
+        self.assertEqual(result["status"], "not_generated")
+        self.assertFalse((self.root / DEFAULT_FALLBACK_DIRECTORY).exists())
+        self.write_pack(team_id="OTHER")
+        self.assertEqual(self.generate()["status"], "not_generated")

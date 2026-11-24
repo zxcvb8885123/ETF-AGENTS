@@ -933,6 +933,7 @@ class ProductionTemplateTests(unittest.TestCase):
             "offense_off_drawdown": "0.50",  # 2026-11-23 由 0.12 改（回撤煞車實質關閉，回滾樣板 2026-11-23-before-drawdown-brake-off.json）
             "thesis_size_cap": {"version": "v1"},  # 2026-11-11 offense-ext-1（回滾樣板 2026-11-11-before-offense-extensions.json）
             "cash_glide": {"version": "v1"},
+            "agent_view_turn": {"version": "v1"},  # 2026-11-24 12:05：exposure_view／turn_assessment 一致性交給風險 Agent
         })
         self.assertEqual(sizing["agent_swap"]["exposure"]["max_pairs_by_view"], {"probe": 10, "start_rebuild": 10, "rebuild": 10})
         for row in sizing["rebound_participation"]["by_state"].values():

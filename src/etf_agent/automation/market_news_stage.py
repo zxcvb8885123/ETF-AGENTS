@@ -196,10 +196,12 @@ def build_daily_market_news(pipeline, snapshot, captures_root, database_path) ->
         source_run, reused = _previous_bundle_labels(pipeline.run_dir, reps) if getattr(pipeline, "event_reuse", False) else (None, {})
         new_reps = [row for row in reps if row["item_id"] not in reused]
         prior_reused_count = len(reused)
+        batched = False
         if len(new_reps) > LABEL_BATCH_SIZE:
             # 分批標好的標籤與沿用標籤同樣由程式併入；最後的 synthesis 任務不再逐則標註。
             reused = {**reused, **_label_in_batches(pipeline, name, new_reps, window_start, cutoff)}
             new_reps = []
+            batched = True
         shown =[{"item_id": row["item_id"], "source": row["source"], "published_at": row["published_at"],
                   "title": wrap_untrusted_text(row["title"]), "summary": wrap_untrusted_text(row["summary"])} for row in new_reps]
         brief_body = {"window_start": window_start, "decision_cutoff": cutoff,
@@ -227,10 +229,14 @@ def build_daily_market_news(pipeline, snapshot, captures_root, database_path) ->
             }, ["outlook", "findings"]),
         }, ["labels", "synthesis"])
 
+        def agent_labels(output):
+            # 分批模式：批次標籤是唯一依據，synthesis 任務即使輸出了 labels 也一律忽略（避免覆蓋批次標籤）。
+            return [] if batched else output.get("labels", [])
+
         def validate(output):
             try:
                 evaluate(build_market_news_pack(captures, snapshot["snapshot_id"], cutoff, window_start,
-                                                _expand_labels(_restore_content_ids(_merge_reused(output.get("labels", []), reused), items), items), output.get("synthesis", {}), database_path, SCHEMA_VERSION))
+                                                _expand_labels(_restore_content_ids(_merge_reused(agent_labels(output), reused), items), items), output.get("synthesis", {}), database_path, SCHEMA_VERSION))
                 return []
             except (MarketNewsError, KeyError, TypeError) as error:
                 return [str(error)]
@@ -248,7 +254,7 @@ def build_daily_market_news(pipeline, snapshot, captures_root, database_path) ->
             schema,
         )
         output = pipeline.agent_step(task, lambda row: dict(row), validate)
-        labels, synthesis = _expand_labels(_restore_content_ids(_merge_reused(output["labels"], reused), items), items), output["synthesis"]
+        labels, synthesis = _expand_labels(_restore_content_ids(_merge_reused(agent_labels(output), reused), items), items), output["synthesis"]
         if prior_reused_count:
             new_count = len(reps) - prior_reused_count
             pipeline.save_artifact("market_news_label_reuse", {"source_run": source_run, "reused_count": prior_reused_count, "new_count": new_count})

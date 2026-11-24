@@ -299,3 +299,52 @@ class MarketNewsBatchLabelTests(unittest.TestCase):
     def test_an_empty_batch_answer_is_rejected(self):
         with self.assertRaisesRegex(DailyPipelineError, "漏標"):
             build_daily_market_news(FakePipeline(self.root, lambda items: {"labels": []}), self.snapshot, self.captures_root, self.database)
+
+    def test_synthesis_labels_never_override_batch_labels_on_parallel_path(self):
+        import threading
+        from etf_agent.automation.pipeline_base import PipelineBase
+
+        class ParallelFake(FakePipeline):
+            """批次任務走真正的 PipelineBase._run_jobs 平行路徑。"""
+
+            def __init__(self, root, answer):
+                super().__init__(root, answer)
+                self.max_workers, self.calls, self._calls_lock, self._abort = 4, [], threading.Lock(), threading.Event()
+
+            def _run_jobs(self, jobs):
+                return PipelineBase._run_jobs(self, jobs)
+
+        seen = []
+
+        def answer(items):
+            result = self.answer(items)
+            if items:
+                seen.extend(row["item_id"] for row in items)
+            else:  # synthesis 任務亂給 labels：不得覆蓋批次標籤
+                result["labels"] = [{"item_id": i, "relevance": "unrelated", "stance": "negative", "reason": "亂標"} for i in seen]
+            return result
+
+        pipeline = ParallelFake(self.root, answer)
+        pair = build_daily_market_news(pipeline, self.snapshot, self.captures_root, self.database)
+        self.assertEqual(len(pair["bundle"]["labels"]), 6)
+        self.assertEqual({row["relevance"] for row in pair["bundle"]["labels"]}, {"market"})
+        self.assertFalse(pipeline._abort.is_set())
+
+    def test_failed_parallel_jobs_clear_the_abort_flag(self):
+        import threading
+        from etf_agent.automation.pipeline_base import PipelineBase
+
+        class Holder:
+            max_workers = 2
+
+            def __init__(self):
+                self.calls, self._calls_lock, self._abort = [], threading.Lock(), threading.Event()
+
+        holder = Holder()
+
+        def boom():
+            raise DailyPipelineError("批次失敗")
+
+        with self.assertRaisesRegex(DailyPipelineError, "批次失敗"):
+            PipelineBase._run_jobs(holder, [("a", boom), ("b", lambda: 1)])
+        self.assertFalse(holder._abort.is_set())

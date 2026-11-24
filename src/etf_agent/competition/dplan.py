@@ -20,6 +20,8 @@ from etf_agent.core import parse_decimal
 from etf_agent.data.evidence import TAIPEI_TIMEZONE as TAIPEI
 from etf_agent.data.trading_calendar import DECISION_DEADLINE
 from etf_agent.decision.contracts import DecisionToolError, decimal_value
+from etf_agent.decision.risk import restricted_carried_symbols
+from etf_agent.decision.sizing import restricted_hold_enabled
 
 
 class DPlanError(ValueError):
@@ -564,9 +566,10 @@ class DPlanExporter:
         derived = sorted((o["ticker"], o["side"], o["shares"]) for o in order_rows)
         if proposed != derived:
             raise DPlanError("主辦方 target_weight 股數公式與已核准 Decision orders 不一致；拒絕輸出 D-Plan")
+        market_view = self._reconcile_exposure_intent(context["market_view"], order_rows, latest_prices, nav)
         plan = {
             "schema_version": "4.3", "doc_type": "D-Plan", "team_id": team_id, "trade_date": trade_date,
-            "sources": context["sources"], "observations": context["observations"], "market_view": context["market_view"],
+            "sources": context["sources"], "observations": context["observations"], "market_view": market_view,
             "inferences": context["inferences"], "decisions": decisions, "no_trade_decisions": no_trade,
             "orders": order_rows, "agent_metadata": context["agent_metadata"],
         }
@@ -574,8 +577,39 @@ class DPlanExporter:
         if errors:
             raise DPlanError("D-Plan 本地驗證失敗：" + "; ".join(errors))
         # 姿態檢查必須沿用上方 target_weight／股數推導的同一估值分母；有 DataPack 時不能退回帳本 NAV。
-        self._validate_official_posture(plan, account, bundle, order_rows, latest_prices, target, nav)
+        # restricted_hold（版本閘門）：與 Guard 同一口徑，股數不變的受限持股漲價超限屬辦法註 3 調整期，不在匯出時擋整份。
+        sizing = artifacts["policy"].get("position_sizing") or {}
+        carried = restricted_carried_symbols(bundle, bundle["snapshot"], held, target) if restricted_hold_enabled(sizing) else set()
+        self._validate_official_posture(plan, account, bundle, order_rows, latest_prices, target, nav, carried)
         return plan
+
+    @staticmethod
+    def _exposure_intent_fits(intent: object, buy: Decimal, sell: Decimal, nav: Decimal) -> bool:
+        """C12 口徑：increase 需買入大於賣出、reduce 需賣出大於買入、hold 需淨流向不超過 NAV 的 2%。"""
+        if intent == "increase":
+            return buy > sell
+        if intent == "reduce":
+            return sell > buy
+        return intent == "hold" and abs(buy - sell) <= nav * Decimal("0.02")
+
+    @classmethod
+    def _reconcile_exposure_intent(cls, market_view: Mapping[str, object], orders: Sequence[Mapping[str, object]],
+                                   prices: Mapping[str, Decimal], nav: Decimal) -> Mapping[str, object]:
+        """context 以含滑價的 gross_amount 與提案 NAV 預判淨曝險方向，口徑與這裡的 C12（前日收盤價、官方 NAV）不同。
+
+        預判已符合 C12 時原樣保留（已匯出的 D-Plan 重建結果不變）；不符時改由官方 order_rows／價格／NAV 推導，
+        避免「hold 加小幅淨賣出」之類的邊界被自己的 C12 擋下。"""
+        posture = market_view.get("posture")
+        if not isinstance(posture, Mapping):
+            return market_view
+        ticker_prices = {symbol[:4]: price for symbol, price in prices.items()}
+        buy = sum((Decimal(int(row["shares"])) * ticker_prices[row["ticker"]] for row in orders if row["side"] == "BUY"), Decimal("0"))
+        sell = sum((Decimal(int(row["shares"])) * ticker_prices[row["ticker"]] for row in orders if row["side"] == "SELL"), Decimal("0"))
+        if cls._exposure_intent_fits(posture.get("net_exposure_intent"), buy, sell, nav):
+            return market_view
+        net = buy - sell
+        intent = "hold" if abs(net) <= nav * Decimal("0.02") else "increase" if net > 0 else "reduce"
+        return {**market_view, "posture": {**posture, "net_exposure_intent": intent}}
 
     @staticmethod
     def _validate_strategy_statement(value: object) -> None:
@@ -598,7 +632,7 @@ class DPlanExporter:
     def _validate_official_posture(
         plan: Mapping[str, object], account: Mapping[str, object], bundle: Mapping[str, object],
         orders: Sequence[Mapping[str, object]], prices: Mapping[str, Decimal], target: Mapping[str, int],
-        valuation_nav: object = None,
+        valuation_nav: object = None, carried_restricted: object = (),
     ) -> None:
         posture = plan["market_view"]["posture"]
         ticker_prices = {}
@@ -619,10 +653,10 @@ class DPlanExporter:
         for symbol, shares in target.items():
             weight = Decimal(shares) * prices[symbol] / nav
             limit = Decimal("0.25") if symbol == "2330.TW" else Decimal("0.10")
-            if weight > limit:
+            if weight > limit and symbol not in carried_restricted:
                 raise DPlanError("官方單一持股上限檢查失敗：%s 超過 %.0f%%" % (symbol[:4], limit * 100))
         intent = posture["net_exposure_intent"]
-        if (intent == "increase" and buy <= sell) or (intent == "reduce" and sell <= buy) or (intent == "hold" and abs(buy - sell) > nav * Decimal("0.02")):
+        if not DPlanExporter._exposure_intent_fits(intent, buy, sell, nav):
             raise DPlanError("C12 本地檢查失敗：net_exposure_intent 與委託淨流向不一致")
         cash = Decimal(str(account["cash"]))
         rules = bundle.get("rules", {})

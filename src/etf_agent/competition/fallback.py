@@ -7,8 +7,9 @@ fail-closed 或子 Agent 逾時都會讓當天沒有 D-Plan，所以在這些情
 - 由程式依既定規則產生，不含任何 Agent 文字，``agent_metadata`` 明寫非 LLM；
 - 走 ``ImmutableRunStore`` 封存（``artifacts/fallback_decisions/<交易日>/<run_id>/``），不放進 ``artifacts/decisions``，
   帳本與前次決策背景都不會把它當成 Agent 決策；
-- 必須通過同一個 ``DPlanValidator`` 與比賽硬性前提（持股 20–30 檔、現金 <25%、單股上限、全在 150 檔內、
-  DataPack 對帳 matched），任一不滿足就不產生、只告警，不硬產；
+- 必須通過同一個 ``DPlanValidator`` 與資料前提（全在 150 檔內、有可引用的官方收盤價與封存行情、DataPack 對帳 matched
+  或僅依 DataPack 持股），任一不滿足就不產生、只告警，不硬產；持股檔數不在 20–30、現金 ≥25%、單股權重超限
+  不擋備援：比賽辦法註 3 對漲價超限有 5 交易日調整期，全部續抱不算加碼，只在結果與警告文字標明；
 - 絕不自動上傳或送件；是否繳交由人決定。
 """
 
@@ -28,6 +29,7 @@ from etf_agent.data.trading_calendar import DECISION_DEADLINE
 from etf_agent.decision.contracts import snapshot_execution_price
 
 from .context import DPlanContextBuilder, _as_taipei, _number
+from .datapack import find_datapack, load_datapack, load_universe, sellable_shares
 from .dplan import DPlanError, DPlanValidator, check_cutoff_before_deadline
 from .service import DEFAULT_OUTPUT_DIRECTORY, DPlanExportService, read_object, replace_json, write_new_json
 
@@ -118,7 +120,7 @@ def fallback_preconditions(
     held = _positions(account)
     metrics["position_count"] = len(held)
     if not MIN_POSITIONS <= len(held) <= MAX_POSITIONS:
-        failures.append("持股 %d 檔，不在 %d–%d 檔內" % (len(held), MIN_POSITIONS, MAX_POSITIONS))
+        warnings.append("警告：持股 %d 檔，不在 %d–%d 檔內；全部續抱不新增也不減少檔數，是否需調整請人工確認" % (len(held), MIN_POSITIONS, MAX_POSITIONS))
     sellable = datapack.get("sellable_shares")
     if not isinstance(sellable, Mapping):
         failures.append("DataPack 對帳結果缺少 sellable_shares")
@@ -139,8 +141,12 @@ def fallback_preconditions(
     cash_ratio = cash / nav
     metrics["cash_ratio"] = str(cash_ratio)
     metrics["nav_tradable"] = str(nav)
-    if cash_ratio < 0 or cash_ratio >= CASH_RATIO_LIMIT:
-        failures.append("DataPack 現金比 %.4f 不在 0–25%% 內" % cash_ratio)
+    # 現金比超出 0–25% 只警告、照產備援（不交件同樣記警告，比賽辦法一天只記一次）；但備援沒有委託，
+    # D-Plan 宣告的現金區間（驗證器上限 0.25）一定對不上實際現金比，C12 姿態檢查必然失敗，另標 cash_range_mismatch 並通知。
+    metrics["cash_range_mismatch"] = bool(cash_ratio < 0 or cash_ratio >= CASH_RATIO_LIMIT)
+    if metrics["cash_range_mismatch"]:
+        warnings.append("警告：DataPack 現金比 %.4f 不在 0–25%% 內；備援全部續抱、不動用現金，宣告的現金區間必然與實際現金比不符"
+                        "（C12 姿態檢查會失敗，現金超限本身也會被記警告），交件前請人工決定是否改交有買單的計畫" % cash_ratio)
 
     close_prices = datapack.get("close_prices") if isinstance(datapack.get("close_prices"), Mapping) else {}
     snapshot_rows = {str(row.get("symbol")): row for row in snapshot.get("latest_prices", []) if isinstance(row, Mapping)}
@@ -159,7 +165,7 @@ def fallback_preconditions(
         weights[ticker] = str(weight)
         limit = STOCK_WEIGHT_LIMIT.get(ticker, DEFAULT_STOCK_WEIGHT_LIMIT)
         if weight > limit:
-            failures.append("%s 權重 %.4f 超過單一持股上限 %.0f%%" % (ticker, weight, limit * 100))
+            warnings.append("警告：%s 權重 %.4f 超過單一持股上限 %.0f%%；依辦法註 3 漲價超限有 5 交易日調整期，續抱不算加碼，請人工確認是否需減碼" % (ticker, weight, limit * 100))
         row = snapshot_rows.get(symbol)
         if row is None:
             failures.append("%s 不在 Snapshot latest_prices，缺可引用的封存行情" % ticker)
@@ -253,14 +259,15 @@ def build_fallback_plan(
             "inf_id": inf_id,
             "premise_refs": ["O1", obs_id],
             "logic": "%s 續抱：本日沒有通過驗證的交易決策，依既定規則不以推測調整部位，維持結算持股 %d 股不動"
-                     "（以資料包收盤價計權重約 %.2f%%，未超過單一持股上限）。" % (ticker, shares, weight * 100),
+                     "（以資料包收盤價計權重約 %.2f%%）。" % (ticker, shares, weight * 100),
             "conclusion": "%s 續抱，無委託。" % ticker,
             "counter_evidence": None,
         })
         no_trade.append({"ticker": ticker, "reason_refs": ["I1", inf_id], "reason": "備援續抱：程式依規則產生，未經本日模型判斷。"})
 
-    low = max(Decimal("0"), cash_ratio - CASH_RANGE_MARGIN)
-    high = min(CASH_RATIO_LIMIT, cash_ratio + CASH_RANGE_MARGIN)
+    # D-Plan 驗證器要求 0 ≤ 下限 ≤ 上限 ≤ 0.25；現金 ≥25% 時區間壓在 0.24–0.25，實際現金比以警告標明。
+    low = max(Decimal("0"), min(cash_ratio - CASH_RANGE_MARGIN, CASH_RATIO_LIMIT - CASH_RANGE_MARGIN))
+    high = min(CASH_RATIO_LIMIT, max(cash_ratio + CASH_RANGE_MARGIN, low))
     market_view = {
         "basis_refs": ["O1"],
         "logic": "備援計畫：本日決策鏈未產生通過驗證的決策（%s），程式未研判市場走向（regime 填 neutral 不代表研判結果），"
@@ -323,6 +330,31 @@ class FallbackDPlanService:
             return False
         return canonical_sha256(current) in self.fallback_plan_sha256s(trade_date)
 
+    def generate_from_datapack(
+        self, *, daily_run: Mapping[str, object], datapack_dir: Path, snapshot_path: Path, profile_path: Path,
+        account_id: str, reason: str, detail: str, now: Optional[datetime] = None,
+        universe_path: Optional[Path] = None, datapack_path: Optional[Path] = None,
+    ) -> Dict[str, object]:
+        """只依「當日 DataPack 持股」產生全部續抱、無委託的備援，不依賴本機帳本、也不要求帳本對帳成功。
+
+        用途：本機帳本與 DataPack 對不上（或對帳前流程就失敗）時，主辦方持股仍是地面真相，備援照樣能交件。
+        持股、現金、NAV、收盤價都取自 DataPack（``datapack_path`` 指定檔；省略時在 ``datapack_dir`` 找本隊、
+        ``daily_run`` 目標交易日的最新一份）；Snapshot 只提供可引用的封存行情與 150 檔交易池（``universe_path`` 預設
+        ``<root>/data/official_universe.csv``）。結果與 ``generate`` 同形，另有 ``source="datapack_only"``、
+        ``ledger_reconciled=False``；仍標 ``fallback=true``、非 LLM、``uploaded=False``，絕不上傳。
+        持股檔數、現金比、單股權重超限只列警告（辦法註 3 漲價超限有 5 交易日調整期）；資料包缺結算持股、
+        缺收盤價、持股不在交易池或過了交件期限仍回 ``not_generated``。"""
+        now = now or datetime.now(TAIPEI)
+        try:
+            return self._generate(
+                daily_run=daily_run, account_path=None, snapshot_path=snapshot_path, profile_path=profile_path,
+                account_id=account_id, reason=reason, detail=detail, now=now, datapack_dir=Path(datapack_dir),
+                universe_path=Path(universe_path) if universe_path is not None else self.root / "data" / "official_universe.csv",
+                datapack_path=Path(datapack_path) if datapack_path is not None else None)
+        except (DPlanError, OSError, ValueError, TypeError, KeyError) as error:
+            return {"status": "not_generated", "reason": reason, "error": str(error), "failures": [str(error)],
+                    "source": "datapack_only"}
+
     def generate(
         self, *, daily_run: Mapping[str, object], account_path: Path, snapshot_path: Path, profile_path: Path,
         account_id: str, reason: str, detail: str, now: Optional[datetime] = None,
@@ -335,7 +367,39 @@ class FallbackDPlanService:
         except (DPlanError, OSError, ValueError, TypeError, KeyError) as error:
             return {"status": "not_generated", "reason": reason, "error": str(error), "failures": [str(error)]}
 
-    def _generate(self, *, daily_run, account_path, snapshot_path, profile_path, account_id, reason, detail, now) -> Dict[str, object]:
+    @staticmethod
+    def _datapack_only_inputs(pack_loaded: Mapping[str, object], universe: Mapping[str, str], *, team_id: str,
+                              trade_date: str, account_id: str) -> Tuple[Dict[str, object], Dict[str, object]]:
+        """把 DataPack 轉成備援流程用的「帳戶快照」與「對帳結果」形狀，持股一律取自 DataPack。"""
+        pack = pack_loaded["pack"]
+        if pack["team_id"] != team_id or pack["trade_date"] != trade_date:
+            raise DPlanError("DataPack 的隊伍（%s）或交易日（%s）與本次（%s／%s）不一致" % (
+                pack["team_id"], pack["trade_date"], team_id, trade_date))
+        if pack["holdings"] is None or pack["account"] is None:
+            raise DPlanError("DataPack 尚無結算持股（missing 含 prev_settlement），無法依資料包產生備援")
+        sellable = sellable_shares(pack)
+        positions, close_prices = [], {}
+        for code, shares in sorted(sellable.items()):
+            symbol = universe.get(code)
+            if symbol is None:
+                raise DPlanError("DataPack 持股 %s 不在官方交易池，無法對應" % code)
+            positions.append({"symbol": symbol, "shares": shares})
+        for row in pack["holdings"]:
+            if row["close_price"] is not None and int(row["shares"]) > 0 and row["code"] in universe:
+                close_prices[universe[row["code"]]] = str(row["close_price"])
+        account = {"account_id": account_id, "source": "datapack", "positions": positions}
+        datapack = {
+            "status": "matched", "datapack_sha256": pack_loaded["raw_sha256"], "datapack_path": pack_loaded["path"],
+            "team_id": pack["team_id"], "trade_date": pack["trade_date"], "as_of_date": pack["as_of_date"],
+            "generated_at": pack["generated_at"], "nav_tradable": str(pack["account"]["nav_tradable"]),
+            "cash": {"datapack": str(pack["account"]["cash"])},
+            "sellable_shares": sellable, "close_prices": close_prices,
+        }
+        return account, datapack
+
+    def _generate(self, *, daily_run, account_path, snapshot_path, profile_path, account_id, reason, detail, now,
+                  datapack_dir: Optional[Path] = None, universe_path: Optional[Path] = None,
+                  datapack_path: Optional[Path] = None) -> Dict[str, object]:
         if reason not in FALLBACK_REASONS:
             raise DPlanError("備援原因代碼不合法：%s" % reason)
         if daily_run.get("rolled_back"):
@@ -347,11 +411,20 @@ class FallbackDPlanService:
         if profile.get("strategy_status") != "approved":
             raise DPlanError("competition_profile 策略尚未確認，備援 D-Plan 一樣不得產生")
         trade_date = DPlanExportService.trade_date(daily_run)
-        account = read_object(Path(account_path), "帳戶快照")
         snapshot = read_object(Path(snapshot_path), "ResearchSnapshot")
-        if account.get("account_id") not in (None, account_id):
-            raise DPlanError("帳戶快照的 account_id（%s）與本次帳戶（%s）不同" % (account.get("account_id"), account_id))
-        datapack = daily_run.get("datapack")
+        datapack_only = account_path is None
+        if datapack_only:
+            if datapack_path is not None:
+                loaded = load_datapack(datapack_path, now.astimezone(timezone.utc))
+            else:
+                loaded = find_datapack(datapack_dir, team_id, trade_date, now.astimezone(timezone.utc))
+            account, datapack = self._datapack_only_inputs(
+                loaded, load_universe(universe_path), team_id=team_id, trade_date=trade_date, account_id=account_id)
+        else:
+            account = read_object(Path(account_path), "帳戶快照")
+            if account.get("account_id") not in (None, account_id):
+                raise DPlanError("帳戶快照的 account_id（%s）與本次帳戶（%s）不同" % (account.get("account_id"), account_id))
+            datapack = daily_run.get("datapack")
         checks = fallback_preconditions(account, snapshot, datapack if isinstance(datapack, Mapping) else {},
                                         team_id=team_id, trade_date=trade_date, now=now)
         if not checks["ok"]:
@@ -370,6 +443,8 @@ class FallbackDPlanService:
             "run_id": run_id,
             "fallback": True,
             "status": "no_trade",
+            "source": "datapack_only" if datapack_only else "ledger_reconciled",
+            "ledger_reconciled": not datapack_only,
             "producer": "deterministic_program",
             "agent_generated": False,
             "reason": reason,
@@ -408,6 +483,8 @@ class FallbackDPlanService:
         return {
             "status": "fallback",
             "fallback": True,
+            "source": "datapack_only" if datapack_only else "ledger_reconciled",
+            "ledger_reconciled": not datapack_only,
             "reason": reason,
             "reason_label": FALLBACK_REASONS[reason],
             "detail": _clean_text(detail, 1000),
@@ -421,6 +498,7 @@ class FallbackDPlanService:
             "trade_date": trade_date,
             "position_count": checks["metrics"].get("position_count"),
             "cash_ratio": checks["metrics"].get("cash_ratio"),
+            "cash_range_mismatch": bool(checks["metrics"].get("cash_range_mismatch")),
             "warnings": checks["warnings"],
             "local_validation": "passed",
             "organizer_server_validation": "not_run",

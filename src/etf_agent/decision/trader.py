@@ -358,7 +358,7 @@ def apply_trade_decision(
         turn_facts_gate=cash_stance_turn_facts_gate(policy.get("position_sizing") or {}),
         exposure_view_gate=exposure_view_gate(policy.get("position_sizing") or {}),
         **({"offense_gate": offense_policy_gate, "offense_facts": offense_facts} if offense_policy_gate is not None else {}),
-        night_rally_gate=night_rally_override_gate(policy.get("position_sizing") or {}),
+        night_rally_gate=night_rally_override_gate(policy.get("position_sizing") or {}, policy.get("drawdown_control")),
     )
     if stance_errors:
         raise DecisionToolError("現金姿態無效：" + "；".join(stance_errors))

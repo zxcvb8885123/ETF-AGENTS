@@ -26,7 +26,8 @@
 
 **省額度與網路中斷的保護**（只動執行流程，不改決策規則）：
 
-- 抓政府開放交易狀態 CSV 沒抓齊（八份缺任何一份）：立刻再抓一次，仍失敗就每 30 分鐘重抓，抓齊才往下跑；最晚試到交件期限 08:55 前一小時，之後沿用舊封存並通知。
+- 抓政府開放交易狀態 CSV 沒抓齊（八份缺任何一份）：立刻再抓一次，仍失敗就每 30 分鐘重抓，抓齊才往下跑；最晚試到**目標交易日** 07:55（交件期限 08:55 前一小時；交易日 15:00 前啟動算替當天交件、之後算替隔天）。已超過停止時間時只做立刻的兩次嘗試、不再睡眠等待（不會把停止時間推到隔天而握著每日鎖），之後沿用舊封存並通知。
+- 個股新聞早上補抓：建 Snapshot 前若今天只抓到部分檔數，補抓**前一個交易日（週一為週五）、前一日曆日、今天**三天（FinMind 每次只回一天，20:40 之後到午夜的新聞只有隔天早上補抓才拿得到；不查休市日曆，多抓的日子結果為空）。三天共用 1500 秒總預算，預算不足 30 秒就停止並記為失敗；`available_at` 仍是這次抓取時間，不回填到過去。
 - 交易狀態只要還有任何一檔 `unknown`，Guard 必定拒絕，所以流程在呼叫任何子 Agent 前就停止（`pipeline.json` 的 `error` 寫明檔數），不耗用額度。
 - 決策鏈因 Claude 額度用完（5 小時額度等）失敗：讀錯誤訊息的重置時間，等到重置後 2 分鐘再自動續跑（沿用已驗證輸出），最多 3 次；重置後來不及在 08:55 前跑完就不等。看不懂重置時間則等 30 分鐘。
 
@@ -123,7 +124,7 @@ osascript -e 'display notification "測試" with title "ETF Agent"'
 
 1. **上傳原本的 D-Plan 主檔**，它和帳本對得上。`artifacts/latest/latest.md` 仍是重做那次的報告或失敗診斷，上傳時以 D-Plan 主檔為準。
 2. 該 run 不能 `--resume`。還想重做的話，08:30 前執行 `./start.sh run --force`（整條重跑約 20 分鐘）。
-3. 查原因：看前述日誌，以及該次 `pipeline.json` 的 `superseded_pending`、`rolled_back`；還原本身失敗會記 `rollback_error`，需人工檢查帳本。子 Agent 逾時、非零結束或輸出不是 JSON 時，程式會自動再試一次（間隔 30 秒，不拖過 08:55），`agent_calls` 裡帶 `transient_error` 的就是失敗的那次。
+3. 查原因：看前述日誌，以及該次 `pipeline.json` 的 `superseded_pending`、`rolled_back`；還原本身失敗會記 `rollback_error`，需人工檢查帳本。子 Agent 逾時、非零結束或輸出不是 JSON 時，程式會自動再試一次（間隔 30 秒，不拖過 08:55）；單次子 Agent 逾時另受交件期限限制：取 runner 逾時與「剩餘時間 − 180 秒」的較小者，剩餘（已扣 180 秒）不足 60 秒就不啟動 Agent、直接記為暫時性失敗，`agent_calls` 裡帶 `transient_error` 的就是失敗的那次。
 
 還原成功時不會產生備援 D-Plan，因為昨晚那份主檔仍有效。
 
@@ -140,8 +141,11 @@ osascript -e 'display notification "測試" with title "ETF Agent"'
 備援的性質：
 
 - 內容全由程式產生，沒有 Agent 文字，不宣稱是模型產製，也沒評估當天個股風險。
-- 只在前提都滿足時才產生：持股 20–30 檔、現金比低於 25%、單一持股上限（2330 為 25%，其餘 10%）、持股全在 150 檔內、帳本持股等於資料包持股、資料包對帳一致、此刻與 Snapshot 都早於 08:55。任一不滿足就不硬產，只通知，原因寫在 `pipeline.json` 的 `dplan.fallback`。
-- 不會產生的情況：已還原昨晚備案（原主檔仍有效）；流程在資料包對帳前就失敗；已過 08:55；用了 `--skip-datapack`。
+- 只在下列前提都滿足時才產生：持股全在 150 檔內、帳本持股等於資料包持股、資料包對帳一致、每檔持股有資料包收盤價與 Snapshot 行情、此刻與 Snapshot 都早於 08:55。任一不滿足就不硬產，只通知，原因寫在 `pipeline.json` 的 `dplan.fallback`。
+- 備援前提的檔數（20–30）、現金比（低於 25%）、單股權重超限（2330 為 25%、其餘 10%）改為**只警告**，不再擋備援：全部續抱不新增也不減少檔數、不動用現金，漲價超限依比賽辦法註 3 有 5 交易日調整期；警告寫在結果的 `warnings`，是否需調整請人工確認。現金比超出 0–25% 時另標 `cash_range_mismatch: true` 並通知：備援沒有委託，D-Plan 宣告的現金區間（上限 25%）必然對不上實際現金比，C12 姿態檢查會失敗，交件前請人工決定。
+- 不會產生的情況：已還原昨晚備案（原主檔仍有效）；流程在決定目標時段前就失敗；DataPack 未對帳且尚未建立 Snapshot；已過 08:55；用了 `--skip-datapack`。
+- **保底備援**：DataPack 對帳通過後、呼叫任何子 Agent 前，程式先落地一份全部續抱的保底備援（`summary["early_fallback"]`，不通知、不影響本次決策），因為決策鏈可能拖到 08:55 之後才失敗。正式 D-Plan 產出時以同一主檔覆蓋（備援已標 `fallback=true` 並登記在 `fallback_decisions`）；主檔已是正式決策時保底只存 `versions/`；正式 D-Plan 沒產出、結束時的備援也失敗時，沿用保底並據實回報目前可交的是這份備援。
+- **DataPack 未對帳時的備援**：流程在對帳前失敗、或帳本與 DataPack 對不上時，主辦方持股才是地面真相，改用只依 DataPack 持股的 `generate_from_datapack`（`source=datapack_only`）；產生後會通知，交件後須執行 `./start.sh run --rebase-to-datapack` 修正帳本。需要已建立的 Snapshot，否則不產生。
 - **絕不自動上傳**，要不要交由你決定。
 
 存放位置：
@@ -164,7 +168,7 @@ D-Plan 的匯出器會用資料包的收盤價換算股數。持股的 Snapshot 
 
 ### 帳本與資料包對不上
 
-流程在呼叫 Agent 前就會停止，並列出逐檔差異與可能原因（前日整批作廢、被排除代號、違規天數）。找不到本交易日資料包、主辦方結算尚未產生、持股股數不同、現金差超過容忍值，都會停止。
+流程在呼叫 Agent 前就會停止，並列出逐檔差異與可能原因（前日整批作廢、被排除代號、違規天數）。DataPack 的 `prev_day_orders.outcome` 為 `voided`（`HOST_VOIDED`）或 `none`（前一交易日未繳交，`HOST_NOT_SUBMITTED`）時，帳本一律比照整批作廢結算為無成交，兩者原因碼不同。找不到本交易日資料包、主辦方結算尚未產生、持股股數不同、現金差超過容忍值，都會停止。
 
 先不跑 Agent、只確認兩邊是否一致（一致回傳 0，不一致回傳 2 並印出現金差）：
 
@@ -237,7 +241,7 @@ D-Plan 的 `target_weight` 以資料包的 `nav_tradable` 反推，帳本淨值�
 
 ## 安裝排程
 
-排程由 macOS launchd 執行，樣板都在 `scripts/launchd/`。安裝前需求：Docker Desktop 已啟動、`claude` CLI 已登入、`.venv` 已建立（以 `requirements.lock` 安裝，見 [Docker 說明](docker.md#依賴與重建)）；Mac 在排程時間不能是睡著的（launchd 不會把睡著的 Mac 叫醒，也不補跑），請保持喚醒或關閉接電源時自動睡眠。
+排程由 macOS launchd 執行，樣板都在 `scripts/launchd/`。安裝前需求：Docker Desktop 已啟動、`claude` CLI 已登入、`.venv` 已建立（以 `requirements.lock` 安裝，見 [Docker 說明](docker.md#依賴與重建)）；launchd 不會把睡著的 Mac 叫醒；排程時間 Mac 睡著時，錯過的 `StartCalendarInterval` 工作會在醒來後補跑一次（多次錯過也只補一次；關機期間錯過的不補），但補跑可能已過交件期限，所以仍請保持喚醒或關閉接電源時自動睡眠。
 
 | 樣板 | 用途 | 必要 |
 | --- | --- | --- |
@@ -267,6 +271,8 @@ tail -n 3 /Users/apollo/stock/ETF_AGENTS/var/logs/daily_status.log
 ```
 
 改了 plist 要重新載入：先 `launchctl unload` 再 `launchctl load`。卸載：`launchctl unload /Users/apollo/Library/LaunchAgents/com.etf-agents.dplan-watchdog.plist`。
+
+**比賽結束提醒**：比賽 2026-11-27 結束，最後一次 D-Plan 交件後請手動卸載全部排程（每個樣板各用上述 `launchctl unload` 指令一次，檔名換成 `com.etf-agents.<名稱>.plist`；`launchctl list | grep com.etf-agents` 應已無輸出），否則比賽後仍會每天跑決策、抓資料並可能產生備援與通知。
 
 各排程的日誌位置：`daily` 在 `var/logs/launchd.log`；`data`、`finmind-news` 在 `artifacts/daily/`；看門狗、反思與隔夜背景在 `var/logs/`。
 

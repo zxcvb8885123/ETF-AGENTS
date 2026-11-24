@@ -55,7 +55,9 @@ BOUND_FIELDS = {"view", "effective_view", "suppressed_reason", "cash_loosening"}
 # thesis_size_cap＝放寬現金期間 thesis 配對的份量格也套該級 max_size；cash_glide＝offense 放寬現金之後，防守姿態的現金回升受 cash_ratio_range.max_daily_raise 約束。
 THESIS_SIZE_CAP_FIELD = "thesis_size_cap"
 CASH_GLIDE_FIELD = "cash_glide"
-OPTIONAL_VERSION_FIELDS = (THESIS_SIZE_CAP_FIELD, CASH_GLIDE_FIELD)
+# agent_view_turn（2026-11-24 11:30，使用者決定）：exposure_view 與 turn_assessment 的搭配由風險 Agent 判斷，程式不再檢查一致性。
+AGENT_VIEW_TURN_FIELD = "agent_view_turn"
+OPTIONAL_VERSION_FIELDS = (THESIS_SIZE_CAP_FIELD, CASH_GLIDE_FIELD, AGENT_VIEW_TURN_FIELD)
 OPTIONAL_FIELD_VERSION = "v1"
 # cash_glide 開啟時 pipeline 多綁一個欄位：現金回升被限制時的前後值（沒限制為 null）。
 CASH_RAISE_LIMITED_FIELD = "cash_raise_limited"
@@ -101,6 +103,11 @@ def offense_bound(gate: Optional[Mapping[str, object]]) -> bool:
 def thesis_size_cap_enabled(gate: Optional[Mapping[str, object]]) -> bool:
     """``offense.thesis_size_cap`` 欄位存在（樣板層級，簡報與提示用；是否生效見 ``thesis_size_cap_active``）。"""
     return isinstance(gate, Mapping) and THESIS_SIZE_CAP_FIELD in gate
+
+
+def agent_view_turn_enabled(gate: Optional[Mapping[str, object]]) -> bool:
+    """``offense.agent_view_turn`` 欄位存在：不檢查 exposure_view 與 turn_assessment 的一致性；沒有欄位回 False（原行為）。"""
+    return isinstance(gate, Mapping) and AGENT_VIEW_TURN_FIELD in gate
 
 
 def cash_glide_enabled(gate: Optional[Mapping[str, object]]) -> bool:
@@ -659,17 +666,18 @@ def validate_offense_stance(
     reference_tokens: Sequence[str],
     prefix: str,
     errors: List[str],
+    view_turn_match: bool = True,
 ) -> None:
     """offense 閘門啟用時的現金姿態驗證（exposure_view 的值域另由 ``validate_exposure_view`` 檢查）：
 
     - 與 ``turn_assessment`` 的一致性（計畫 4.1）：probe 配 no_turn_evidence／turn_unconfirmed、start_rebuild 至少 turn_unconfirmed、rebuild 須 turn_confirmed；
-      不一致退回重答，不由程式夾到邊界。
+      不一致退回重答，不由程式夾到邊界。``view_turn_match=False``（``offense.agent_view_turn`` 開啟）時不檢查這一項。
     - 非 keep_defensive：evidence_ids 至少兩個市場層級證據，且至少一個不是新聞。
     - probe：``offense_basis``（至少兩個不同類別、各類事實 available）與 ``failure_condition`` 必填；其他等級不得填。
     - 姿態為 defensive：非 keep_defensive 須填 ``defensive_reconciliation``；keep_defensive 或其他姿態不得填。
     - 文字不得寫出背景識別碼；全部只有列舉與文字，沒有數字欄位。"""
     before = len(errors)
-    _validate_offense_stance(stance, evidence, market_evidence_ids, non_news_ids, facts, reference_tokens, prefix, errors)
+    _validate_offense_stance(stance, evidence, market_evidence_ids, non_news_ids, facts, reference_tokens, prefix, errors, view_turn_match)
     if len(errors) > before:
         errors.append(FIELD_RESET_REMINDER)
 
@@ -683,13 +691,14 @@ def _validate_offense_stance(
     reference_tokens: Sequence[str],
     prefix: str,
     errors: List[str],
+    view_turn_match: bool = True,
 ) -> None:
     view = stance.get("exposure_view")
     if view not in EXPOSURE_VIEWS_WITH_PROBE:
         return  # 值域錯誤已由 validate_exposure_view 回報
     offensive = view != KEEP_DEFENSIVE
     turn = stance.get("turn_assessment")
-    if offensive and turn in TURN_ASSESSMENTS:
+    if view_turn_match and offensive and turn in TURN_ASSESSMENTS:
         index = TURN_ASSESSMENTS.index(str(turn))
         allowed = {PROBE: (0, 1), "start_rebuild": (1, 2), "rebuild": (2, 2)}[str(view)]
         if not allowed[0] <= index <= allowed[1]:
@@ -954,7 +963,7 @@ def capped_size(size: str, max_size: str) -> str:
 __all__ = [
     "BOUND_FIELDS", "OFFENSE_CATEGORIES", "OFFENSE_FACTS_KEY", "OFFENSE_NOTE", "OFFENSE_V1", "OFFENSE_VIEWS", "SUPPRESSED_REASONS",
     "bind_offense", "build_offense_facts", "capped_size", "effective_view", "expected_cash_buffer", "non_news_market_ids",
-    "normalize_offense_stance", "offense_bound", "offense_brief", "offense_cash_target", "CASH_GLIDE_FIELD", "CASH_RAISE_LIMITED_FIELD", "THESIS_SIZE_CAP_FIELD",
+    "normalize_offense_stance", "offense_bound", "offense_brief", "offense_cash_target", "CASH_GLIDE_FIELD", "CASH_RAISE_LIMITED_FIELD", "THESIS_SIZE_CAP_FIELD", "AGENT_VIEW_TURN_FIELD", "agent_view_turn_enabled",
     "bound_field_names", "cash_glide_brief", "cash_glide_ceiling", "cash_glide_enabled", "cash_raise_limited", "drawdown_allows_glide", "thesis_size_cap_active",
     "thesis_size_cap_enabled", "offense_gate", "offense_levels",
     "offense_reference_tokens", "validate_offense_binding", "validate_offense_facts", "validate_offense_gate", "validate_offense_limits",

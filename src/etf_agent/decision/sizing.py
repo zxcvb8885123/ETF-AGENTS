@@ -159,6 +159,19 @@ HELD_WEIGHT_BUDGET_VERSIONS = (HELD_WEIGHT_BUDGET, HELD_WEIGHT_BUDGET_V2)
 # 名額回收（slot_recycle 版本閘門，物件 {"version": "v1"}）：排名在前的新股因預算為零或目標金額不足一張而算不出整張
 # （LOT_SIZE）時，不再占著新增名額，讓後面的候選補位；總持股數仍不超過上限。省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。
 SLOT_RECYCLE = {"version": "v1"}
+# 2026-11-24 後新增的四個執行面閘門（物件 {"version": "v1"}，只由人設定、策略反思禁區；省略即逐位元維持舊重建行為）：
+# - restricted_hold：處置／停牌等受限的持股只能續抱，``_fit_stock_weights`` 不為它產生 trim 賣單，Guard 的 STOCK_WEIGHT 容忍
+#   「續抱、受限、本次未買進」的超限部位（比賽辦法：漲價超限有 5 交易日調整期）。
+# - pinned_high_ceiling：``alpha_floor_weights`` 算 medium／low 的天花板（最小 high 份額）時，排除被自身流動性／特別上限卡在
+#   低於 α × 單股上限的 high，避免一檔卡住的 high 把全部 medium／low 壓到同一個小值、剩餘預算變現金。前提 limit_scaled_conviction。
+# - gap_reserve_budget：信心預算先扣預估的跳空預留（買進增量 × buy_gap_reserve_rate），``_fit_cash`` 就不必每天從名次最後的買單砍。
+#   前提 buy_gap_reserve。
+# - cash_basis：``_fit_cash`` 的現金緩衝改用「已交割＋未交割＋本次賣款 − 買進 ≥ NAV × 緩衝」（與 NAV 口徑的預算一致），
+#   另獨立要求「已交割＋當日可用賣款 − 買進（含跳空預留）≥ 0」不得透支（與 ScenarioEngine 的 buying_power 同口徑）。
+RESTRICTED_HOLD = {"version": "v1"}
+PINNED_HIGH_CEILING = {"version": "v1"}
+GAP_RESERVE_BUDGET = {"version": "v1"}
+CASH_BASIS = {"version": "v1"}
 DRAWDOWN_DERISK_FIELDS = {"version", "max_derisk_fraction", "release_symbols", "release_ref"}
 DRAWDOWN_DERISK_FRACTION = Decimal("0.25")
 # 2026-11-05 後新增（high_conviction_cash_floor 版本閘門，只由人設定）：高信心（high）買單可把現金用到
@@ -214,7 +227,7 @@ AGENT_SWAP_VERSIONS = (AGENT_SWAP_V1, AGENT_SWAP_V2)
 AGENT_SWAP_FIELDS = {
     "version", "max_swaps_per_run", "min_holding_days", "thesis_hint_symbols", "verdicts_ref", "nominated_pairs", "nomination_ref",
     "exposure", "quality_dip", "derisk_day_view", "proceeds_to_add", "entry_reserve", "victim_rules",
-    "earmark", "victim_bear_claim",
+    "earmark", "victim_bear_claim", "swap_fit",
 }
 # earmark（版本閘門，物件，只由人設定，已實作、尚未開啟）：換股賣款專款專用。成交的換股對中，換出者的賣款淨額只給同一對的換入者，
 # 不進一般可用現金（不流向其他加碼或新股），換入者用不完的留作現金；換入者買到的股數低於保留股數 × min_fill_ratio 時整組取消
@@ -228,6 +241,11 @@ EARMARK_SCOPES = ("all", "defensive")
 # （adopted_claim_ids 含 bear- 開頭，claim 屬於該股由 TradeDecisionValidator 保證）；沒有即取消該對（AGENT_SWAP_CANCELLED:victim_no_bear_claim，
 # 換出者不賣）。適用全部 purpose（thesis／exposure／quality_dip）；只在配置層檢查，不改提名驗證與簡報。前提 agent_swap v2。
 VICTIM_BEAR_CLAIM = {"version": "v1"}
+# swap_fit（版本閘門，物件 {"version": "v1"}，只由人設定）：換股配置端兩處與提名端對齊。（1）成交上限＝min(agent_swap.max_swaps_per_run,
+# rotation.max_swaps_per_run − 第一輪出場數)（status.md「成交上限取兩者較小」；提名端一向如此，配置端原本只看 agent_swap.max_swaps_per_run，
+# 由 agent_swap_fill_cap 兩邊共用）；（2）可行性試算前段某組放不進時逐組跳過（該組 swap_cap），不再從尾端減組數而連帶取消後面可行的組。
+# 前提 agent_swap v2；省略此欄位的舊 Policy／舊 run 逐位元維持原重建行為。
+SWAP_FIT = {"version": "v1"}
 # proceeds_to_add（版本閘門，物件 {"version": "v1"}，2026-11-11 只由人設定）：換股成立時，換出者的賣款可流向高信心加碼持股。
 # 換入者因額度被高信心加碼持股占走而沒有買單（無任何縮減旗標），且同一份配置有高信心加碼持股真的買進，該對不取消、換出者照賣，
 # 換入者改標 AGENT_SWAP_PROCEEDS_TO_ADD；沒有高信心加碼持股買進時仍照舊取消（不會只賣不買）。前提 agent_swap v2；
@@ -359,6 +377,13 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
              "team_inputs 不升版、沒有新鍵（配置引擎由 bundle 與 Policy 重算，Finalizer 以配置重建比對）；見 docs/plans/stop_loss_take_profit_plan.md",
     ),
     GateRule("slot_recycle", allowed=(SLOT_RECYCLE,), note="物件 {\"version\": \"v1\"}；LOT_SIZE 候選釋出占用的新增名額"),
+    GateRule("restricted_hold", allowed=(RESTRICTED_HOLD,), note="受限持股只能續抱：不產生 trim 賣單，Guard 容忍續抱受限部位超限"),
+    GateRule(
+        "pinned_high_ceiling", allowed=(PINNED_HIGH_CEILING,), requires=("limit_scaled_conviction",),
+        note="被自身上限卡住（低於 α × 單股上限）的 high 不再決定 medium／low 的天花板",
+    ),
+    GateRule("gap_reserve_budget", allowed=(GAP_RESERVE_BUDGET,), requires=("buy_gap_reserve",), note="信心預算先扣預估跳空預留"),
+    GateRule("cash_basis", allowed=(CASH_BASIS,), note="現金緩衝改用已交割＋未交割口徑，另獨立要求已交割現金不透支"),
     GateRule(
         "high_conviction_cash_floor", requires=("cash_buffer_floor", "cash_fit_order"),
         derisk_versions=DRAWDOWN_DERISK_NO_READD_VERSIONS,
@@ -410,6 +435,12 @@ GATE_PREREQUISITES: Tuple[GateRule, ...] = (
         requires=("agent_swap",),
         note="換出者須有交易 Agent 本次已採納的該股空頭 claim（v1），否則取消該對（victim_no_bear_claim，換出者不賣）；適用全部 purpose、"
              "只在配置層檢查；須 agent_swap v2（由 _validate_agent_swap 檢查）；team_inputs 不升版、沒有新鍵",
+    ),
+    GateRule(
+        "agent_swap.swap_fit",
+        requires=("agent_swap",),
+        note="換股配置端與提名端對齊（v1）：成交上限取 min(agent_swap.max_swaps_per_run, rotation.max_swaps_per_run − 第一輪出場數)，"
+             "可行性試算前段某組放不進時逐組跳過（swap_cap）而不連帶取消後面可行的組；須 agent_swap v2；team_inputs 不升版、沒有新鍵",
     ),
     GateRule(
         "agent_swap.exposure",
@@ -695,13 +726,13 @@ def validate_cash_stance(
             stance, evidence, context.market_evidence_ids, exposure_facts, prefix, errors, allow_probe=offense_gate is not None)
     if offense_gate is not None:
         from .exposure_facts import exposure_reference_tokens
-        from .offense import non_news_market_ids, offense_reference_tokens, validate_offense_stance
+        from .offense import agent_view_turn_enabled, non_news_market_ids, offense_reference_tokens, validate_offense_stance
         tokens = [*offense_reference_tokens(offense_facts), *exposure_reference_tokens(exposure_facts)]
         if cash_ratio_range is not None:
             tokens.extend(anchor_reference_tokens(cash_ratio_range, prior_context))
         validate_offense_stance(
             stance, evidence, context.market_evidence_ids, non_news_market_ids(context.bundle, context.overnight_evidence_ids),
-            offense_facts, tokens, prefix, errors)
+            offense_facts, tokens, prefix, errors, view_turn_match=not agent_view_turn_enabled(offense_gate))
     if "benchmark_input" in context.bundle and isinstance(stance.get("rationale"), str):
         # benchmark_facts（版本閘門，決策輸入有 benchmark_input 才檢查）：背景不是證據，理由不得寫出區塊鍵名。
         from .benchmark_facts import benchmark_reference_tokens
@@ -718,7 +749,11 @@ def validate_cash_stance(
     if night_rally_gate is not None and stance.get("level") == "aggressive":
         from .night_rally import night_rally_allows_aggressive
         night_rally_ok = night_rally_allows_aggressive(night_rally_gate, context.bundle, evidence)
-    if night_rally_gate is not None and night_rally_gate.get("version") == "v2":
+    if night_rally_gate is not None:
+        # night_rally_override v4：情緒 negative 不再擋 aggressive（姿態由風險 Agent 判斷）；v1～v3 與沒有閘門時不經過。
+        from .night_rally import sentiment_guard_lifted
+        night_rally_ok = night_rally_ok or sentiment_guard_lifted(night_rally_gate)
+    if night_rally_gate is not None and night_rally_gate.get("version") in ("v2", "v3"):
         from .night_rally import validate_night_rally_requirement
         validate_night_rally_requirement(night_rally_gate, context.bundle, stance, prefix, errors)
     if (stance.get("level") == "aggressive" and sentiment.get("status") == "available"
@@ -938,6 +973,13 @@ def _validate_agent_swap(sizing: Mapping[str, object], errors: List[str]) -> Non
             errors.append('%s.victim_bear_claim 必須是 {"version": "v1"}' % prefix)
         if version != AGENT_SWAP_V2:
             errors.append("%s.victim_bear_claim 需要 agent_swap v2（配置才讀提名）" % prefix)
+    if "swap_fit" in gate:
+        if gate["swap_fit"] != SWAP_FIT:
+            errors.append('%s.swap_fit 必須是 {"version": "v1"}' % prefix)
+        if version != AGENT_SWAP_V2:
+            errors.append("%s.swap_fit 需要 agent_swap v2（配置才讀提名）" % prefix)
+        if not isinstance(sizing.get("rotation"), Mapping):
+            errors.append("%s.swap_fit 需要 position_sizing.rotation（成交上限取兩者較小）" % prefix)
     if "exposure" in gate:
         from .exposure_swap import validate_exposure_swap_gate
         validate_exposure_swap_gate(sizing, errors)
@@ -1102,6 +1144,24 @@ def victim_bear_claim_enabled(sizing: object) -> bool:
     """``position_sizing.agent_swap.victim_bear_claim`` 啟用（換出者須有本次採納的該股空頭 claim）；沒有欄位回 False（原行為）。"""
     swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
     return isinstance(swap, Mapping) and swap.get("victim_bear_claim") == VICTIM_BEAR_CLAIM
+
+
+def swap_fit_enabled(sizing: object) -> bool:
+    """``position_sizing.agent_swap.swap_fit`` 啟用（成交上限與可行性試算對齊提名端）；沒有欄位回 False（原行為）。"""
+    swap = sizing.get("agent_swap") if isinstance(sizing, Mapping) else None
+    return isinstance(swap, Mapping) and swap.get("swap_fit") == SWAP_FIT
+
+
+def agent_swap_fill_cap(sizing: object, first_round_exits: int, rotation_bound: bool = True) -> int:
+    """換股成交組數上限，提名端（``swap_nomination.nomination_facts`` 的 fill_cap）與配置端（``_agent_swap``）共用的唯一算式。
+
+    ``rotation_bound`` 為真：``min(agent_swap.max_swaps_per_run, max(0, rotation.max_swaps_per_run − 第一輪出場數))``；
+    為假：只看 ``agent_swap.max_swaps_per_run``（沒有 ``swap_fit`` 的舊 Policy 配置端原行為）。"""
+    swap = sizing["agent_swap"]  # type: ignore[index]
+    cap = int(swap["max_swaps_per_run"])
+    if not rotation_bound:
+        return cap
+    return min(cap, max(0, int(sizing["rotation"]["max_swaps_per_run"]) - int(first_round_exits)))  # type: ignore[index]
 
 
 def derisk_day_uses_agent_view(sizing: object) -> bool:
@@ -1560,6 +1620,26 @@ def drawdown_derisk_v5(sizing: object) -> bool:
     return isinstance(derisk, Mapping) and derisk.get("version") == DRAWDOWN_DERISK_VERSION_V5
 
 
+def restricted_hold_enabled(sizing: Mapping[str, object]) -> bool:
+    """restricted_hold 閘門：只有剛好 {"version": "v1"} 才算開啟。"""
+    return sizing.get("restricted_hold") == RESTRICTED_HOLD
+
+
+def pinned_high_ceiling_enabled(sizing: Mapping[str, object]) -> bool:
+    """pinned_high_ceiling 閘門：只有剛好 {"version": "v1"} 才算開啟。"""
+    return sizing.get("pinned_high_ceiling") == PINNED_HIGH_CEILING
+
+
+def gap_reserve_budget_enabled(sizing: Mapping[str, object]) -> bool:
+    """gap_reserve_budget 閘門：只有剛好 {"version": "v1"} 才算開啟。"""
+    return sizing.get("gap_reserve_budget") == GAP_RESERVE_BUDGET
+
+
+def cash_basis_enabled(sizing: Mapping[str, object]) -> bool:
+    """cash_basis 閘門：只有剛好 {"version": "v1"} 才算開啟。"""
+    return sizing.get("cash_basis") == CASH_BASIS
+
+
 def slot_recycle_enabled(sizing: Mapping[str, object]) -> bool:
     """slot_recycle 閘門：只有剛好 {"version": "v1"} 才算開啟；其他值已被 validate_gate_prerequisites 拒絕。"""
     return sizing.get("slot_recycle") == SLOT_RECYCLE
@@ -1944,6 +2024,7 @@ def alpha_floor_weights(
     budget: Decimal,
     volatility_exponent: Optional[Decimal],
     floors: Mapping[str, Decimal],
+    pinned_below: Optional[Decimal] = None,
 ) -> Dict[str, Decimal]:
     """limit_scaled_conviction v1（α 方案）：高信心候選的份額至少為 max(原式份額, ``floors``)，其餘照原式並受跨等級約束。
 
@@ -1956,6 +2037,9 @@ def alpha_floor_weights(
     3. 否則 high 固定為 r（不因別檔被抬高而縮小），剩餘預算依原式分給 medium／low；volatility_exponent = 0 時
        medium 不得高於最小的 high、low 不得高於最小的 medium（沒有 medium 時為最小的 high）。因這些天花板而
        分不完的預算留作現金（不違反封頂、總和不超過預算）。volatility_exponent > 0 不加天花板（文件揭露的例外）。
+
+    ``pinned_below``（pinned_high_ceiling 閘門，α × 單股上限；None 即舊行為）：必要份額剛好等於自身上限、且上限低於此值的 high
+    （被流動性／特別上限卡住）不參與「最小 high」天花板與 high ≥ medium ≥ low 的檢查，避免它把全部 medium／low 壓到同一個小值。
     """
     left = max(budget, Decimal("0"))
     highs = [symbol for symbol in order if symbol in floors]
@@ -1967,10 +2051,17 @@ def alpha_floor_weights(
             symbols, tiers, multipliers, volatility, volatility_floor, caps, amount, volatility_exponent,
         )
 
+    base = proportional(order, left, limits)
+    required = {symbol: max(base[symbol], floors[symbol]) for symbol in highs}
+    pinned = (
+        {symbol for symbol in highs if required[symbol] == limits[symbol] and limits[symbol] < pinned_below}
+        if pinned_below is not None else set()
+    )
+
     def tier_order_holds(shares: Mapping[str, Decimal]) -> bool:
         upper: Optional[Decimal] = None
         for level in CONVICTION_LEVELS:
-            members = [shares[symbol] for symbol in order if tiers[symbol] == level]
+            members = [shares[symbol] for symbol in order if tiers[symbol] == level and symbol not in pinned]
             if not members:
                 continue
             if upper is not None and max(members) > upper:
@@ -1978,8 +2069,6 @@ def alpha_floor_weights(
             upper = min(members)
         return True
 
-    base = proportional(order, left, limits)
-    required = {symbol: max(base[symbol], floors[symbol]) for symbol in highs}
     lifted = any(required[symbol] != base[symbol] for symbol in highs)
     if not lifted and (not ordered_tiers or tier_order_holds(base)):
         return base
@@ -1995,8 +2084,9 @@ def alpha_floor_weights(
     weights.update(required)
     rest = left - sum((required[symbol] for symbol in highs), Decimal("0"))
     caps = dict((symbol, limits[symbol]) for symbol in others)
-    if ordered_tiers and highs:
-        lowest_high = min(required[symbol] for symbol in highs)
+    ceiling_highs = [symbol for symbol in highs if symbol not in pinned]
+    if ordered_tiers and ceiling_highs:
+        lowest_high = min(required[symbol] for symbol in ceiling_highs)
         caps = {symbol: min(cap, lowest_high) for symbol, cap in caps.items()}
     shares = proportional(others, rest, caps)
     if ordered_tiers:

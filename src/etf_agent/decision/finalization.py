@@ -655,7 +655,7 @@ class DecisionFinalizer:
             exposure_view_gate=view_gate,
             exposure_facts=team.get(EXPOSURE_FACTS_KEY) if view_gate is not None else None,
             **({"offense_gate": offense_policy_gate, "offense_facts": team.get(OFFENSE_FACTS_KEY)} if offense_policy_gate is not None else {}),
-            night_rally_gate=night_rally_override_gate(sizing),
+            night_rally_gate=night_rally_override_gate(sizing, self.policy.get("drawdown_control")),
         )
         if not isinstance(sizing, Mapping):
             return errors + ["DecisionPolicy 必須啟用 position_sizing"]

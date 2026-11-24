@@ -118,10 +118,13 @@ class IndexFactsTests(unittest.TestCase):
         self.assertEqual(facts["latest_date"], earlier)
         self.assertTrue(any("不是 snapshot.latest_trade_date" in gap for gap in facts["data_gaps"]))
 
-    def test_row_after_the_latest_trade_date_is_rejected(self):
-        later = (date.fromisoformat(self.base["snapshot"]["latest_trade_date"]) + timedelta(days=3)).isoformat()
-        with self.assertRaises(DecisionToolError):
-            market_index_facts(with_index(self.base, rising(70), end=later))
+    def test_row_after_the_latest_trade_date_is_truncated_and_recorded_as_a_gap(self):
+        # 純紀錄輸入不因資料日晚於最近交易日讓整個 run 失敗：截掉並記缺口（原先拋 DecisionToolError）。
+        trade_date = self.base["snapshot"]["latest_trade_date"]
+        later = (date.fromisoformat(trade_date) + timedelta(days=3)).isoformat()
+        facts = market_index_facts(with_index(self.base, rising(70), end=later))
+        self.assertLessEqual(facts["latest_date"], trade_date)
+        self.assertTrue(any("已截掉不用" in gap for gap in facts["data_gaps"]), facts["data_gaps"])
 
     def test_damaged_raw_response_is_rejected(self):
         bundle = with_index(self.base, rising(70))

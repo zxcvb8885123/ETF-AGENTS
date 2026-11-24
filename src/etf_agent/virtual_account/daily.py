@@ -61,6 +61,15 @@ def average_price(trade_value: object, volume_shares: object) -> Optional[Decima
     return (Decimal(value) / Decimal(volume)).quantize(PRICE_TICK, rounding=ROUND_HALF_UP)
 
 
+def _read_state(repository: VirtualAccountRepository, run_id: str, name: str = "state") -> Dict[str, object]:
+    """讀已通過 manifest 驗證的帳本 run 檔案（``state`` 或 ``transition``）。"""
+    path = repository.verify(run_id) / (name + ".json")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise VirtualAccountError("無法讀取帳本 %s 的 %s：%s" % (run_id, name, error)) from error
+
+
 def find_host_outcome(datapack_dir: Optional[Path], team_id: Optional[str], trade_date: str,
                       read_at: Optional[datetime] = None) -> Optional[Dict[str, object]]:
     """在主辦方 DataPack 資料夾找出「結算日（as_of_date）等於 ``trade_date``」的本隊資料包，回傳其 prev_day_orders。
@@ -437,6 +446,49 @@ class DailyAccountRunner:
                 "unfilled": len(result["transition"]["execution"]["unfilled_orders"]),
                 **({"host_outcome": host_outcome["outcome"]} if host_outcome is not None else {}),
                 **calendar_basis}
+
+    def audit_host_outcome(self, observed_at: Optional[str] = None) -> Dict[str, object]:
+        """對帳：最近一次 close 結算時資料包還沒到（19:12 結算、19:32 才有資料包），事後資料包到了就核對一次。
+
+        只讀、不改寫任何已封存紀錄。``status``：``no_close``（鏈上沒有 close 狀態）、``no_datapack``（找不到結算日對應的資料包）、
+        ``ok``（紀錄與資料包一致，或兩邊都是會成交的結果）、``conflict``（資料包說 voided／none 但帳本模擬成交了，
+        或已記錄的 outcome 與資料包不同）。``conflict`` 時以 DataPack 為準：該筆成交不應存在，
+        請在下一次 prepare 後用 ``--rebase-to-datapack`` 以主辦方結算持股與現金重建（舊紀錄保留可稽核）。"""
+        run_id: Optional[str] = self.repository.latest()["run_id"]
+        seen = set()
+        close_state = None
+        while run_id and run_id not in seen:
+            seen.add(run_id)
+            state = _read_state(self.repository, run_id)
+            if state.get("provenance", {}).get("type") == "close":
+                close_state = (run_id, state)
+                break
+            run_id = state.get("provenance", {}).get("parent_run_id")
+        if close_state is None:
+            return {"status": "no_close"}
+        close_run_id, state = close_state
+        provenance = state["provenance"]
+        trade_date = str(provenance.get("trade_date"))
+        found = find_host_outcome(self.datapack_dir, self.team_id, trade_date,
+                                  parse_time(observed_at, "observed_at") if observed_at else None)
+        if found is None:
+            return {"status": "no_datapack", "close_run_id": close_run_id, "trade_date": trade_date}
+        recorded = provenance.get("host_outcome")
+        transition = _read_state(self.repository, close_run_id, "transition")
+        fills = len(transition.get("execution", {}).get("fills", []))
+        result: Dict[str, object] = {
+            "status": "ok", "close_run_id": close_run_id, "trade_date": trade_date, "datapack_outcome": found["outcome"],
+            "datapack_sha256": found["datapack_sha256"], "recorded_outcome": recorded.get("outcome") if isinstance(recorded, Mapping) else None,
+            "simulated_fills": fills,
+        }
+        if isinstance(recorded, Mapping) and recorded.get("outcome") != found["outcome"]:
+            result.update(status="conflict", message="帳本 close %s 記錄的主辦方結果 %s 與資料包 %s 不同" % (
+                close_run_id, recorded.get("outcome"), found["outcome"]))
+        elif found["outcome"] in ("voided", "none") and fills > 0 and recorded is None:
+            result.update(status="conflict", message=(
+                "主辦方資料包記錄 %s 前一交易日委託 outcome=%s（不成交），但帳本 close %s 結算時資料包尚未到、已模擬成交 %d 筆；"
+                "以資料包為準，請用 --rebase-to-datapack 重建" % (trade_date, found["outcome"], close_run_id, fills)))
+        return result
 
     def supersede_unstarted_decision(self, decision_run_id: Optional[str], cutoff: str) -> Optional[Path]:
         """新 cutoff 早於待結算決策目標時段當天的交件期限（08:55）時，把該決策整個移到封存區並回傳新位置。

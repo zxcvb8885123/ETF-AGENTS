@@ -76,7 +76,7 @@ def _series(bundle: Mapping[str, object], gaps: List[str]) -> Dict[str, Decimal]
 
 
 def market_index_facts(bundle: Mapping[str, object]) -> Dict[str, object]:
-    """依 bundle 重算加權指數事實；資料不足記入 ``data_gaps``，不猜。有任何收盤日晚於最近交易日即拒絕。"""
+    """依 bundle 重算加權指數事實；資料不足記入 ``data_gaps``，不猜。晚於最近交易日的收盤日截掉並記缺口。"""
     snapshot = bundle.get("snapshot")
     trade_date = snapshot.get("latest_trade_date") if isinstance(snapshot, Mapping) else None
     if not isinstance(trade_date, str):
@@ -85,7 +85,9 @@ def market_index_facts(bundle: Mapping[str, object]) -> Dict[str, object]:
     series = _series(bundle, gaps)
     later = sorted(day for day in series if day > trade_date)
     if later:
-        raise DecisionToolError("market_index_facts：加權指數 %s 晚於 snapshot.latest_trade_date %s" % (later[0], trade_date))
+        # 純紀錄輸入不因資料日晚於最近交易日讓整個 run 失敗：截掉晚於 latest_trade_date 的日子並記缺口（原先整個 run 拋錯，不會有舊 run 受影響）。
+        series = {day: value for day, value in series.items() if day <= trade_date}
+        gaps.append("加權指數有 %d 個收盤日晚於 snapshot.latest_trade_date %s（最早 %s），已截掉不用" % (len(later), trade_date, later[0]))
     result: Dict[str, object] = {
         "version": MARKET_INDEX_FACTS, "citable": False, "source": SOURCE, "as_of": trade_date, "note": MARKET_INDEX_NOTE,
     }

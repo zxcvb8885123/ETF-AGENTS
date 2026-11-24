@@ -82,7 +82,7 @@ AUTO_RESUME_MIN_REMAINING = timedelta(minutes=25)
 # 額度用完要等重置、安全拒絕不該重試：這些錯誤續跑無效。
 NON_RESUMABLE_MARKERS = ("session limit", "usage limit", "hit your", "rate limit", "秘密", "未核准工具")
 RESUME_LATEST = "latest"  # --resume 不帶 RUN_ID：續跑今天最近一個未完成的 run
-NEWS_CATCHUP_TIMEOUT_SECONDS = 900  # 個股新聞補抓上限；逐股 150 檔約數分鐘，卡住不拖垮每日流程
+NEWS_CATCHUP_TIMEOUT_SECONDS = 1500  # 個股新聞補抓總時間預算（前一交易日、前一日曆日、今天共用）；卡住不拖垮每日流程
 DATA_READY_TIME = time(15, 0)  # 交易日 15:00 後當日行情才算齊全（yfinance 等來源收盤後才有）
 TRADE_DATE_LOOKBACK_DAYS = 14  # 往前找最近交易日的上限，避免日曆缺漏時無窮迴圈
 RECENT_RUN_WINDOW = timedelta(hours=1)  # 同時段的 run 在此時間內完成才略過；更早的（例如半夜手動跑）照常重做
@@ -261,29 +261,78 @@ def attempt_fallback_dplan(summary: dict, args, session, account_path: Path, sna
         summary["dplan"]["fallback"] = {"status": "not_generated", "error": "已還原重跑前的備案決策，原 D-Plan 主檔仍可上傳，不需備援"}
         log("[備援] 不產生：已還原重跑前的備案決策")
         return
-    if session is None or not isinstance(summary.get("datapack"), dict):
-        summary["dplan"]["fallback"] = {"status": "not_generated", "error": "流程在目標時段或 DataPack 對帳前就失敗，缺少產生備援所需的輸入"}
-        log("[備援] 不產生：缺少目標時段或 DataPack 對帳結果")
-        notify("ETF Agent 備援 D-Plan", "未產生備援：流程在 DataPack 對帳前失敗，今日沒有可交的 D-Plan，請人工處理")
+    if session is None:
+        summary["dplan"]["fallback"] = {"status": "not_generated", "error": "流程在決定目標時段前就失敗，缺少產生備援所需的輸入"}
+        log("[備援] 不產生：缺少目標時段")
+        notify("ETF Agent 備援 D-Plan", "未產生備援：流程在決定目標時段前失敗，今日沒有可交的 D-Plan，請人工處理")
         return
     if session_deadline_passed(session, now):
         summary["dplan"]["fallback"] = {"status": "not_generated", "error": "已過目標時段的交件期限，備援 D-Plan 無法繳交"}
         log("[備援] 不產生：已過交件期限")
         return
-    result = FallbackDPlanService(ROOT).generate(
-        daily_run=dict(summary, target_session=session), account_path=account_path, snapshot_path=snapshot_path,
-        profile_path=ROOT / "config" / "competition_profile.json", account_id=args.account_id,
-        reason=reason, detail=detail, now=now,
-    )
+    datapack = summary.get("datapack")
+    if isinstance(datapack, dict) and datapack.get("status") == "matched":
+        result = FallbackDPlanService(ROOT).generate(
+            daily_run=dict(summary, target_session=session), account_path=account_path, snapshot_path=snapshot_path,
+            profile_path=ROOT / "config" / "competition_profile.json", account_id=args.account_id,
+            reason=reason, detail=detail, now=now,
+        )
+    else:
+        # 對帳前就失敗或帳本與 DataPack 對不上：主辦方持股才是地面真相，改只依 DataPack 產生全部續抱。
+        if not Path(snapshot_path).is_file():
+            summary["dplan"]["fallback"] = {"status": "not_generated", "error": "DataPack 未對帳且尚未建立 Snapshot，缺少產生備援所需的輸入"}
+            log("[備援] 不產生：DataPack 未對帳且沒有 Snapshot")
+            notify("ETF Agent 備援 D-Plan", "未產生備援：流程在建立 Snapshot 前失敗，今日沒有可交的 D-Plan，請人工處理")
+            return
+        result = FallbackDPlanService(ROOT).generate_from_datapack(
+            daily_run=dict(summary, target_session=session), datapack_dir=getattr(args, "datapack_dir", None) or ROOT / "var" / "datapack",
+            snapshot_path=snapshot_path, profile_path=ROOT / "config" / "competition_profile.json",
+            account_id=args.account_id, reason=reason, detail=detail, now=now,
+        )
     if result.get("status") == "fallback":
         summary["dplan"] = dict(result, original={k: dplan.get(k) for k in ("status", "error") if k in dplan})
         log("[備援] 已產生備援 D-Plan（全部續抱、無委託，程式產生，未上傳）：%s" % result["output"])
+        for warning in result.get("warnings") or []:
+            log("[備援] %s" % warning)
+        if result.get("cash_range_mismatch"):
+            notify("ETF Agent 備援 D-Plan", "備援現金比 %s 超出 0–25%%，宣告區間必然對不上實際現金，交件前請人工確認" % result.get("cash_ratio"))
+        if result.get("source") == "datapack_only":
+            notify("ETF Agent 備援 D-Plan", "本機帳本未與 DataPack 對帳，備援只依 DataPack 持股產生；交件後請執行 --rebase-to-datapack 修正帳本")
         if not result.get("main_replaced"):
             log("[備援] 主檔是正式決策的 D-Plan，備援只存在 versions/，請人工決定要交哪一份")
     else:
         summary["dplan"]["fallback"] = result
         log("[備援] 未產生備援 D-Plan：%s" % result.get("error"))
         notify("ETF Agent 備援 D-Plan", "未產生備援 D-Plan：%s" % str(result.get("error"))[:160])
+
+
+def precommit_fallback_dplan(summary: dict, args, session, account_path: Path, snapshot_path: Path, now: datetime) -> None:
+    """DataPack 對帳通過後、呼叫任何子 Agent 前先落地一份保底備援（全部續抱、無委託，程式產生、不上傳）。
+
+    決策鏈可能拖到 08:55 之後才失敗，只在流程結束才產備援會來不及；有保底時，逾時或崩潰也至少有一份可交的檔。
+    正式 D-Plan 產出時 ``DPlanExportService`` 以 ``replace_json`` 覆蓋同一主檔（備援已標 fallback=true、
+    並登記在 fallback_decisions，不會被誤認成正式決策）；主檔已是正式決策（例如前一次 run 已產出）時備援只存 versions/。
+    不產生時只記錄，不通知、不影響本次決策；結果放 ``summary["early_fallback"]``，不動 ``summary["dplan"]``。"""
+    from etf_agent.competition import FallbackDPlanService
+
+    datapack = summary.get("datapack")
+    if not isinstance(datapack, dict) or datapack.get("status") != "matched":
+        return  # 略過對帳或未對帳：備援前提不成立
+    if session_deadline_passed(session, now):
+        return
+    try:
+        result = FallbackDPlanService(ROOT).generate(
+            daily_run=dict(summary, target_session=session), account_path=account_path, snapshot_path=snapshot_path,
+            profile_path=ROOT / "config" / "competition_profile.json", account_id=args.account_id,
+            reason="pipeline_failed", detail="保底備援：決策鏈尚未完成；正式 D-Plan 產出後會覆蓋此檔", now=now,
+        )
+    except Exception as error:  # noqa: BLE001 — 保底失敗不得影響正式決策
+        result = {"status": "not_generated", "error": "備援程式例外：%s" % error}
+    summary["early_fallback"] = result
+    if result.get("status") == "fallback":
+        log("[備援] 已先落地保底備援（正式 D-Plan 產出後覆蓋；未上傳）：%s" % result.get("output"))
+    else:
+        log("[備援] 保底備援未產生：%s" % result.get("error"))
 
 
 LOCK_STALE_HOURS = 6
@@ -383,15 +432,41 @@ def ensure_company_news(now: datetime) -> dict:
         return {"status": "check_failed", "error": str(error)}
     if done >= universe:
         return {"status": "already_collected", "collected": done}
-    log("個股新聞今天只抓到 %d／%d 檔，建 Snapshot 前補抓" % (done, universe))
-    try:
-        completed = subprocess.run([str(ROOT / "scripts" / "run_finmind_news.sh"), day.isoformat()],
-                                   cwd=ROOT, check=False, timeout=NEWS_CATCHUP_TIMEOUT_SECONDS)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return {"status": "failed", "collected_before": done, "error": str(error)}
-    if completed.returncode != 0:
-        return {"status": "failed", "collected_before": done, "exit_code": completed.returncode}
-    return {"status": "caught_up", "collected_before": done}
+    dates = company_news_catchup_dates(day)
+    log("個股新聞今天只抓到 %d／%d 檔，建 Snapshot 前補抓 %s" % (done, universe, "、".join(item.isoformat() for item in dates)))
+    # FinMind 每次只回傳一天；20:40 排程之後到午夜的前一日新聞只有隔天早上補抓才拿得到。
+    # 每日各抓一次，available_at 仍是這次抓取時間（不回填到過去）。所有日期共用一份時間預算。
+    started = time_module.monotonic()
+    fetched = []
+    for fetch_day in dates:
+        remaining = NEWS_CATCHUP_TIMEOUT_SECONDS - (time_module.monotonic() - started)
+        if remaining < 30:
+            return {"status": "failed", "collected_before": done, "fetched_dates": fetched, "error": "補抓時間預算用盡"}
+        try:
+            completed = subprocess.run([str(ROOT / "scripts" / "run_finmind_news.sh"), fetch_day.isoformat()],
+                                       cwd=ROOT, check=False, timeout=remaining)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return {"status": "failed", "collected_before": done, "fetched_dates": fetched, "error": str(error)}
+        if completed.returncode != 0:
+            return {"status": "failed", "collected_before": done, "fetched_dates": fetched,
+                    "exit_code": completed.returncode, "failed_date": fetch_day.isoformat()}
+        fetched.append(fetch_day.isoformat())
+    return {"status": "caught_up", "collected_before": done, "fetched_dates": fetched}
+
+
+def company_news_catchup_dates(today) -> list:
+    """補抓的新聞日期：前一個交易日（週一為週五）、前一日曆日（若不同）與今天，由舊到新。
+
+    不查休市日曆（週間國定假日只是多抓一天、結果為空，不影響正確性）。"""
+    previous = today - timedelta(days=1)
+    last_weekday = previous
+    while last_weekday.weekday() >= 5:
+        last_weekday -= timedelta(days=1)
+    dates = []
+    for item in (last_weekday, previous, today):
+        if item not in dates:
+            dates.append(item)
+    return dates
 
 
 def expected_latest_trade_date(captures_root: Path, now: datetime):
@@ -559,11 +634,14 @@ CAPTURE_RETRY_MARGIN = timedelta(hours=1)  # 重試最晚停在交件期限前�
 
 
 def capture_retry_stop_at(now: datetime) -> datetime:
-    """下一個 08:55 交件期限前一小時；重抓資料最晚做到這個時間。"""
-    deadline = datetime.combine(now.astimezone(TAIPEI_TIMEZONE).date(), DECISION_DEADLINE, TAIPEI_TIMEZONE)
-    if now >= deadline - CAPTURE_RETRY_MARGIN:
-        deadline += timedelta(days=1)
-    return deadline - CAPTURE_RETRY_MARGIN
+    """目標日 08:55 交件期限前一小時；重抓資料最晚做到這個時間。
+
+    目標日：交易日 DATA_READY_TIME（15:00）之前啟動是替當天交件（例如 07:00 排程），之後啟動是替隔天。
+    已超過停止時間就回傳過去的時間：capture_with_retry 只做立刻的兩次嘗試、不再睡眠等待，
+    不會把停止時間推到隔天而握著每日鎖拖一整天。"""
+    local = now.astimezone(TAIPEI_TIMEZONE)
+    target = local.date() if local.time() < DATA_READY_TIME else local.date() + timedelta(days=1)
+    return datetime.combine(target, DECISION_DEADLINE, TAIPEI_TIMEZONE) - CAPTURE_RETRY_MARGIN
 
 
 def ensure_calendar_capture(captures_root: Path, now: datetime) -> bool:
@@ -1194,6 +1272,8 @@ def _main(args) -> int:
         summary["datapack"] = datapack_gate(args, run_dir, account_path, session, previous_summary.get("datapack"), snapshot_path, stamp)
         account_run_id = prepared_account_run(args.account_id)
         write_json(summary_path, summary)
+        precommit_fallback_dplan(summary, args, session, account_path, snapshot_path, datetime.now(TAIPEI_TIMEZONE))
+        write_json(summary_path, summary)
 
         log("[3/4] 決策鏈：分析團隊 → 多空研究 → 交易 → 風險（子 Agent 經 %s%s）" % (
             args.agent_cli, "" if args.research_agent_cli == args.agent_cli else "，多空研究員經 %s" % args.research_agent_cli))
@@ -1347,6 +1427,12 @@ def _main(args) -> int:
             summary.setdefault("dplan", {"status": "blocked", "error": str(summary.get("error"))})["fallback"] = {
                 "status": "not_generated", "error": "備援程式例外：%s" % error}
             log("[備援] 備援程式例外，未產生：%s" % error)
+    early = summary.get("early_fallback")
+    if (isinstance(early, dict) and early.get("status") == "fallback" and early.get("main_replaced") and not summary.get("rolled_back")
+            and summary.get("dplan", {}).get("status") not in {"ready", "fallback"}):
+        # 正式 D-Plan 沒產出、結束時的備援也沒成功，但保底備援已在主檔：據實回報目前可交的是這份備援。
+        summary["dplan"] = dict(early, original={k: summary.get("dplan", {}).get(k) for k in ("status", "error") if k in summary.get("dplan", {})})
+        log("[備援] 沿用流程開始前落地的保底備援：%s" % early.get("output"))
     summary["calibration"] = record_calibration()
     summary.setdefault("finished_at", datetime.now(TAIPEI_TIMEZONE).isoformat())
     summary["final_status"] = final_run_status(summary)

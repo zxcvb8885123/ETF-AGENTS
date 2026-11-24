@@ -80,11 +80,13 @@ def evidence_recency(bundle: Mapping[str, object], market_evidence_ids: Set[str]
     boundary = window_start(trade_date)
 
     times: Dict[str, Dict[str, object]] = {}
+    late_gaps: List[str] = []
     news_input = bundle.get("market_news_input")
     if isinstance(news_input, Mapping) and isinstance(news_input.get("bundle"), Mapping):
         pack = news_input["bundle"]
-        merged = pack.get("schema_version") == "market-news-1.2"  # 1.2 允許同一來源多次抓取；舊版仍一來源一份
-        for item in prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"], merge=merged)["items"]:
+        merged = pack.get("schema_version") in ("market-news-1.2", "market-news-1.3")  # 1.2 起允許同一來源多次抓取；舊版仍一來源一份
+        lenient = pack.get("schema_version") == "market-news-1.3"  # 1.3：單則壞時間只丟該則
+        for item in prepare(pack["captures"], pack["window_start"], pack["decision_cutoff"], merge=merged, lenient=lenient)["items"]:
             published = parse_aware_time(item["published_at"], "published_at", error=DecisionToolError)
             times[item["item_id"]] = _time_entry(item["item_id"], "news", published, cutoff, boundary)
     overnight = bundle.get("overnight_market_input")
@@ -101,7 +103,9 @@ def evidence_recency(bundle: Mapping[str, object], market_evidence_ids: Set[str]
             if isinstance(component, Mapping) and component.get("evidence_id") and component.get("as_of"):
                 as_of = str(component["as_of"])
                 if as_of > trade_date:
-                    raise DecisionToolError("evidence_recency：%s 的資料日晚於台股最近交易日" % component["evidence_id"])
+                    # 不讓一筆晚於最近交易日的成分拖垮整個 run（原先拋錯，不會有舊 run 受影響）：不分組，記入缺口。
+                    late_gaps.append("%s 的資料日 %s 晚於台股最近交易日 %s，無法分組" % (component["evidence_id"], as_of, trade_date))
+                    continue
                 times[str(component["evidence_id"])] = {
                     "evidence_id": str(component["evidence_id"]),
                     "kind": "fear_greed",
@@ -117,7 +121,7 @@ def evidence_recency(bundle: Mapping[str, object], market_evidence_ids: Set[str]
     }
 
     buckets: Dict[str, List[Dict[str, object]]] = {name: [] for name in BUCKETS}
-    data_gaps: List[str] = []
+    data_gaps: List[str] = list(late_gaps)
     for evidence_id in sorted(market_evidence_ids):
         entry = times.get(evidence_id)
         if entry is None:

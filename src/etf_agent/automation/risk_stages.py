@@ -48,6 +48,13 @@ TYPED_STANCE_PROMPT = (
 )
 
 
+# night_rally_override v4：情緒護欄已取消，改用不含「negative 時姿態為 neutral 或 defensive」的版本。
+TYPED_STANCE_PROMPT_V4 = (
+    "摘要含 market_level_evidence_ids：evidence_ids 至少一個市場層級證據，"
+    "見 cash-stance.md「market_level_evidence_ids」節。"
+)
+
+
 NIGHT_RALLY_PROMPT = (
     "摘要含 night_rally_override：全市場情緒 negative 時，若台指期夜盤漲幅不低於 min_night_change_pct，"
     "且 evidence_ids 引用 night_evidence_id，程式放行 aggressive；是否選仍由你判斷，見 cash-stance.md「night_rally_override」節。"
@@ -60,6 +67,35 @@ NIGHT_RALLY_V2_PROMPT = (
     "aggressive_required=false 時同 v1。"
     "見 cash-stance.md「night_rally_override」節。"
 )
+
+
+NIGHT_RALLY_V4_PROMPT = (
+    "摘要含 night_rally_override（v4）：現金姿態完全由你看行情判斷；"
+    "情緒 negative 也可以選 aggressive，夜盤大漲也不強迫 aggressive。情緒、恐懼貪婪指標與夜盤都是要權衡的事實，理由說明取捨。"
+    "見 cash-stance.md「night_rally_override」節。"
+)
+
+# offense.agent_view_turn 開啟時替換 TURN_ASSESSMENT_PROMPT_OFFENSE／OFFENSE_VIEW_PROMPT 的一致性句子。
+VIEW_TURN_MATCH_SENTENCE = (
+    "一、它必須與 exposure_view 一致"
+    "（probe 配 no_turn_evidence 或 turn_unconfirmed、start_rebuild 至少 turn_unconfirmed、rebuild 須 turn_confirmed），不一致會被退回，程式不會替你調整；"
+)
+VIEW_TURN_FREE_SENTENCE = "一、它與 exposure_view 的搭配由你判斷，程式不檢查兩者是否一致；"
+OFFENSE_VIEW_MATCH_SENTENCE = (
+    "probe 是預測型，轉向還看不出來或尚未確認時小量先試（turn_assessment 可配 no_turn_evidence 或 turn_unconfirmed）；"
+    "start_rebuild 要 turn_assessment 至少 turn_unconfirmed；rebuild 要 turn_confirmed。"
+)
+OFFENSE_VIEW_FREE_SENTENCE = "probe 是小量先試、start_rebuild 開始重建、rebuild 全面重建；選哪一級與 turn_assessment 的搭配由你判斷，程式不檢查一致性。"
+
+
+def free_view_turn(prompt: str, match: str, free: str, offense_gate: Optional[Mapping[str, object]]) -> str:
+    """offense.agent_view_turn 開啟時把一致性句子換成「由你判斷」；沒有欄位時原字串不變。句子找不到即報錯（避免提示與驗證脫節）。"""
+    from etf_agent.decision.offense import agent_view_turn_enabled
+    if not agent_view_turn_enabled(offense_gate):
+        return prompt
+    if match not in prompt:
+        raise ValueError("offense.agent_view_turn：提示文字找不到一致性句子，請同步更新 risk_stages")
+    return prompt.replace(match, free)
 
 
 SOFT_FLOOR_PROMPT = (
@@ -324,7 +360,10 @@ class RiskStagesMixin:
             {str(row["source_evidence_id"]) for row in bundle["snapshot"]["latest_prices"] if row.get("source_evidence_id")}
         )
         # 隔夜市場背景只在決策輸入有附時才進 brief 與提示詞，沒有附的舊流程維持原樣。
-        overnight = overnight_market_channel(bundle)
+        overnight = overnight_market_channel(bundle, keep_available_night=night_rally_gate is not None)
+        if night_rally_gate is not None:  # v3：回撤下限優先，下限高於 aggressive 時不要求 aggressive（v1／v2 原物件）
+            from etf_agent.decision.night_rally import with_drawdown_floor
+            night_rally_gate = with_drawdown_floor(night_rally_gate, (drawdown_control or {}).get("stance_floor"))
         context = DecisionContext(bundle)
         typed = context.evidence_policy is not None
         regime = momentum.get("regime_assessment")
@@ -474,8 +513,10 @@ class RiskStagesMixin:
                CASH_GRADE_PROMPT if graded else "姿態對應的現金比例由 Policy 決定，你不得輸出百分比。",
                OVERNIGHT_PROMPT if overnight is not None else "",
                SOFT_FLOOR_PROMPT if soft_floors else "",
-               TYPED_STANCE_PROMPT if typed else "", _SHARED_RULES)
-            + ((NIGHT_RALLY_V2_PROMPT if night_rally_gate.get("version") == "v2" else NIGHT_RALLY_PROMPT)
+               (TYPED_STANCE_PROMPT_V4 if night_rally_gate is not None and night_rally_gate.get("version") == "v4"
+                else TYPED_STANCE_PROMPT) if typed else "", _SHARED_RULES)
+            + ((NIGHT_RALLY_V2_PROMPT if night_rally_gate.get("version") in ("v2", "v3") else
+                NIGHT_RALLY_V4_PROMPT if night_rally_gate.get("version") == "v4" else NIGHT_RALLY_PROMPT)
                if night_rally_gate is not None else "")
             + (RECENCY_PROMPT if cash_stance_recency is not None else "")
             + (
@@ -483,15 +524,18 @@ class RiskStagesMixin:
                 if cash_stance_turn_facts is not None else ""
             )
             + (
-                (TURN_ASSESSMENT_PROMPT_OFFENSE if offense_gate is not None else TURN_ASSESSMENT_PROMPT_AGENT_LED if agent_led else
+                (free_view_turn(TURN_ASSESSMENT_PROMPT_OFFENSE, VIEW_TURN_MATCH_SENTENCE, VIEW_TURN_FREE_SENTENCE, offense_gate)
+                 if offense_gate is not None else TURN_ASSESSMENT_PROMPT_AGENT_LED if agent_led else
                  (TURN_STATE_PROMPT_V2 if turn_state.get("version") == "v2" else TURN_STATE_PROMPT))
                 if turn_state is not None else ""
             )
             + (MARKET_INDEX_PROMPT if market_index_facts_gate is not None else "")
             + (BENCHMARK_PROMPT if benchmark_facts is not None else "")
             + (
-                (OFFENSE_VIEW_PROMPT.replace(REFERENCE_PHRASE, REFERENCE_PHRASE_OMITTED)
-                 if offense_reference_omitted(cash_stance_brief_gate) else OFFENSE_VIEW_PROMPT) if offense_gate is not None else
+                free_view_turn(
+                    OFFENSE_VIEW_PROMPT.replace(REFERENCE_PHRASE, REFERENCE_PHRASE_OMITTED)
+                    if offense_reference_omitted(cash_stance_brief_gate) else OFFENSE_VIEW_PROMPT,
+                    OFFENSE_VIEW_MATCH_SENTENCE, OFFENSE_VIEW_FREE_SENTENCE, offense_gate) if offense_gate is not None else
                 (EXPOSURE_VIEW_PROMPT_AGENT_LED if agent_led else EXPOSURE_VIEW_PROMPT)
                 if exposure_view_gate is not None else ""
             )

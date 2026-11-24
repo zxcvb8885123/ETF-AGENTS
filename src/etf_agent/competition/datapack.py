@@ -281,6 +281,9 @@ def reconcile(loaded: Mapping[str, object], account_snapshot: Mapping[str, objec
     if differences:
         problems.append("持股股數與 DataPack 不一致：%s" % "；".join(
             "%s 帳本 %d／資料包 %d" % (d["symbol"], d["ledger_shares"], d["datapack_shares"]) for d in differences))
+    if differences and orders["outcome"] in ("voided", "none"):
+        problems.append("資料包記錄前一交易日委託 outcome=%s（不成交），帳本若已模擬成交就會與主辦方不同；"
+                        "以資料包為準，請用 --rebase-to-datapack 重建（或先跑 audit_host_outcome 確認）" % orders["outcome"])
     if abs(ledger_cash - official_cash) > tolerance:
         problems.append("現金差 %s 元，超過容忍 %s 元（帳本 %s／資料包 %s）" % (ledger_cash - official_cash, tolerance, ledger_cash, official_cash))
     if problems:

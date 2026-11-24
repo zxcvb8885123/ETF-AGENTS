@@ -31,6 +31,9 @@ from .risk import (
 from .revision import RevisionHistoryBuilder, RevisionHistoryValidator
 from .exposure import hold_conviction_enabled
 from .trader import TradeDecisionValidator
+from .dip_facts import DIP_FACTS_KEY, quality_dip_assessment_gate, quality_dip_facts_gate
+from .sizing import reentry_hint_symbols
+from .valuation_facts import VALUATION_FACTS_KEY, valuation_facts_gate
 
 
 def target_trade_date(bundle: Mapping[str, object]) -> Optional[str]:
@@ -223,6 +226,33 @@ class PortfolioDecisionApplicationService:
         errors = DecisionInputValidator(self.bundle).validate()
         return {"valid": not errors, "errors": errors}
 
+    def _trade_validator(
+        self, momentum: Mapping[str, object], debate: Mapping[str, object], policy: Optional[Mapping[str, object]],
+        policy_path: Optional[Path] = None,
+    ) -> TradeDecisionValidator:
+        """CLI 各驗證路徑共用的 TradeDecisionValidator：比照 DecisionResultValidator 由 policy 與 team_inputs 推導
+        hold_conviction、dip_assessment、reentry_hint_symbols、dip_facts、prior_context、valuation_facts，
+        避免合法 run 被誤報「含未允許欄位：dip_assessment」。team_inputs 取自 policy 同目錄的 ``team_inputs.json``
+        （run 目錄的標準佈局）；找不到時 dip_facts／prior_context／valuation_facts 為 None，與舊行為相同。"""
+        sizing = policy.get("position_sizing") if isinstance(policy, Mapping) else None
+        team: Mapping[str, object] = {}
+        if policy_path is not None:
+            beside = Path(policy_path).with_name("team_inputs.json")
+            if beside.is_file():
+                team = self.read_json(beside, " team_inputs")
+        dip_gate = quality_dip_facts_gate(sizing)
+        prior = team.get("prior_decision_context")
+        return TradeDecisionValidator(
+            self.bundle, momentum, debate,
+            prior_context=prior if isinstance(prior, Mapping) else None,
+            position_review=self.position_review or (team.get("position_review") if isinstance(team.get("position_review"), Mapping) else None),
+            hold_conviction=isinstance(policy, Mapping) and hold_conviction_enabled(policy),
+            dip_facts=team.get(DIP_FACTS_KEY) if dip_gate is not None else None,
+            reentry_hint_symbols=reentry_hint_symbols(sizing),
+            dip_assessment=quality_dip_assessment_gate(sizing) is not None,
+            valuation_facts=team.get(VALUATION_FACTS_KEY) if valuation_facts_gate(sizing) is not None else None,
+        )
+
     def _require_input(self) -> None:
         errors = DecisionInputValidator(self.bundle).validate()
         if errors:
@@ -258,10 +288,8 @@ class PortfolioDecisionApplicationService:
         momentum = self.read_json(momentum_path, " MomentumResult")
         debate = self.read_json(debate_path, " ResearchDebateBundle")
         result = self.read_json(result_path, " TradeDecision")
-        hold_conviction = policy_path is not None and hold_conviction_enabled(self.read_json(policy_path, " DecisionPolicy"))
-        errors = TradeDecisionValidator(
-            self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction
-        ).validate(result)
+        policy = self.read_json(policy_path, " DecisionPolicy") if policy_path is not None else None
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(result)
         response: Dict[str, object] = {"valid": not errors, "errors": errors}
         if not errors:
             self._write(result, output)
@@ -282,7 +310,7 @@ class PortfolioDecisionApplicationService:
         debate = self.read_json(debate_path, " ResearchDebateBundle")
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         if errors:
             raise DecisionToolError("TradeDecision 驗證失敗：" + "；".join(errors))
         result = AllocationOrderEngine(self.bundle, policy).run(intent)
@@ -302,7 +330,7 @@ class PortfolioDecisionApplicationService:
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         return {"valid": not errors, "errors": errors}
 
@@ -321,7 +349,7 @@ class PortfolioDecisionApplicationService:
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         if errors:
             raise DecisionToolError("ProposalBundle 驗證失敗：" + "；".join(errors))
@@ -346,7 +374,7 @@ class PortfolioDecisionApplicationService:
         policy = self.read_json(policy_path, " DecisionPolicy")
         proposal = self.read_json(proposal_path, " ProposalBundle")
         scenario = self.read_json(scenario_path, " ScenarioResult")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         if errors:
@@ -375,7 +403,7 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
@@ -406,7 +434,7 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         errors.extend(ProposalValidator(self.bundle, policy, intent).validate(proposal))
         errors.extend(ScenarioValidator(self.bundle, policy).validate(proposal, scenario))
         errors.extend(GuardValidator(self.bundle, policy).validate(proposal, scenario, guard))
@@ -455,7 +483,7 @@ class PortfolioDecisionApplicationService:
         scenario = self.read_json(scenario_path, " ScenarioResult")
         guard = self.read_json(guard_path, " GuardResult")
         review = self.read_json(review_path, " RiskReview")
-        intent_errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        intent_errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         if intent_errors:
             raise DecisionToolError("TradeDecision 驗證失敗：" + "；".join(intent_errors))
         builder = RevisionHistoryBuilder(self.bundle, policy, intent)
@@ -480,7 +508,7 @@ class PortfolioDecisionApplicationService:
         intent = self.read_json(intent_path, " TradeDecision")
         policy = self.read_json(policy_path, " DecisionPolicy")
         history = self.read_json(history_path, " RevisionHistory")
-        errors = TradeDecisionValidator(self.bundle, momentum, debate, position_review=self.position_review, hold_conviction=hold_conviction_enabled(policy)).validate(intent)
+        errors = self._trade_validator(momentum, debate, policy, policy_path).validate(intent)
         errors.extend(RevisionHistoryValidator(self.bundle, policy, intent).validate(history))
         return {"valid": not errors, "errors": errors}
 

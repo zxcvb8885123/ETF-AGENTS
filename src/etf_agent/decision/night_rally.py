@@ -7,6 +7,14 @@
 v1 放行只是「允許」，是否選 aggressive 仍由風險 Agent 判斷；Agent 不輸出任何數字。
 v2（2026-11-24，使用者決定）：在 v1 之上，夜盤可用且漲幅達門檻時「要求」aggressive 並引用夜盤證據，
 未照做即驗證失敗、走帶回饋的修正循環（比照回撤下限以驗證擋、不由程式改寫姿態）；夜盤不可用時與 v1 相同、不強制。
+v3（2026-11-24 新增，在 v2 之上）：
+- 回撤下限優先：當天 ``drawdown_control.stance_floor`` 高於 aggressive（neutral／defensive）時，不再要求 aggressive
+  （v2 此時「必須 aggressive」與「不得低於下限」同時成立、怎麼答都失敗）；放行規則（v1）不變。
+- 要求 aggressive 時另要求 ``exposure_view`` 不是 keep_defensive（v2 只在簡報提醒，選了就讓曝險換股整組取消）；走修正循環。
+v4（2026-11-24 11:30 新增，使用者決定「進攻或防守由 Agent 看行情判斷，不用規則綁」）：
+- 取消「全市場情緒 negative 不得 aggressive」的一致性護欄：情緒只是背景，aggressive 不再需要夜盤放行；
+- 不強迫 aggressive（同 v1），也不要求 ``exposure_view``；夜盤成分仍列在簡報，可引用、不必引用。
+其餘證據規則（至少一個市場層級證據）與回撤下限（drawdown_control.stance_floor）不變。
 """
 
 from decimal import Decimal, InvalidOperation
@@ -14,15 +22,31 @@ from typing import Iterable, List, Mapping, Optional
 
 GATE_FIELD = "night_rally_override"
 GATE_VERSION = "v1"
-GATE_VERSIONS = ("v1", "v2")
+GATE_VERSIONS = ("v1", "v2", "v3", "v4")
+ENFORCING_VERSIONS = ("v2", "v3")  # 夜盤達門檻時「要求」aggressive 的版本
+AGENT_JUDGMENT_VERSION = "v4"  # 情緒 negative 不再擋 aggressive（姿態完全由風險 Agent 判斷）
+FLOOR_KEY = "drawdown_floor"  # 由 night_rally_override_gate 帶入的執行期欄位（不是 Policy 欄位）
 NIGHT_SYMBOL = "TXF_NIGHT"
 _MAX_THRESHOLD = Decimal("10")  # 台指期單日漲跌幅上限 10%，門檻高於它永遠不會成立
 
 
-def night_rally_override_gate(sizing: object) -> Optional[Mapping[str, object]]:
-    """閘門啟用時回傳閘門物件；沒有閘門回 None（行為與舊版完全相同）。"""
+def night_rally_override_gate(sizing: object, control: object = None) -> Optional[Mapping[str, object]]:
+    """閘門啟用時回傳閘門物件；沒有閘門回 None（行為與舊版完全相同）。
+
+    ``control`` 是 Policy 的 ``drawdown_control``：只有 v3 讀它，當天 ``stance_floor`` 高於 aggressive 時在回傳的副本
+    帶上 ``drawdown_floor``，讓「要求 aggressive」讓位給回撤下限；v1／v2 或不傳 ``control`` 時回傳原物件。"""
     gate = sizing.get(GATE_FIELD) if isinstance(sizing, Mapping) else None
-    return gate if isinstance(gate, Mapping) else None
+    if not isinstance(gate, Mapping):
+        return None
+    return with_drawdown_floor(gate, control.get("stance_floor") if isinstance(control, Mapping) else None)
+
+
+def with_drawdown_floor(gate: Mapping[str, object], floor: object) -> Mapping[str, object]:
+    """v3 且回撤下限高於 aggressive 時回傳帶 ``drawdown_floor`` 的副本；其餘回原物件。"""
+    from .drawdown import stance_meets_floor
+    if gate.get("version") == "v3" and floor is not None and not stance_meets_floor("aggressive", floor):
+        return {**dict(gate), FLOOR_KEY: str(floor)}
+    return gate
 
 
 def _threshold(gate: Mapping[str, object]) -> Optional[Decimal]:
@@ -37,7 +61,7 @@ def _threshold(gate: Mapping[str, object]) -> Optional[Decimal]:
 
 
 def validate_night_rally_override_gate(sizing: Mapping[str, object], errors: List[str]) -> None:
-    """閘門形狀：{version: v1／v2, min_night_change_pct: "<0 到 10 的百分比字串>"}；數值由人填、程式不給預設。"""
+    """閘門形狀：{version: v1～v4, min_night_change_pct: "<0 到 10 的百分比字串>"}；數值由人填、程式不給預設。"""
     gate = sizing[GATE_FIELD]
     prefix = "position_sizing.%s" % GATE_FIELD
     if not isinstance(gate, Mapping):
@@ -74,6 +98,11 @@ def night_rally_allows_aggressive(
     return row is not None and row["evidence_id"] in set(evidence_ids)
 
 
+def sentiment_guard_lifted(gate: Optional[Mapping[str, object]]) -> bool:
+    """v4：全市場情緒 negative 不再擋 aggressive；沒有閘門或 v1～v3 回 False（原護欄）。"""
+    return gate is not None and gate.get("version") == AGENT_JUDGMENT_VERSION
+
+
 def _rally_row(gate: Optional[Mapping[str, object]], bundle: Mapping[str, object]) -> Optional[Mapping[str, object]]:
     """閘門（v1／v2）啟用、夜盤可用且漲幅 ≥ 門檻時回傳夜盤成分；否則 None。"""
     if gate is None or gate.get("version") not in GATE_VERSIONS:
@@ -91,7 +120,7 @@ def _rally_row(gate: Optional[Mapping[str, object]], bundle: Mapping[str, object
 
 def night_rally_required_evidence(gate: Optional[Mapping[str, object]], bundle: Mapping[str, object]) -> Optional[str]:
     """v2 且夜盤漲幅達門檻時回傳必須引用的夜盤 evidence_id（姿態必須 aggressive）；其餘情況回 None（不強制）。"""
-    if gate is None or gate.get("version") != "v2":
+    if gate is None or gate.get("version") not in ENFORCING_VERSIONS or gate.get(FLOOR_KEY) is not None:
         return None
     row = _rally_row(gate, bundle)
     return str(row["evidence_id"]) if row is not None else None
@@ -107,12 +136,17 @@ def validate_night_rally_requirement(
         return
     evidence = stance.get("evidence_ids")
     cited = isinstance(evidence, list) and required in evidence
+    if gate is not None and gate.get("version") == "v3" and stance.get("level") == "aggressive" and cited \
+            and stance.get("exposure_view") == "keep_defensive":
+        errors.append(
+            "%s 人設規則 night_rally_override v3：夜盤漲幅達門檻要求 aggressive 時，exposure_view 不得是 keep_defensive"
+            "（keep_defensive 會讓曝險換股整組取消）；請改為 start_rebuild 或 rebuild（若有要求 exposure_view），並說明取捨" % prefix)
     if stance.get("level") != "aggressive" or not cited:
         row = night_rally_component(bundle) or {}
         errors.append(
-            "%s 人設規則 night_rally_override v2：台指期夜盤漲幅 %s%% 不低於門檻 %s%%，現金姿態必須是 aggressive，"
+            "%s 人設規則 night_rally_override %s：台指期夜盤漲幅 %s%% 不低於門檻 %s%%，現金姿態必須是 aggressive，"
             "且 evidence_ids 必須引用夜盤證據 %s；請改為 aggressive 並在 rationale 說明夜盤與前一交易日收盤資料的取捨"
-            % (prefix, row.get("change_pct"), gate.get("min_night_change_pct") if gate else None, required))
+            % (prefix, gate.get("version") if gate else "v2", row.get("change_pct"), gate.get("min_night_change_pct") if gate else None, required))
 
 
 def night_rally_brief(gate: Optional[Mapping[str, object]], bundle: Mapping[str, object]) -> Optional[Mapping[str, object]]:
@@ -120,10 +154,23 @@ def night_rally_brief(gate: Optional[Mapping[str, object]], bundle: Mapping[str,
     if gate is None:
         return None
     row = night_rally_component(bundle)
-    if gate.get("version") == "v2":
+    if sentiment_guard_lifted(gate):
+        return {
+            "version": gate.get("version"),
+            "min_night_change_pct": gate.get("min_night_change_pct"),
+            "night_evidence_id": row["evidence_id"] if row is not None else None,
+            "night_change_pct": row["change_pct"] if row is not None else None,
+            "rule": "人設規則（v4）：現金姿態完全由你看行情判斷。全市場情緒 negative 不再禁止 aggressive，夜盤漲幅也不強迫 aggressive；"
+                    "情緒、恐懼貪婪指標與夜盤都是你要權衡的事實。夜盤可用時可引用 night_evidence_id。"
+                    "理由須說明各方證據的取捨（例如恐懼指標是前一交易日收盤資料、夜盤可能只是一日行情）。",
+        }
+    if gate.get("version") in ENFORCING_VERSIONS:
         required = night_rally_required_evidence(gate, bundle) is not None
         return {
-            "version": "v2",
+            "version": gate.get("version"),
+            **({"drawdown_floor": gate[FLOOR_KEY],
+                "drawdown_floor_note": "回撤下限 %s 優先，今日不要求 aggressive（現金姿態仍不得低於下限）" % gate[FLOOR_KEY]}
+               if gate.get(FLOOR_KEY) is not None else {}),
             "min_night_change_pct": gate.get("min_night_change_pct"),
             "night_evidence_id": row["evidence_id"] if row is not None else None,
             "night_change_pct": row["change_pct"] if row is not None else None,

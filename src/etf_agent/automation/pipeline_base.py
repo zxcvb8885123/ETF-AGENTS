@@ -88,7 +88,9 @@ class AgentStepOutcome:
 ANALYST_TASK_PREFIXES = frozenset({"technical", "fundamental", "event", "market"})
 RESEARCH_TASK_PREFIXES = frozenset({"bull", "bear"})
 MAX_PARALLEL_WORKERS = 8
-DEFAULT_TRANSIENT_RETRIES = 1  # 暫時性失敗（逾時、非零結束、輸出不是 JSON）最多再試的次數
+DEADLINE_SAFETY_SECONDS = 180  # 子 Agent 單次逾時須在交件期限前至少留這麼多秒給驗證與匯出
+MIN_AGENT_SECONDS = 60  # 剩餘時間（已扣安全邊際）低於此值就不啟動 Agent
+DEFAULT_TRANSIENT_RETRIES = 1 # 暫時性失敗（逾時、非零結束、輸出不是 JSON）最多再試的次數
 DEFAULT_RETRY_DELAY_SECONDS = 30.0
 # 研究階段暫存啟用時，run 目錄內出現這些檔代表多空研究員（或其後段產物）已落地；
 # 不含每次都會重寫的 brief_bull_*／brief_bear_*（兩方共同輸入，不含任何研究員輸出）。
@@ -255,19 +257,28 @@ class PipelineBase:
         if self.max_workers == 1 or len(jobs) <= 1:
             return [job() for _, job in jobs]
         first_call = len(self.calls)
-        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(jobs))) as pool:
-            futures = [pool.submit(job) for _, job in jobs]
-            wait(futures, return_when=FIRST_EXCEPTION)
-            if any(not future.cancelled() and future.done() and future.exception() is not None for future in futures):
-                self._abort.set()
+        raised = None
+        try:
+            with ThreadPoolExecutor(max_workers=min(self.max_workers, len(jobs))) as pool:
+                futures = [pool.submit(job) for _, job in jobs]
+                wait(futures, return_when=FIRST_EXCEPTION)
+                if any(not future.cancelled() and future.done() and future.exception() is not None for future in futures):
+                    self._abort.set()
+                for future in futures:
+                    future.cancel()
+            position = {name: index for index, (name, _) in enumerate(jobs)}
+            with self._calls_lock:
+                self.calls[first_call:] = sorted(self.calls[first_call:], key=lambda call: position.get(str(call["name"]), len(jobs)))
             for future in futures:
-                future.cancel()
-        position = {name: index for index, (name, _) in enumerate(jobs)}
-        with self._calls_lock:
-            self.calls[first_call:] = sorted(self.calls[first_call:], key=lambda call: position.get(str(call["name"]), len(jobs)))
-        for future in futures:
-            if not future.cancelled() and future.exception() is not None:
-                raise future.exception()
+                if not future.cancelled() and future.exception() is not None:
+                    raised = future.exception()
+                    break
+        finally:
+            # 中止旗標只管這一批平行任務；批次結束（executor 已等完所有執行中任務）即清除，
+            # 否則呼叫端接住失敗降級後，同 run 之後的 Agent 暫時性錯誤再也不重試。
+            self._abort.clear()
+        if raised is not None:
+            raise raised
         return [future.result() for future in futures]
 
     def _research_residue(self) -> List[Path]:
@@ -498,10 +509,15 @@ class PipelineBase:
             if (task.deny_reads or task.deny_read_directories) and not getattr(runner, "enforces_deny_reads", False) and self._staged_raw is None:
                 # 不強制拒讀的執行器只能在研究階段輸出暫存之內執行帶 deny_reads 的任務；其他情形直接拒絕，不重試。
                 raise DailyPipelineError("%s 的執行器無法強制拒讀規則，且不在研究階段輸出暫存內，已拒絕啟動" % task.name)
+            time_limit = self._time_limit_seconds()
+            if time_limit is not None and time_limit < MIN_AGENT_SECONDS:
+                # 距交件期限已不足以跑完一次呼叫：不啟動，走與暫時性失敗相同的流程（可降級步驟降級，其餘整份失敗）。
+                raise TransientAgentError("%s 距交件期限 %s 只剩 %.0f 秒，不啟動 Agent" % (
+                    task.name, self.retry_deadline.strftime("%H:%M"), max(time_limit, 0.0)))
             try:
                 call = runner.run(AgentTask(
                     task.name, prompt, task.schema, task.deny_reads, stage_isolated=self._staged_raw is not None,
-                    deny_read_directories=task.deny_read_directories,
+                    deny_read_directories=task.deny_read_directories, time_limit_seconds=time_limit,
                 ), self.run_dir)
             except TransientAgentError as error:
                 duration = round(time.monotonic() - started, 1)
@@ -541,6 +557,13 @@ class PipelineBase:
         """本次 run 到目前為止所有 Agent 呼叫讀到的 Skill 檔版本彙整（見 ``skill_digest.skill_versions``）。"""
         with self._calls_lock:
             return skill_versions(list(self.calls))
+
+    def _time_limit_seconds(self) -> Optional[float]:
+        """距交件期限的剩餘秒數扣安全邊際；沒有設定交件期限時回 None（不限制）。"""
+        if self.retry_deadline is None:
+            return None
+        remaining = (self.retry_deadline - datetime.now(self.retry_deadline.tzinfo)).total_seconds()
+        return remaining - DEADLINE_SAFETY_SECONDS
 
     def _retry_blocker(self, retry: int, failed_duration: float) -> Optional[str]:
         """不該再試的原因；可以再試時回 None。"""

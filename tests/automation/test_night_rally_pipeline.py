@@ -164,10 +164,51 @@ class NightRallyV2Tests(NightRallyPipelineTests):
         self.assertFalse(brief["night_rally_override"]["aggressive_required"])
 
 
+class NightRallyV4Tests(unittest.TestCase):
+    """v4（2026-11-24 11:30）：情緒 negative 不再擋 aggressive，夜盤也不強迫；姿態完全由風險 Agent 判斷。"""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.directory = self._dir.name
+
+    def run_with(self, stance, change="9"):
+        world = PipelineWorld(Path(self.directory), approved_status=True)
+        _with_gate(world, "v4")
+        overnight = _overnight_with_night(self.directory, world, change)
+        fear_greed = _negative_fear_greed(self.directory, world)
+        runner = FakeRunner(team_outputs(cash_stance=[stance] * 4))
+        result = world.run(runner, fear_greed=fear_greed, overnight=overnight)
+        bundle = json.loads((world.run_dir / "decision_input.json").read_text(encoding="utf-8"))
+        if bundle["market_fear_greed_input"]["result"].get("outlook") != "negative":
+            self.skipTest("恐懼貪婪 fixture 不是 negative")
+        prompts = " ".join(str(prompt) for prompt in runner.prompts)
+        self.assertNotIn("全市場情緒 negative 時姿態為 neutral 或 defensive", prompts)  # v4 提示不再叫 Agent 避開 aggressive
+        self.assertIn("night_rally_override（v4）", prompts)
+        return world, result
+
+    def test_aggressive_without_the_night_evidence_passes_under_negative_sentiment(self):
+        stance = dict(STANCE, level="aggressive", rationale="恐懼指標是前一交易日資料，綜合判斷今日偏多。")
+        world, result = self.run_with(stance, change="3")
+        self.assertEqual(result.status, "completed", result.errors)
+        team = json.loads((world.run_dir / "team_inputs.json").read_text(encoding="utf-8"))
+        self.assertEqual(team["cash_stance"]["level"], "aggressive")
+        brief = json.loads((world.run_dir / "brief_cash_stance.json").read_text(encoding="utf-8"))
+        self.assertEqual(brief["night_rally_override"]["version"], "v4")
+        self.assertNotIn("aggressive_required", brief["night_rally_override"])
+        DecisionRepository(world.repository).verify("decision-fixture")
+
+    def test_neutral_is_not_forced_up_by_a_big_night_rally(self):
+        world, result = self.run_with(dict(STANCE, rationale="夜盤大漲但可能只是一日行情，維持中性。"), change="9")
+        self.assertEqual(result.status, "completed", result.errors)
+        team = json.loads((world.run_dir / "team_inputs.json").read_text(encoding="utf-8"))
+        self.assertEqual(team["cash_stance"]["level"], "neutral")
+
+
 class NightRallyGateShapeTests(unittest.TestCase):
-    def test_v1_and_v2_are_accepted_and_other_versions_refused(self):
+    def test_v1_to_v4_are_accepted_and_other_versions_refused(self):
         from etf_agent.decision.night_rally import validate_night_rally_override_gate
-        for version, ok in (("v1", True), ("v2", True), ("v3", False)):
+        for version, ok in (("v1", True), ("v2", True), ("v3", True), ("v4", True), ("v5", False)):
             errors = []
             validate_night_rally_override_gate({"night_rally_override": dict(GATE, version=version)}, errors)
             self.assertEqual(errors == [], ok, (version, errors))

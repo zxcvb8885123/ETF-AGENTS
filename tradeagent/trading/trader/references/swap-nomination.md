@@ -23,6 +23,7 @@
 
 - `buy_basis_ids`：該新股在第一輪**已採納**的多頭論點（簡報的 `buy_basis`），至少一個。
 - `sell_basis_ids`：該持股在第一輪**已採納**的空頭論點、持股檢視警示 `review:<代號>:<旗標>`，或持股事實 `review:<代號>:position`（簡報的 `sell_basis`），至少一個。
+- 簡報有 `victim_bear_claim` 說明時（Policy 啟用 `agent_swap.victim_bear_claim`），換出者資格另要求第一輪已採納該股的空頭論點（`bear-` 開頭）；只採納持股檢視警示或持股事實的持股不可提名（`no_adopted_bear_claim`），三種 purpose 都一樣。
 - 不得引用第一輪已否決的論點，也不得引用別檔的識別碼；第二輪不改第一輪的判斷。要換掉某檔持股，第一輪就該採納它的空頭論點或持股事實。
 - **反彈期的換位置問題（這一步才看得到全部候選）**：持股是抗跌的防守股、反彈期只會漲得比交易池少時，問自己「把這筆資金換到反彈中更強的新股，理由是否更強？」答案為是才列為換出者，並在 `reason` 用兩邊各自的依據說清楚；第一輪看不到別批候選，所以這一題只在這裡回答。**這個 Skill 不是逐 run 版本化，以下依簡報是否含 `victim_rules` 區塊（換出者規則閘門）判斷：**
   - 簡報**沒有** `victim_rules`：沿用上述寫法，`purpose=thesis` 的資格只看簡報的 `nominable`／`blocked_reasons`。
@@ -54,8 +55,8 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 
 簡報含 `exposure_swap` 時，每一對多填列舉 `purpose`，輸出多一個 `lower_conviction_review`；沒有這個區塊就完全不適用，照上面的規則。上面「市場參與度低本身不是賣出理由」「不得純粹為了買別檔而賣」兩句，只在 `purpose=exposure` 的配對放寬為：以曝險事實加上你的取捨說明讓位；`thesis` 配對維持原句。
 
-- `thesis`：和上面完全相同，換出者要有自己的空頭論點或持股事實（`sell_basis_ids` 照舊）。
-- `exposure`：你判斷組合在反彈日跟不上市場（例如低 beta、上行捕捉弱、持股當日報酬落後交易池），要讓出位置給新股。換出者的 `sell_basis_ids` **必須含它自己的曝險事實 `review:<代號>:exposure`**（簡報該持股的 `exposure_basis`，只能用在這個目的、只能是被換出那檔自己的），也可另加它在第一輪已採納的論點；不需要空頭論點。`reason` 寫清楚為什麼讓位、為什麼新股的位置更值得。曝險事實是程式算的事實，不是賣出指令；你仍要說明取捨。
+- `thesis`：和上面完全相同，換出者要有自己的空頭論點或持股事實（`sell_basis_ids` 照舊）。簡報含 `victim_bear_claim` 說明時，持股檢視警示與持股事實不再算換出資格，必須有第一輪已採納的該股 `bear-` 論點（`no_adopted_bear_claim`），三種 purpose 都一樣。
+- `exposure`：你判斷組合在反彈日跟不上市場（例如低 beta、上行捕捉弱、持股當日報酬落後交易池），要讓出位置給新股。換出者的 `sell_basis_ids` **必須含它自己的曝險事實 `review:<代號>:exposure`**（簡報該持股的 `exposure_basis`，只能用在這個目的、只能是被換出那檔自己的），也可另加它在第一輪已採納的論點；一般情況不需要空頭論點，**但簡報有 `victim_bear_claim` 說明（Policy 啟用 `agent_swap.victim_bear_claim`）時，換出者必須有第一輪已採納的該股空頭論點（`bear-` 開頭），沒有的持股在 `exposure_blocked_reasons` 會列 `no_adopted_bear_claim`，不可提名。`reason` 寫清楚為什麼讓位、為什麼新股的位置更值得。曝險事實是程式算的事實，不是賣出指令；你仍要說明取捨。
 - `buy_basis_ids` 照舊只放新股的多頭論點，不得放曝險事實編號。
 - **順序**：同一份清單裡，中、低信心持股的 `exposure` 配對排在高信心持股的 `exposure` 配對之前；清單尾端會最先被程式捨棄。
 - `lower_conviction_review`：只有當你要提名**高信心持股**以 `exposure` 讓位時才填，否則輸出 `[]`。填的時候，簡報 `lower_conviction_symbols` 的每一檔都要交代剛好一次：`nominated`（已在某一對 `exposure` 的 `sell_symbol`）或 `kept`（不讓位，附一句 `reason`）。
@@ -113,7 +114,7 @@ Policy 啟用 `exposure_view` 時，簡報多一個 `exposure_facts` 區塊：�
 
 簡報的 `quality_dip_swap` 有 `size_grades` 時（quality_dip v3），每對另有 `"size"`（quality_dip 配對填 `"small"`／`"medium"`／`"large"`，其他填 `""`；**簡報有 `entry_reserve` 時每一組都填列舉、不可填 `""`**），頂層另有 `"quality_dip_decline": {"reason_kind": "not_applicable", "reason": ""}`（需要交代時依上面填列舉與一句理由）。
 
-簡報有 `exposure_swap.entry_reserve` 時（`agent_swap.entry_reserve`），**每一組**都要填 `"size"`（`"small"` 試單、`"medium"` 一般、`"large"` 把握最高；不可留空字串、不輸出任何百分比）。程式把份量格對成買進上限，換入者的買進先保留預算，縮到不足一張就整組取消、換出者不賣；超出份量格所需的賣款回到一般預算（可能流向其他買單）。清單上限是 `max_nominations`，比實際成交組數（`fill_limit`）長，超過成交上限的組從清單尾端取消，所以把最想換的放前面。
+簡報有 `exposure_swap.entry_reserve` 時（`agent_swap.entry_reserve`），**每一組**都要填 `"size"`（`"small"` 試單、`"medium"` 一般、`"large"` 把握最高；不可留空字串、不輸出任何百分比）。程式把份量格對成買進上限，換入者的買進先保留預算，縮到不足一張就整組取消、換出者不賣；超出份量格所需的賣款：Policy 有 `agent_swap.earmark`（專款專用）時留作現金、不流向其他買單，沒有 earmark 時才回到一般預算（可能流向其他買單）。清單上限是 `max_nominations`，比實際成交組數（`fill_limit`）長，超過成交上限的組從清單尾端取消，所以把最想換的放前面。
 
 `entry_reserve.note` 另有「thesis 份量格上限」一句時（`position_sizing.offense.thesis_size_cap` 開啟）：風險 Agent 的有效等級放寬防守姿態的現金目標那天，`purpose=thesis` 的配對份量格會被程式縮到該級 `max_size`（只縮不取消、不占曝險配對名額、不被組合 beta 停止線取消）；這只限制份量格，不限制動用放寬的現金。你仍照把握程度填 `size`，不必自己壓低。簡報沒有這句時不適用。
 

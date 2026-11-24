@@ -37,10 +37,13 @@ def market_sentiment_channel(bundle):
     return channel
 
 
-def overnight_market_channel(bundle):
+def overnight_market_channel(bundle, keep_available_night=False):
     """隔夜市場背景通道（美股指數、台股代理；1.1 另含日韓、VIX、台指期夜盤與方向一致性 ``agreement``）；與全市場情緒分開，不併入 ``market_sentiment``。
 
     沒有隔夜市場輸入時回傳 None。非 available 時不附逐標的數字，避免被當成結論。
+    ``keep_available_night=True``（night_rally_override 閘門啟用的風險簡報才傳）：整體 unavailable（例如美股休市、主訊號缺）
+    但台指期夜盤成分可用且有 evidence_id 時，仍只附該夜盤成分並標 ``night_only=True``，讓夜盤規則要求引用的證據在通道看得到；
+    預設 False 時通道與舊版逐鍵相同。
     """
     if "overnight_market_input" not in bundle:
         return None
@@ -58,4 +61,13 @@ def overnight_market_channel(bundle):
                    "evidence_id") if key in row}
                    for row in result["components"] if row["status"] == "available"] if available else [],
                "data_gaps": result["data_gaps"], "limitations": result["limitations"]}
+    if keep_available_night and not available:
+        from .night_rally import NIGHT_SYMBOL
+        night = [row for row in result["components"] if row["symbol"] == NIGHT_SYMBOL and row["status"] == "available"
+                 and row.get("evidence_id")]
+        if night:
+            channel["components"] = [{key: night[0][key] for key in (
+                "symbol", "role", "as_of", "change_pct", "cumulative_change_pct", "percentile_20d", "percentile_250d",
+                "evidence_id") if key in night[0]}]
+            channel["night_only"] = True
     return channel

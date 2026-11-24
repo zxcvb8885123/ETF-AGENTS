@@ -10,7 +10,7 @@ from etf_agent.core import untrusted_value
 from .active_share import active_share, top_weights
 from .allocation import DecisionPolicyValidator, ProposalValidator
 from .rebound import lifted_turnover_rate
-from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate, revision_bounds_gate
+from .sizing import SECTOR_FIT, allowed_cash_grades, cash_grade_grid, cash_ratio_gate, restricted_hold_enabled, revision_bounds_gate
 from .contracts import (
     DECISION_SCHEMA_VERSION,
     DecisionContext,
@@ -109,6 +109,39 @@ def liquidity_exposure(proposal: Mapping[str, object], momentum: Mapping[str, ob
         "warning_participation": _rate(LIQUIDITY_PARTICIPATION_WARNING),
         "flagged_symbols": sorted(row["symbol"] for row in items if row["flagged"]),
         "items": items,
+    }
+
+
+def tradability_sets(
+    bundle: Mapping[str, object], snapshot: Mapping[str, object]
+) -> tuple[Dict[str, str], Set[str], Set[str]]:
+    """Guard 與 D-Plan 匯出共用的交易狀態：回傳（逐檔狀態、可交易、不可交易）。"""
+    status_bundle = bundle.get("trading_status_bundle")
+    assessment = bundle.get("tradability_assessment")
+    if isinstance(status_bundle, Mapping) and isinstance(assessment, Mapping):
+        status_by_symbol = {
+            str(item.get("symbol", "")).upper(): str(item.get("state", "unknown"))
+            for item in assessment.get("symbols", [])
+            if isinstance(item, Mapping) and item.get("symbol")
+        }
+        tradable = {symbol for symbol, state in status_by_symbol.items() if state == "allowed"}
+        not_tradable = {symbol for symbol, state in status_by_symbol.items() if state == "blocked"}
+        return status_by_symbol, tradable, not_tradable
+    # 相容既有 fixture；正式 Snapshot 的同名欄位是計數，不能進入此分支。
+    tradable = {str(value).upper() for value in snapshot.get("tradable_symbols", [])}
+    not_tradable = {str(value).upper() for value in snapshot.get("not_tradable_symbols", [])}
+    return {}, tradable, not_tradable
+
+
+def restricted_carried_symbols(
+    bundle: Mapping[str, object], snapshot: Mapping[str, object], held: Mapping[str, int], target: Mapping[str, int]
+) -> Set[str]:
+    """restricted_hold：股數不變（沒有委託）且不可交易的持股；Guard 與 D-Plan 匯出都只容忍這些股票漲價超限。"""
+    _, tradable, not_tradable = tradability_sets(bundle, snapshot)
+    return {
+        str(symbol).upper() for symbol, shares in held.items()
+        if shares and target.get(symbol) == shares
+        and (str(symbol).upper() in not_tradable or (tradable and str(symbol).upper() not in tradable))
     }
 
 
@@ -302,25 +335,7 @@ class CompetitionGuardV2:
             str(item["symbol"]).upper(): decimal_value(item["weight"], "weight")
             for item in positions
         }
-        status_bundle = self.context.bundle.get("trading_status_bundle")
-        assessment = self.context.bundle.get("tradability_assessment")
-        status_by_symbol = {}
-        if isinstance(status_bundle, Mapping) and isinstance(assessment, Mapping):
-            status_by_symbol = {
-                str(item.get("symbol", "")).upper(): str(item.get("state", "unknown"))
-                for item in assessment.get("symbols", [])
-                if isinstance(item, Mapping) and item.get("symbol")
-            }
-            tradable = {symbol for symbol, state in status_by_symbol.items() if state == "allowed"}
-            not_tradable = {symbol for symbol, state in status_by_symbol.items() if state == "blocked"}
-        else:
-            # 相容既有 fixture；正式 Snapshot 的同名欄位是計數，不能進入此分支。
-            tradable = {
-                str(value).upper() for value in self.context.snapshot.get("tradable_symbols", [])
-            }
-            not_tradable = {
-                str(value).upper() for value in self.context.snapshot.get("not_tradable_symbols", [])
-            }
+        status_by_symbol, tradable, not_tradable = tradability_sets(self.context.bundle, self.context.snapshot)
         universe = set(self.context.universe)
         self._check(checks, "UNIVERSE", set(weights).issubset(universe), sorted(set(weights) - universe))
         explicit_status = bool(status_by_symbol) or bool(tradable or not_tradable)
@@ -370,11 +385,17 @@ class CompetitionGuardV2:
         default_limit = decimal_value(self.policy["max_stock_weight"], "max_stock_weight")
         special = self.policy.get("special_weight_limits", {})
         violations = []
+        # position_sizing.restricted_hold（版本閘門）：續抱、受限（不可交易）、本次沒有買進的持股無法由程式減碼，
+        # 漲價超限屬比賽辦法的 5 交易日調整期，Guard 容忍並記為 carried；有買進或可交易的股票仍是硬性違規。舊 run 沒有閘門，照舊。
+        restricted_hold = restricted_hold_enabled(self.policy.get("position_sizing") or {})
+        carried_restricted = not_tradable_among(carried_symbols) if restricted_hold else set()
+        carried_over = []
         for symbol, weight in weights.items():
             limit = decimal_value(special.get(symbol, default_limit), "weight_limit") if isinstance(special, Mapping) else default_limit
             if weight > limit:
-                violations.append({"symbol": symbol, "actual": _rate(weight), "limit": _rate(limit)})
-        self._check(checks, "STOCK_WEIGHT", not violations, violations)
+                item = {"symbol": symbol, "actual": _rate(weight), "limit": _rate(limit)}
+                (carried_over if symbol in carried_restricted else violations).append(item)
+        self._check(checks, "STOCK_WEIGHT", not violations, {"violations": violations, "carried": carried_over} if restricted_hold else violations)
         sector_by_symbol = {
             str(symbol).upper(): str(sector)
             for symbol, sector in self.policy.get("sector_by_symbol", {}).items()
@@ -434,7 +455,7 @@ class CompetitionGuardV2:
             stock_violations = []
             for symbol, weight in scenario_weights.items():
                 limit = decimal_value(special.get(symbol, default_limit), "weight_limit") if isinstance(special, Mapping) else default_limit
-                if weight > limit:
+                if weight > limit and symbol not in carried_restricted:
                     stock_violations.append(symbol)
             scenario_sector: Dict[str, Decimal] = {}
             for symbol, weight in scenario_weights.items():

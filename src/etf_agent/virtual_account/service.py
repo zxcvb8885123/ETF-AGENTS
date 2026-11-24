@@ -17,11 +17,11 @@ from typing import Callable, Dict, Iterator, List, Mapping, Optional
 from etf_agent.core import canonical_sha256, content_sha256, parse_aware_time, parse_decimal
 from etf_agent.decision.contracts import DecisionInputValidator
 from etf_agent.decision.finalization import DecisionRepository, DecisionResultValidator
-from etf_agent.ledger import HOST_VOIDED, AccountLedger, ExecutionSimulator
+from etf_agent.ledger import HOST_NOT_SUBMITTED, HOST_VOIDED, AccountLedger, ExecutionSimulator
 
 
 RUN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-# 主辦方 DataPack prev_day_orders.outcome 的合法值；結算只對 voided 改變行為（整批不成交），其餘照模擬成交。
+# 主辦方 DataPack prev_day_orders.outcome 的合法值；結算對 voided（整批作廢）與 none（未繳交）都改為無成交，其餘照模擬成交。
 HOST_OUTCOMES = ("none", "unknown", "voided", "executed")
 HOST_OUTCOME_FIELDS = {"outcome", "void_reasons", "excluded_codes", "datapack_sha256", "datapack_path",
                        "trade_date", "as_of_date", "generated_at"}
@@ -420,7 +420,13 @@ class VirtualAccountRepository:
             seen.add(run_id)
             state = _read(self.verify(run_id) / "state.json", "state")
             symbols = sorted({str(row["symbol"]).upper() for row in state.get("positions", []) if int(row.get("shares", 0)) > 0})
-            history.append({"run_id": run_id, "as_of": str(state["as_of"]), "symbols": symbols})
+            # trade_date 是該狀態所屬的交易日（close 為成交日、rebase 為結算日）；as_of 是資料可得時間，收盤結算延到
+            # 午夜後會落在隔天，算持有起點請優先用 trade_date。舊帳本沒有的種類回 None，不猜。
+            provenance = state.get("provenance", {})
+            trade_date = provenance.get("trade_date") if provenance.get("type") == "close" else (
+                provenance.get("as_of_date") if provenance.get("type") == "datapack_rebase" else None)
+            history.append({"run_id": run_id, "as_of": str(state["as_of"]), "symbols": symbols,
+                            "trade_date": str(trade_date) if trade_date else None})
             run_id = state.get("provenance", {}).get("parent_run_id")
         return list(reversed(history))
 
@@ -611,7 +617,7 @@ class VirtualAccountService:
         """以執行日官方價量結算一份已驗證的 Decision run。
 
         ``host_outcome`` 是主辦方 DataPack 的 ``prev_day_orders``（含來源雜湊與 as_of_date）；outcome 為
-        ``voided`` 時主辦方已整批作廢，帳本把該決策結算為「無成交」（持股、現金只做交割與估值），不再模擬成交。
+        ``voided``（整批作廢）或 ``none``（前一交易日未繳交）時，帳本把該決策結算為「無成交」（持股、現金只做交割與估值），不再模擬成交。
         省略或 outcome 為其他值時維持原模擬成交。"""
         host = self._host_outcome(host_outcome)
         prepared = self.repository.latest()
@@ -683,6 +689,9 @@ class VirtualAccountService:
         buying_power = ledger.buying_power(bool(rules["reuse_sell_proceeds"]))
         if host is not None and host["outcome"] == "voided":
             execution = simulator.void_batch(decision, market, buying_power, market["execution_at"], HOST_VOIDED, host["void_reasons"])
+        elif host is not None and host["outcome"] == "none":
+            # 主辦方記錄前一交易日沒有收到任何委託（未繳交）：同樣不成交，本機決策不能當成已成交。
+            execution = simulator.void_batch(decision, market, buying_power, market["execution_at"], HOST_NOT_SUBMITTED, [])
         else:
             execution = simulator.run(decision, market, buying_power, market["execution_at"])
         ledger.apply_fills(execution, settlement_date, bool(rules["reuse_sell_proceeds"]))

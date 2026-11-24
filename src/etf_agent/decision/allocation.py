@@ -35,11 +35,14 @@ from .sizing import (
     HELD_WEIGHT_BUDGET, HIGH_CONVICTION_CASH_PRIORITY,
     HIGH_CONVICTION_CASH_FLOOR, LIMIT_HEADROOM, LIMIT_HEADROOM_BUY, LIMIT_SCALED_CONVICTION, SECTOR_FIT, SIZING_METHOD,
     STOCK_LIMIT_HEADROOM, TURNOVER_FIT, alpha_floor_weights, breadth_target, buy_gap_reserve_rate, cash_fit_min_fill_ratio,
-    conviction_weights, derisk_day_uses_agent_view, earmark_gate, proceeds_to_add_enabled, victim_bear_claim_enabled, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
+    conviction_weights, derisk_day_uses_agent_view, earmark_gate, proceeds_to_add_enabled, victim_bear_claim_enabled, swap_fit_enabled, agent_swap_fill_cap, drawdown_derisk_fraction, drawdown_derisk_v2, drawdown_derisk_v3, drawdown_derisk_v4,
     agent_swap_binding, high_conviction_floor_ratio, limit_scaled_alpha, reentry_blocked_symbols, release_order_binding,
     slot_recycle_enabled, validate_position_sizing,
     cash_fit_cancels_dust, cash_fit_ordered, held_weight_budget_enabled, high_priority_blocks, high_priority_enabled,
     reentry_cooldown_hint_only, reentry_hint_id,
+)
+from .sizing import (
+    cash_basis_enabled, gap_reserve_budget_enabled, pinned_high_ceiling_enabled, restricted_hold_enabled,
 )
 from .liquidity_fit import liquidity_fit_limit, liquidity_fit_upstream
 from .high_risk_cap import (
@@ -1388,7 +1391,13 @@ class AllocationOrderEngine:
                     entry_weights[(buy, sell)] = base_weight
                 kept_pairs.append((buy, sell))
             needed = kept_pairs
-        limit = int((self.policy["position_sizing"]["agent_swap"])["max_swaps_per_run"])
+        fit_gate = swap_fit_enabled(self.policy.get("position_sizing"))
+        # swap_fit：與提名端共用 agent_swap_fill_cap（取 agent_swap 與 rotation 上限減第一輪出場數的較小者）；沒有閘門時只看 agent_swap 上限（原行為）。
+        limit = agent_swap_fill_cap(
+            self.policy["position_sizing"],
+            sum(1 for symbol in current if intents.get(symbol) in {"exit", "forced_exit"} and symbol not in untradable),
+            rotation_bound=fit_gate,
+        )
         if quality_binding is not None and quality_binding.get("sized"):
             # v3：quality_dip 組數另計（已受 quality_dip.max_swaps_per_run 限制），不占 agent_swap.max_swaps_per_run；
             # 總上限只約束其餘（thesis／exposure）配對，超過的從清單尾端取消。
@@ -1423,8 +1432,7 @@ class AllocationOrderEngine:
             baseline_new = {symbol for symbol in baseline_new if weights[symbol] > 0}
         accepted: List[Tuple[str, str]] = []
         result = targets
-        for count in range(len(needed), 0, -1):
-            chosen = needed[:count]
+        def feasible(chosen: Sequence[Tuple[str, str]]) -> Optional[Tuple[List[str], Dict[str, Decimal], Dict[str, str], Decimal, Dict[str, Tuple[Decimal, Decimal]]]]:
             trial_active = set(active_symbols) - {sell for _, sell in chosen}
             trial_target = dict(target_shares)
             for _, sell in chosen:
@@ -1434,9 +1442,26 @@ class AllocationOrderEngine:
                 allowed_new=set(weights) | {buy for buy, _ in chosen},
                 reserved={buy: reserve_plan[buy][1] for buy, _ in chosen} if reserve_plan else None,
             )
-            if all(buy in trial[1] for buy, _ in chosen) and baseline_new <= set(trial[1]):
-                accepted, result = list(chosen), trial
-                break
+            return trial if all(buy in trial[1] for buy, _ in chosen) and baseline_new <= set(trial[1]) else None
+
+        if fit_gate:
+            # swap_fit：依清單先後逐組加入，放不進的那一組取消（swap_cap），不連帶取消後面仍可行的組（比照 turnover_skip）。
+            skipped_pairs: List[Tuple[str, str]] = []
+            for pair in needed:
+                trial = feasible(accepted + [pair])
+                if trial is None:
+                    skipped_pairs.append(pair)
+                else:
+                    accepted, result = accepted + [pair], trial
+            for buy, sell in skipped_pairs:
+                cancel(buy, sell, "swap_cap")
+            needed = accepted  # 下面的尾端取消迴圈（needed[len(accepted):]）自然為空
+        else:
+            for count in range(len(needed), 0, -1):
+                trial = feasible(needed[:count])
+                if trial is not None:
+                    accepted, result = list(needed[:count]), trial
+                    break
         for buy, sell in needed[len(accepted):]:
             cancel(buy, sell, "swap_cap")
         for buy, sell in accepted:
@@ -1659,8 +1684,12 @@ class AllocationOrderEngine:
                 sector_value[sectors[sell]] = sector_value.get(sectors[sell], Decimal(0)) - victim_value
             plan[buy] = (shares, Decimal(shares) * price / marked_nav, (
                 "份量格 %s（買進權重上限 %s%s）、保留買進 %d 股，最小的限制是 %s（份量格權重、單股餘裕、產業餘裕、賣款加格點以上現金）；"
-                "不再參與信心預算；超出份量格所需的賣款回到一般預算（可能流向其他買單）" % (
-                    size, format(weight, ".2%"), "，優質股自己的硬上限與裁決" if quality else "", shares, binding)))
+                "不再參與信心預算；%s" % (
+                    size, format(weight, ".2%"), "，優質股自己的硬上限與裁決" if quality else "", shares, binding,
+                    # 文字更正跟著 swap_fit 閘門：封存 run（沒有 swap_fit）的旗標文字逐字不變，才能逐位元重建。
+                    "超出份量格所需的賣款留作現金（agent_swap.earmark 專款專用，不流向其他買單）"
+                    if swap_fit_enabled(self.policy.get("position_sizing")) and self._earmark_active() is not None
+                    else "超出份量格所需的賣款回到一般預算（可能流向其他買單）")))
             kept.append((buy, sell))
         return kept, plan
 
@@ -2123,6 +2152,16 @@ class AllocationOrderEngine:
                 Decimal("0"),
             )
             budget = Decimal("1") - effective["cash_buffer_rate"] - held_outside  # type: ignore[operator]
+            if gap_reserve_budget_enabled(sizing) and "buy_gap_reserve_rate" in effective:
+                # gap_reserve_budget（版本閘門）：_fit_cash 要求「期末現金 ≥ 緩衝 + 買進增量 × 跳空預留率」，預算先扣掉預估的預留，
+                # 否則每天固定超配、再從名次最後的買單砍。設 T = 入選股（含換入者保留）份額總和、C = 入選持股現有權重：
+                # T ≤ 1 − 緩衝 − held_outside − rate × (T − C)，即 T ≤ (B + rate × C) ÷ (1 + rate)；高估增量只會少配、不會透支。
+                rate = effective["buy_gap_reserve_rate"]
+                current_weight = sum(
+                    (Decimal(target_shares[symbol]) * self.prices[symbol] / marked_nav for symbol in weighted if symbol in active_symbols),
+                    Decimal("0"),
+                )
+                budget = (budget + rate * current_weight) / (Decimal("1") + rate)  # type: ignore[operator]
             if reserved:
                 budget -= reserved_total  # entry_reserve：先扣掉換入者保留的權重（沒有保留時不經過這行，舊路徑逐位元不變）
             # eligible 全是本次 buy／add 的股票：stock_limit_headroom 啟用時封頂留 3%（0.97），否則 0.995。
@@ -2147,7 +2186,11 @@ class AllocationOrderEngine:
                     symbol: min(alpha * self._weight_limit(symbol, effective), limits[symbol])
                     for symbol in weighted if tiers[symbol] == "high"
                 }
-                weights = alpha_floor_weights(weighted, tiers, multipliers, volatility, floor, limits, budget, exponent, floors)
+                # pinned_high_ceiling（版本閘門）：被自身上限卡在低於 α × 預設單股上限的 high 不決定 medium／low 的天花板。
+                pinned_below = alpha * effective["max_stock_weight"] if pinned_high_ceiling_enabled(sizing) else None  # type: ignore[operator]
+                weights = alpha_floor_weights(
+                    weighted, tiers, multipliers, volatility, floor, limits, budget, exponent, floors, pinned_below,
+                )
             weights.update(reserved)
             if not held_weight_budget:
                 break
@@ -2279,7 +2322,10 @@ class AllocationOrderEngine:
         cash: Decimal,
         effective: Mapping[str, object],
     ) -> Tuple[List[Dict[str, object]], Decimal, List[Dict[str, object]]]:
-        """在 Guard 前按整張降低預計超重部位；費稅改變 NAV 時逐張重算。"""
+        """在 Guard 前按整張降低預計超重部位；費稅改變 NAV 時逐張重算。
+
+        ``restricted_hold``（版本閘門）：處置／停牌等受限標的不能賣，不為它產生 trim 賣單（Guard 的 STOCK_WEIGHT 容忍
+        續抱、受限、本次未買進的超限部位）；沒有閘門時與原式逐位相同。"""
         fitted = list(orders)
         shares = dict(current)
         for order in fitted:
@@ -2291,9 +2337,12 @@ class AllocationOrderEngine:
         from .risk import ScenarioEngine
 
         scenarios = ScenarioEngine(self.context.bundle, self.policy)
+        restricted = self._untradable() if restricted_hold_enabled(self.policy.get("position_sizing") or {}) else set()
         while True:
             changed = False
             for symbol in sorted(shares):
+                if symbol in restricted:
+                    continue
                 while shares[symbol] > 0:
                     # 封頂係數每輪重算：買單被整筆減光後該股只剩續抱，回到 0.995，不會因價格漂移被多賣。
                     buying = any(item["symbol"] == symbol and item["side"] == "buy" for item in fitted)
@@ -3050,14 +3099,23 @@ class AllocationOrderEngine:
         - ``cash_buffer_floor``：見 ``_cash_floor``。
         - ``high_conviction_cash_floor``：high 買單的下限改為軟下限（``_cash_floor``），動用到一般下限以下時
           記 RISK_CASH_SOFT_FLOOR；``floor_disabled`` 時不套用。
+        - ``cash_basis``（版本閘門）：緩衝檢查改用「已交割＋未交割現金＋本次賣款 − 買進（含跳空預留）≥ NAV × 緩衝」（與 NAV 口徑的
+          預算一致，期末現金不再多出未交割現金），另獨立要求「已交割現金＋當日可用賣款 − 買進（含跳空預留）≥ 0」不得透支
+          （ScenarioEngine 的 buying_power 同口徑；主辦方資金不足會整批作廢）。
         - ``agent_swap.earmark``（換股賣款專款專用）：成交換股對的換出者賣款淨額從一般可用現金移出、記在同一對換入者名下；
           換入者排在全部買單之前（不分信心），每筆買進含跳空預留先用自己的專款，不足的部分才用一般現金（仍須保住現金下限），
           用不完的專款留作現金、不流向其他買單。交易 Agent 自己的 exit／trim 賣款與其他賣單不受影響，照舊進一般現金。"""
         sells = [item for item in orders if item["side"] == "sell"]
         buys = [item for item in orders if item["side"] == "buy"]
-        available = starting_cash
+        basis = cash_basis_enabled(self.policy.get("position_sizing") or {})
+        # cash_basis：緩衝以總現金（已交割＋未交割）計；另追蹤「已交割」餘額防透支。沒有閘門時 floor_cash 即 starting_cash、不追蹤。
+        floor_cash = starting_total_cash if basis else starting_cash
+        available = floor_cash
+        settled_left = starting_cash
         if effective["reuse_sell_proceeds"]:
-            available += sum(decimal_value(item["net_cash_impact"], "net_cash_impact") for item in sells)
+            sell_proceeds = sum(decimal_value(item["net_cash_impact"], "net_cash_impact") for item in sells)
+            available += sell_proceeds
+            settled_left += sell_proceeds
         earmark_left: Dict[str, Decimal] = {}
         if self._swap_pairs and effective["reuse_sell_proceeds"] and self._earmark_active() is not None:
             proceeds_of = {str(item["symbol"]): decimal_value(item["net_cash_impact"], "net_cash_impact") for item in sells}
@@ -3065,11 +3123,12 @@ class AllocationOrderEngine:
                 if sell_symbol in proceeds_of:
                     earmark_left[buy_symbol] = proceeds_of[sell_symbol]
                     available -= proceeds_of[sell_symbol]
-        buffer = self._cash_floor(nav, starting_cash, effective, floor_disabled=floor_disabled)
+                    settled_left -= proceeds_of[sell_symbol]
+        buffer = self._cash_floor(nav, floor_cash, effective, floor_disabled=floor_disabled)
         # high_conviction_cash_floor（版本閘門）：high 買單改用軟下限；減碼日（floor_disabled）不套用。
         soft_ratio = None if floor_disabled else effective.get("high_conviction_floor_ratio")
         soft_buffer = (
-            self._cash_floor(nav, starting_cash, effective, tier="high", floor_disabled=floor_disabled)
+            self._cash_floor(nav, floor_cash, effective, tier="high", floor_disabled=floor_disabled)
             if soft_ratio is not None else buffer
         )
         all_tiers = (self.policy.get("position_sizing") or {}).get("conviction_by_symbol") or {}
@@ -3135,10 +3194,18 @@ class AllocationOrderEngine:
                     rate = reserve_rate or Decimal("0")
                     general_head = available - buy_total * rate - item_buffer
                     cash_ok = cost * (1 + rate) - earmark_left[str(item["symbol"])] <= max(Decimal("0"), general_head)
+                    if basis:
+                        cash_ok = cash_ok and cost * (1 + rate) - earmark_left[str(item["symbol"])] <= max(
+                            Decimal("0"), settled_left - buy_total * rate
+                        )
                 elif reserve_rate is None:
                     cash_ok = available - cost >= item_buffer
+                    if basis:
+                        cash_ok = cash_ok and settled_left - cost >= 0
                 else:
                     cash_ok = available - cost - (buy_total + cost) * reserve_rate >= item_buffer
+                    if basis:
+                        cash_ok = cash_ok and settled_left - cost - (buy_total + cost) * reserve_rate >= 0
                 turnover_ok = turnover_budget is None or turnover_used + gross <= turnover_budget
                 if cash_ok and turnover_ok:
                     break
@@ -3177,11 +3244,13 @@ class AllocationOrderEngine:
                 use = min(need, earmark_left[str(item["symbol"])])
                 earmark_left[str(item["symbol"])] -= use
                 available -= need - use
+                settled_left -= need - use
                 turnover_used += decimal_value(candidate["gross_amount"], "gross_amount")
             elif candidate:
                 headroom_before = available - buy_total * (reserve_rate or Decimal("0"))
                 fitted.append(candidate)
                 available += decimal_value(candidate["net_cash_impact"], "net_cash_impact")
+                settled_left += decimal_value(candidate["net_cash_impact"], "net_cash_impact")
                 turnover_used += decimal_value(candidate["gross_amount"], "gross_amount")
                 buy_total += -decimal_value(candidate["net_cash_impact"], "net_cash_impact")
                 if soft_high:
