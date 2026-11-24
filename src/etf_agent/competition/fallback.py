@@ -141,8 +141,12 @@ def fallback_preconditions(
     cash_ratio = cash / nav
     metrics["cash_ratio"] = str(cash_ratio)
     metrics["nav_tradable"] = str(nav)
-    if cash_ratio < 0 or cash_ratio >= CASH_RATIO_LIMIT:
-        warnings.append("警告：DataPack 現金比 %.4f 不在 0–25%% 內；全部續抱不動用現金，是否需調整請人工確認" % cash_ratio)
+    # 現金比超出 0–25% 只警告、照產備援（不交件同樣記警告，比賽辦法一天只記一次）；但備援沒有委託，
+    # D-Plan 宣告的現金區間（驗證器上限 0.25）一定對不上實際現金比，C12 姿態檢查必然失敗，另標 cash_range_mismatch 並通知。
+    metrics["cash_range_mismatch"] = bool(cash_ratio < 0 or cash_ratio >= CASH_RATIO_LIMIT)
+    if metrics["cash_range_mismatch"]:
+        warnings.append("警告：DataPack 現金比 %.4f 不在 0–25%% 內；備援全部續抱、不動用現金，宣告的現金區間必然與實際現金比不符"
+                        "（C12 姿態檢查會失敗，現金超限本身也會被記警告），交件前請人工決定是否改交有買單的計畫" % cash_ratio)
 
     close_prices = datapack.get("close_prices") if isinstance(datapack.get("close_prices"), Mapping) else {}
     snapshot_rows = {str(row.get("symbol")): row for row in snapshot.get("latest_prices", []) if isinstance(row, Mapping)}
@@ -494,6 +498,7 @@ class FallbackDPlanService:
             "trade_date": trade_date,
             "position_count": checks["metrics"].get("position_count"),
             "cash_ratio": checks["metrics"].get("cash_ratio"),
+            "cash_range_mismatch": bool(checks["metrics"].get("cash_range_mismatch")),
             "warnings": checks["warnings"],
             "local_validation": "passed",
             "organizer_server_validation": "not_run",

@@ -292,6 +292,10 @@ def attempt_fallback_dplan(summary: dict, args, session, account_path: Path, sna
     if result.get("status") == "fallback":
         summary["dplan"] = dict(result, original={k: dplan.get(k) for k in ("status", "error") if k in dplan})
         log("[備援] 已產生備援 D-Plan（全部續抱、無委託，程式產生，未上傳）：%s" % result["output"])
+        for warning in result.get("warnings") or []:
+            log("[備援] %s" % warning)
+        if result.get("cash_range_mismatch"):
+            notify("ETF Agent 備援 D-Plan", "備援現金比 %s 超出 0–25%%，宣告區間必然對不上實際現金，交件前請人工確認" % result.get("cash_ratio"))
         if result.get("source") == "datapack_only":
             notify("ETF Agent 備援 D-Plan", "本機帳本未與 DataPack 對帳，備援只依 DataPack 持股產生；交件後請執行 --rebase-to-datapack 修正帳本")
         if not result.get("main_replaced"):

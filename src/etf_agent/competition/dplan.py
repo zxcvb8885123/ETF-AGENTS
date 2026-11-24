@@ -20,6 +20,8 @@ from etf_agent.core import parse_decimal
 from etf_agent.data.evidence import TAIPEI_TIMEZONE as TAIPEI
 from etf_agent.data.trading_calendar import DECISION_DEADLINE
 from etf_agent.decision.contracts import DecisionToolError, decimal_value
+from etf_agent.decision.risk import restricted_carried_symbols
+from etf_agent.decision.sizing import restricted_hold_enabled
 
 
 class DPlanError(ValueError):
@@ -575,7 +577,10 @@ class DPlanExporter:
         if errors:
             raise DPlanError("D-Plan 本地驗證失敗：" + "; ".join(errors))
         # 姿態檢查必須沿用上方 target_weight／股數推導的同一估值分母；有 DataPack 時不能退回帳本 NAV。
-        self._validate_official_posture(plan, account, bundle, order_rows, latest_prices, target, nav)
+        # restricted_hold（版本閘門）：與 Guard 同一口徑，股數不變的受限持股漲價超限屬辦法註 3 調整期，不在匯出時擋整份。
+        sizing = artifacts["policy"].get("position_sizing") or {}
+        carried = restricted_carried_symbols(bundle, bundle["snapshot"], held, target) if restricted_hold_enabled(sizing) else set()
+        self._validate_official_posture(plan, account, bundle, order_rows, latest_prices, target, nav, carried)
         return plan
 
     @staticmethod
@@ -627,7 +632,7 @@ class DPlanExporter:
     def _validate_official_posture(
         plan: Mapping[str, object], account: Mapping[str, object], bundle: Mapping[str, object],
         orders: Sequence[Mapping[str, object]], prices: Mapping[str, Decimal], target: Mapping[str, int],
-        valuation_nav: object = None,
+        valuation_nav: object = None, carried_restricted: object = (),
     ) -> None:
         posture = plan["market_view"]["posture"]
         ticker_prices = {}
@@ -648,7 +653,7 @@ class DPlanExporter:
         for symbol, shares in target.items():
             weight = Decimal(shares) * prices[symbol] / nav
             limit = Decimal("0.25") if symbol == "2330.TW" else Decimal("0.10")
-            if weight > limit:
+            if weight > limit and symbol not in carried_restricted:
                 raise DPlanError("官方單一持股上限檢查失敗：%s 超過 %.0f%%" % (symbol[:4], limit * 100))
         intent = posture["net_exposure_intent"]
         if not DPlanExporter._exposure_intent_fits(intent, buy, sell, nav):

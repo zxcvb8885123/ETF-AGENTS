@@ -118,7 +118,11 @@ class FallbackPreconditionTests(unittest.TestCase):
         account, snapshot, datapack = world(cash_ratio=Decimal("0.25"))
         result = self.check(account, snapshot, datapack)
         self.assertTrue(result["ok"], result["failures"])
-        self.assertTrue(any("警告" in item and "現金比" in item for item in result["warnings"]))
+        self.assertTrue(any("警告" in item and "現金比" in item and "C12" in item for item in result["warnings"]))
+        self.assertTrue(result["metrics"]["cash_range_mismatch"])
+
+    def test_cash_ratio_inside_range_has_no_mismatch_flag(self):
+        self.assertFalse(self.check()["metrics"]["cash_range_mismatch"])
 
     def test_single_stock_cap_uses_25_for_2330_and_10_for_others_as_warnings(self):
         ok_account, ok_snapshot, ok_datapack = world(weights={"2330": "0.249", "1000": "0.099"})

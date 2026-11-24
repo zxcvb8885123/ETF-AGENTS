@@ -112,6 +112,39 @@ def liquidity_exposure(proposal: Mapping[str, object], momentum: Mapping[str, ob
     }
 
 
+def tradability_sets(
+    bundle: Mapping[str, object], snapshot: Mapping[str, object]
+) -> tuple[Dict[str, str], Set[str], Set[str]]:
+    """Guard 與 D-Plan 匯出共用的交易狀態：回傳（逐檔狀態、可交易、不可交易）。"""
+    status_bundle = bundle.get("trading_status_bundle")
+    assessment = bundle.get("tradability_assessment")
+    if isinstance(status_bundle, Mapping) and isinstance(assessment, Mapping):
+        status_by_symbol = {
+            str(item.get("symbol", "")).upper(): str(item.get("state", "unknown"))
+            for item in assessment.get("symbols", [])
+            if isinstance(item, Mapping) and item.get("symbol")
+        }
+        tradable = {symbol for symbol, state in status_by_symbol.items() if state == "allowed"}
+        not_tradable = {symbol for symbol, state in status_by_symbol.items() if state == "blocked"}
+        return status_by_symbol, tradable, not_tradable
+    # 相容既有 fixture；正式 Snapshot 的同名欄位是計數，不能進入此分支。
+    tradable = {str(value).upper() for value in snapshot.get("tradable_symbols", [])}
+    not_tradable = {str(value).upper() for value in snapshot.get("not_tradable_symbols", [])}
+    return {}, tradable, not_tradable
+
+
+def restricted_carried_symbols(
+    bundle: Mapping[str, object], snapshot: Mapping[str, object], held: Mapping[str, int], target: Mapping[str, int]
+) -> Set[str]:
+    """restricted_hold：股數不變（沒有委託）且不可交易的持股；Guard 與 D-Plan 匯出都只容忍這些股票漲價超限。"""
+    _, tradable, not_tradable = tradability_sets(bundle, snapshot)
+    return {
+        str(symbol).upper() for symbol, shares in held.items()
+        if shares and target.get(symbol) == shares
+        and (str(symbol).upper() in not_tradable or (tradable and str(symbol).upper() not in tradable))
+    }
+
+
 class ScenarioEngine:
     """Apply transparent price and liquidity assumptions to one proposal."""
 
@@ -302,25 +335,7 @@ class CompetitionGuardV2:
             str(item["symbol"]).upper(): decimal_value(item["weight"], "weight")
             for item in positions
         }
-        status_bundle = self.context.bundle.get("trading_status_bundle")
-        assessment = self.context.bundle.get("tradability_assessment")
-        status_by_symbol = {}
-        if isinstance(status_bundle, Mapping) and isinstance(assessment, Mapping):
-            status_by_symbol = {
-                str(item.get("symbol", "")).upper(): str(item.get("state", "unknown"))
-                for item in assessment.get("symbols", [])
-                if isinstance(item, Mapping) and item.get("symbol")
-            }
-            tradable = {symbol for symbol, state in status_by_symbol.items() if state == "allowed"}
-            not_tradable = {symbol for symbol, state in status_by_symbol.items() if state == "blocked"}
-        else:
-            # 相容既有 fixture；正式 Snapshot 的同名欄位是計數，不能進入此分支。
-            tradable = {
-                str(value).upper() for value in self.context.snapshot.get("tradable_symbols", [])
-            }
-            not_tradable = {
-                str(value).upper() for value in self.context.snapshot.get("not_tradable_symbols", [])
-            }
+        status_by_symbol, tradable, not_tradable = tradability_sets(self.context.bundle, self.context.snapshot)
         universe = set(self.context.universe)
         self._check(checks, "UNIVERSE", set(weights).issubset(universe), sorted(set(weights) - universe))
         explicit_status = bool(status_by_symbol) or bool(tradable or not_tradable)
