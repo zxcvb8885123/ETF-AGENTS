@@ -78,7 +78,8 @@
   - `agent_swap.victim_rules` v1 已開啟（2026-11-16，thesis 換出者的 hold 信心上限 low 與交易日持有天數），見 status／contracts；風險 Agent 的可引用行情清單已含本次委託標的（不需閘門、不動契約）。
   - `position_sizing.high_risk_cap`（高風險股上限，只擋買不賣）2026-11-22 以 `enforce` 開啟、同批撿便宜改為風險 Agent 說 `turn_confirmed` 才買；**2026-11-24 使用者決定兩項一起改回**（`mode record` 只記錄不擋、`min_turn_assessment no_turn_evidence`，撿便宜回到 Agent 判斷，ladder 回檔門檻仍在）。
   - 純紀錄、不改配置的閘門（`cash_stance_turn_facts`、`market_index_facts`、`exposure_view`、`quality_dip_facts`、`quality_dip_assessment`、`event_direction`、`benchmark_facts`）：背景事實 `citable=false`、不可引用。
-  - **已實作、尚未開啟**：`reentry_cooldown` v4（換股換出也進再進場提示並附出場理由，正式仍 v3）、`position_review.beta_adjust`（扣 beta 後的落後判斷）、`valuation_facts`（估值 V2）、`position_sizing.stop_exit`（程式兜底硬停損，使用者決定不開）、`high_conviction_cash_floor`（且與 `cash_ratio_range` 互斥）。把它們的行為當成現行行為是錯的。
+  - `reentry_cooldown` v4（換股換出也進再進場提示並附出場理由）與 `position_review.beta_adjust`（警示扣除大盤 beta）2026-11-26 15:00 已開啟：都只給交易 Agent 資訊、不擋單。
+  - **已實作、尚未開啟**：`valuation_facts`（估值 V2）、`position_sizing.stop_exit`（程式兜底硬停損，使用者決定不開）、`high_conviction_cash_floor`（且與 `cash_ratio_range` 互斥）。把它們的行為當成現行行為是錯的。
   - 所有版本閘門只由人設定、策略反思不得改；Agent 不輸出數字，數值一律由人填。
 
 ### 子 Agent 執行器與安全邊界

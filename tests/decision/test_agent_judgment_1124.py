@@ -111,7 +111,7 @@ class LiveConfigTests(unittest.TestCase):
     def test_the_live_policy_hands_the_stance_back_to_the_agent(self):
         live = json.loads((ROOT / "config" / "decision_policy.json").read_text(encoding="utf-8"))
         sizing = live["position_sizing"]
-        self.assertEqual(live["policy_id"], "strategy-2026-11-26-swap-hold-2-1")
+        self.assertEqual(live["policy_id"], "strategy-2026-11-26-cooldown-v4-beta-1")
         self.assertEqual(sizing["night_rally_override"]["version"], "v4")
         self.assertTrue(agent_view_turn_enabled(sizing["offense"]))
         self.assertEqual(sizing["agent_swap"]["min_holding_days"], 2)  # 2026-11-26 由 0 改回 2

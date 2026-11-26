@@ -64,6 +64,11 @@ def _agent_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
 
 def _stop_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
     """前次 run 中被程式兜底停損出場（RISK_STOP_EXIT）的股票；proposal.json 不可用或與 decision 不是同一組一律拒絕。"""
+    return set(_stop_exit_details(run_dir, decision))
+
+
+def _stop_exit_details(run_dir: Path, decision: Mapping[str, object]) -> Dict[str, str]:
+    """停損出場股票 → 旗標說明文字（v4 當作出場理由，kind=stop_exit）。"""
     proposal = _read_run_json(run_dir, "proposal")
     if proposal is None:
         raise DecisionToolError("再進場冷卻（stop_exit）無法讀取決策庫 run 的 proposal.json：%s" % run_dir.name)
@@ -73,7 +78,8 @@ def _stop_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
     if not isinstance(flags, list):
         raise DecisionToolError("再進場冷卻（stop_exit）：決策庫 run %s 的 proposal.constraint_flags 必須是清單" % run_dir.name)
     return {
-        str(flag.get("symbol", "")).upper() for flag in flags
+        str(flag.get("symbol", "")).upper(): str(flag.get("detail", "")).strip() or "程式兜底停損出場（RISK_STOP_EXIT）"
+        for flag in flags
         if isinstance(flag, Mapping) and flag.get("code") == "RISK_STOP_EXIT" and flag.get("symbol")
     }
 
@@ -197,9 +203,13 @@ def _scan_exits(
             # v4：交易 Agent 第二輪提名換出的股票也算它自己的出場（程式只檢查可行性、不挑股）。
             swapped = (exited - agent_exited) & _swap_victims(run_dir, decision) if include_swaps and exited - agent_exited else set()
             exited = agent_exited | stopped | swapped
-            if include_swaps and (agent_exited | swapped):
+            if include_swaps and (agent_exited | swapped | stopped):
                 session_text = prior_session.isoformat()
-                for symbol, record in _exit_reasons(run_dir, decision, agent_exited, swapped).items():
+                records = _exit_reasons(run_dir, decision, agent_exited, swapped) if agent_exited | swapped else {}
+                if stopped:
+                    details = _stop_exit_details(run_dir, decision)
+                    records.update({symbol: {"kind": "stop_exit", "reason": details[symbol]} for symbol in sorted(stopped)})
+                for symbol, record in records.items():
                     previous = reasons.get(symbol)
                     # 同一檔在視窗內多次出場：留交易時段最晚的那次（同時段不會有兩個 approved 結算 run 都賣同一檔以外的情況，再以 run_id 定序）。
                     if previous is None or (previous["session_start"], previous["run_id"]) < (session_text, run_dir.name):
@@ -207,7 +217,7 @@ def _scan_exits(
         if exited:
             symbols |= exited
             run_ids.add(run_dir.name)
-    # 名單內每檔都必須有理由；停損出場（程式兜底，沒有 Agent 理由）與 v4 互斥（sizing 驗證），這裡再擋一次。
+    # 名單內每檔都必須有理由（Agent 出場、換股換出或停損旗標說明），缺一檔即拒絕。
     missing = sorted(symbols - set(reasons)) if include_swaps else []
     if missing:
         raise DecisionToolError("再進場冷卻 v4：%s 在名單內卻沒有出場理由" % "、".join(missing))

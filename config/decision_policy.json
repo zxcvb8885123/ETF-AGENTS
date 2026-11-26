@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "policy_id": "strategy-2026-11-26-swap-hold-2-1",
-  "available_at": "2026-11-26T14:10:00+08:00",
+  "policy_id": "strategy-2026-11-26-cooldown-v4-beta-1",
+  "available_at": "2026-11-26T15:00:00+08:00",
   "currency": "TWD",
   "cash_buffer_rate": "0.05",
   "default_target_weight": "0.04",
@@ -32,7 +32,8 @@
       "lag": "0.04"
     },
     "stale_alert": null,
-    "context": "v1"
+    "context": "v1",
+    "beta_adjust": "v1"
   },
   "position_sizing": {
     "method": "conviction_volatility_v2",
@@ -107,7 +108,7 @@
     "sector_fit": "v1",
     "turnover_fit": "v1",
     "reentry_cooldown": {
-      "version": "v3",
+      "version": "v4",
       "days": 3
     },
     "drawdown_derisk": {

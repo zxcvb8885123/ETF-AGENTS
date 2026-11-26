@@ -122,13 +122,13 @@ REENTRY_COOLDOWN_VERSION_V3 = "v3"
 # v4（2026-11-26，只由人設定）：同 v3 只提示、不擋買單，另把「交易 Agent 第二輪提名換出」（agent_swap，proposal 旗標 AGENT_SWAP）
 # 也算進名單——換出者是交易 Agent 自己提名的，不是程式賣的；v3 漏掉它們，11-25 換出 2609、11-26 又換回。
 # pipeline 另綁 ``exit_reasons``（每檔當時的出場種類與理由文字），交易 Agent 簡報在提示旁附上，Finalizer 以決策庫整份重算。
-# v4 的名單不再排除換股換入候選（只提示、不限制；買回仍須在第一輪回應提示）。v1～v3 逐位元不變。
+# 程式兜底停損（stop_exit）出場的股票 kind=stop_exit、理由取 RISK_STOP_EXIT 旗標說明。v4 的名單不再排除換股換入候選（只提示、不限制；買回仍須在第一輪回應提示）。v1～v3 逐位元不變。
 REENTRY_COOLDOWN_VERSION_V4 = "v4"
 REENTRY_COOLDOWN_VERSIONS = (
     REENTRY_COOLDOWN_VERSION, REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3, REENTRY_COOLDOWN_VERSION_V4,
 )
 REENTRY_COOLDOWN_FIELDS = {"version", "days", "blocked_symbols", "source_run_ids", "exit_reasons"}
-REENTRY_EXIT_KINDS = ("agent_exit", "agent_swap")
+REENTRY_EXIT_KINDS = ("agent_exit", "agent_swap", "stop_exit")
 REENTRY_EXIT_REASON_FIELDS = {"run_id", "session_start", "kind", "reason"}
 # 2026-11-03 後新增（drawdown_derisk 版本閘門）：現金姿態為 defensive 時由程式依 ATR14 由高到低、信心低到高把持股減碼到
 # 姿態現金緩衝（RISK_DRAWDOWN，一次最多 NAV × max_derisk_fraction，預設 0.25）；配置預算 ≤ 0 時旗標改為 CASH_BUFFER；
@@ -848,8 +848,6 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
             ):
                 errors.append("position_sizing.reentry_cooldown.source_run_ids 必須是排序且不重複的非空字串清單")
             _validate_exit_reasons(cooldown, blocked, errors)
-            if cooldown.get("version") == REENTRY_COOLDOWN_VERSION_V4 and "stop_exit" in sizing:
-                errors.append("position_sizing.reentry_cooldown v4 與 stop_exit 互斥（停損出場沒有交易 Agent 的出場理由）")
     if "drawdown_derisk" in sizing:
         derisk = sizing["drawdown_derisk"]
         if not isinstance(derisk, Mapping):

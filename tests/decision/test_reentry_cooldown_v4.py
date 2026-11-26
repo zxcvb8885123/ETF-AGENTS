@@ -136,6 +136,19 @@ class ReentryCooldownV4Tests(unittest.TestCase):
         with self.assertRaises(DecisionToolError):
             recent_exit_records(self.root, self.session_bundle, 3)
 
+    def test_stop_exits_are_listed_with_the_flag_text_as_reason(self):
+        run = self.archive("run-1", [EXIT("2317.TW")], {"2317.TW": ("hold", "續抱")})
+        proposal = json.loads((run / "proposal.json").read_text(encoding="utf-8"))
+        proposal["constraint_flags"].append({"symbol": "2317.TW", "code": "RISK_STOP_EXIT", "detail": "自進場虧損達停損線"})
+        (run / "proposal.json").write_text(json.dumps(proposal, ensure_ascii=False), encoding="utf-8")
+        artifacts = {name: json.loads((run / ("%s.json" % name)).read_text(encoding="utf-8"))
+                     for name in ("decision", "decision_input", "intent", "proposal", "team_inputs")}
+        (run / "manifest.json").write_text(json.dumps(DecisionRepository(self.root).build_manifest("run-1", artifacts)), encoding="utf-8")
+        self.assertEqual(recent_exit_records(self.root, self.session_bundle, 3)[0], [])  # 沒開 stop_exit 不算
+        symbols, _, reasons = recent_exit_records(self.root, self.session_bundle, 3, include_stop_exits=True)
+        self.assertEqual(symbols, ["2317.TW"])
+        self.assertEqual((reasons["2317.TW"]["kind"], reasons["2317.TW"]["reason"]), ("stop_exit", "自進場虧損達停損線"))
+
     # ------------------------------------------------------------------ Policy 綁定、驗證與 Finalizer
 
     def bound_policy(self):
@@ -172,8 +185,7 @@ class ReentryCooldownV4Tests(unittest.TestCase):
         def empty_reason(c, s): c["exit_reasons"]["2609.TW"]["reason"] = ""
         def unknown_field(c, s): c["exit_reasons"]["2609.TW"]["weight"] = "0.1"
         def on_v3(c, s): c["version"] = "v3"
-        def with_stop_exit(c, s): s["stop_exit"] = {"version": "v1"}
-        for mutate in (drop, extra_symbol, bad_kind, empty_reason, unknown_field, on_v3, with_stop_exit):
+        for mutate in (drop, extra_symbol, bad_kind, empty_reason, unknown_field, on_v3):
             with self.subTest(mutate.__name__):
                 self.assertTrue(self.validation_errors(mutate), mutate.__name__)
 

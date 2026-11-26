@@ -318,10 +318,11 @@ class ProductionTemplateTests(unittest.TestCase):
             live["position_review"],
             {"version": "v2", "loss_alert": "0.12", "retrace_alert_20d": "0.20", "gain_alert": "0.20",
              "trail_alert": {"arm_gain": "0.10", "giveback": "0.08"},
-             "relative_loss_alert": {"loss": "0.08", "lag": "0.04"}, "stale_alert": None, "context": "v1"},
+             "relative_loss_alert": {"loss": "0.08", "lag": "0.04"}, "stale_alert": None, "context": "v1",
+             "beta_adjust": "v1"},  # 2026-11-26 15:00 開啟
         )
         self.assertNotIn("stop_exit", live["position_sizing"])
-        self.assertEqual(live["policy_id"], "strategy-2026-11-26-swap-hold-2-1")
+        self.assertEqual(live["policy_id"], "strategy-2026-11-26-cooldown-v4-beta-1")
         self.assertIn("exposure_rotation", live["position_sizing"])  # position_review v2 的前提
 
     def test_a_run_on_the_untouched_live_gates_completes_and_rebuilds_clean(self):

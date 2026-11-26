@@ -401,7 +401,8 @@ class DecisionFinalizer:
         try:
             if v4:
                 # v4：名單另含交易 Agent 提名的換出，並整份重算每檔出場理由（exit_reasons）。
-                symbols, run_ids, reasons = recent_exit_records(self.decision_repository, self.bundle, days)
+                symbols, run_ids, reasons = recent_exit_records(
+                    self.decision_repository, self.bundle, days, include_stop_exits=isinstance(sizing.get("stop_exit"), Mapping))
             else:
                 symbols, run_ids = recent_exit_symbols(self.decision_repository, self.bundle, days, agent_only=True)
         except Exception as error:  # 決策庫損毀、manifest 或 intent.json 不可用一律拒絕，不當成沒有出場
