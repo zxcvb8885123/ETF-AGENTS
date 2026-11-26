@@ -101,6 +101,45 @@ class HeldWeightFactsPipelineTests(unittest.TestCase):
             self.assertNotIn("held_weight", prompt)
 
 
+RECORDS = (["2317.TW"], ["run-x"], {"2317.TW": {
+    "run_id": "run-x", "session_start": "2026-09-19T01:00:00+00:00", "kind": "agent_swap", "reason": "第二輪提名換出：跌幅超出大盤能解釋的部分"}})
+
+
+class ReentryCooldownV4PipelineTests(unittest.TestCase):
+    """v4：提示旁附當時出場的種類與理由；回應了的買回照常成交，Finalizer 以同一份重算比對。"""
+
+    def run_v4(self, trade):
+        run = None
+        patches = [
+            mock.patch("etf_agent.decision.reentry_cooldown.recent_exit_records", return_value=RECORDS),
+            mock.patch("etf_agent.decision.finalization.recent_exit_records", return_value=RECORDS),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        run = Run(self, template(reentry_cooldown={"version": "v4", "days": 3}), team_outputs(trader_b0=[trade]))
+        return run
+
+    def test_the_brief_carries_the_exit_reason_and_a_responded_buy_back_executes(self):
+        run = self.run_v4(trade_with("cooldown:2317.TW"))
+        self.assertEqual(run.result.status, "completed", run.result.errors)
+        self.assertEqual(run.result.decision_status, "approved")
+        self.assertIn(("2317.TW", "buy"), {(o["symbol"], o["side"]) for o in run.result.orders})
+        trader = run.load("brief_trader_b0")
+        hinted = {row["symbol"]: row["reentry_cooldown"] for row in trader["symbols"] if "reentry_cooldown" in row}
+        self.assertEqual(hinted, {"2317.TW": {
+            "hint_id": "cooldown:2317.TW", "citable": False, "exit_kind": "agent_swap",
+            "exited_session": "2026-09-19T01:00:00+00:00", "exit_reason": "第二輪提名換出：跌幅超出大盤能解釋的部分"}})
+        self.assertIn("exit_reason", dict(run.runner.prompts)["trader_b0"])
+        policy = run.load("policy")
+        self.assertEqual(policy["position_sizing"]["reentry_cooldown"]["exit_reasons"], RECORDS[2])
+
+    def test_an_unanswered_buy_back_is_still_cancelled_like_v3(self):
+        run = self.run_v4(trade_with())
+        self.assertEqual(run.result.status, "completed", run.result.errors)
+        self.assertIn(("2317.TW", "RISK_REENTRY_COOLDOWN"), run.flags())
+
+
 class ReentryCooldownV3PipelineTests(unittest.TestCase):
     TEMPLATE = {"reentry_cooldown": {"version": "v3", "days": 3}}
 

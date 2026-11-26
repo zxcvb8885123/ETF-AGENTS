@@ -17,6 +17,7 @@ from typing import Dict, List, Mapping, Optional, Tuple
 
 from etf_agent.core import parse_aware_time
 
+from .exposure import beta_model, exposure_rotation_gate
 from .fields import DecisionToolError, decimal_value, reject_unknown_fields, snapshot_execution_price
 
 
@@ -25,7 +26,9 @@ POLICY_VERSION = "v1"
 POLICY_VERSION_V2 = "v2"  # 自進場起算的三個警示（版本閘門，只由人設定；沒有 v2 的 Policy 逐位元維持 v1 行為）
 POLICY_VERSIONS = (POLICY_VERSION, POLICY_VERSION_V2)
 POLICY_FIELDS = {"version", "loss_alert", "retrace_alert_20d", "gain_alert", "context"}
-POLICY_FIELDS_V2 = POLICY_FIELDS | {"trail_alert", "relative_loss_alert", "stale_alert"}
+POLICY_FIELDS_V2 = POLICY_FIELDS | {"trail_alert", "relative_loss_alert", "stale_alert", "beta_adjust"}
+OPTIONAL_POLICY_FIELDS = ("context", "beta_adjust")  # 省略就不出現在 review["policy"]（舊 Policy 逐位元不變）
+BETA_ADJUST_VERSION = "v1"  # policy 設 beta_adjust=v1（需 v2 加 context=v1）才附 beta 與扣除 beta 後的殘差報酬
 # v2 的巢狀門檻物件欄位（全部必填；整個物件為 null 代表不啟用該警示）。
 TRAIL_ALERT_FIELDS = ("arm_gain", "giveback")
 RELATIVE_LOSS_ALERT_FIELDS = ("loss", "lag")
@@ -41,6 +44,8 @@ CONTEXT_ITEM_FIELDS = {
     "return_5d", "pool_return_5d", "relative_to_pool_5d", "return_20d", "pool_return_20d", "relative_to_pool_20d",
     "pool_size", "latest_revenue_available_at", "latest_financial_available_at",
 }
+# beta_adjust 另附的事實：beta 取自 BetaModel（視窗沿用 exposure_rotation.beta_window_days），殘差＝個股報酬減 beta × 交易池報酬。
+BETA_ITEM_FIELDS = {"beta", "residual_5d", "residual_20d", "residual_since_entry"}
 # v2 另算的自進場事實（持有起點取自 Policy 綁定的 exposure_rotation.held_since_by_symbol；不依賴帳戶 average_cost）。
 ENTRY_ITEM_FIELDS = {
     "entry_date", "holding_trading_days", "return_since_entry", "peak_return_since_entry", "retrace_from_entry_high",
@@ -59,6 +64,13 @@ COST_BASIS_NOTE = (
 COST_BASIS_NOTE_V2 = COST_BASIS_NOTE + (
     "另有自進場起算的事實（entry_date、return_since_entry 等）：以持有起點當日收盤為基準、不依賴帳戶成本，"
     "帳本重建日也不會歸零；進場事實缺漏時 entry_gap 說明原因、不產生該類警示。"
+)
+
+COST_BASIS_NOTE_BETA = COST_BASIS_NOTE_V2 + (
+    "beta_adjust 另附 beta（對交易池等權的歷史 beta，缺資料為 null）與殘差報酬 residual_5d／residual_20d／residual_since_entry"
+    "（＝個股報酬減 beta × 同期交易池報酬，扣掉市場帶動的部分；beta 缺資料時殘差也是 null）。"
+    "高 beta 股在大盤下跌時跌幅本來就大於交易池，relative_to_pool 會把這種跌幅當成個股轉弱；"
+    "relative_loss_alert 改用 residual_since_entry 判斷落後（beta 缺資料時退回 relative_to_pool_since_entry）。"
 )
 
 
@@ -122,6 +134,11 @@ def validate_position_review_policy(policy: object, errors: List[str]) -> None:
         errors.append("%s.version 必須為 %s 或 %s" % (prefix, POLICY_VERSION, POLICY_VERSION_V2))
     if policy.get("context") not in (None, CONTEXT_VERSION):
         errors.append("%s.context 只允許省略或 %s" % (prefix, CONTEXT_VERSION))
+    if "beta_adjust" in policy:
+        if policy["beta_adjust"] != BETA_ADJUST_VERSION:
+            errors.append("%s.beta_adjust 只允許省略或 %s" % (prefix, BETA_ADJUST_VERSION))
+        elif not v2 or policy.get("context") != CONTEXT_VERSION:
+            errors.append("%s.beta_adjust 需要 version=%s 且 context=%s" % (prefix, POLICY_VERSION_V2, CONTEXT_VERSION))
     for field in ("loss_alert", "retrace_alert_20d", "gain_alert"):
         if field not in policy:
             errors.append("%s 缺少 %s（不啟用請明確寫 null）" % (prefix, field))
@@ -274,6 +291,9 @@ def _entry_flags(settings: Mapping[str, object], facts: Mapping[str, object]) ->
 
     own, peak, retrace, relative = (
         number("return_since_entry"), number("peak_return_since_entry"), number("retrace_from_entry_high"), number("relative_to_pool_since_entry"))
+    if settings.get("beta_adjust") == BETA_ADJUST_VERSION and number("residual_since_entry") is not None:
+        # beta_adjust：落後改看扣除 beta 後的殘差；殘差為 None（beta 或交易池報酬缺資料）時保留原始相對報酬，維持舊行為、不造假。
+        relative = number("residual_since_entry")
     trail = settings.get("trail_alert")
     if isinstance(trail, Mapping) and peak is not None and retrace is not None \
             and peak >= decimal_value(trail["arm_gain"], "trail_alert.arm_gain") and retrace <= -decimal_value(trail["giveback"], "trail_alert.giveback"):
@@ -288,6 +308,25 @@ def _entry_flags(settings: Mapping[str, object], facts: Mapping[str, object]) ->
     if isinstance(stale, Mapping) and own is not None and isinstance(days, int) and days >= int(stale["days"]) and own < 0:
         flags.append("stale_alert")
     return flags
+
+
+def _residual(beta: Optional[Decimal], own: object, pool: object) -> Optional[str]:
+    """殘差報酬＝個股報酬減 beta × 交易池報酬（輸入為已量化的事實字串）；任一輸入缺資料即 None。"""
+    if beta is None or own is None or pool is None:
+        return None
+    return _quantize(Decimal(str(own)) - beta * Decimal(str(pool)))
+
+
+def _beta_window_facts(beta: Optional[Decimal], context: Mapping[str, object]) -> Dict[str, object]:
+    return {
+        "beta": None if beta is None else _quantize(beta),
+        "residual_5d": _residual(beta, context.get("return_5d"), context.get("pool_return_5d")),
+        "residual_20d": _residual(beta, context.get("return_20d"), context.get("pool_return_20d")),
+    }
+
+
+def _beta_since_entry(beta: Optional[Decimal], entry: Mapping[str, object]) -> Dict[str, object]:
+    return {"residual_since_entry": _residual(beta, entry.get("return_since_entry"), entry.get("pool_return_since_entry"))}
 
 
 def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, object]) -> Dict[str, object]:
@@ -307,6 +346,12 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
     with_context = settings.get("context") == CONTEXT_VERSION
     v2 = settings.get("version") == POLICY_VERSION_V2
     held_since = _held_since_dates(policy) if v2 else {}
+    betas = None
+    if settings.get("beta_adjust") == BETA_ADJUST_VERSION:
+        gate = exposure_rotation_gate(policy.get("position_sizing"))
+        if gate is None or "beta_window_days" not in gate:
+            raise DecisionToolError("持股檢視 beta_adjust 需要 position_sizing.exposure_rotation.beta_window_days，缺少時拒絕（fail-closed）")
+        betas = beta_model(bundle, gate)
     if v2:
         _check_bars_visible(bundle)
     account = bundle["account_snapshot"]
@@ -350,6 +395,8 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
         entry: Dict[str, object] = {}
         if v2:
             entry = _entry_facts(held_since, symbol, bars, series)
+            if betas is not None:
+                entry = {**entry, **_beta_since_entry(betas.beta(symbol), entry)}
             flags.extend({"review_id": review_id(symbol, flag), "flag": flag} for flag in _entry_flags(settings, entry))
         context: Dict[str, object] = {}
         if with_context:
@@ -362,6 +409,8 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
                 context["relative_to_pool_" + tag] = None if own is None or pool is None else _quantize(own - pool)
                 if window == RETRACE_WINDOW:
                     context["pool_size"] = size
+            if betas is not None:
+                context.update(_beta_window_facts(betas.beta(symbol), context))
             context["latest_revenue_available_at"] = _latest_available(bundle, symbol, "monthly_revenue")
             context["latest_financial_available_at"] = _latest_available(bundle, symbol, "financial_statement")
         items.append({
@@ -379,8 +428,8 @@ def build_position_review(bundle: Mapping[str, object], policy: Mapping[str, obj
         })
     return {
         "schema_version": POSITION_REVIEW_VERSION,
-        "policy": {key: settings.get(key) for key in sorted(POLICY_FIELDS_V2 if v2 else POLICY_FIELDS) if key != "context" or "context" in settings},
-        "cost_basis_note": COST_BASIS_NOTE_V2 if v2 else COST_BASIS_NOTE,
+        "policy": {key: settings.get(key) for key in sorted(POLICY_FIELDS_V2 if v2 else POLICY_FIELDS) if key not in OPTIONAL_POLICY_FIELDS or key in settings},
+        "cost_basis_note": COST_BASIS_NOTE_BETA if betas is not None else (COST_BASIS_NOTE_V2 if v2 else COST_BASIS_NOTE),
         "items": items,
     }
 
@@ -437,6 +486,7 @@ def position_review_brief(review: Mapping[str, object]) -> Dict[str, object]:
                 "position_id", "average_cost", "price", "unrealized_return", "retrace_from_high_5d", "retrace_from_high_20d", "flags", "evidence_ids",
                 *sorted(CONTEXT_ITEM_FIELDS & set(item)),
                 *sorted(ENTRY_ITEM_FIELDS & set(item)),
+                *sorted(BETA_ITEM_FIELDS & set(item)),
             )}
             for item in review["items"]
         },

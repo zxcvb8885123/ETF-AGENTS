@@ -119,6 +119,12 @@ _REVIEW_RULES = (
     "本批輸入含 position_review_background 與各持股的 position_review（程式算好的持股檢視，數字不可改寫；"
     "flags 內的 review_id 放進 adopted_claim_ids 剛好一次），依 data-rules.md「持股檢視」處理。"
 )
+# position_review.beta_adjust=v1 才加這段；沒有時提示詞逐字不變。
+_REVIEW_BETA_RULES = (
+    "持股檢視另附 beta 與 residual_5d／residual_20d／residual_since_entry（扣掉 beta × 交易池報酬後的殘差，也就是大盤帶不動的那一部分）。"
+    "高 beta 股在大盤下跌時本來就跌得比交易池多，relative_to_pool 為負不代表個股自己轉弱：判斷是否個股轉弱、減碼或出場時請以殘差為準；"
+    "寫 invalidation_conditions 時不要只寫「落後交易池」，要寫成「扣掉大盤影響後仍落後」這類之後看得到的條件。"
+)
 
 _EXPOSURE_RULES = (
     "本批輸入含 exposure_background 與各持股的 exposure（程式算好的 beta 與上行／下行捕捉，只是背景、沒有 evidence_id、不可引用）；"
@@ -135,6 +141,17 @@ _COOLDOWN_RULES = (
     "本批部分未持有的股票附有 reentry_cooldown 提示（近期才由交易 Agent 自己出場，是程式事實、不是禁止）：若你仍決定 buy 這檔，"
     "必須把該提示的 hint_id 放進這檔的 adopted_claim_ids 一次，並在 rationale 說明為何與先前出場時的判斷不同；"
     "沒有放進去的 buy 會被程式取消。不 buy 就不要放，也不可放進 rejected_claim_ids。"
+)
+def _review_beta_adjusted(position_review: Optional[Mapping[str, object]]) -> bool:
+    policy = position_review.get("policy") if isinstance(position_review, Mapping) else None
+    return isinstance(policy, Mapping) and policy.get("beta_adjust") == "v1"
+
+
+# reentry_cooldown v4：提示另附當時出場的種類與理由；只有 v4 的批次才加這段，v3 的提示文字逐字不變。
+_COOLDOWN_REASON_RULES = (
+    "v4 的 reentry_cooldown 提示另附 exit_kind（agent_exit＝你第一輪決定出場；agent_swap＝你第二輪提名換出）、exited_session 與"
+    " exit_reason（當時寫的出場理由）。這些是背景、不是證據、不可引用，也不得整句照抄：決定 buy 時請比對當時的出場理由，"
+    "在 rationale 用本次的多空 claim 說明是什麼變了；當時的理由仍成立、本次又沒有新的支持時，買回只是在付來回成本。"
 )
 
 
@@ -502,6 +519,7 @@ class TeamStagesMixin:
         dip_assessment: bool = False,
         valuation_facts: Optional[Mapping[str, object]] = None,
         trader_background: Optional[Mapping[str, object]] = None,
+        reentry_exit_reasons: Optional[Mapping[str, Mapping[str, object]]] = None,
     ) -> Dict[str, object]:
         """交易 Agent 逐批整合多空研究，說明論點取捨後決定意圖與 buy／add 信心。
 
@@ -517,7 +535,9 @@ class TeamStagesMixin:
         ``trader_background``（position_sizing.trader_background_record）有時，簡報的 ``strategy_lessons`` 與 ``thesis_review_background``
         改由這份封存紀錄產生（不再當場讀來源檔），簡報形狀不變；None 時照舊讀檔，簡報與驗證逐位元不變。
         ``valuation_facts``（position_sizing.valuation_facts，估值 V2）有時每批簡報多附本批股票的 ``valuation_background``（citable=false），
-        文字欄位出現其識別碼即拒絕；沒有時簡報與驗證逐鍵不變。"""
+        文字欄位出現其識別碼即拒絕；沒有時簡報與驗證逐鍵不變。
+        ``reentry_exit_reasons``（reentry_cooldown v4 綁定的 ``exit_reasons``）有時，冷卻提示旁另附當時出場的種類、交易時段與理由
+        （citable=false），理由文字也加入背景照抄檢查；沒有時簡報與驗證逐鍵不變。"""
         envelope = trade_decision_envelope(bundle, debate, "trade-decision:%s" % run_id)
         background, prior_by_symbol = prior_decision_brief(prior_context) if prior_context is not None else (None, {})
         held = {str(item["symbol"]).upper(): item.get("shares") for item in bundle["account_snapshot"].get("positions", [])}
@@ -542,6 +562,7 @@ class TeamStagesMixin:
         weight_brief = held_weight_brief(held_weight_facts) if held_weight_facts is not None else {}
         # reentry_cooldown v3：未持有且近期出場的股票各附一個 hint_id 提示（買回須回應）；沒有 v3 時簡報逐鍵不變。
         hint_symbols = sorted({str(s).upper() for s in (reentry_hint_symbols or ())} - set(held))
+        exit_reasons = {str(k).upper(): v for k, v in (reentry_exit_reasons or {}).items()}
         hold_conviction = exposure_review is not None
         if trader_background is not None:
             # 交易背景封存：簡報用 run 開始時封存的來源檔內容，續跑時來源檔被改也不影響。
@@ -553,7 +574,8 @@ class TeamStagesMixin:
         # 背景照抄檢查（只在這裡即時驗證，Finalizer 不傳）：簡報附的教訓文字與持股論點檢視摘要，理由與條件不得整句照抄。
         background_texts = [*(lessons_background["lessons"] if lessons_background is not None else []),
                             *(item["summary"] for item in (thesis_verdicts["items"] if thesis_verdicts is not None else [])
-                              if str(item["symbol"]).upper() in held)]
+                              if str(item["symbol"]).upper() in held),
+                            *(str(record.get("reason", "")) for symbol, record in exit_reasons.items() if symbol in hint_symbols)]
         batches = universe_batches([row["symbol"] for row in bundle["snapshot"]["latest_prices"]])
         def make_job(batch: Mapping[str, object]) -> Tuple[str, Callable[[], Dict[str, object]]]:
             name = "trader_b%d" % batch["batch_index"]
@@ -603,8 +625,12 @@ class TeamStagesMixin:
                                if symbol in dip_brief.get("by_symbol", {}) else {}),
                             **({"held_weight": weight_brief["by_symbol"][symbol]}
                                if symbol in weight_brief.get("by_symbol", {}) else {}),
-                            **({"reentry_cooldown": {"hint_id": reentry_hint_id(symbol), "citable": False}}
-                               if symbol in hint_symbols else {}),
+                            **({"reentry_cooldown": {
+                                "hint_id": reentry_hint_id(symbol), "citable": False,
+                                **({"exit_kind": exit_reasons[symbol].get("kind"),
+                                    "exited_session": exit_reasons[symbol].get("session_start"),
+                                    "exit_reason": exit_reasons[symbol].get("reason")} if symbol in exit_reasons else {}),
+                            }} if symbol in hint_symbols else {}),
                         }
                         for symbol in batch["symbols"]
                     ],
@@ -616,18 +642,20 @@ class TeamStagesMixin:
                 "你是 $trader 交易 Agent，負責整合多頭與空頭兩位研究員的結果。先讀 %s 及其中連結的 references/data-rules.md，"
                 "再讀本批輸入 %s。對本批 %d 檔股票（%s）逐檔整合兩方論點、記錄每個論點的採納或否決，"
                 "再依持股與交易條件形成單一交易意圖；整合方式、理由寫法、欄位與限制都依參考文件。"
-                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s%s%s%s%s"
+                "交件前核對：items 的股票數必須等於本批 %d 檔、逐檔都有裁決，漏一檔整批會被退回重做。%s%s%s%s%s%s%s%s%s%s%s%s"
                 % (
                     self.root / "tradeagent/trading/trader/SKILL.md", brief_path,
                     len(batch["symbols"]), "、".join(batch["symbols"]), len(batch["symbols"]),
                     _PRIOR_RULES if background is not None else "",
                     _ROTATION_RULES if portfolio_slots is not None else "",
                     _REVIEW_RULES if position_review is not None else "",
+                    _REVIEW_BETA_RULES if _review_beta_adjusted(position_review) else "",
                     _EXPOSURE_RULES if exposure_review is not None else "",
                     _DIP_TRADER_RULES if dip_facts is not None else "",
                     _DIP_ASSESSMENT_RULES if dip_assessment else "",
                     _HELD_WEIGHT_RULES if held_weight_facts is not None else "",
                     _COOLDOWN_RULES if set(hint_symbols) & set(batch["symbols"]) else "",
+                    _COOLDOWN_REASON_RULES if set(exit_reasons) & set(hint_symbols) & set(batch["symbols"]) else "",
                     _VALUATION_TRADER_RULES if valuation_facts is not None else "",
                     _SHARED_RULES,
                 ),

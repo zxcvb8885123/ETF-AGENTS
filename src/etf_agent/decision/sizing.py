@@ -119,8 +119,17 @@ REENTRY_COOLDOWN_VERSION_V2 = "v2"
 # 但**不再擋買單**：交易 Agent 簡報附 ``cooldown:<代號>`` 提示，買回（buy）時須把該識別碼放進 adopted_claim_ids 回應一次；
 # 沒回應的買單由配置取消並記 RISK_REENTRY_COOLDOWN（只取消該動作）。agent_swap 的換入候選仍沿用名單排除（見 swap_nomination）。
 REENTRY_COOLDOWN_VERSION_V3 = "v3"
-REENTRY_COOLDOWN_VERSIONS = (REENTRY_COOLDOWN_VERSION, REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3)
-REENTRY_COOLDOWN_FIELDS = {"version", "days", "blocked_symbols", "source_run_ids"}
+# v4（2026-11-26，只由人設定）：同 v3 只提示、不擋買單，另把「交易 Agent 第二輪提名換出」（agent_swap，proposal 旗標 AGENT_SWAP）
+# 也算進名單——換出者是交易 Agent 自己提名的，不是程式賣的；v3 漏掉它們，11-25 換出 2609、11-26 又換回。
+# pipeline 另綁 ``exit_reasons``（每檔當時的出場種類與理由文字），交易 Agent 簡報在提示旁附上，Finalizer 以決策庫整份重算。
+# v4 的名單不再排除換股換入候選（只提示、不限制；買回仍須在第一輪回應提示）。v1～v3 逐位元不變。
+REENTRY_COOLDOWN_VERSION_V4 = "v4"
+REENTRY_COOLDOWN_VERSIONS = (
+    REENTRY_COOLDOWN_VERSION, REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3, REENTRY_COOLDOWN_VERSION_V4,
+)
+REENTRY_COOLDOWN_FIELDS = {"version", "days", "blocked_symbols", "source_run_ids", "exit_reasons"}
+REENTRY_EXIT_KINDS = ("agent_exit", "agent_swap")
+REENTRY_EXIT_REASON_FIELDS = {"run_id", "session_start", "kind", "reason"}
 # 2026-11-03 後新增（drawdown_derisk 版本閘門）：現金姿態為 defensive 時由程式依 ATR14 由高到低、信心低到高把持股減碼到
 # 姿態現金緩衝（RISK_DRAWDOWN，一次最多 NAV × max_derisk_fraction，預設 0.25）；配置預算 ≤ 0 時旗標改為 CASH_BUFFER；
 # drawdown_control 另需 release_neutral_below／release_defensive_below 兩個解除門檻（hysteresis）。省略此欄位的舊 run 不減碼。
@@ -781,6 +790,36 @@ def _validate_volatility_exponent(sizing: Mapping[str, object], errors: List[str
         errors.append("position_sizing.volatility_exponent 必須介於 0 與 1（含）")
 
 
+def _validate_exit_reasons(cooldown: Mapping[str, object], blocked: object, errors: List[str]) -> None:
+    """reentry_cooldown v4 的 ``exit_reasons``：只有 v4 可有；名單已綁定時必須同時綁定，鍵剛好等於 blocked_symbols。"""
+    prefix = "position_sizing.reentry_cooldown.exit_reasons"
+    reasons = cooldown.get("exit_reasons")
+    if cooldown.get("version") != REENTRY_COOLDOWN_VERSION_V4:
+        if "exit_reasons" in cooldown:
+            errors.append("%s 只允許 v4" % prefix)
+        return
+    if blocked is None:
+        if "exit_reasons" in cooldown:
+            errors.append("%s 只能與 blocked_symbols 一起由 pipeline 綁定" % prefix)
+        return
+    if not isinstance(reasons, Mapping):
+        errors.append("%s 必須與 blocked_symbols 同時綁定（物件）" % prefix)
+        return
+    if isinstance(blocked, list) and sorted(reasons) != sorted(blocked):
+        errors.append("%s 的代號必須剛好等於 blocked_symbols" % prefix)
+    for symbol, record in reasons.items():
+        label = "%s.%s" % (prefix, symbol)
+        if not isinstance(record, Mapping):
+            errors.append("%s 必須是物件" % label)
+            continue
+        reject_unknown_fields(record, REENTRY_EXIT_REASON_FIELDS, label, errors)
+        if record.get("kind") not in REENTRY_EXIT_KINDS:
+            errors.append("%s.kind 只允許 %s" % (label, "、".join(REENTRY_EXIT_KINDS)))
+        for field in ("run_id", "session_start", "reason"):
+            if not isinstance(record.get(field), str) or not str(record.get(field)).strip():
+                errors.append("%s.%s 必須是非空字串" % (label, field))
+
+
 def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -> None:
     """2026-11-03 新增的執行面版本閘門的物件形狀與比例範圍；允許值、前提與互斥由 GATE_PREREQUISITES 統一檢查。
 
@@ -808,6 +847,9 @@ def _validate_execution_gates(sizing: Mapping[str, object], errors: List[str]) -
                 not isinstance(runs, list) or not all(isinstance(s, str) and s for s in runs) or runs != sorted(set(runs))
             ):
                 errors.append("position_sizing.reentry_cooldown.source_run_ids 必須是排序且不重複的非空字串清單")
+            _validate_exit_reasons(cooldown, blocked, errors)
+            if cooldown.get("version") == REENTRY_COOLDOWN_VERSION_V4 and "stop_exit" in sizing:
+                errors.append("position_sizing.reentry_cooldown v4 與 stop_exit 互斥（停損出場沒有交易 Agent 的出場理由）")
     if "drawdown_derisk" in sizing:
         derisk = sizing["drawdown_derisk"]
         if not isinstance(derisk, Mapping):
@@ -1646,15 +1688,32 @@ def slot_recycle_enabled(sizing: Mapping[str, object]) -> bool:
 
 
 def reentry_cooldown_agent_only(sizing: Mapping[str, object]) -> bool:
-    """reentry_cooldown v2／v3：名單只收交易 Agent 自己的出場；其他（v1、無閘門）一律 False。"""
+    """reentry_cooldown v2／v3／v4：名單只收交易 Agent 自己的出場（v4 另含它提名的換出）；其他（v1、無閘門）一律 False。"""
     cooldown = sizing.get("reentry_cooldown")
-    return isinstance(cooldown, Mapping) and cooldown.get("version") in (REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3)
+    return isinstance(cooldown, Mapping) and cooldown.get("version") in (
+        REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3, REENTRY_COOLDOWN_VERSION_V4)
 
 
 def reentry_cooldown_hint_only(sizing: object) -> bool:
-    """reentry_cooldown v3：名單不擋買單、改成交易 Agent 簡報的提示（買回須回應）；其他一律 False。"""
+    """reentry_cooldown v3／v4：名單不擋買單、改成交易 Agent 簡報的提示（買回須回應）；其他一律 False。"""
     cooldown = sizing.get("reentry_cooldown") if isinstance(sizing, Mapping) else None
-    return isinstance(cooldown, Mapping) and cooldown.get("version") == REENTRY_COOLDOWN_VERSION_V3
+    return isinstance(cooldown, Mapping) and cooldown.get("version") in (REENTRY_COOLDOWN_VERSION_V3, REENTRY_COOLDOWN_VERSION_V4)
+
+
+def reentry_cooldown_v4(sizing: object) -> bool:
+    """reentry_cooldown v4：名單含交易 Agent 提名的換出、綁出場理由、不排除換股換入候選。"""
+    cooldown = sizing.get("reentry_cooldown") if isinstance(sizing, Mapping) else None
+    return isinstance(cooldown, Mapping) and cooldown.get("version") == REENTRY_COOLDOWN_VERSION_V4
+
+
+def reentry_exit_reasons(sizing: object) -> Optional[Dict[str, Dict[str, str]]]:
+    """v4 已綁定的出場理由（代號 → {run_id, session_start, kind, reason}）；其他回 None（簡報逐鍵不變）。"""
+    if not reentry_cooldown_v4(sizing):
+        return None
+    reasons = sizing["reentry_cooldown"].get("exit_reasons")  # type: ignore[index]
+    if not isinstance(reasons, Mapping):
+        return None
+    return {str(symbol).upper(): dict(record) for symbol, record in reasons.items() if isinstance(record, Mapping)}
 
 
 def reentry_hint_id(symbol: str) -> str:
