@@ -246,8 +246,13 @@ class ShadowRunTests(unittest.TestCase):
 
     def test_facts_recomputed_from_the_inputs_must_match(self):
         art = self.shadow_art
-        # 換入股進了出場冷卻名單：同一份提名不再符合重算的事實。
-        blocked = sealed(art["policy"], lambda policy: policy["position_sizing"]["reentry_cooldown"].update(blocked_symbols=["2317.TW"]))
+        # 換入股進了出場冷卻名單（v3 口徑：名單排除換入候選；v4 只提示、不排除，見 test_swap_nomination）：同一份提名不再符合重算的事實。
+        def cooled_v3(policy):
+            cooldown = policy["position_sizing"]["reentry_cooldown"]
+            cooldown.pop("exit_reasons", None)
+            cooldown.update(version="v3", blocked_symbols=["2317.TW"])
+
+        blocked = sealed(art["policy"], cooled_v3)
         self.assertRejected(self.shadow.rebuild_errors(art, policy=blocked), "不能作為換入股")
         # 持有天數下限拉高：換出股資格不成立。
         strict = sealed(art["policy"], lambda policy: policy["position_sizing"]["agent_swap"].update(min_holding_days=60))

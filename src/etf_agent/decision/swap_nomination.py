@@ -60,6 +60,7 @@ from .sizing import (
     cash_grade_grid,
     cash_ratio_gate,
     reentry_blocked_symbols,
+    reentry_cooldown_v4,
     victim_bear_claim_enabled,
     victim_rules_gate,
 )
@@ -303,7 +304,8 @@ def nomination_facts(
     held = _held_shares(bundle)
     prices = {str(row["symbol"]).upper() for row in bundle["snapshot"]["latest_prices"]}
     untradable = untradable_symbols(bundle)
-    blocked = set(reentry_blocked_symbols(sizing) or [])
+    # reentry_cooldown v4 只提示、不限制：不再排除換入候選（買回已在第一輪回應過提示）；v1～v3 照舊排除。
+    blocked = set() if reentry_cooldown_v4(sizing) else set(reentry_blocked_symbols(sizing) or [])
     ranks = rank_by_symbol(ranking)
     roles = _roles(debate, position_review)
     days = holding_days_by_symbol(policy, bundle)

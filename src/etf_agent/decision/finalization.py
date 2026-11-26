@@ -41,13 +41,13 @@ from .turn_facts import cash_stance_turn_facts_gate
 from .swap_nomination import SWAP_NOMINATION_KEY, agent_swap_gate, validate_team_swap_nomination
 from .dip_facts import DIP_FACTS_KEY, quality_dip_assessment_gate, quality_dip_facts_gate, validate_dip_facts
 from .exposure_facts import EXPOSURE_FACTS_KEY, exposure_view_gate, validate_exposure_facts
-from .reentry_cooldown import recent_exit_symbols
+from .reentry_cooldown import recent_exit_records, recent_exit_symbols
 from .release_order import RELEASE_ORDER_KEY, validate_team_release_order
 from .held_weight_facts import HELD_WEIGHT_FACTS_KEY, validate_held_weight_facts
 from .night_rally import night_rally_override_gate
 from .sizing import (
     cash_ratio_gate, cash_ratio_selection_check, drawdown_derisk_v5, held_weight_facts_gate, reentry_cooldown_agent_only,
-    reentry_hint_symbols, validate_cash_stance,
+    reentry_cooldown_v4, reentry_hint_symbols, validate_cash_stance,
 )
 from .stance import STANCE_SCHEMA_VERSION, ResearchDebateBundleValidator
 from .trader import SIZED, TradeDecisionValidator, support_by_symbol
@@ -397,12 +397,20 @@ class DecisionFinalizer:
         days = cooldown.get("days")
         if isinstance(days, bool) or not isinstance(days, int) or days < 1:
             return ["%s.days 必須是正整數" % prefix]
+        v4 = reentry_cooldown_v4(sizing)
         try:
-            symbols, run_ids = recent_exit_symbols(self.decision_repository, self.bundle, days, agent_only=True)
+            if v4:
+                # v4：名單另含交易 Agent 提名的換出，並整份重算每檔出場理由（exit_reasons）。
+                symbols, run_ids, reasons = recent_exit_records(
+                    self.decision_repository, self.bundle, days, include_stop_exits=isinstance(sizing.get("stop_exit"), Mapping))
+            else:
+                symbols, run_ids = recent_exit_symbols(self.decision_repository, self.bundle, days, agent_only=True)
         except Exception as error:  # 決策庫損毀、manifest 或 intent.json 不可用一律拒絕，不當成沒有出場
             return ["%s 無法由決策庫重算冷卻名單：%s" % (prefix, error)]
         if cooldown["blocked_symbols"] != symbols or cooldown["source_run_ids"] != run_ids:
             return ["%s 的名單與決策庫重算不一致（重算：%s／%s）" % (prefix, symbols, run_ids)]
+        if v4 and cooldown.get("exit_reasons") != reasons:
+            return ["%s.exit_reasons 與決策庫重算不一致" % prefix]
         return []
 
     def _validate_cash_ratio_anchor(self) -> List[str]:

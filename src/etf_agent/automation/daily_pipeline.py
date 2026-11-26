@@ -57,7 +57,7 @@ from etf_agent.decision.trader_background import (
 )
 from etf_agent.decision.valuation_facts import build_valuation_facts, valuation_facts_gate, valuation_root_for
 from etf_agent.decision.release_order import apply_release_order
-from etf_agent.decision.sizing import drawdown_derisk_v5, held_weight_facts_gate, reentry_hint_symbols
+from etf_agent.decision.sizing import drawdown_derisk_v5, held_weight_facts_gate, reentry_exit_reasons, reentry_hint_symbols
 from etf_agent.decision.held_weight_facts import build_held_weight_facts
 from etf_agent.decision.thesis_verdicts import bind_forced_swap, load_thesis_verdicts
 from etf_agent.research import ResearchResultValidator
@@ -456,6 +456,8 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
             self.save_artifact("held_weight_facts", held_weight_facts)
         # reentry_cooldown v3：名單（已綁進 base_policy）改成交易 Agent 簡報的提示，沒有 v3 時為 None、簡報逐鍵不變。
         reentry_hints = reentry_hint_symbols(base_policy.get("position_sizing"))
+        # reentry_cooldown v4：提示旁附當時出場的種類與理由（已綁進 base_policy、Finalizer 重算）；沒有 v4 時為 None、簡報逐鍵不變。
+        reentry_reasons = reentry_exit_reasons(base_policy.get("position_sizing"))
         # trader_background_record（交易背景封存，版本閘門）：交易簡報的策略教訓與論點檢視背景改由封存紀錄產生、另存 team_inputs.trader_background。
         # 續跑時若 run 目錄已有封存檔，驗證後沿用、不重讀來源檔；沒有閘門時不建立、簡報逐鍵不變。
         trader_background = None
@@ -480,6 +482,7 @@ class DailyDecisionPipeline(PipelineBase, TeamStagesMixin, RiskStagesMixin):
                 exposure_review, **({"dip_facts": dip_facts} if dip_facts is not None else {}),
                 **({"held_weight_facts": held_weight_facts} if held_weight_facts is not None else {}),
                 **({"reentry_hint_symbols": reentry_hints} if reentry_hints is not None else {}),
+                **({"reentry_exit_reasons": reentry_reasons} if reentry_reasons is not None else {}),
                 **({"dip_assessment": True} if quality_dip_assessment_gate((base_policy or {}).get("position_sizing")) is not None else {}),
                 **({"valuation_facts": valuation_facts} if valuation_facts is not None else {}),
                 **({"trader_background": trader_background} if trader_background is not None else {}),

@@ -210,6 +210,18 @@ class FactsTests(unittest.TestCase):
 
         self.assertEqual(World(mutate_bundle=no_price).facts()["candidates"][0]["reasons"], ["no_price"])
 
+    def test_reentry_cooldown_v4_only_hints_and_does_not_block_candidates(self):
+        """v4：名單只是第一輪的提示，換股換入候選不再因冷卻被排除（v1～v3 照舊排除）。"""
+        def cooled_v4(policy):
+            policy["position_sizing"]["reentry_cooldown"] = {
+                "version": "v4", "days": 3, "blocked_symbols": ["1101.TW"], "source_run_ids": ["run-1"],
+                "exit_reasons": {"1101.TW": {"run_id": "run-1", "session_start": "2026-09-19T01:00:00+00:00",
+                                             "kind": "agent_swap", "reason": "換出理由"}},
+            }
+
+        row = World(mutate_policy=cooled_v4).facts()["candidates"][0]
+        self.assertEqual((row["symbol"], row["nominable"], row["reasons"]), ("1101.TW", True, []))
+
     def test_victim_blocking_reasons(self):
         def untradable(bundle):
             bundle["trading_status_bundle"] = {"bundle_id": "t"}

@@ -55,7 +55,7 @@ def without_stop_exit(value):
     value["position_sizing"].get("agent_swap", {}).pop("victim_rules", None)  # victim_rules 需要 position_review v2，降版時一併拿掉
     review = value["position_review"]
     review["version"] = "v1"
-    for key in ("trail_alert", "relative_loss_alert", "stale_alert"):
+    for key in ("trail_alert", "relative_loss_alert", "stale_alert", "beta_adjust"):
         review.pop(key, None)
     value["position_sizing"].pop("stop_exit", None)
     return value

@@ -18,6 +18,10 @@ stop_exit（程式兜底的硬停損，``include_stop_exits=True``，只在 Poli
 所以從前次 run 的 proposal.json 取帶 ``RISK_STOP_EXIT`` 旗標且賣單意圖為 exit 的股票，與上面的 Agent 出場取聯集；proposal.json 缺少、損壞或與 decision 不是
 同一組時拒絕，不當成「沒有停損」。Policy 沒有 stop_exit（或從未停損）時名單與舊版逐位元相同。
 v3 的名單口徑同 v2（同樣 ``agent_only=True``），但名單不擋買單、只是交易 Agent 簡報的提示（見 ``sizing.REENTRY_COOLDOWN_VERSION_V3``）。
+v4（``include_swaps=True``）：名單再加上交易 Agent 第二輪提名換出的股票（前次 run 的 proposal 有 ``AGENT_SWAP`` 旗標且賣單意圖 exit），
+並為每檔記下最近一次出場的 run、交易時段、種類與理由文字（交易 Agent 自己出場取 intent 的 rationale；換股換出取 team_inputs
+換股提名的 reason），由 ``recent_exit_records`` 回傳、pipeline 綁成 ``exit_reasons``。proposal.json、team_inputs.json 缺少、損壞
+或對不上一律拒絕，不當成沒有出場。
 """
 
 from __future__ import annotations
@@ -27,11 +31,17 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
+from etf_agent.core import canonical_sha256
 from etf_agent.core.run_layout import list_run_dirs
 
 from .contracts import DecisionToolError, parse_time
 from .prior_decision import _account_id, _read_run_json, _session_start
-from .sizing import REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3, REENTRY_COOLDOWN_VERSIONS
+from .sizing import (
+    REENTRY_COOLDOWN_VERSION_V2,
+    REENTRY_COOLDOWN_VERSION_V3,
+    REENTRY_COOLDOWN_VERSION_V4,
+    REENTRY_COOLDOWN_VERSIONS,
+)
 
 EXIT_INTENTS = ("exit", "forced_exit")
 
@@ -54,6 +64,11 @@ def _agent_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
 
 def _stop_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
     """前次 run 中被程式兜底停損出場（RISK_STOP_EXIT）的股票；proposal.json 不可用或與 decision 不是同一組一律拒絕。"""
+    return set(_stop_exit_details(run_dir, decision))
+
+
+def _stop_exit_details(run_dir: Path, decision: Mapping[str, object]) -> Dict[str, str]:
+    """停損出場股票 → 旗標說明文字（v4 當作出場理由，kind=stop_exit）。"""
     proposal = _read_run_json(run_dir, "proposal")
     if proposal is None:
         raise DecisionToolError("再進場冷卻（stop_exit）無法讀取決策庫 run 的 proposal.json：%s" % run_dir.name)
@@ -63,9 +78,56 @@ def _stop_exit_symbols(run_dir: Path, decision: Mapping[str, object]) -> set:
     if not isinstance(flags, list):
         raise DecisionToolError("再進場冷卻（stop_exit）：決策庫 run %s 的 proposal.constraint_flags 必須是清單" % run_dir.name)
     return {
-        str(flag.get("symbol", "")).upper() for flag in flags
+        str(flag.get("symbol", "")).upper(): str(flag.get("detail", "")).strip() or "程式兜底停損出場（RISK_STOP_EXIT）"
+        for flag in flags
         if isinstance(flag, Mapping) and flag.get("code") == "RISK_STOP_EXIT" and flag.get("symbol")
     }
+
+
+def _swap_victims(run_dir: Path, decision: Mapping[str, object]) -> set:
+    """前次 run 中交易 Agent 第二輪提名換出（AGENT_SWAP 旗標）的股票；proposal.json 不可用或與 decision 不是同一組一律拒絕。"""
+    proposal = _read_run_json(run_dir, "proposal")
+    if proposal is None:
+        raise DecisionToolError("再進場冷卻 v4 無法讀取決策庫 run 的 proposal.json：%s" % run_dir.name)
+    if decision.get("proposal_id") != proposal.get("proposal_id"):
+        raise DecisionToolError("再進場冷卻 v4：決策庫 run %s 的 decision 與 proposal 不是同一組" % run_dir.name)
+    flags = proposal.get("constraint_flags")
+    if not isinstance(flags, list):
+        raise DecisionToolError("再進場冷卻 v4：決策庫 run %s 的 proposal.constraint_flags 必須是清單" % run_dir.name)
+    return {
+        str(flag.get("symbol", "")).upper() for flag in flags
+        if isinstance(flag, Mapping) and flag.get("code") == "AGENT_SWAP" and flag.get("symbol")
+    }
+
+
+def _exit_reasons(run_dir: Path, decision: Mapping[str, object], agent: set, swapped: set) -> Dict[str, Dict[str, str]]:
+    """v4：每檔出場的種類與理由文字。交易 Agent 自己出場取 intent.rationale；換股換出取 team_inputs 換股提名的 reason。"""
+    intent = _read_run_json(run_dir, "intent")
+    if intent is None or decision.get("trade_intent_result_id") != intent.get("decision_id"):
+        raise DecisionToolError("再進場冷卻 v4：決策庫 run %s 的 intent.json 不可用或與 decision 不是同一組" % run_dir.name)
+    rationale = {
+        str(item.get("symbol", "")).upper(): str(item.get("rationale", ""))
+        for item in intent.get("items", []) if isinstance(item, Mapping)
+    }
+    nominations: Dict[str, str] = {}
+    if swapped:
+        team = _read_run_json(run_dir, "team_inputs")
+        # decision.team_inputs_sha256 是整份 team_inputs 的 canonical 雜湊（Finalizer 同一算法），對不上即不是同一組。
+        if team is None or decision.get("team_inputs_sha256") != canonical_sha256(team):
+            raise DecisionToolError("再進場冷卻 v4：決策庫 run %s 的 team_inputs.json 不可用或與 decision 不是同一組" % run_dir.name)
+        record = team.get("swap_nomination")
+        for pair in (record.get("nominations", []) if isinstance(record, Mapping) else []):
+            if isinstance(pair, Mapping) and pair.get("sell_symbol"):
+                nominations[str(pair["sell_symbol"]).upper()] = str(pair.get("reason", ""))
+    reasons: Dict[str, Dict[str, str]] = {}
+    for symbol in sorted(agent | swapped):
+        # 交易 Agent 自己給 exit 優先（第一輪就決定出場）；只有被提名換出的才取提名理由。
+        kind = "agent_exit" if symbol in agent else "agent_swap"
+        text = rationale.get(symbol, "") if kind == "agent_exit" else nominations.get(symbol, "")
+        if not text.strip():
+            raise DecisionToolError("再進場冷卻 v4：決策庫 run %s 找不到 %s 的出場理由" % (run_dir.name, symbol))
+        reasons[symbol] = {"kind": kind, "reason": text.strip()}
+    return reasons
 
 
 def recent_exit_symbols(
@@ -74,16 +136,32 @@ def recent_exit_symbols(
 ) -> Tuple[List[str], List[str]]:
     """最近 ``days`` 個日曆天內已出場的股票與來源 run_id（都排序去重）；``agent_only`` 為 v2：只計交易 Agent 自己的出場；
     ``include_stop_exits`` 再加上程式兜底停損（RISK_STOP_EXIT）出場的股票（只在 agent_only 時有意義；v1 本來就計所有出場）。"""
+    symbols, run_ids, _ = _scan_exits(repository_root, bundle, days, agent_only, include_stop_exits, include_swaps=False)
+    return symbols, run_ids
+
+
+def recent_exit_records(
+    repository_root: Optional[Path], bundle: Mapping[str, object], days: int, include_stop_exits: bool = False,
+) -> Tuple[List[str], List[str], Dict[str, Dict[str, str]]]:
+    """v4：名單（交易 Agent 自己出場＋它提名的換出）、來源 run_id 與每檔最近一次出場的理由（代號 → run_id、session_start、kind、reason）。"""
+    return _scan_exits(repository_root, bundle, days, True, include_stop_exits, include_swaps=True)
+
+
+def _scan_exits(
+    repository_root: Optional[Path], bundle: Mapping[str, object], days: int, agent_only: bool,
+    include_stop_exits: bool, include_swaps: bool,
+) -> Tuple[List[str], List[str], Dict[str, Dict[str, str]]]:
     if repository_root is None or not Path(repository_root).is_dir():
-        return [], []
+        return [], [], {}
     cutoff = parse_time(bundle.get("decision_cutoff"), "decision_cutoff")
     try:
         session_start = _session_start(bundle, "本次 bundle")
     except DecisionToolError:
-        return [], []
+        return [], [], {}
     account_id = _account_id(bundle)
     symbols: set = set()
     run_ids: set = set()
+    reasons: Dict[str, Dict[str, str]] = {}
     for run_dir in list_run_dirs(Path(repository_root)):
         decision = _read_run_json(run_dir, "decision")
         if decision is None:
@@ -122,11 +200,28 @@ def recent_exit_symbols(
             agent_exited = exited & _agent_exit_symbols(run_dir, decision)
             # 只有出場賣單裡有交易 Agent 沒標 exit 的股票時才需要查停損旗標；沒有就不讀 proposal.json（名單與舊版逐位元相同）。
             stopped = (exited - agent_exited) & _stop_exit_symbols(run_dir, decision) if include_stop_exits and exited - agent_exited else set()
-            exited = agent_exited | stopped
+            # v4：交易 Agent 第二輪提名換出的股票也算它自己的出場（程式只檢查可行性、不挑股）。
+            swapped = (exited - agent_exited) & _swap_victims(run_dir, decision) if include_swaps and exited - agent_exited else set()
+            exited = agent_exited | stopped | swapped
+            if include_swaps and (agent_exited | swapped | stopped):
+                session_text = prior_session.isoformat()
+                records = _exit_reasons(run_dir, decision, agent_exited, swapped) if agent_exited | swapped else {}
+                if stopped:
+                    details = _stop_exit_details(run_dir, decision)
+                    records.update({symbol: {"kind": "stop_exit", "reason": details[symbol]} for symbol in sorted(stopped)})
+                for symbol, record in records.items():
+                    previous = reasons.get(symbol)
+                    # 同一檔在視窗內多次出場：留交易時段最晚的那次（同時段不會有兩個 approved 結算 run 都賣同一檔以外的情況，再以 run_id 定序）。
+                    if previous is None or (previous["session_start"], previous["run_id"]) < (session_text, run_dir.name):
+                        reasons[symbol] = {"run_id": run_dir.name, "session_start": session_text, **record}
         if exited:
             symbols |= exited
             run_ids.add(run_dir.name)
-    return sorted(symbols), sorted(run_ids)
+    # 名單內每檔都必須有理由（Agent 出場、換股換出或停損旗標說明），缺一檔即拒絕。
+    missing = sorted(symbols - set(reasons)) if include_swaps else []
+    if missing:
+        raise DecisionToolError("再進場冷卻 v4：%s 在名單內卻沒有出場理由" % "、".join(missing))
+    return sorted(symbols), sorted(run_ids), {symbol: reasons[symbol] for symbol in sorted(reasons)}
 
 
 def bind_reentry_cooldown(
@@ -144,6 +239,14 @@ def bind_reentry_cooldown(
     version = cooldown.get("version")
     if version not in REENTRY_COOLDOWN_VERSIONS:
         raise DecisionToolError("position_sizing.reentry_cooldown.version 只允許 %s" % "、".join(REENTRY_COOLDOWN_VERSIONS))
+    if version == REENTRY_COOLDOWN_VERSION_V4:
+        symbols, run_ids, reasons = recent_exit_records(
+            repository_root, bundle, days, include_stop_exits=isinstance(sizing.get("stop_exit"), dict),
+        )
+        cooldown["blocked_symbols"] = symbols
+        cooldown["source_run_ids"] = run_ids
+        cooldown["exit_reasons"] = reasons
+        return bound
     symbols, run_ids = recent_exit_symbols(
         repository_root, bundle, days, agent_only=version in (REENTRY_COOLDOWN_VERSION_V2, REENTRY_COOLDOWN_VERSION_V3),
         include_stop_exits=isinstance(sizing.get("stop_exit"), dict),
@@ -153,4 +256,4 @@ def bind_reentry_cooldown(
     return bound
 
 
-__all__ = ["bind_reentry_cooldown", "recent_exit_symbols"]
+__all__ = ["bind_reentry_cooldown", "recent_exit_records", "recent_exit_symbols"]

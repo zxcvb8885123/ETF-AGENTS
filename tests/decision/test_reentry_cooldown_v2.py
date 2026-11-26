@@ -117,12 +117,12 @@ class ReentryCooldownV2Tests(unittest.TestCase):
 
     def test_bind_rejects_unknown_version(self):
         template = copy.deepcopy(self.policy)
-        template["position_sizing"]["reentry_cooldown"] = {"version": "v4", "days": 3}
+        template["position_sizing"]["reentry_cooldown"] = {"version": "v5", "days": 3}
         with self.assertRaises(DecisionToolError):
             bind_reentry_cooldown(template, self.root, self.session_bundle)
 
     def test_policy_validation_accepts_v2_and_rejects_bad_versions(self):
-        for version, ok in (("v1", True), ("v2", True), ("v3", True), ("v4", False), ("V2", False), (2, False), (None, False)):
+        for version, ok in (("v1", True), ("v2", True), ("v3", True), ("v4", True), ("v5", False), ("V2", False), (2, False), (None, False)):
             with self.subTest(version=version):
                 policy = copy.deepcopy(self.policy)
                 policy["position_sizing"]["reentry_cooldown"] = {"version": version, "days": 3}
